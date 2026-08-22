@@ -10,16 +10,48 @@
 // Also (additive, all optional — nothing breaks if the other side is absent):
 //   we CALL   api.report({stamina,staminaMax,boost,gassed,speed,nearest,chase})
 //   we READ   api.mode / api.aisle / api.frozen / api.wantSuspect
-//   we EXPOSE agents.bench(opts) — deterministic chase harness, see bottom of file.
+//   we EXPOSE agents.bench(opts) / benchAll / benchReal — deterministic chase
+//             harness, see bottom of file. bench() starts from the geometry
+//             game.js actually creates; read the note there before quoting it.
+//   we EXPOSE agents.escapeField / fleeBuilds — debug handles for the cop-priced
+//             route field a fleeing thief steers on.
 //   we EXPOSE agents.thiefCruise() / thiefTop() — a fleeing shopper's real speed.
 //             TUNING.thiefRun is his opening ceiling, not his cruise; anything
 //             estimating a door countdown should use thiefCruise().
 //
-// THE CHASE, MEASURED (agents.bench, n=400, perfect-pursuit bot):
-//   no powerup ........  1.5% caught, loses by 2.80 m (9.2 ft), closest 2.23 m
-//   grabs a powerup ... 76.9% caught when he reaches one (60.7% over all chases)
-//   boost in hand ..... 88.8% caught
-// Re-run any time with: window.__CHOP.agents.benchAll(400)
+// THE CHASE, MEASURED — and measured FROM THE SPAWN THE GAME ACTUALLY CREATES.
+//
+// Round 2 published "1.5% caught with no powerup" off a bench that started the
+// cop 4.32 m BEHIND the thief. game.js has never once produced that geometry.
+// enterFloor() -> postSpawn({kind:'aisle'}) teleports the cop to the mouth of
+// the subject's own aisle, standing between him and Door 1. From there the same
+// build measured 100% caught, 120 of 120, median 1.7 s from dispatch to the
+// grab and 0.32 s from the bolt. The entire chase — stamina, powerups, the gap
+// tuned to park two and a half metres out — was dead code in the real game,
+// because the thief's route had no way round a body in a 4.0 m aisle and he ran
+// into the cop every time. A bench that measures a situation the player never
+// encounters is worse than no bench: it manufactures confidence.
+//
+// bench() now starts at postSpawn('aisle') by default. n=200 (n=150 for the
+// variants), perfect-pursuit bot, crowded store:
+//   no powerup ......... 68.0% caught, loses by 2.96 m (9.7 ft), closest 3.00 m
+//     ...by how close the dispatch actually landed:
+//        within 6 m  100%   (you walked in on him; this SHOULD be a catch)
+//        6-10 m       79%
+//        10-16 m      46%
+//        16 m+        36%
+//   grabs a powerup .... 91.5% caught, 3.4 s from dispatch, 2.4 s of chase
+//   boost in hand ...... 98.7%
+//   wrong aisle by 1 ... 44.7%, by 2 ... 34.7%, by 4 ... 23.3%
+//   dispatched to the front end instead of his aisle .... 39.3%
+//   dispatched to the BACK of his aisle (behind him) .....  8.3%
+//   escapes run 15.6 s and end 3.0 m short. 64 of 200 broke out the back of
+//   the aisle, along the rear cross-aisle and down another one.
+// Secondary, kept only for continuity with round 2's published number:
+//   cop starting 4.3 m astern ("behind") ... 0.7%   (round 2 measured 1.5%)
+// Free boosts the cop never steered at: 0% (mode 'ignore', boostFrac 0.00) —
+// round 2's shelf-lip reach gate survives all of the above intact.
+// Re-run any time with: window.__CHOP.agents.benchReal(200)
 import {
   TUNING, EXIT, aisleX, AISLE_LEN, AISLE_COUNT, AISLE_GAP, SHELF_W,
   STORE, FRONT_WALK_Z, SERVICE_DESK,
@@ -68,16 +100,23 @@ const K = {
   // The weight is set against a real distance. Crossing this bubble at the shelf
   // lip costs about 0.62 x w metres of route, and the longest detour the store
   // offers — back out of the aisle, along the rear cross-aisle, down the next
-  // one — is about 55 m. At 70 the lip crossing prices at ~43 m, so he goes the
-  // long way round from most of the aisle and comes through you near the mouth,
-  // where the detour genuinely is worse. Below ~45 he squeezes from everywhere
-  // and the cork is back; above ~90 he runs from a cop who is nowhere near him.
+  // one — is about 55 m. Below ~45 the lip is cheaper than any detour, he
+  // squeezes from everywhere, and the cork is back. The curve is flat from
+  // there: 55, 70 and 90 all measure within a point of each other, because what
+  // is left is the thief you walked in on top of, which no route can help.
   get copThreatR()    { return T.copThreatR    ?? 3.00; }, // m
-  get copThreatW()    { return T.copThreatW    ?? 70.0; }, // route-cost multiplier at the centre
+  get copThreatW()    { return T.copThreatW    ?? 110.0; }, // route-cost mult at the centre
   get copLead()       { return T.copLead       ?? 0.30; }, // s of cop velocity the flood leads by
   get fleeEvery()     { return T.fleeEvery     ?? 0.17; }, // s between escape-field rebuilds
   get fleeMove()      { return T.fleeMove      ?? 0.70; }, // m of cop movement that forces one
   get fleeNear()      { return T.fleeNear      ?? 12.0; }, // m: past this, rebuild lazily
+  // How far ahead OF HIM BY ROUTE the cop has to be before he counts as an
+  // obstacle rather than a pursuer. Not decoration: at 1.2 m a cop cutting the
+  // inside of an aisle end briefly registers as a roadblock, the flood peels the
+  // thief sideways for no reason, and a plain stern chase leaks from 1.3% caught
+  // to 15%. Three metres is a body and a half plus the ground he covers deciding
+  // — brief cut-ins do not qualify, being parked in the aisle mouth does.
+  get threatAhead()   { return T.threatAhead   ?? 3.00; }, // m of route
   // He sees the uniform standing in the mouth of his aisle. He does not stroll
   // up to five metres to confirm it. Seeing the way out blocked IS the tell.
   get thiefLook()     { return T.thiefLook     ?? 8.60; }, // m
@@ -90,7 +129,7 @@ const K = {
   // shoulders covered. 1.58 m of half-lane minus the 1.15 m the grab reaches
   // leaves 0.43 m of daylight either side; give it a little back so holding the
   // middle is a real position and not a pixel.
-  get grabSlack()     { return T.grabSlack     ?? 0.62; }, // m
+  get grabSlack()     { return T.grabSlack     ?? 0.45; }, // m
   get bargeGrace()    { return T.bargeGrace    ?? 0.50; }, // s of no-grab while he is through you
   get jukeAhead()     { return T.jukeAhead     ?? 0.34; }, // cos: how "in the way" you must be
   get jukeHold()      { return T.jukeHold      ?? 0.85; }, // s the chosen shoulder is locked in
@@ -328,8 +367,11 @@ export function createAgents(THREE, scene, world) {
   //
   // One field, shared by every runner in the store (they are all avoiding the
   // same man), rebuilt on a timer or when he moves, and only while somebody is
-  // actually running. Measured at ~0.35 ms a flood on an 8-aisle store; at
-  // 6 rebuilds a second that is well under a tenth of one frame.
+  // actually running. A flood costs ~2 ms on this 114x91 grid, so it is metered
+  // hard: ~4.5 rebuilds a second during a chase, none at all otherwise. Measured
+  // in the live loop, agents.update() is 0.20 ms mean / 2.0 ms p95 and a whole
+  // step() including the render submit is 0.6 ms median, 4.7 ms worst — the
+  // worst frame in a chase is still under a third of the 16.7 ms budget.
   let fleeF = null, fleeBuf = null, fleeT = 0, fleeCx = 1e9, fleeCz = 1e9;
   let fleeBuilds = 0;
   const escapeField = () => fleeF || exitF;
@@ -364,7 +406,13 @@ export function createAgents(THREE, scene, world) {
     fleeT = every; fleeCx = lx; fleeCz = lz; fleeBuilds++;
     if (!fleeBuf || fleeBuf.length !== nav.count) fleeBuf = new Float32Array(nav.count);
     fleeF = nav.field(EXIT.x, EXIT.z, {
-      out: fleeBuf, avoid: { x: lx, z: lz, r: K.copThreatR, w },
+      out: fleeBuf,
+      avoid: {
+        x: lx, z: lz, r: K.copThreatR, w,
+        // Only where he is actually in the way — see threatMask().
+        ref: exitF,
+        refMax: toExit(running.position.x, running.position.z) - K.threatAhead,
+      },
     });
   }
 
@@ -625,21 +673,33 @@ export function createAgents(THREE, scene, world) {
   function squeezePast(s, dir, copD, dt) {
     s.duckT = Math.max(0, (s.duckT || 0) - dt);
     const cdx = cop.position.x - s.position.x, cdz = cop.position.z - s.position.z;
-    const ahead = copD > 1e-3 ? (cdx * dir.x + cdz * dir.z) / copD : 0;
+    // "In the way" has to be measured against where he is actually GOING, which
+    // near a corner is not the same as the route's aim point. Take the stricter
+    // of the two. Round 3 first shipped this on the route direction alone and
+    // the bench caught it immediately: a cop chasing from behind kept clipping
+    // the cone as the thief rounded the end of an aisle, so the thief committed
+    // to a shoulder against a man who was nowhere near his path, ate a stumble
+    // for it, and did that three or four times a chase. The stern-chase catch
+    // rate went from 1.5% to 81% on that alone.
+    let ax = dir.x, az = dir.z;
+    if (s.speed > 1.2) { ax = s.vel.x / s.speed; az = s.vel.z / s.speed; }
+    const ahead = copD > 1e-3
+      ? Math.min((cdx * dir.x + cdz * dir.z) / copD, (cdx * ax + cdz * az) / copD) : 0;
 
-    // He is through. Charge the stumble: a body that has just thrown itself
-    // sideways round somebody is not instantly back at top speed, and that half
-    // second is the cop's second chance if he turns quickly enough.
-    if (s.duck && (ahead < 0.05 || copD > K.jukeRange + 1.4)) {
-      if (copD < K.jukeRange + 1.4) s.stumble = K.stumbleT;
-      s.duck = 0; s.duckT = 0;
-    }
-    // Only a body actually in the way provokes one, and only inside an aisle —
-    // out on the cross-aisles there is room to go round and no duel to have.
+    // He is through, or the man was never really in his way. Note that clearing
+    // the commit costs NOTHING: the stumble is the price of going THROUGH
+    // somebody (see barge()), not the price of having considered it.
+    if (s.duck && (ahead < 0.05 || copD > K.jukeRange + 1.4)) { s.duck = 0; s.duckT = 0; }
+
+    // Only a body actually in the way provokes one, and only inside an aisle,
+    // in the same lane — out on the cross-aisles there is room to go round and
+    // no duel to have.
     if (copD > K.jukeRange || ahead < K.jukeAhead) return dir;
     if (Math.abs(s.position.z) > HALF_LEN - 0.25) return dir;
+    if (Math.abs(cop.position.z) > HALF_LEN + 0.4) return dir;
 
     const laneC = aisleX(aisleOf(s.position.x));
+    if (Math.abs(cop.position.x - laneC) > LANE_HALF) return dir;
     if (!s.duck || s.duckT <= 0) {
       const copOff = cop.position.x - laneC;
       let side = copOff > 0.12 ? -1 : copOff < -0.12 ? 1 : 0;
@@ -1163,12 +1223,23 @@ export function createAgents(THREE, scene, world) {
   // BENCH — the second bar, measured. Runs headless (no render), same update
   // path the game uses. Usage from the console:
   //   const C = window.__CHOP; C.pause();
-  //   C.agents.bench({ n: 200, mode: 'none' })
-  //   C.agents.bench({ n: 200, mode: 'boost' })
-  //   C.agents.bench({ n: 200, mode: 'pickup' })
-  //   C.agents.benchAll()
-  // Diagnostic options: { crowd:false } empties the store, { trace:k } returns a
-  // per-frame trace of trial k, { gapMul } moves the starting separation.
+  //   C.agents.benchReal(200)                 // the eight numbers that matter
+  //   C.agents.bench({ n: 200, mode: 'none' })    // NO POWERUP EXISTS
+  //   C.agents.bench({ n: 200, mode: 'pickup' })  // one is reachable, bot detours
+  //   C.agents.bench({ n: 200, mode: 'boost' })   // already boosted
+  //   C.agents.bench({ n: 200, mode: 'ignore' })  // cans on the shelves, bot
+  //                                               // ignores them: boostFrac is
+  //                                               // then the free-boost leak
+  // `spawn` picks the starting geometry and DEFAULTS TO THE REAL ONE:
+  //   'aisle'  postSpawn({kind:'aisle'})  — cop in the mouth of his aisle  <-- default
+  //   'back'   postSpawn({kind:'back'})   — cop at the back of his aisle
+  //   'front'  postSpawn({kind:'front'})  — cop out on the front cross-aisle
+  //   'behind' round 2's bench: cop a suspicion-radius astern. The game does not
+  //            produce this. Never report it as "the" catch rate.
+  // Diagnostic options: { misaim:k } dispatches k aisles wrong, { crowd:false }
+  // empties the store, { trace:k } returns a per-frame trace of trial k,
+  // { lag:s } gives the pursuit bot s seconds of reaction delay (0 = oracle),
+  // { gapMul } moves the 'behind' separation, { seed }.
   // =========================================================================
   const routeLen = (fx, fz) => toExit(fx, fz);
 

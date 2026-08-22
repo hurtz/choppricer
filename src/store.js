@@ -52,6 +52,13 @@ function textures(THREE) {
     bottle: PK.bottleAtlas(THREE, DEPT_KEYS),
     tag: PK.tagAtlas(THREE),
     cavity: PK.cavityTex(THREE),
+    // round-3: ambient occlusion, gondola hardware, floor wear, ceiling clutter
+    ao: TX.shelfAOTex(THREE),
+    slot: TX.slotTex(THREE),
+    smear: TX.smearTex(THREE),
+    peg: TX.pegTex(THREE),
+    wear: TX.floorWearTex(THREE),
+    dangle: TX.danglerAtlas(THREE),
     sign: TX.signAtlas(THREE, DEPTS),
     blade: TX.bladeAtlas(THREE, DEPTS),
     lane: TX.laneAtlas(THREE),
@@ -178,13 +185,34 @@ export function buildStore(THREE, scene) {
   };
 
   // ---- shared materials ---------------------------------------------------
+  // MATERIAL VARIETY. Round 2 shaded every package family with one matte
+  // Lambert, so a can, a PET bottle, a foil bag and a coated carton all read as
+  // the same painted cardboard. Coated board stays Lambert — it genuinely is
+  // near-matte — and everything with a gloss gets Phong, with the per-texel
+  // specular strength driven off the mask's print-brightness channel so white
+  // film and bare tinplate flare while printed ink stays dull.
   const M = {
-    pkgBox: PK.chopPackageMat(THREE, T.boxA, PK.ATLAS.carton),
-    pkgCan: PK.chopPackageMat(THREE, T.can, PK.ATLAS.can),
-    pkgBottle: PK.chopPackageMat(THREE, T.bottle, PK.ATLAS.bottle),
-    pkgBag: PK.chopPackageMat(THREE, T.bagA, PK.ATLAS.pouch),
+    pkgBox: PK.chopPackageMat(THREE, T.boxA, PK.ATLAS.carton, {
+      spec: { shininess: 14, specular: 0x2b2924 },
+      gloss: '0.16 + 0.42 * chopM.g * chopM.g',
+    }),
+    pkgCan: PK.chopPackageMat(THREE, T.can, PK.ATLAS.can, {
+      spec: { shininess: 58, specular: 0x8c8880 },
+      gloss: '0.45 + 0.95 * pow( chopM.g, 2.2 )',
+    }),
+    pkgBottle: PK.chopPackageMat(THREE, T.bottle, PK.ATLAS.bottle, {
+      spec: { shininess: 96, specular: 0xa39f95 },
+      gloss: '0.50 + 1.25 * pow( chopM.g, 2.6 )',
+    }),
+    pkgBag: PK.chopPackageMat(THREE, T.bagA, PK.ATLAS.pouch, {
+      spec: { shininess: 34, specular: 0x8e8a80 },
+      gloss: '0.28 + 1.35 * pow( chopM.g, 3.2 )',
+    }),
     fix: new THREE.MeshLambertMaterial({ color: 0xffffff }),
     wood: new THREE.MeshLambertMaterial({ map: T.wood, color: 0xffffff }),
+    steel: new THREE.MeshPhongMaterial({
+      color: 0xffffff, shininess: 42, specular: 0x6a665c,
+    }),
   };
 
   // ONE geometry per package family, UVs normalised into unit-cell space. The
@@ -240,6 +268,15 @@ export function buildStore(THREE, scene) {
   // Qtag: one shelf-edge tag per SKU run, width keyed to that SKU's facing.
   // Qcav: the gradient that darkens the back of every shelf cavity.
   const Qtag = new Quads(), Qcav = new Quads();
+  // ROUND-3 additions.
+  //   Qao     one multiply-blended AO card across the MOUTH of every shelf
+  //           cavity — near-black under the deck above, hard seam at the deck
+  //   Qslot   punched-slot gondola uprights at every 4ft section joint
+  //   Qsmear  the polished-floor reflection streak under each gondola face,
+  //           tinted per streak with the colour of the product above it
+  //   Qdangle cardboard promo danglers hanging on strings from the ceiling
+  const Qao = new Quads(), Qslot = new Quads(), Qpeg = new Quads();
+  const Qsmear = new Quads(true), Qdangle = new Quads();
 
   // =========================================================================
   // FLOOR
@@ -252,6 +289,23 @@ export function buildStore(THREE, scene) {
   floor.position.set(CX, 0, CZ);
   floor.receiveShadow = true;
   root.add(floor);
+
+  // WEAR LAYER. One non-repeating multiply pass over the whole sales floor:
+  // years of black scuffing concentrated in the traffic lanes, cart-wheel arcs
+  // and buffer swirl. The tile map repeats every 2.44 m; this breaks that
+  // period and is the difference between "a tiled plane" and "a floor".
+  {
+    const wear = new THREE.Mesh(
+      new THREE.PlaneGeometry(SW, SD),
+      new THREE.MeshBasicMaterial({
+        map: T.wear, transparent: true, depthWrite: false,
+        blending: THREE.MultiplyBlending,
+      }));
+    wear.rotation.x = -Math.PI / 2;
+    wear.position.set(CX, 0.004, CZ);
+    wear.renderOrder = 0;
+    root.add(wear);
+  }
 
   // long specular smear of the light rows down each aisle
   for (let i = 0; i < AISLE_COUNT; i++) {
@@ -306,11 +360,16 @@ export function buildStore(THREE, scene) {
   // =========================================================================
   // CEILING  (culled for any camera above it — the chase cam flies at 6.4m)
   // =========================================================================
+  // The old ceiling ran a strong emissive under a low-contrast tile map, which
+  // flattened the T-bar grid into nothing: 30% of every frame was a featureless
+  // cream field and the ceiling scored the lowest edge density of any band in
+  // the image. The map now carries the contrast; the emissive only lifts the
+  // black point so the tiles do not go muddy between fixtures.
   const ceilPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(SW, SD),
     new THREE.MeshLambertMaterial({
-      map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 2.44, SD / 2.44); return t; })(),
-      color: 0xf6efdd, emissive: 0x8b8676, emissiveIntensity: 1.0,
+      map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 4.88, SD / 4.88); return t; })(),
+      color: 0xefe7d3, emissive: 0x5c5749, emissiveIntensity: 1.0,
     }));
   ceilPlane.rotation.x = Math.PI / 2;    // normal points down
   ceilPlane.position.set(CX, CEIL_H, CZ);
@@ -321,14 +380,33 @@ export function buildStore(THREE, scene) {
   // continuous 100%-white ribbon the length of the store, which is the single
   // most obviously synthetic thing about a CG ceiling.
   const FIX_L = 2.34, FIX_GAP = 0.62;
+  // A perfect grid of identically bright fixtures is a two-second CG tell. Real
+  // rows are hung off whatever the deck allowed: the pitch wanders, tubes age
+  // to different colour temperatures, and there is always at least one fixture
+  // with a dead lamp and one missing altogether. The atlas carries four states;
+  // this picks one per fixture and jitters the position.
+  const fixState = () => {
+    const r = rng();
+    return r < 0.58 ? 0 : r < 0.78 ? 1 : r < 0.93 ? 2 : 3;
+  };
   const lightRow = (x, z0, z1) => {
     const pitch = FIX_L + FIX_GAP;
     const n = Math.max(1, Math.round((z1 - z0) / pitch));
     const span = n * pitch - FIX_GAP;
     let z = (z0 + z1) / 2 - span / 2 + FIX_L / 2;
     for (let k = 0; k < n; k++, z += pitch) {
-      qDown(Qstrip, x, LY, z, 0.44, FIX_L, FULL);
-      fix(x, LY + 0.085, z, 0.54, 0.15, FIX_L + 0.04, 0xe6ddc8, BfixC);
+      const jz = z + rr(rng, -0.16, 0.16), jx = x + rr(rng, -0.05, 0.05);
+      const dead = rng() < 0.055;
+      if (!dead) {
+        qDown(Qstrip, jx, LY, jz, 0.44, FIX_L, cellUV(fixState(), 4, 1));
+        // and its own reflection on the polished floor five metres below. The
+        // long continuous smear round 2 drew had no rhythm; a real floor
+        // mirrors DISCRETE fixtures with dark gaps between them.
+        qUp(Qglow, jx, 0.020, jz, 0.62, FIX_L * 1.75, FULL);
+      } else fix(jx, LY + 0.012, jz, 0.44, 0.03, FIX_L, 0x8a8578, BfixC);
+      fix(jx, LY + 0.085, jz, 0.54, 0.15, FIX_L + 0.04, 0xe6ddc8, BfixC);
+      // the door frame around the lens, and the trim at the two ends
+      fix(jx, LY + 0.006, jz, 0.50, 0.012, FIX_L + 0.05, 0xb6af9c, BfixC);
     }
   };
   const lightRowX = (z, x0, x1) => {
@@ -337,8 +415,14 @@ export function buildStore(THREE, scene) {
     const span = n * pitch - FIX_GAP;
     let x = (x0 + x1) / 2 - span / 2 + FIX_L / 2;
     for (let k = 0; k < n; k++, x += pitch) {
-      Qstrip.rect([x, LY, z], [0, 0, -0.22], [FIX_L / 2, 0, 0], 0, 0, 1, 1);
-      fix(x, LY + 0.085, z, FIX_L + 0.04, 0.15, 0.54, 0xe6ddc8, BfixC);
+      const jx = x + rr(rng, -0.16, 0.16), jz = z + rr(rng, -0.05, 0.05);
+      const dead = rng() < 0.055;
+      const uv = cellUV(fixState(), 4, 1);
+      if (!dead) {
+        Qstrip.rect([jx, LY, jz], [0, 0, -0.22], [FIX_L / 2, 0, 0], uv[0], uv[1], uv[2], uv[3]);
+        qUp(Qglow, jx, 0.020, jz, FIX_L * 1.75, 0.62, FULL);
+      } else fix(jx, LY + 0.012, jz, FIX_L, 0.03, 0.44, 0x8a8578, BfixC);
+      fix(jx, LY + 0.085, jz, FIX_L + 0.04, 0.15, 0.54, 0xe6ddc8, BfixC);
     }
   };
   for (let i = 0; i < AISLE_COUNT; i++) {
@@ -358,10 +442,57 @@ export function buildStore(THREE, scene) {
     }
   }
   for (let k = 0; k < 12; k++) {
-    const x = STORE.minX + 3 + (k % 6) * (SW - 6) / 5;
-    const z = STORE.minZ + 5 + Math.floor(k / 6) * (SD - 12);
+    const x = STORE.minX + 3 + (k % 6) * (SW - 6) / 5 + rr(rng, -0.5, 0.5);
+    const z = STORE.minZ + 5 + Math.floor(k / 6) * (SD - 12) + rr(rng, -0.8, 0.8);
     fix(x, CEIL_H - 0.06, z, 1.18, 0.12, 1.18, 0xf2ecdb, BfixC);
     fix(x, CEIL_H - 0.13, z, 1.02, 0.04, 1.02, 0xd7d0bc, BfixC);
+    for (let b = -3; b <= 3; b++) {          // the blades of the diffuser
+      fix(x, CEIL_H - 0.15, z + b * 0.14, 0.98, 0.05, 0.045, 0x9d9682, BfixC);
+    }
+  }
+  // ---- ceiling clutter ----------------------------------------------------
+  // Speakers, exit lights, junction boxes and a run of loose conduit. Nothing
+  // here is load-bearing for gameplay; all of it is the incidental hardware a
+  // real drop ceiling carries and a rendered one never does.
+  for (let k = 0; k < 14; k++) {
+    const x = STORE.minX + 2.5 + rng() * (SW - 5), z = STORE.minZ + 2.5 + rng() * (SD - 5);
+    fix(x, CEIL_H - 0.05, z, 0.30, 0.09, 0.30, 0xe4ddc9, BfixC);
+    fix(x, CEIL_H - 0.10, z, 0.24, 0.03, 0.24, 0x5d574a, BfixC);
+  }
+  for (let k = 0; k < 9; k++) {              // conduit / loose data cable
+    const z = STORE.minZ + 3 + rng() * (SD - 6);
+    const x0 = STORE.minX + rr(rng, 1, 8), x1 = STORE.maxX - rr(rng, 1, 8);
+    tube((x0 + x1) / 2, CEIL_H - rr(rng, 0.06, 0.12), z, 0, 0, Math.PI / 2,
+      rr(rng, 0.018, 0.032), x1 - x0, k % 3 ? 0x8d8676 : 0x3c3a34, BtubeC);
+    for (let x = x0 + 1.5; x < x1; x += rr(rng, 2.4, 5.0)) {
+      fix(x, CEIL_H - 0.05, z, 0.07, 0.10, 0.07, 0x8d8676, BfixC);
+    }
+  }
+  // ---- hanging promo danglers ---------------------------------------------
+  // Cardboard cards on string at wildly varying heights. They cost almost
+  // nothing and they put genuine detail into the top third of the frame, which
+  // measured as the single flattest region in every round-2 render.
+  const dangle = (x, z, y) => {
+    const uv = cellUV((rng() * 8) | 0, 4, 2);
+    const w = rr(rng, 0.26, 0.40), h = w * rr(rng, 0.68, 0.86);
+    const yaw = rr(rng, -0.5, 0.5);
+    const cs = Math.cos(yaw) * w / 2, sn = Math.sin(yaw) * w / 2;
+    for (const s of [1, -1]) {
+      Qdangle.rect([x, y, z + s * 0.004], [s * cs, 0, -s * sn], [0, h / 2, 0],
+        uv[0], uv[1], uv[2], uv[3]);
+    }
+    tube(x, (y + h / 2 + CEIL_H) / 2, z, 0, 0, 0, 0.006,
+      CEIL_H - y - h / 2, 0xb9b2a0);
+  };
+  for (let i = 0; i < AISLE_COUNT - 1; i++) {
+    const gx = aisleX(i) + PITCH / 2;
+    for (let k = 0; k < 5; k++) {
+      dangle(gx + rr(rng, -0.55, 0.55), rr(rng, -HALF + 1, HALF - 1), rr(rng, 3.45, 4.55));
+    }
+  }
+  for (let k = 0; k < 14; k++) {
+    dangle(STORE.minX + 4 + rng() * (SW - 8), FRONT_WALK_Z + rr(rng, -2.2, 1.4),
+      rr(rng, 3.3, 4.4));
   }
   scene.onBeforeRender = (r, sc, cam) => {
     const p = cam && cam.position;
@@ -410,6 +541,32 @@ export function buildStore(THREE, scene) {
     return Array.from({ length: n }, (_, i) => halfDepth * (1.0 - 0.22 * (i / Math.max(1, n - 1))));
   }
 
+  // ---- gondola hardware ---------------------------------------------------
+  const SECT = 1.22;                         // one 4ft shelving section
+  // A price rail is an extruded C-channel screwed to a 4ft shelf, so it stops
+  // at every section joint and starts again 20 mm later with a visible end.
+  // Emitting one 25 m quad instead was worth ~90 hard vertical edges per aisle.
+  function railRun(lip, y, a0, a1, dir) {
+    const n = Math.max(1, Math.round((a1 - a0) / SECT));
+    const w = (a1 - a0) / n;
+    for (let k = 0; k < n; k++) {
+      const s = a0 + k * w + 0.011, e = a0 + (k + 1) * w - 0.011;
+      qX(Qrail, lip + dir * 0.012, y, (s + e) / 2, e - s, 0.062, dir, [0, 0, (e - s), 1]);
+    }
+  }
+  function railRunX(cz, y, a0, a1, dir) {
+    const n = Math.max(1, Math.round((a1 - a0) / SECT));
+    const w = (a1 - a0) / n;
+    for (let k = 0; k < n; k++) {
+      const s = a0 + k * w + 0.011, e = a0 + (k + 1) * w - 0.011;
+      qZ(Qrail, (s + e) / 2, y, cz, e - s, 0.062, dir, [0, 0, (e - s), 1]);
+    }
+  }
+  // 13 printed tag designs then 3 orphan states — see pack.js TAG_SKU.
+  const tagUV = (kindT) => (kindT === 'orphan'
+    ? cellUV(PK.TAG_SKU + ((rng() * (16 - PK.TAG_SKU)) | 0), 4, 4)
+    : cellUV((rng() * PK.TAG_SKU) | 0, 4, 4));
+
   function buildRun(idx, x, halfW, faces, opts = {}) {
     const B = newPkg();
     const z0 = -BODY, z1 = BODY, len = z1 - z0;
@@ -419,11 +576,19 @@ export function buildStore(THREE, scene) {
 
     // kick plate + base
     fix(x, 0.075, 0, halfW * 2 - 0.10, 0.15, len, P.kick);
-    // back panel / pegboard spine
+    // back panel / pegboard spine. Round 3 skins it with a real perforated
+    // panel: it shows in the bottom of every cavity and across the whole of
+    // any bare bay, and round 2 put a smooth beige slab there.
     if (faces.length === 2) {
       fix(x, 1.10, 0, 0.07, 1.90, len, P.peg);
+      for (const s2 of [-1, 1]) {
+        qX(Qpeg, x + s2 * 0.037, 1.10, 0, len, 1.90, s2, [0, 0, len / 0.30, 1.90 / 0.30]);
+      }
     } else {
-      fix(x - faces[0].dir * (halfW - 0.04), 1.10, 0, 0.08, 1.90, len, P.peg);
+      const bx = x - faces[0].dir * (halfW - 0.04);
+      fix(bx, 1.10, 0, 0.08, 1.90, len, P.peg);
+      qX(Qpeg, bx + faces[0].dir * 0.042, 1.10, 0, len, 1.90, faces[0].dir,
+        [0, 0, len / 0.30, 1.90 / 0.30]);
     }
 
     for (const f of faces) {
@@ -436,20 +601,34 @@ export function buildStore(THREE, scene) {
         // aisle wall read as alternating bright and dark horizontal bands
         // instead of one evenly lit slab.
         fix(lip - f.dir * (dep / 2), DECK[d] - 0.041, 0, dep + 0.015, 0.020, len, P.shelfUnder);
-        // price rail on the lip
-        qX(Qrail, lip + f.dir * 0.012, DECK[d] - 0.020, 0, len, 0.062, f.dir, [0, 0, len / 1.0, 1]);
+        // PRICE RAIL — broken at every 4ft section joint. Round 2 ran one
+        // continuous extruded bar the full 25 m of the aisle, which is a very
+        // strong architectural giveaway even at distance: real shelving is
+        // assembled from 3-4ft sections and every joint shows.
+        railRun(lip, DECK[d] - 0.020, z0, z1, f.dir);
         const head = (DECK[d + 1] !== undefined ? DECK[d + 1] : SHELF_H + 0.03) - DECK[d] - 0.036;
         // cavity gradient: dark under the shelf above, fading down. Also what
         // makes a sold-out void read as a black hole rather than a beige gap.
         qX(Qcav, lip - f.dir * (dep - 0.01), DECK[d] + head * 0.5, 0, len, head, f.dir, FULL);
+        // CAVITY AMBIENT OCCLUSION — multiply-blended across the mouth of the
+        // cavity, 6 mm proud of the deepest facing and 6 mm behind the rail.
+        // Near-black under the deck above, clearing by mid-height, then a hard
+        // seam at the deck. This is the round-3 headline change: without it
+        // every product is lit identically and the run reads as a decal.
+        qX(Qao, lip - f.dir * 0.006, DECK[d] + head * 0.5, 0, len, head, f.dir, FULL);
+        // deck brackets at the section joints, seen from below on high decks
+        for (let z = z0 + 0.61; z < z1; z += 1.22) {
+          fix(lip - f.dir * (dep * 0.30), DECK[d] - 0.056, z,
+            dep * 0.56, 0.032, 0.020, 0x847c6b);
+        }
         // pull: top decks are faced right up to the lip, bottom decks sink back
         const pull = d / (DECK.length - 1);
         fillShelf(B, rng, f.dept, {
           axis: 'z', a0: z0 + 0.05, a1: z1 - 0.05, lip, face: f.dir,
           deckY: DECK[d], headroom: head, depth: dep, lit: LIT[d], col, pull,
-          tag: (aStart, aw) => {
+          tag: (aStart, aw, kindT) => {
             qX(Qtag, lip + f.dir * 0.020, DECK[d] - 0.021, aStart + aw / 2, aw, 0.050,
-              f.dir, cellUV((rng() * 16) | 0, 4, 4));
+              f.dir, tagUV(kindT));
           },
         });
         // top deck gets a second row behind the facings — otherwise the chase
@@ -462,9 +641,50 @@ export function buildStore(THREE, scene) {
           });
         }
       }
-      // uprights every 4ft section, flush with the lip so they read as breaks
-      for (let z = z0; z <= z1 + 0.01; z += 1.22) {
-        fix(lip - f.dir * 0.010, 1.10, z, 0.042, 1.95, 0.040, P.upright);
+      // UPRIGHTS every 4ft section. Round 2 drew a plain smooth 42 mm post;
+      // real gondola uprights are 3in wide and carry a column of punched slots
+      // at ~1in pitch all the way up. The slot column is the strongest small
+      // vertical rhythm in an aisle and it was completely missing.
+      const UPW = 0.072;
+      for (let z = z0; z <= z1 + 0.01; z += SECT) {
+        fix(lip - f.dir * 0.026, 1.06, z, 0.052, 2.00, UPW, P.upright);
+        qX(Qslot, lip + f.dir * 0.004, 1.06, z, UPW, 2.00, f.dir, [0, 0, 1, 2.00 / 0.05]);
+        // the two flanges that catch the shelf brackets
+        fix(lip - f.dir * 0.058, 1.06, z, 0.045, 2.00, UPW * 0.55, 0x9d9583);
+      }
+      // CLIP STRIPS. A plastic ladder of hooks hung off a shelf lip carrying a
+      // column of single-serve pouches — cross-merchandising, in every real
+      // aisle, and about the densest small detail available at eye level. They
+      // hang PROUD of the cavity AO card, so they catch the light and read as
+      // bright clutter against the shadowed facings behind them.
+      for (let s = 0; s < ri(rng, 2, 4); s++) {
+        const d0 = ri(rng, Math.min(2, DECK.length - 1), DECK.length - 1);
+        const zc = rr(rng, z0 + 1.0, z1 - 1.0);
+        const top = DECK[d0] - 0.045;
+        const nHook = ri(rng, 4, 7);
+        fix(lip + f.dir * 0.020, top - 0.20, zc, 0.016, 0.42, 0.028, 0xe4dece);
+        const hsl = pick(rng, f.dept.colors);
+        for (let k = 0; k < nHook; k++) {
+          col.setHSL((hsl[0] + k * 9) % 360 / 360, Math.min(1, hsl[1] / 100 * 1.1),
+            Math.min(0.9, hsl[2] / 100 * rr(rng, 0.95, 1.15)));
+          B.bag.push(lip + f.dir * 0.036, top - 0.055 - k * 0.058, zc + rr(rng, -0.006, 0.006),
+            rr(rng, -0.05, 0.05), (f.dir > 0 ? Math.PI / 2 : -Math.PI / 2) + rr(rng, -0.12, 0.12),
+            0, 0.062, 0.052, 0.018, col, (rng() * 8) | 0);
+        }
+      }
+      // FLOOR REFLECTION. A polished VCT floor carries a soft vertical smear of
+      // the whole gondola run. Each streak is tinted with a colour lifted from
+      // the department palette above it, so the reflection is a band of blurred
+      // product colour rather than a grey wash.
+      for (let z = z0; z < z1; z += 0.30) {
+        const hsl = pick(rng, f.dept.colors);
+        col.setHSL(hsl[0] / 360, hsl[1] / 100 * 0.55,
+          Math.min(0.80, hsl[2] / 100 * rr(rng, 0.9, 1.35)));
+        Qsmear.tint = col;
+        const w = rr(rng, 0.24, 0.40), out = rr(rng, 1.30, 2.40);
+        Qsmear.rect(
+          [lip + f.dir * (out / 2), 0.010, z + w / 2],
+          [0, 0, f.dir * w / 2], [f.dir * out / 2, 0, 0], 0, 0, 1, 1);
       }
       // top rail / valance
       fix(lip - f.dir * 0.05, SHELF_H + 0.02, 0, 0.11, 0.07, len, P.deckDark);
@@ -477,8 +697,13 @@ export function buildStore(THREE, scene) {
         for (const s of [-1, 1]) fix(lip - f.dir * 0.05, 2.10, bz + s * 0.95, 0.15, 0.08, 0.04, P.metal);
       }
       // contact shadow where the run meets the floor — the single cheapest cue
-      // that anything in this store is actually sitting on the ground
-      qUp(Qshadow, lip + f.dir * 0.06, 0.006, 0, 1.8, len * 1.02, FULL);
+      // that anything in this store is actually sitting on the ground. Two
+      // passes: a wide soft ambient one and a tight near-black line right at
+      // the kick plate, which is what actually sells the contact.
+      qUp(Qshadow, lip + f.dir * 0.06, 0.006, 0, 2.6, len * 1.02, FULL);
+      qUp(Qshadow, lip + f.dir * 0.02, 0.007, 0, 0.46, len * 1.01, FULL);
+      // rubber bumper along the foot of the run
+      fix(lip - f.dir * 0.012, 0.048, 0, 0.030, 0.058, len, 0x4a4640);
     }
 
     // wood end panels + endcaps
@@ -490,16 +715,20 @@ export function buildStore(THREE, scene) {
         fix(x, 0.075, zEnd + dir * (EC_D / 2 + 0.05), halfW * 2 - 0.08, 0.15, EC_D + 0.1, P.kick);
         for (let d = 0; d < ECDECK.length; d++) {
           fix(x, ECDECK[d] - 0.018, lip - dir * (EC_D / 2), halfW * 2 - 0.04, 0.036, EC_D, P.deck);
-          qZ(Qrail, x, ECDECK[d] - 0.020, lip + dir * 0.012, halfW * 2 - 0.04, 0.062, dir,
-            [0, 0, (halfW * 2) / 1.0, 1]);
+          fix(x, ECDECK[d] - 0.041, lip - dir * (EC_D / 2), halfW * 2 - 0.05, 0.020, EC_D, P.shelfUnder);
+          railRunX(lip + dir * 0.012, ECDECK[d] - 0.020, x - halfW + 0.02, x + halfW - 0.02, dir);
           const head = (ECDECK[d + 1] !== undefined ? ECDECK[d + 1] : 2.02) - ECDECK[d] - 0.036;
+          qZ(Qcav, x, ECDECK[d] + head * 0.5, lip - dir * (EC_D - 0.01),
+            halfW * 2 - 0.04, head, dir, FULL);
+          qZ(Qao, x, ECDECK[d] + head * 0.5, lip - dir * 0.006,
+            halfW * 2 - 0.04, head, dir, FULL);
           fillShelf(B, rng, faces[0].dept, {
             axis: 'x', a0: x - halfW + 0.04, a1: x + halfW - 0.04, lip, face: dir,
             deckY: ECDECK[d], headroom: head, depth: EC_D * 0.92, lit: 1.05, col,
-            pull: d / (ECDECK.length - 1),
-            tag: (aStart, aw) => {
+            pull: d / (ECDECK.length - 1), vacancy: 0.4,
+            tag: (aStart, aw, kindT) => {
               qZ(Qtag, aStart + aw / 2, ECDECK[d] - 0.021, lip + dir * 0.020, aw, 0.050,
-                dir, cellUV((rng() * 16) | 0, 4, 4));
+                dir, tagUV(kindT));
             },
           });
         }
@@ -592,10 +821,15 @@ export function buildStore(THREE, scene) {
     for (let d = 0; d < 4; d++) {
       const y = 0.42 + d * 0.34;
       fix(x - 0.42, y - 0.015, laneCZ + 0.4, 0.28, 0.03, 2.0, P.deck);
-      qX(Qrail, x - 0.42 - 0.15, y - 0.018, laneCZ + 0.4, 2.0, 0.05, -1, [0, 0, 2.0, 1]);
+      fix(x - 0.42, y - 0.036, laneCZ + 0.4, 0.26, 0.016, 1.98, P.shelfUnder);
+      railRun(x - 0.42 - 0.15, y - 0.018, laneCZ - 0.6, laneCZ + 1.4, -1);
+      qX(Qao, x - 0.42 - 0.146, y + 0.15, laneCZ + 0.4, 2.0, 0.30, -1, FULL);
       fillShelf(B, rng, DEPTS[3], {
         axis: 'z', a0: laneCZ - 0.6, a1: laneCZ + 1.4, lip: x - 0.42 - 0.14, face: -1,
-        deckY: y, headroom: 0.30, depth: 0.26, lit: 1.02, col, pull: 0.9,
+        deckY: y, headroom: 0.30, depth: 0.26, lit: 1.02, col, pull: 0.9, vacancy: 0.5,
+        tag: (aStart, aw, kindT) => {
+          qX(Qtag, x - 0.42 - 0.132, y - 0.019, aStart + aw / 2, aw, 0.044, -1, tagUV(kindT));
+        },
       });
     }
     qUp(Qshadow, x + 0.05, 0.006, laneCZ, 2.4, laneLen + 1.4, FULL);
@@ -639,13 +873,15 @@ export function buildStore(THREE, scene) {
     const lip = coolZ - coolD / 2 + 0.16;
     for (let d = 0; d < CD.length; d++) {
       fix(cmid, CD[d] - 0.016, coolZ + 0.06, cw - 0.1, 0.032, 0.86, 0xfbf6ea);
+      fix(cmid, CD[d] - 0.040, coolZ + 0.06, cw - 0.12, 0.018, 0.84, 0x7d7466);
+      railRunX(lip - 0.014, CD[d] - 0.020, coolX0 + 0.1, coolX1 - 0.1, -1);
+      qZ(Qao, cmid, CD[d] + 0.17, lip + 0.006, cw - 0.1, 0.34, -1, FULL);
       fillShelf(B, rng, FROZEN, {
         axis: 'x', a0: coolX0 + 0.15, a1: coolX1 - 0.15, lip, face: -1,
         deckY: CD[d], headroom: 0.34, depth: 0.68, lit: 1.22, col,
-        pull: d / Math.max(1, CD.length - 1),
-        tag: (aStart, aw) => {
-          qZ(Qtag, aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048,
-            -1, cellUV((rng() * 16) | 0, 4, 4));
+        pull: d / Math.max(1, CD.length - 1), vacancy: 0.7,
+        tag: (aStart, aw, kindT) => {
+          qZ(Qtag, aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048, -1, tagUV(kindT));
         },
       });
     }
@@ -717,14 +953,16 @@ export function buildStore(THREE, scene) {
     const RD = [0.42, 0.86, 1.30, 1.74];
     for (let d = 0; d < RD.length; d++) {
       fix(wmid, RD[d] - 0.016, wz + 0.05, ww - 0.1, 0.032, 0.72, 0xfbf6ea);
-      qZ(Qrail, wmid, RD[d] - 0.02, wz - 0.32, ww - 0.1, 0.055, -1, [0, 0, ww, 1]);
+      fix(wmid, RD[d] - 0.040, wz + 0.05, ww - 0.12, 0.018, 0.70, 0x7d7466);
+      railRunX(wz - 0.32, RD[d] - 0.020, wx0 + 0.1, wx1 - 0.1, -1);
+      qZ(Qao, wmid, RD[d] + 0.20, wz - 0.316, ww - 0.1, 0.40, -1, FULL);
       fillShelf(B, rng, DEPTS[7], {
         axis: 'x', a0: wx0 + 0.1, a1: wx1 - 0.1, lip: wz - 0.31, face: -1,
         deckY: RD[d], headroom: 0.40, depth: 0.60, lit: 1.0, col,
         pull: d / Math.max(1, RD.length - 1),
-        tag: (aStart, aw) => {
+        tag: (aStart, aw, kindT) => {
           qZ(Qtag, aStart + aw / 2, RD[d] - 0.021, wz - 0.31 - 0.020, aw, 0.048,
-            -1, cellUV((rng() * 16) | 0, 4, 4));
+            -1, tagUV(kindT));
         },
       });
     }
@@ -799,26 +1037,120 @@ export function buildStore(THREE, scene) {
   qUp(Qshadow, sd.x, 0.006, sd.z, 7.6, 3.0, FULL);
 
   // =========================================================================
-  // POWERUP SPOTS — grab points scattered down the aisle floors
+  // POWERUP SPOTS — REAL MERCHANDISING, not markers
   // =========================================================================
+  // Round 2 shipped these as unlit flat-shaded slabs hovering in front of the
+  // shelf faces with no attachment point and no supporting geometry, and the
+  // blind critic's very first tell on one image was exactly that. The fix is at
+  // the source: every boost is now a piece of store furniture a player learns
+  // to recognise — a bakery dump table of donut boxes, or an iced barrel cooler
+  // of energy cans — sited so the grabbable item sits ON it.
+  //
+  // The contract is unchanged: {x, z, kind}. The x values here are the exact
+  // positions the chase snaps to (aisle centreline +- TUNING.pickupLip), so the
+  // furniture and the pickup point cannot drift apart.
+  // NOTE: deliberately NO colliders. These are small, they sit at the very edge
+  // of the walkable lane, and a solid body here would put a wall between the
+  // cop and the thing he is running for.
+  const Bmerch = newPkg();
+  const PICKUP_LIP = 1.58;                   // == TUNING.pickupLip
+
+  function headerCard(x, y, z, w) {
+    // a wire stem and a printed riser card — what actually labels a display,
+    // and what makes a boost findable without an unlit overlay quad
+    const y0 = 0.52, y1 = y - 0.16;
+    tube(x, (y0 + y1) / 2, z, 0, 0, 0, 0.011, y1 - y0, P.metal);
+    fix(x, y, z, w + 0.05, 0.30, 0.035, 0xf3ebd6);
+    for (const s of [-1, 1]) {
+      qZ(Qpromo, x, y, z + s * 0.026, w, 0.26, s, cellUV((rng() * 4) | 0, 1, 4));
+    }
+  }
+
+  function donutTable(x, z) {
+    const w = 0.62, d = 0.58;
+    fix(x, 0.055, z, w + 0.10, 0.11, d + 0.10, 0x3a3630);          // black plinth
+    fix(x, 0.30, z, w, 0.38, d, 0xffffff, Bwood);                   // wood body
+    fix(x, 0.505, z, w + 0.07, 0.04, d + 0.07, P.woodDark);         // rim
+    for (const s of [-1, 1]) {
+      qZ(Qrail, x, 0.505, z + s * (d / 2 + 0.041), w, 0.05, s, [0, 0, w, 1]);
+      qX(Qrail, x + s * (w / 2 + 0.041), 0.505, z, d, 0.05, s, [0, 0, d, 1]);
+    }
+    // stacked bakery boxes: white board with a printed band, three columns of
+    // two or three, deliberately uneven the way a bakery clerk leaves them
+    let top = 0.525;
+    for (let cx = -1; cx <= 1; cx++) {
+      let y = 0.525;
+      const n = ri(rng, 2, 3);
+      for (let k = 0; k < n; k++) {
+        const h = rr(rng, 0.085, 0.105);
+        col.setHSL(rr(rng, 328, 344) / 360, rr(rng, 0.30, 0.62), rr(rng, 0.72, 0.88));
+        Bmerch.box.push(x + cx * 0.20 + rr(rng, -0.014, 0.014), y + h / 2, z + rr(rng, -0.03, 0.03),
+          0, rr(rng, -0.16, 0.16), 0, 0.19, h, 0.185, col, 4 + ((rng() * 3) | 0) * 8);
+        y += h;
+      }
+      top = Math.max(top, y);
+    }
+    // one box open on top, and a couple of loose donuts in it
+    for (let k = 0; k < 7; k++) {
+      col.setHSL(rr(rng, 24, 38) / 360, rr(rng, 0.42, 0.66), rr(rng, 0.45, 0.62));
+      Borb.push(x + rr(rng, -0.16, 0.16), top + 0.035, z + rr(rng, -0.14, 0.14),
+        Math.PI / 2, rng() * 6.28, 0, 0.052, 0.052, 0.030, col);
+    }
+    headerCard(x, 1.34, z, 0.46);
+    qUp(Qshadow, x, 0.006, z, w + 1.0, d + 1.0, FULL);
+  }
+
+  function energyBarrel(x, z) {
+    const r = 0.30;
+    fix(x, 0.055, z, r * 2 + 0.06, 0.11, r * 2 + 0.06, 0x3a3630);
+    tube(x, 0.52, z, 0, 0, 0, r * 2, 0.82, 0xc0392b);               // painted tub
+    tube(x, 0.90, z, 0, 0, 0, r * 2 + 0.05, 0.07, 0xe8e2d0);        // rolled rim
+    fix(x, 0.885, z, r * 1.7, 0.02, r * 1.7, 0x33454e);             // dark interior
+    // a heap of ice and slim cans breaking the rim
+    for (let k = 0; k < 26; k++) {
+      const a = rng() * 6.283, rad = Math.sqrt(rng()) * r * 0.80;
+      col.setHSL(rr(rng, 80, 155) / 360, rr(rng, 0.55, 0.85), rr(rng, 0.40, 0.56));
+      Bmerch.can.push(x + Math.cos(a) * rad, rr(rng, 0.90, 0.99), z + Math.sin(a) * rad,
+        rr(rng, -0.35, 0.35), rng() * 6.28, rr(rng, -0.3, 0.3),
+        0.062, rr(rng, 0.14, 0.17), 0.062, col, (rng() * 8) | 0);
+    }
+    for (let k = 0; k < 20; k++) {
+      const a = rng() * 6.283, rad = Math.sqrt(rng()) * r * 0.88;
+      col.setHSL(0.55, 0.10, rr(rng, 0.80, 0.95));
+      Borb.push(x + Math.cos(a) * rad, rr(rng, 0.89, 0.93), z + Math.sin(a) * rad,
+        rng() * 3, rng() * 6.28, 0, 0.036, 0.030, 0.036, col);
+    }
+    headerCard(x, 1.36, z, 0.42);
+    qUp(Qshadow, x, 0.006, z, r * 2 + 1.0, r * 2 + 1.0, FULL);
+  }
+
+  const putSpot = (x, z, kind) => {
+    powerupSpots.push({ x, z, kind });
+    if (kind === 'donuts') donutTable(x, z); else energyBarrel(x, z);
+  };
+
   for (let i = 0; i < AISLE_COUNT; i++) {
     const n = 1 + (i % 2);
     for (let k = 0; k < n; k++) {
-      powerupSpots.push({
-        x: aisleX(i) + rr(rng, -1.1, 1.1),
-        z: rr(rng, -HALF + 2, HALF - 2),
-        kind: (i + k) % 2 ? 'donuts' : 'energy',
-      });
+      // aisle 0's left side and aisle 7's right side are shallow wall runs, so
+      // keep those on the island-gondola side or the display sits in a wall
+      let side = (i + k) % 2 ? 1 : -1;
+      if (i === 0) side = 1;
+      if (i === AISLE_COUNT - 1) side = -1;
+      putSpot(aisleX(i) + side * PICKUP_LIP,
+        rr(rng, -HALF + 2.4, HALF - 2.4),
+        (i + k) % 2 ? 'donuts' : 'energy');
     }
   }
   // FRONT CROSS-AISLE. Most of a chase actually runs along here, not down an
   // aisle, so aisle-only spots left the cop unable to reach a boost in about a
-  // quarter of chases. A checkout cooler and a donut box on a front end-cap are
-  // both completely natural placements. Kept clear of the lanes and the exit
-  // run so nothing here narrows the walkable route to the doors.
-  powerupSpots.push({ x: aisleX(1) + PITCH / 2, z: FRONT_WALK_Z + 0.6, kind: 'energy' });
-  powerupSpots.push({ x: aisleX(4) + PITCH / 2, z: FRONT_WALK_Z + 0.6, kind: 'donuts' });
-  powerupSpots.push({ x: aisleX(6) + PITCH / 2, z: FRONT_WALK_Z - 0.9, kind: 'energy' });
+  // quarter of chases. A checkout barrel cooler and a bakery table on the front
+  // end are both completely natural placements. Kept clear of the lanes and the
+  // exit run so nothing here narrows the walkable route to the doors.
+  putSpot(aisleX(1) + PITCH / 2, FRONT_WALK_Z + 0.6, 'energy');
+  putSpot(aisleX(4) + PITCH / 2, FRONT_WALK_Z + 0.6, 'donuts');
+  putSpot(aisleX(6) + PITCH / 2, FRONT_WALK_Z - 0.9, 'energy');
+  flushPkg(Bmerch, 'merch');
 
   // =========================================================================
   // FLUSH BATCHES + QUAD SOUPS
@@ -837,6 +1169,11 @@ export function buildStore(THREE, scene) {
     parent.add(m); return m;
   };
   soup(Qrail, new THREE.MeshLambertMaterial({ map: T.rail, color: 0xfffdf4, emissive: 0x2a2620 }), 'rails');
+  soup(Qslot, new THREE.MeshLambertMaterial({ map: T.slot, color: 0xf6f0dd }), 'uprights');
+  soup(Qpeg, new THREE.MeshLambertMaterial({ map: T.peg, color: 0xf0e9d6 }), 'backPanels');
+  soup(Qdangle, new THREE.MeshBasicMaterial({
+    map: T.dangle, color: 0xeae3d2, side: THREE.DoubleSide,
+  }), 'danglers');
   // shelf cavities: dark under the shelf above, clearing toward the deck
   const cavMat = new THREE.MeshBasicMaterial({
     map: T.cavity, transparent: true, depthWrite: false,
@@ -852,7 +1189,7 @@ export function buildStore(THREE, scene) {
   soup(Qcool, new THREE.MeshBasicMaterial({ map: T.coolerBack, color: 0xffffff }), 'coolerBack');
   soup(Qstrip, new THREE.MeshBasicMaterial({ map: T.strip, color: 0xffffff }), 'lightStrips', ceilGroup);
   const shadowMat = new THREE.MeshBasicMaterial({
-    map: T.glow, color: 0x1c1710, transparent: true, opacity: 0.46, depthWrite: false,
+    map: T.glow, color: 0x1c1710, transparent: true, opacity: 0.55, depthWrite: false,
   });
   const sm = soup(Qshadow, shadowMat, 'contactShadows'); if (sm) sm.renderOrder = 1;
   const glowMat = new THREE.MeshBasicMaterial({
@@ -860,6 +1197,18 @@ export function buildStore(THREE, scene) {
     blending: THREE.AdditiveBlending,
   });
   const gm = soup(Qglow, glowMat, 'floorGlow'); if (gm) gm.renderOrder = 2;
+  // the polished-floor smear of the gondola run, tinted per streak
+  const smearMat = new THREE.MeshBasicMaterial({
+    map: T.smear, transparent: true, opacity: 0.42, depthWrite: false,
+    vertexColors: true, blending: THREE.AdditiveBlending,
+  });
+  const sr = soup(Qsmear, smearMat, 'floorSmear'); if (sr) sr.renderOrder = 2;
+  // CAVITY AMBIENT OCCLUSION — multiplied over the product, so it has to run
+  // after every opaque package and before the glass.
+  const aoMat = new THREE.MeshBasicMaterial({
+    map: T.ao, transparent: true, depthWrite: false, blending: THREE.MultiplyBlending,
+  });
+  const ao = soup(Qao, aoMat, 'shelfAO'); if (ao) ao.renderOrder = 3;
   const glassMat = new THREE.MeshBasicMaterial({
     color: 0xcfe4ee, transparent: true, opacity: 0.20, depthWrite: false,
   });
@@ -870,11 +1219,11 @@ export function buildStore(THREE, scene) {
   // =========================================================================
   // LIGHTING
   // =========================================================================
-  scene.add(new THREE.AmbientLight(0xffeed4, 0.38));
-  const hemi = new THREE.HemisphereLight(0xfff5e4, 0x7a6c50, 0.70);
+  scene.add(new THREE.AmbientLight(0xffeed4, 0.46));
+  const hemi = new THREE.HemisphereLight(0xfff5e4, 0x7a6c50, 0.80);
   hemi.position.set(0, CEIL_H, 0);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff3e0, 0.60);
+  const key = new THREE.DirectionalLight(0xfff3e0, 0.66);
   key.position.set(CX + 9, CEIL_H + 7, CZ - 12);
   key.target.position.set(CX, 0, CZ);
   key.castShadow = true;

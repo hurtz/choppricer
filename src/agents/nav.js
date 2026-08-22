@@ -215,6 +215,15 @@ export function makeNav(boxes, bounds, opt = {}) {
   // Deliberately soft, never blocking: a hard block can strand a thief in a
   // pocket with an infinite field and no gradient at all, and being properly
   // cornered should mean a desperate squeeze, not a freeze.
+  // `av.ref` / `av.refMax` are the second half of the idea, and without them the
+  // first half backfires. A bubble is only allowed on cells that are already
+  // DOWNSTREAM of the runner — closer to the goal than he is by route. A man
+  // standing between you and the door is an obstacle; a man on your heels is a
+  // pursuer, and pricing the ground you are already standing on makes the flood
+  // hand you a sidestep out of the bubble instead of a straight sprint for the
+  // door. Measured: without this filter a plain stern chase went from 2.5%
+  // caught to 79%, because the thief spent the whole run peeling sideways off a
+  // cop who was never in his way to begin with.
   let _th = null, _tbox = null;
   function threatMask(av) {
     if (!_th) _th = new Float32Array(N);
@@ -223,6 +232,7 @@ export function makeNav(boxes, bounds, opt = {}) {
         for (let j = _tbox[2]; j <= _tbox[3]; j++) _th[idx(i, j)] = 0;
     }
     const r = av.r, w = av.w ?? 20;
+    const ref = av.ref || null, refMax = av.refMax ?? Infinity;
     const i0 = cxOf(av.x - r), i1 = cxOf(av.x + r);
     const j0 = czOf(av.z - r), j1 = czOf(av.z + r);
     _tbox = [i0, i1, j0, j1];
@@ -232,8 +242,10 @@ export function makeNav(boxes, bounds, opt = {}) {
         const ddz = wz(j) - av.z;
         const d = Math.hypot(ddx, ddz);
         if (d >= r) continue;
+        const k = idx(i, j);
+        if (ref && !(ref[k] < refMax)) continue;
         const t = 1 - d / r;
-        _th[idx(i, j)] = w * t * t;
+        _th[k] = w * t * t;
       }
     }
     return _th;

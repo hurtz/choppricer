@@ -49,9 +49,26 @@ export function floorTex(THREE) {
         const w = rr(rng, 1.2, 3.4), hh = rr(rng, 1.2, 3.0);
         g.fillRect(x, y, w, hh);
       }
-      // grout / tile seam
-      g.strokeStyle = 'rgba(104,94,78,0.46)'; g.lineWidth = 1.8;
-      g.strokeRect(tx * S + 0.75, ty * S + 0.75, S - 1.5, S - 1.5);
+      // grout / tile seam. Round 3: pushed from 46% to a hard dark line with a
+      // bright wax bead beside it — at twenty metres the old seam aliased away
+      // and the floor became the second-flattest band in the frame.
+      g.strokeStyle = 'rgba(74,66,53,0.72)'; g.lineWidth = 2.4;
+      g.strokeRect(tx * S + 0.9, ty * S + 0.9, S - 1.8, S - 1.8);
+      g.strokeStyle = 'rgba(255,251,240,0.40)'; g.lineWidth = 1.2;
+      g.strokeRect(tx * S + 3.0, ty * S + 3.0, S - 6, S - 6);
+      // one tile in six is a different dye lot, one in twenty is chipped
+      if (rng() < 0.16) {
+        g.fillStyle = `hsla(${h - 10} ${s + 6}% ${l - 6}% / 0.55)`;
+        g.fillRect(tx * S + 2, ty * S + 2, S - 4, S - 4);
+      }
+      if (rng() < 0.06) {
+        g.strokeStyle = 'rgba(66,58,46,0.45)'; g.lineWidth = rr(rng, 0.8, 1.8);
+        g.beginPath();
+        let cx2 = tx * S + rng() * S, cy2 = ty * S + rng() * S;
+        g.moveTo(cx2, cy2);
+        for (let k = 0; k < 4; k++) g.lineTo(cx2 += rr(rng, -18, 18), cy2 += rr(rng, -18, 18));
+        g.stroke();
+      }
     }
   }
   // long scuff arcs from the buffing machine
@@ -65,77 +82,371 @@ export function floorTex(THREE) {
     g.stroke();
   }
   g.globalAlpha = 1;
-  return tex(THREE, c, { rx: 1, ry: 1 });
+  return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
 }
 
 // ---------------------------------------------------------------------------
-// CEILING — 2ft acoustic drop tile with T-bar grid. 4x4 tiles => 2.44 m repeat.
+// CEILING — 2ft acoustic drop tile with T-bar grid.
+// ROUND 3. The old version tiled a 4x4 patch every 2.44 m and drew the T-bar at
+// ~14 grey levels of contrast, which aliases to nothing past six metres: the
+// ceiling was a 30%-of-frame flat cream field and the single lowest-detail
+// region in every render (band-1 edge density 11-14% against 19-49% for real
+// photography). Now: 8x8 tiles over a 4.88 m repeat so the pattern period is
+// doubled, a T-bar with real contrast and a dark shadow line on one side, and
+// per-tile incident — water stains, cut tiles, return-air grilles, patched
+// tiles, sagging corners. Real supermarket ceilings are visibly beaten up.
 export function ceilTex(THREE) {
-  const N = 512, T = 4, S = N / T;
+  const N = 1024, T = 8, S = N / T;
   const [c, g] = cv(N, N);
   const rng = makeRng(90210);
-  g.fillStyle = '#e9e3d3'; g.fillRect(0, 0, N, N);
+  g.fillStyle = '#ddd6c4'; g.fillRect(0, 0, N, N);
   for (let ty = 0; ty < T; ty++) for (let tx = 0; tx < T; tx++) {
-    g.fillStyle = hsl(rr(rng, 38, 46), rr(rng, 14, 20), rr(rng, 87, 91));
-    g.fillRect(tx * S + 2, ty * S + 2, S - 4, S - 4);
-    // fissured / pinhole acoustic texture
-    for (let i = 0; i < 700; i++) {
-      g.fillStyle = `rgba(140,132,116,${rr(rng, 0.05, 0.22)})`;
-      g.fillRect(tx * S + rng() * S, ty * S + rng() * S, rr(rng, 1, 2.6), rr(rng, 1, 2.6));
+    const roll = rng();
+    const grille = roll < 0.045;             // return-air grille
+    const patched = roll >= 0.045 && roll < 0.10;
+    const base = [rr(rng, 36, 47), rr(rng, 10, 19), patched ? rr(rng, 76, 82) : rr(rng, 84, 91)];
+    g.fillStyle = hsl(base[0], base[1], base[2]);
+    g.fillRect(tx * S + 3, ty * S + 3, S - 6, S - 6);
+    // fissured / pinhole acoustic texture — the fine grain that stops the tile
+    // reading as a painted rectangle when the camera gets near it
+    for (let i = 0; i < 2200; i++) {
+      g.fillStyle = `rgba(128,120,104,${rr(rng, 0.06, 0.30)})`;
+      g.fillRect(tx * S + rng() * S, ty * S + rng() * S, rr(rng, 1.2, 3.4), rr(rng, 1.2, 3.4));
     }
-    for (let i = 0; i < 26; i++) {
-      g.strokeStyle = `rgba(150,142,124,${rr(rng, 0.05, 0.16)})`;
-      g.lineWidth = rr(rng, 1, 2.6);
+    for (let i = 0; i < 70; i++) {
+      g.strokeStyle = `rgba(138,130,112,${rr(rng, 0.07, 0.24)})`;
+      g.lineWidth = rr(rng, 1.2, 3.6);
       g.beginPath();
       let x = tx * S + rng() * S, y = ty * S + rng() * S;
       g.moveTo(x, y);
-      for (let k = 0; k < 4; k++) g.lineTo(x += rr(rng, -22, 22), y += rr(rng, -22, 22));
+      for (let k = 0; k < 4; k++) g.lineTo(x += rr(rng, -30, 30), y += rr(rng, -30, 30));
       g.stroke();
     }
+    if (grille) {                            // eggcrate return-air register
+      g.fillStyle = '#9a927e';
+      g.fillRect(tx * S + 9, ty * S + 9, S - 18, S - 18);
+      for (let k = 14; k < S - 14; k += 9) {
+        g.fillStyle = 'rgba(38,36,30,0.72)';
+        g.fillRect(tx * S + k, ty * S + 12, 4.5, S - 24);
+        g.fillRect(tx * S + 12, ty * S + k, S - 24, 4.5);
+      }
+      g.strokeStyle = 'rgba(255,252,240,0.55)'; g.lineWidth = 2;
+      g.strokeRect(tx * S + 9, ty * S + 9, S - 18, S - 18);
+    } else if (roll > 0.86) {                // water stain, ringed and off-centre
+      const sx = tx * S + rr(rng, S * 0.25, S * 0.75);
+      const sy = ty * S + rr(rng, S * 0.25, S * 0.75);
+      for (let ring = 3; ring >= 0; ring--) {
+        const rad = S * (0.14 + ring * 0.07);
+        g.fillStyle = `rgba(${152 - ring * 6},${128 - ring * 7},${88 - ring * 5},${0.055 + ring * 0.035})`;
+        g.beginPath();
+        for (let k = 0; k <= 22; k++) {
+          const a = (k / 22) * 6.283, rp = rad * (0.78 + 0.34 * Math.abs(Math.sin(a * 2.3 + ring)));
+          g[k ? 'lineTo' : 'moveTo'](sx + Math.cos(a) * rp, sy + Math.sin(a) * rp * 0.86);
+        }
+        g.closePath(); g.fill();
+      }
+    } else if (roll > 0.80) {                // sagging tile: shadow on two edges
+      g.fillStyle = 'rgba(70,64,52,0.16)';
+      g.fillRect(tx * S + 3, ty * S + 3, S - 6, 12);
+      g.fillRect(tx * S + 3, ty * S + 3, 12, S - 6);
+    }
   }
-  // T-bar
+  // T-BAR. A real 15/16in grid reads as a light metal face with a hard shadow
+  // line on one side of it — that shadow is what survives to twenty metres.
   for (let i = 0; i <= T; i++) {
-    g.fillStyle = '#c9c2b0';
-    g.fillRect(i * S - 2.5, 0, 5, N);
-    g.fillRect(0, i * S - 2.5, N, 5);
-    g.fillStyle = 'rgba(255,252,242,0.75)';
-    g.fillRect(i * S - 1, 0, 1.4, N);
-    g.fillRect(0, i * S - 1, N, 1.4);
+    const p = i * S;
+    g.fillStyle = 'rgba(58,53,42,0.60)';
+    g.fillRect(p - 4.5, 0, 9, N); g.fillRect(0, p - 4.5, N, 9);
+    g.fillStyle = '#bdb5a0';
+    g.fillRect(p - 3.2, 0, 6.4, N); g.fillRect(0, p - 3.2, N, 6.4);
+    g.fillStyle = 'rgba(255,252,242,0.92)';
+    g.fillRect(p - 1.4, 0, 2.0, N); g.fillRect(0, p - 1.4, N, 2.0);
+    g.fillStyle = 'rgba(46,42,33,0.42)';     // shadow gap under the flange
+    g.fillRect(p + 3.2, 0, 2.6, N); g.fillRect(0, p + 3.2, N, 2.6);
   }
-  return tex(THREE, c, { rx: 1, ry: 1 });
+  return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
 }
 
 // ---------------------------------------------------------------------------
-// LIGHT STRIP — one 2.44 m run of a 2-tube fluorescent strip fixture.
+// LIGHT STRIP ATLAS — 4 states of one 4ft 2-tube fluorescent troffer, in a
+// 4x1 grid. The quad's u runs ACROSS the fixture and v runs along its length,
+// so each cell is drawn tall: canvas x = the 0.44 m width, canvas y = the run.
+// ROUND 3: a perfect grid of identically bright fixtures is one of the loudest
+// CG tells there is. Real rows carry dead tubes, aged-warm tubes and dim ones,
+// so store.js picks a cell per fixture and jitters the spacing.
+//   0 bright   1 dim/cool   2 aged warm   3 one tube out
 export function stripTex(THREE) {
-  // ONE 4ft fixture, drawn end to end across the canvas — store.js now emits
-  // these as discrete fixtures with dark gaps between them rather than one
-  // infinite 100%-white ribbon at constant brightness.
-  const W = 256, H = 64;
-  const [c, g] = cv(W, H);
-  g.fillStyle = '#b9b4a5'; g.fillRect(0, 0, W, H);              // housing
-  g.fillStyle = '#d8d3c3'; g.fillRect(0, 3, W, H - 6);
-  // the prismatic lens: bright in the middle, falling off to the reflector
-  const grd = g.createLinearGradient(0, 4, 0, H - 4);
-  grd.addColorStop(0, '#cfd2c0');
-  grd.addColorStop(0.16, '#f4f5e6');
-  grd.addColorStop(0.42, '#ffffff');
-  grd.addColorStop(0.58, '#fffef6');
-  grd.addColorStop(0.86, '#eef0dd');
-  grd.addColorStop(1, '#c2c4b2');
-  g.fillStyle = grd; g.fillRect(13, 5, W - 26, H - 10);
-  // lens ribs — the fine striations that make a diffuser read as a diffuser
-  for (let x = 15; x < W - 15; x += 4) {
-    g.fillStyle = 'rgba(150,152,138,0.30)'; g.fillRect(x, 6, 1.1, H - 12);
-    g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(x + 1.6, 6, 1.0, H - 12);
+  const CW = 64, CH = 256, COLS = 4;
+  const [c, g] = cv(CW * COLS, CH);
+  const rng = makeRng(0x11467);
+  const LENS = [
+    ['#ffffff', '#fffdf2', '#f2f4e2'],
+    ['#dfe4d8', '#e9eee1', '#ccd2c4'],
+    ['#fff0cf', '#ffe6b4', '#f0d69f'],
+    ['#ffffff', '#fffdf2', '#f2f4e2'],
+  ];
+  for (let i = 0; i < COLS; i++) {
+    g.save();
+    g.translate(i * CW, 0);
+    g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
+    // housing rails down both long edges
+    g.fillStyle = '#a29c8c'; g.fillRect(0, 0, CW, CH);
+    g.fillStyle = '#c4bfae'; g.fillRect(3, 0, CW - 6, CH);
+    // the two lens halves
+    for (const half of [0, 1]) {
+      const x0 = 6 + half * (CW - 12) / 2, w = (CW - 12) / 2 - 1;
+      const dead = i === 3 && half === 0;
+      const L = LENS[i];
+      const grd = g.createLinearGradient(x0, 0, x0 + w, 0);
+      if (dead) {
+        grd.addColorStop(0, '#8e8d7f'); grd.addColorStop(0.5, '#a3a294');
+        grd.addColorStop(1, '#8a8a7d');
+      } else {
+        grd.addColorStop(0.00, L[2]); grd.addColorStop(0.22, L[1]);
+        grd.addColorStop(0.50, L[0]); grd.addColorStop(0.80, L[1]);
+        grd.addColorStop(1.00, L[2]);
+      }
+      g.fillStyle = grd; g.fillRect(x0, 7, w, CH - 14);
+      // prismatic striations across the tube — the fine ladder you actually
+      // see on a diffuser, and a genuine high-frequency detail at any distance
+      for (let y = 9; y < CH - 9; y += 3) {
+        g.fillStyle = dead ? 'rgba(90,90,82,0.28)' : 'rgba(146,148,132,0.22)';
+        g.fillRect(x0, y, w, 0.9);
+        g.fillStyle = dead ? 'rgba(190,190,180,0.16)' : 'rgba(255,255,255,0.30)';
+        g.fillRect(x0, y + 1.2, w, 0.8);
+      }
+      // a couple of dead flies and a dust line, because every diffuser has them
+      for (let k = 0; k < 5; k++) {
+        g.fillStyle = 'rgba(66,60,48,0.42)';
+        g.beginPath();
+        g.ellipse(x0 + rr(rng, 2, w - 2), rr(rng, 14, CH - 14), rr(rng, 0.8, 2.2),
+          rr(rng, 0.6, 1.6), 0, 0, 6.29);
+        g.fill();
+      }
+    }
+    // dark seam between the two tubes, running the length of the fixture
+    g.fillStyle = 'rgba(104,102,90,0.55)'; g.fillRect(CW / 2 - 1.6, 7, 3.2, CH - 14);
+    // socket end caps at both ends — unlit metal
+    g.fillStyle = '#7f7b6d'; g.fillRect(3, 0, CW - 6, 9); g.fillRect(3, CH - 9, CW - 6, 9);
+    g.fillStyle = '#605d52'; g.fillRect(3, 0, CW - 6, 3); g.fillRect(3, CH - 3, CW - 6, 3);
+    g.restore();
   }
-  // the dark seam where the two tubes meet behind the lens
-  g.fillStyle = 'rgba(122,120,106,0.34)'; g.fillRect(13, H / 2 - 2, W - 26, 4);
-  // socket end caps — solid, unlit metal, and big enough to actually read
-  g.fillStyle = '#8f8b7c'; g.fillRect(0, 3, 13, H - 6); g.fillRect(W - 13, 3, 13, H - 6);
-  g.fillStyle = '#6f6c60'; g.fillRect(0, 3, 4, H - 6); g.fillRect(W - 4, 3, 4, H - 6);
-  g.fillStyle = 'rgba(255,255,255,0.30)'; g.fillRect(4, 5, 2, H - 10);
-  return tex(THREE, c, { rx: 1, ry: 1 });
+  return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
+}
+
+// ---------------------------------------------------------------------------
+// SLOTTED UPRIGHT — the punched steel post at every 4ft gondola section joint.
+// One tile = 50 mm of post carrying two slots at 25 mm pitch, so store.js just
+// repeats it up the height. The slot column is the strongest small-scale
+// vertical rhythm in a real aisle and it was completely absent.
+export function slotTex(THREE) {
+  const W = 48, H = 64;
+  const [c, g] = cv(W, H);
+  const grd = g.createLinearGradient(0, 0, W, 0);
+  grd.addColorStop(0.00, '#8e8674');
+  grd.addColorStop(0.16, '#e3dbc4');
+  grd.addColorStop(0.42, '#cec6ad');
+  grd.addColorStop(0.58, '#d9d1b8');
+  grd.addColorStop(0.86, '#b3ab95');
+  grd.addColorStop(1.00, '#7d7665');
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  // the two punched slots
+  for (const cy of [H * 0.25, H * 0.75]) {
+    g.fillStyle = 'rgba(28,25,19,0.92)';
+    g.fillRect(W * 0.34, cy - H * 0.105, W * 0.32, H * 0.21);
+    g.fillStyle = 'rgba(255,250,236,0.55)';       // struck edge catching light
+    g.fillRect(W * 0.34, cy + H * 0.095, W * 0.32, 1.6);
+    g.fillStyle = 'rgba(70,64,50,0.45)';
+    g.fillRect(W * 0.34, cy - H * 0.115, W * 0.32, 1.4);
+  }
+  // the pressed return down each edge
+  g.fillStyle = 'rgba(255,252,240,0.42)'; g.fillRect(W * 0.09, 0, 1.4, H);
+  g.fillStyle = 'rgba(52,47,38,0.38)'; g.fillRect(W * 0.92, 0, 1.6, H);
+  return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
+}
+
+// ---------------------------------------------------------------------------
+// GONDOLA BACK PANEL — perforated steel. One tile = 300 mm square carrying a
+// 25 mm grid of punched pegboard slots plus the horizontal joint between
+// panels. Visible in the bottom of every cavity and across the whole of any
+// bare bay, where round 2 showed a smooth beige slab.
+export function pegTex(THREE) {
+  const N = 128;
+  const [c, g] = cv(N, N);
+  const rng = makeRng(0x9E6);
+  g.fillStyle = '#b8ae97'; g.fillRect(0, 0, N, N);
+  for (let i = 0; i < 900; i++) {            // powder-coat grain and grime
+    g.fillStyle = `rgba(${ri(rng, 120, 190)},${ri(rng, 112, 180)},${ri(rng, 96, 160)},${rr(rng, 0.06, 0.22)})`;
+    g.fillRect(rng() * N, rng() * N, rr(rng, 1, 4), rr(rng, 1, 4));
+  }
+  const P = N / 12;                          // 25 mm slot pitch
+  for (let ry = 0; ry < 12; ry++) for (let rx = 0; rx < 12; rx++) {
+    const x = (rx + 0.5) * P, y = (ry + 0.5) * P;
+    g.fillStyle = 'rgba(34,30,23,0.72)';
+    g.fillRect(x - P * 0.16, y - P * 0.30, P * 0.32, P * 0.60);
+    g.fillStyle = 'rgba(255,250,236,0.30)';
+    g.fillRect(x - P * 0.16, y + P * 0.28, P * 0.32, 1.1);
+  }
+  // panel joint across the middle
+  g.fillStyle = 'rgba(60,54,42,0.45)'; g.fillRect(0, N / 2 - 1.5, N, 3);
+  g.fillStyle = 'rgba(255,250,236,0.35)'; g.fillRect(0, N / 2 + 1.5, N, 1.2);
+  return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
+}
+
+// ---------------------------------------------------------------------------
+// SHELF-CAVITY AMBIENT OCCLUSION. Multiply-blended over everything inside one
+// shelf cavity: near-black hard up under the deck above, clearing by 45% of
+// the head height, then a hard dark seam in the bottom few percent where the
+// product meets the deck. This is the round-3 headline change — without it
+// every facing is evenly lit and the whole gondola reads as a decal on a plane.
+export function shelfAOTex(THREE) {
+  const [c, g] = cv(8, 256);
+  // canvas row 0 -> v = 1 = hard under the shelf above.
+  // Kept DELIBERATELY shallow: the near-black belongs at the BACK of the
+  // cavity (cavityTex, behind the product) — this card sits across the mouth,
+  // so an aggressive ramp here just puts every facing in shadow and inverts
+  // the tonal relationship with the shelf lips.
+  const grd = g.createLinearGradient(0, 0, 0, 256);
+  grd.addColorStop(0.00, '#5f594d');          // hard under the deck above
+  grd.addColorStop(0.06, '#8e8779');
+  grd.addColorStop(0.14, '#bdb5a5');
+  grd.addColorStop(0.26, '#dcd5c7');
+  grd.addColorStop(0.40, '#f0ebe0');
+  grd.addColorStop(0.80, '#fdfaf3');
+  grd.addColorStop(0.94, '#ece5d8');          // deck contact seam
+  grd.addColorStop(0.980, '#b7af9f');
+  grd.addColorStop(1.00, '#948c7c');
+  g.fillStyle = grd; g.fillRect(0, 0, 8, 256);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// FLOOR REFLECTION SMEAR — a vertical ramp used for the polished-VCT streak of
+// the gondola on the floor. Opaque at the shelf kick, gone 1.2 m out. Tinted
+// per-quad with the colour of whatever is on the shelf above it.
+export function smearTex(THREE) {
+  const [c, g] = cv(8, 128);
+  const grd = g.createLinearGradient(0, 128, 0, 0);
+  grd.addColorStop(0.00, 'rgba(255,255,255,0.92)');
+  grd.addColorStop(0.10, 'rgba(255,255,255,0.60)');
+  grd.addColorStop(0.30, 'rgba(255,255,255,0.26)');
+  grd.addColorStop(0.62, 'rgba(255,255,255,0.08)');
+  grd.addColorStop(1.00, 'rgba(255,255,255,0)');
+  g.fillStyle = grd; g.fillRect(0, 0, 8, 128);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// FLOOR WEAR — one non-repeating multiply layer stretched over the whole sales
+// floor: black scuffing concentrated in the traffic lanes, cart-wheel arcs,
+// heel marks, patched tiles and the dull halo where the buffer never reaches.
+export function floorWearTex(THREE) {
+  const N = 1024;
+  const [c, g] = cv(N, N);
+  const rng = makeRng(0x5CFF);
+  g.fillStyle = '#ffffff'; g.fillRect(0, 0, N, N);
+  // broad dull traffic bands — the store's aisles run vertically in this map
+  for (let k = 0; k < 9; k++) {
+    const x = (k + 0.5) * N / 9;
+    const grd = g.createLinearGradient(x - N * 0.052, 0, x + N * 0.052, 0);
+    grd.addColorStop(0, 'rgba(255,255,255,0)');
+    grd.addColorStop(0.5, 'rgba(122,114,100,0.30)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(x - N * 0.052, 0, N * 0.104, N);
+  }
+  for (const y of [N * 0.14, N * 0.86]) {         // front + back cross-aisles
+    const grd = g.createLinearGradient(0, y - N * 0.06, 0, y + N * 0.06);
+    grd.addColorStop(0, 'rgba(255,255,255,0)');
+    grd.addColorStop(0.5, 'rgba(116,108,94,0.30)');
+    grd.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grd; g.fillRect(0, y - N * 0.06, N, N * 0.12);
+  }
+  // black scuff arcs — cart wheels and shoe heels, biased into the lanes
+  for (let i = 0; i < 1500; i++) {
+    const lane = Math.floor(rng() * 9);
+    const x = (lane + 0.5) * N / 9 + rr(rng, -N * 0.055, N * 0.055);
+    const y = rng() * N;
+    g.strokeStyle = `rgba(${ri(rng, 30, 78)},${ri(rng, 28, 70)},${ri(rng, 24, 60)},${rr(rng, 0.05, 0.30)})`;
+    g.lineWidth = rr(rng, 0.7, 3.2);
+    g.beginPath();
+    const r = rr(rng, 4, 46), a = rng() * 6.28;
+    g.arc(x, y, r, a, a + rr(rng, 0.25, 1.5));
+    g.stroke();
+  }
+  // buffer swirls over the whole floor, much fainter
+  for (let i = 0; i < 420; i++) {
+    g.strokeStyle = rng() < 0.5 ? 'rgba(255,255,255,0.30)' : 'rgba(120,112,98,0.10)';
+    g.lineWidth = rr(rng, 0.8, 2.6);
+    g.beginPath();
+    const x = rng() * N, y = rng() * N, r = rr(rng, 40, 260), a = rng() * 6.28;
+    g.arc(x, y, r, a, a + rr(rng, 0.2, 0.9));
+    g.stroke();
+  }
+  // a few dark patches — a repair, a stain, a mat shadow
+  for (let i = 0; i < 26; i++) {
+    g.fillStyle = `rgba(96,88,74,${rr(rng, 0.05, 0.15)})`;
+    g.beginPath();
+    g.ellipse(rng() * N, rng() * N, rr(rng, 8, 54), rr(rng, 6, 40), rng() * 3, 0, 6.29);
+    g.fill();
+  }
+  return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
+}
+
+// ---------------------------------------------------------------------------
+// CEILING DANGLERS — die-cut cardboard promo cards on strings. Cheap, and they
+// put real detail into the top third of the frame, which was the single
+// lowest-detail band in every round-2 render.
+export function danglerAtlas(THREE) {
+  const COLS = 4, ROWS = 2, CW = 192, CH = 144;
+  const [c, g] = cv(CW * COLS, CH * ROWS);
+  const rng = makeRng(0xDA9);
+  const SETS = [
+    ['SAVE', '$1.00', '#d8341f', '#fff8e6'],
+    ['2 FOR', '$5', '#1d5f97', '#fffdf0'],
+    ['NEW!', 'TRY IT', '#e0a416', '#2b2519'],
+    ['BUY 1', 'GET 1', '#2f7a35', '#fffbe9'],
+    ['LOW', 'PRICE', '#c8551b', '#fff6e2'],
+    ['SALE', '99¢', '#b3161d', '#fffae8'],
+    ['CLUB', 'DEAL', '#5a3d8c', '#fff6ec'],
+    ['FRESH', 'DAILY', '#3f7f4f', '#fdf8e8'],
+  ];
+  for (let i = 0; i < COLS * ROWS; i++) {
+    const s = SETS[i % SETS.length];
+    g.save();
+    g.translate((i % COLS) * CW, Math.floor(i / COLS) * CH);
+    g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
+    g.fillStyle = s[3]; g.fillRect(0, 0, CW, CH);
+    g.fillStyle = s[2]; g.fillRect(0, 0, CW, CH * 0.30);
+    g.fillStyle = s[2]; g.fillRect(0, CH * 0.90, CW, CH * 0.10);
+    g.strokeStyle = 'rgba(60,52,40,0.45)'; g.lineWidth = 3;
+    g.strokeRect(1.5, 1.5, CW - 3, CH - 3);
+    g.textBaseline = 'alphabetic';
+    g.textAlign = 'center';
+    g.fillStyle = s[3];
+    fitText(g, s[0], CW / 2, CH * 0.235, CW * 0.84, CH * 0.20, '900');
+    g.fillStyle = s[2];
+    fitText(g, s[1], CW / 2, CH * 0.68, CW * 0.86, CH * 0.36, '900');
+    g.fillStyle = 'rgba(40,34,26,0.75)';
+    g.font = `700 ${CH * 0.075}px ${'Helvetica Neue, Arial'}`;
+    g.textAlign = 'center';
+    g.fillText('WITH CARD  ·  LIMIT 4', CW / 2, CH * 0.855);
+    // punched hang hole
+    g.fillStyle = 'rgba(30,26,20,0.8)';
+    g.beginPath(); g.arc(CW / 2, CH * 0.075, CH * 0.032, 0, 6.29); g.fill();
+    // a little print noise so it is not a flat vector plate
+    for (let k = 0; k < 160; k++) {
+      g.fillStyle = `rgba(${ri(rng, 0, 255)},${ri(rng, 0, 255)},${ri(rng, 0, 255)},0.05)`;
+      g.fillRect(rng() * CW, rng() * CH, rr(rng, 1, 3), rr(rng, 1, 3));
+    }
+    g.restore();
+  }
+  return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
 }
 
 // ---------------------------------------------------------------------------

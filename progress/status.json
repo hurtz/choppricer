@@ -75,8 +75,8 @@
    "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
   },
   "agents": {
-   "round": 2,
-   "state": "gap",
+   "round": 3,
+   "state": "critiquing",
    "shots": [
     {
      "round": 0,
@@ -102,6 +102,11 @@
      "round": 2,
      "path": "../shots/critic_chase_3_caught.png",
      "t": 1787414908.62915
+    },
+    {
+     "round": 3,
+     "path": "../shots/agents_r3.png",
+     "t": 1787417927.564773
     }
    ],
    "gaps": [
@@ -118,13 +123,13 @@
      "text": "A corked 4m aisle is impassable: the thief's nav avoid radius (1.80m) is WIDER than the aisle half-lane (AISLE_GAP/2 - BODY_R = 1.58m), so he can never route around a cop standing in it and walks into the 1.15m catch radius. He needs counterplay \u2014 a back-of-store route, a second exit, or a juke past a blocking body. Then re-bench from enterFloor's actual spawn."
     }
    ],
-   "updated": 1787414908.629148,
-   "note": "Not a tuning problem \u2014 two real bugs. (1) Powerups sat mid-aisle with a 1.42m grab radius, so boostFrac was 0.45 in supposedly-unpowered chases; snapped to shelf lip with a lateral reach gate, now 0.02. (2) Nav routed off the config floor plan, not the store's actual colliders, so thieves ground along unmodelled furniture and escapes only ever came from the two clean aisles; new nav.js builds an occupancy grid from real colliders + Dijkstra field from the exit. (3) Thief had no stamina model.",
+   "updated": 1787418081.848556,
+   "note": "Root cause was NOT the avoid radius: nav.steer did greedy descent FIRST then filtered, so a corked aisle fouled every point, got=false, and it fell back to 'furthest visible point' \u2014 the far side of the cop. The thief sprinted INTO him. Fix prices the cop as a cost inside the Dijkstra flood, but ONLY downstream of the runner: without that filter a cop merely behind prices the ground the thief stands on and the stern chase leaks 1.3% -> 79%.",
    "gap": "A corked 4m aisle is impassable: the thief's nav avoid radius (1.80m) is WIDER than the aisle half-lane (AISLE_GAP/2 - BODY_R = 1.58m), so he can never route around a cop standing in it and walks into the 1.15m catch radius. He needs counterplay \u2014 a back-of-store route, a second exit, or a juke past a blocking body. Then re-bench from enterFloor's actual spawn.",
-   "verdict": "FAIL \u2014 overturns the builder's PASS. From the start the game actually creates (enterFloor teleports the cop to the aisle mouth, between thief and exit) the catch rate is 100% (80/80), median 1.2s to the grab. The builder's 1.5% came from a bench that starts the cop 4.32m BEHIND the thief \u2014 a geometry the game never produces."
+   "verdict": "Builder claims 68.0% no-powerup from the REAL spawn (was 100%), loses by 2.96m; wrong-aisle-by-2 now 34.7% (was 96.7%); legacy behind-spawn 0.7% preserved; incidental free boosts 0.00%."
   },
   "game": {
-   "round": 2,
+   "round": 3,
    "state": "passed",
    "shots": [
     {
@@ -151,15 +156,51 @@
     {
      "round": 1,
      "text": "Desk phase is near-unwinnable: ~12s from concealment tell to exit, 14 roster rows, only 3 of 7 subjects visible per camera."
+    },
+    {
+     "round": 2,
+     "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787416472.604548,
-   "note": "Bench contradicted its own round-1 diagnosis: the 12s window was already 19-24s after the chase rewrite and the observer was already at 83.2%. Real defect was harassment firing on ANY shopper within 4.5m - in a 4m aisle every bystander you edge past files a complaint (0.75 demotions/shift). Fixed with contact-gated complaints + zone dispatch (DISPATCH greyed out for the last 20m of a thief's walk - 64.3% of the guesser's thieves hit that dead zone). Doubled burn-in fixed via cctv.floorBurnIn=false. Deleted the fabricated-escape watchdog: fired 0 times in 50 shift-minutes.",
-   "gap": "Desk phase is near-unwinnable: ~12s from concealment tell to exit, 14 roster rows, only 3 of 7 subjects visible per camera.",
-   "verdict": "PASS \u2014 reader outscores guesser 14:1 and keeps the job. Observer 79.4% catch / 0 demotions / 1532 pts; random guesser 37.0% / 1.56 demotions / 107 pts. 16x240s shifts per policy, n~220 thieves."
+   "updated": 1787418081.817565,
+   "note": "Confirms the coupling I flagged: observer catch fell 79.4% -> 59.7% once the chase stopped being unlosable, and points fell 1532 -> 912. The old figure was inflated by a chase that auto-caught. The skill separation survives the correction, which is the result that matters.",
+   "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
+   "verdict": "PASS (re-measured against the FIXED chase). Observer 59.7% catch / 0 demotions / 912 pts-per-shift; random guesser 32.7% / 1.33 demotions / 133 pts. Reader still outscores guesser ~6.9:1 and keeps the job. 6x200s per policy."
   }
  },
  "log": [
+  {
+   "t": 1787418081.848557,
+   "piece": "agents",
+   "role": "builder",
+   "round": 3,
+   "state": "critiquing",
+   "text": "Root cause was NOT the avoid radius: nav.steer did greedy descent FIRST then filtered, so a corked aisle fouled every point, got=false, and it fell back to 'furthest visible point' \u2014 the far side of the cop. The thief sprinted INTO him. Fix prices the cop as a cost inside the Dijkstra flood, but ONLY downstream of the runner: without that filter a cop merely behind prices the ground the thief stands on and the stern chase leaks 1.3% -> 79%."
+  },
+  {
+   "t": 1787418081.817566,
+   "piece": "game",
+   "role": "lead",
+   "round": 3,
+   "state": "passed",
+   "text": "Confirms the coupling I flagged: observer catch fell 79.4% -> 59.7% once the chase stopped being unlosable, and points fell 1532 -> 912. The old figure was inflated by a chase that auto-caught. The skill separation survives the correction, which is the result that matters."
+  },
+  {
+   "t": 1787417927.5647738,
+   "piece": "agents",
+   "role": "builder",
+   "round": 3,
+   "state": "building",
+   "text": "COUNTERPLAY: the cop is now a COST IN THE ESCAPE FLOOD, not a filter on an already-computed descent. Root cause of the cork: nav.steer's avoid ran AFTER a greedy gradient walk, so it could only pick a nearer point on the same line -- when every point was fouled it fell back to the far side of the cop and the thief sprinted into him. Threat now enters the Dijkstra cost (nav.field opt.avoid), gated to cells downstream of the runner so a pursuer behind him never bends his route. Plus: thief reacts when he SEES the aisle mouth blocked (8.6m, needs LOS + on his route line) instead of walking to 4.5m; tangential (not radial) cop avoidance while running; a committed shoulder-barge whose outcome depends on where the cop was standing when he committed -- hold the lane centre and you have him, drift off one side and he goes past the other for the price of a 0.45s stumble. Per-thief nerve so the route decision is not a pure function of position. FROM enterFloor's REAL SPAWN (cop in the aisle mouth), n=200: no powerup 68.0% (was 100/100 before), loses by 2.96m/9.7ft, escapes run 15.6s, 64/200 broke out the back. Powerup reachable 91.5%. Boost in hand 98.7%. Wrong aisle by 1/2/4: 44.7/34.7/23.3%. Front-end post 39.3%. Round-2's stern-chase bench preserved at 0.7%. Incidental free boosts 0.0%. bench() now defaults to the real spawn and mode:'none' actually removes the powerups."
+  },
+  {
+   "t": 1787416506.167414,
+   "piece": "game",
+   "role": "lead",
+   "round": 2,
+   "state": "gap",
+   "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
+  },
   {
    "t": 1787416472.6045492,
    "piece": "game",
@@ -385,5 +426,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787416472.6045508
+ "updated": 1787418081.8485582
 }

@@ -77,7 +77,14 @@ export class Batch {
 
 // --- quad soup -------------------------------------------------------------
 export class Quads {
-  constructor() { this.p = []; this.n = []; this.uv = []; this.idx = []; this.v = 0; }
+  // `colored` adds a per-vertex colour attribute. Used by the floor-reflection
+  // smear, where every streak under a gondola carries the colour of whatever is
+  // on the shelf above it — one draw call, hundreds of different tints.
+  constructor(colored = false) {
+    this.p = []; this.n = []; this.uv = []; this.idx = []; this.v = 0;
+    this.colored = colored; this.c = colored ? [] : null;
+    this.tint = { r: 1, g: 1, b: 1 };
+  }
   // a,b,c,d world-space corners, CCW seen from the visible side.
   // uv corners map a->(u0,v0) b->(u1,v0) c->(u1,v1) d->(u0,v1)
   quad(a, b, c, d, u0, v0, u1, v1) {
@@ -88,6 +95,10 @@ export class Quads {
     this.p.push(a[0], a[1], a[2], b[0], b[1], b[2], c[0], c[1], c[2], d[0], d[1], d[2]);
     for (let i = 0; i < 4; i++) this.n.push(nx, ny, nz);
     this.uv.push(u0, v0, u1, v0, u1, v1, u0, v1);
+    if (this.colored) {
+      const t = this.tint;
+      for (let i = 0; i < 4; i++) this.c.push(t.r, t.g, t.b);
+    }
     const o = this.v;
     this.idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
     this.v += 4;
@@ -106,6 +117,7 @@ export class Quads {
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.p, 3));
     g.setAttribute('normal', new THREE.Float32BufferAttribute(this.n, 3));
     g.setAttribute('uv', new THREE.Float32BufferAttribute(this.uv, 2));
+    if (this.colored) g.setAttribute('color', new THREE.Float32BufferAttribute(this.c, 3));
     g.setIndex(this.idx);
     g.computeBoundingSphere();
     return g;

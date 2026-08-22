@@ -23,16 +23,22 @@
 import { makeRng, rr, ri } from './kit.js';
 import {
   FACE, BRANDS, VALUE_BRANDS, DESC, FLASH, BURST, NUTRI, WEIGHTS, LEGAL,
-  PANEL_HEAD, TAG_DESC,
+  PANEL_HEAD, TAG_DESC, SUBDESC, CLAIMS,
 } from './brands.js';
 
 // --- atlas grid descriptors (store.js reads these) --------------------------
+// ROUND 3: every cell is 25-33% larger. At 3x zoom on a package a metre from
+// camera the round-2 cells ran out of texels below the wordmark, and a legible
+// logo over an illegible panel reads as MORE artificial than a blank one.
 export const ATLAS = {
-  carton: { cols: 6, rows: 4, cw: 256, ch: 320, wrap: 0.150 },
-  pouch:  { cols: 4, rows: 2, cw: 256, ch: 256, wrap: 0.135 },
-  can:    { cols: 4, rows: 2, cw: 256, ch: 192, wrap: 0 },
-  bottle: { cols: 4, rows: 2, cw: 192, ch: 256, wrap: 0 },
+  carton: { cols: 6, rows: 4, cw: 340, ch: 420, wrap: 0.150 },
+  pouch:  { cols: 4, rows: 2, cw: 320, ch: 320, wrap: 0.135 },
+  can:    { cols: 4, rows: 2, cw: 320, ch: 240, wrap: 0 },
+  bottle: { cols: 4, rows: 2, cw: 256, ch: 340, wrap: 0 },
 };
+// Shelf-tag atlas cells 13-15 are ORPHANS: an empty channel, a bleached blank
+// and a torn remnant. products.js asks for one wherever it leaves a bare bay.
+export const TAG_SKU = 13, TAG_COLS = 4, TAG_ROWS = 4;
 
 function cv(w, h) {
   const c = document.createElement('canvas');
@@ -232,6 +238,31 @@ function edgeShade(g, x, y, w, h, strength = 0.38) {
   g.globalCompositeOperation = 'source-over';
 }
 
+// A hard vertical specular band cut straight into the MASK channels.
+// ROUND-3 BUG FOUND: round 2 drew every sheen as white under 'multiply', and
+// multiplying by white is a no-op — so cans, bottles and jugs came out
+// perfectly matte no matter what the gradient said. A real highlight does two
+// things at once: it DESATURATES toward the light (drop the r = brand-amount
+// channel) and it BRIGHTENS (raise the g = print-brightness channel).
+function glint(g, W, H, cx, halfW, y0, y1, kill, add) {
+  const mk = (fn) => {
+    const gr = g.createLinearGradient(cx - halfW, 0, cx + halfW, 0);
+    gr.addColorStop(0.00, fn(0));
+    gr.addColorStop(0.30, fn(0.35));
+    gr.addColorStop(0.50, fn(1));
+    gr.addColorStop(0.68, fn(0.30));
+    gr.addColorStop(1.00, fn(0));
+    return gr;
+  };
+  g.globalCompositeOperation = 'multiply';
+  g.fillStyle = mk((a) => `rgba(${kill},255,255,${a})`);
+  g.fillRect(cx - halfW, y0, halfW * 2, y1 - y0);
+  g.globalCompositeOperation = 'lighter';
+  g.fillStyle = mk((a) => `rgba(0,${add},0,${a})`);
+  g.fillRect(cx - halfW, y0, halfW * 2, y1 - y0);
+  g.globalCompositeOperation = 'source-over';
+}
+
 function maskTex(THREE, canvas) {
   const t = new THREE.CanvasTexture(canvas);
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
@@ -370,6 +401,10 @@ function cartonDesign(g, i, W, H, M, rng, deptKeys) {
   g.fillStyle = fam === 2 ? ink(30, 245) : ink(12, 40);
   fitText(g, desc, wmCx, wmY + H * 0.070, wmMaxW * 0.96, H * 0.045,
     pk(rng, [FACE.grot, FACE.human, FACE.geo]), '700', arch === 4 ? 'left' : 'center');
+  // sub-descriptor: the second line that has to survive a 3x zoom
+  g.fillStyle = fam === 2 ? ink(40, 200) : ink(14, 62);
+  fitText(g, pk(rng, SUBDESC), wmCx, wmY + H * 0.111, wmMaxW * 0.90, H * 0.030,
+    FACE.grot, '600', arch === 4 ? 'left' : 'center');
 
   // ---- flavour flash ribbon ----------------------------------------------
   const flY = arch === 6 ? H * 0.755 : (arch === 1 ? H * 0.395 : H * 0.455);
@@ -396,9 +431,14 @@ function cartonDesign(g, i, W, H, M, rng, deptKeys) {
   // ---- legal type + weight + barcode + nutrition flash --------------------
   // Type-led designs give the panel far more room, the way a flour or a
   // detergent carton does.
+  // third readable band: a claim line above the weight, set in caps at a size
+  // that survives near-field zoom
+  g.fillStyle = fam === 2 ? ink(50, 210) : ink(14, 70);
+  fitText(g, pk(rng, CLAIMS), x0 + fw * 0.045, noPhoto ? H * 0.532 : H * 0.752,
+    fw * 0.54, H * 0.026, FACE.grot, '700', 'left');
   const legN = noPhoto ? 11 : 7;
   legalBlock(g, x0 + fw * 0.045, noPhoto ? H * 0.60 : H * 0.815, fw * 0.52, legN,
-    H * 0.0165, rng, fam === 2 ? ink(60, 175) : ink(16, 78));
+    H * 0.0180, rng, fam === 2 ? ink(60, 175) : ink(16, 78));
   g.textAlign = 'left';
   g.fillStyle = fam === 2 ? ink(40, 245) : ink(12, 45);
   fitText(g, wt, x0 + fw * 0.045, noPhoto ? H * 0.565 : H * 0.785, fw * 0.50, H * 0.030,
@@ -497,16 +537,34 @@ export function pouchAtlas(THREE, deptKeys) {
       FACE.grot, '700', 'left');
     barcode(g, M + (W - M) * 0.66, H * 0.845, (W - M) * 0.30, H * 0.075, rng);
 
-    // hard specular streak — this is how a viewer instantly reads "plastic"
-    g.save();
+    // hard specular streaks — this is how a viewer instantly reads "plastic".
+    // Only the GREEN channel is raised: adding white here (round 2) also
+    // pushed r and b, which silently shifted the brand amount and the food
+    // palette band of every bag in the store.
+    for (const [ox, ow, amt, rot] of [[0.30, 0.055, 150, -0.34], [0.66, 0.030, 90, 0.28]]) {
+      g.save();
+      g.globalCompositeOperation = 'lighter';
+      g.translate(W * ox, H * 0.5); g.rotate(rot);
+      const st = g.createLinearGradient(-W * ow, 0, W * ow, 0);
+      st.addColorStop(0, 'rgba(0,0,0,0)');
+      st.addColorStop(0.5, `rgba(0,${amt},0,1)`);
+      st.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = st; g.fillRect(-W * ow, -H, W * ow * 2, H * 2);
+      g.restore();
+    }
+    // scattered blown highlights where the film creases — the noise-driven
+    // glint that separates a wrapped pack from a printed carton
     g.globalCompositeOperation = 'lighter';
-    g.translate(W * 0.30, H * 0.5); g.rotate(-0.34);
-    const st = g.createLinearGradient(-W * 0.06, 0, W * 0.06, 0);
-    st.addColorStop(0, 'rgba(255,255,255,0)');
-    st.addColorStop(0.5, 'rgba(255,255,255,0.55)');
-    st.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = st; g.fillRect(-W * 0.06, -H, W * 0.12, H * 2);
-    g.restore();
+    for (let k = 0; k < 46; k++) {
+      const gx = rng() * W, gy = rr(rng, H * 0.06, H * 0.94);
+      const gr2 = rr(rng, 2.5, 11);
+      const rad = g.createRadialGradient(gx, gy, 0, gx, gy, gr2);
+      rad.addColorStop(0, `rgba(0,${ri(rng, 80, 190)},0,1)`);
+      rad.addColorStop(1, 'rgba(0,0,0,0)');
+      g.fillStyle = rad;
+      g.fillRect(gx - gr2, gy - gr2, gr2 * 2, gr2 * 2);
+    }
+    g.globalCompositeOperation = 'source-over';
 
     g.fillStyle = dark ? ink(255, 108) : ink(255, 190);
     g.fillRect(0, 0, M, H);
@@ -568,16 +626,18 @@ export function canAtlas(THREE, deptKeys) {
     }
     barcode(g, seg * 0.10, H * 0.60, seg * 0.55, H * 0.075, rng);
 
-    // cylindrical shading + a hard vertical specular on the tinplate
+    // cylindrical shading, then two REAL specular bands on the tinplate
     const e = g.createLinearGradient(0, 0, W, 0);
-    e.addColorStop(0.00, 'rgba(0,0,0,0.62)');
-    e.addColorStop(0.20, 'rgba(255,255,255,0.26)');   // near-side sheen
+    e.addColorStop(0.00, 'rgba(0,0,0,0.66)');
+    e.addColorStop(0.18, 'rgba(0,0,0,0.10)');
     e.addColorStop(0.50, 'rgba(0,0,0,0.00)');
-    e.addColorStop(0.80, 'rgba(0,0,0,0.20)');
-    e.addColorStop(1.00, 'rgba(0,0,0,0.62)');
+    e.addColorStop(0.82, 'rgba(0,0,0,0.24)');
+    e.addColorStop(1.00, 'rgba(0,0,0,0.66)');
     g.globalCompositeOperation = 'multiply';
-    g.fillStyle = e; g.fillRect(0, H * 0.09, W, H * 0.83);
+    g.fillStyle = e; g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'source-over';
+    glint(g, W, H, W * 0.30, W * 0.095, 0, H, 74, 118);
+    glint(g, W, H, W * 0.735, W * 0.045, 0, H, 165, 52);
     g.restore();
   }
   return maskTex(THREE, c);
@@ -630,19 +690,20 @@ export function bottleAtlas(THREE, deptKeys) {
     }
     barcode(g, seg * 0.12, ly + lh * 0.03, seg * 0.5, lh * 0.10, rng);
 
-    // curvature + two hard streaks
-    // two hard elongated streaks — this is how a viewer reads "PET bottle"
+    // curvature, then two hard elongated streaks — this is how a viewer reads
+    // "PET bottle" in a single glance, and it is the mirror strip you see down
+    // every bleach jug in the reference photography
     const e = g.createLinearGradient(0, 0, W, 0);
-    e.addColorStop(0.00, 'rgba(0,0,0,0.66)');
-    e.addColorStop(0.16, 'rgba(255,255,255,0.55)');
-    e.addColorStop(0.26, 'rgba(255,255,255,0.06)');
-    e.addColorStop(0.58, 'rgba(0,0,0,0.06)');
-    e.addColorStop(0.74, 'rgba(255,255,255,0.34)');
-    e.addColorStop(0.84, 'rgba(255,255,255,0.04)');
-    e.addColorStop(1.00, 'rgba(0,0,0,0.66)');
+    e.addColorStop(0.00, 'rgba(0,0,0,0.70)');
+    e.addColorStop(0.14, 'rgba(0,0,0,0.06)');
+    e.addColorStop(0.55, 'rgba(0,0,0,0.05)');
+    e.addColorStop(0.86, 'rgba(0,0,0,0.30)');
+    e.addColorStop(1.00, 'rgba(0,0,0,0.70)');
     g.globalCompositeOperation = 'multiply';
     g.fillStyle = e; g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'source-over';
+    glint(g, W, H, W * 0.245, W * 0.085, 0, H, 46, 150);
+    glint(g, W, H, W * 0.700, W * 0.050, 0, H, 130, 78);
     g.restore();
   }
   return maskTex(THREE, c);
@@ -653,8 +714,63 @@ export function bottleAtlas(THREE, deptKeys) {
 // large bold price numeral, black on white, plus a UPC block and a caps
 // description. store.js emits ONE tag per SKU run so the rhythm is irregular
 // and matches the facing width above it, instead of a moiring ribbon.
+// The three orphan states. A bare bay in a real store almost never has a bare
+// RAIL — it has the holder still clipped on with nothing, or something curled
+// and bleached, or half a tag someone tore off. Round 2 had no vocabulary for
+// this at all because round 2 had no bare bays.
+function orphanTag(g, variant, CW, CH, rng) {
+  if (variant === 0) {                       // empty extruded channel
+    const grd = g.createLinearGradient(0, 0, 0, CH);
+    grd.addColorStop(0, '#cfc7b2'); grd.addColorStop(0.30, '#8b8371');
+    grd.addColorStop(0.55, '#5d5647'); grd.addColorStop(0.80, '#9b9380');
+    grd.addColorStop(1, '#6e6757');
+    g.fillStyle = grd; g.fillRect(0, 0, CW, CH);
+    g.fillStyle = 'rgba(255,252,240,0.45)'; g.fillRect(0, 1, CW, 2.5);
+    g.fillStyle = 'rgba(28,25,19,0.55)'; g.fillRect(0, CH * 0.34, CW, 3);
+    for (let k = 0; k < 8; k++) {            // adhesive residue and grime
+      g.fillStyle = `rgba(${ri(rng, 90, 150)},${ri(rng, 84, 140)},${ri(rng, 70, 120)},${rr(rng, 0.10, 0.30)})`;
+      g.fillRect(rr(rng, 0, CW), rr(rng, CH * 0.2, CH * 0.8), rr(rng, 6, 40), rr(rng, 3, 12));
+    }
+    return;
+  }
+  if (variant === 1) {                       // bleached blank, curled corner
+    g.fillStyle = '#efe9d6'; g.fillRect(0, 0, CW, CH);
+    g.fillStyle = 'rgba(196,182,150,0.45)'; g.fillRect(0, 0, CW, CH * 0.16);
+    g.strokeStyle = 'rgba(120,110,90,0.5)'; g.lineWidth = 2;
+    g.strokeRect(1, 1, CW - 2, CH - 2);
+    g.fillStyle = 'rgba(150,138,112,0.30)';
+    for (let k = 0; k < 5; k++) {            // ghost of the print that faded
+      g.fillRect(CW * 0.08, CH * (0.30 + k * 0.13), rr(rng, CW * 0.18, CW * 0.62), CH * 0.045);
+    }
+    g.fillStyle = '#ded6c0';                 // the curl
+    g.beginPath();
+    g.moveTo(CW, CH); g.lineTo(CW - CH * 0.42, CH); g.lineTo(CW, CH * 0.55);
+    g.closePath(); g.fill();
+    g.strokeStyle = 'rgba(110,100,82,0.55)'; g.lineWidth = 1.6;
+    g.beginPath(); g.moveTo(CW - CH * 0.42, CH); g.lineTo(CW, CH * 0.55); g.stroke();
+    g.fillStyle = 'rgba(150,138,112,0.55)'; g.fillRect(0, 0, CW * 0.02, CH);
+    return;
+  }
+  // torn remnant: half a tag left in the channel, ragged edge
+  g.fillStyle = '#6b6454'; g.fillRect(0, 0, CW, CH);
+  g.fillStyle = 'rgba(28,25,19,0.5)'; g.fillRect(0, CH * 0.34, CW, 3);
+  g.fillStyle = '#fdf9ec';
+  g.beginPath();
+  g.moveTo(0, 0); g.lineTo(CW * 0.40, 0);
+  for (let k = 0; k <= 8; k++) {
+    g.lineTo(CW * (0.40 + rr(rng, -0.05, 0.05)), CH * (k / 8));
+  }
+  g.lineTo(0, CH); g.closePath(); g.fill();
+  g.fillStyle = '#26241f';
+  g.font = `900 ${CH * 0.46}px ${FACE.fat}`;
+  g.textAlign = 'left';
+  g.fillText(String(ri(rng, 1, 9)), 6, CH * 0.62);
+  g.fillStyle = 'rgba(120,110,90,0.5)';
+  g.fillRect(0, 0, CW * 0.022, CH);
+}
+
 export function tagAtlas(THREE) {
-  const COLS = 4, ROWS = 4, CW = 192, CH = 96;
+  const COLS = TAG_COLS, ROWS = TAG_ROWS, CW = 256, CH = 128;
   const [c, g] = cv(CW * COLS, CH * ROWS);
   const rng = makeRng(0x7A65);
 
@@ -664,6 +780,7 @@ export function tagAtlas(THREE) {
     g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
     g.textBaseline = 'alphabetic';
 
+    if (i >= TAG_SKU) { orphanTag(g, i - TAG_SKU, CW, CH, rng); g.restore(); continue; }
     const sale = i % 5 === 4, yellow = i % 7 === 3;
     g.fillStyle = sale ? '#ffe418' : (yellow ? '#fff6b0' : '#ffffff');
     g.fillRect(0, 0, CW, CH);
@@ -746,15 +863,29 @@ export function cavityTex(THREE) {
 // ---------------------------------------------------------------------------
 // PACKAGE MATERIAL — one mask atlas + a per-instance brand colour + a
 // per-instance atlas cell. See the channel contract at the top of the file.
+// `spec` turns the material Phong instead of Lambert. Round-2 shaded cans,
+// glossy bottles, foil bags and coated board with one identical matte diffuse,
+// and a real aisle is DOMINATED by specular events: the bright vertical band
+// down every can, the blown white glint on shrink film, the mirror strip on a
+// bleach jug. `gloss` is a GLSL expression over `chopM` (the mask sample) that
+// drives per-texel specular strength — feeding it the print-brightness channel
+// makes white film crinkle flare while the printed ink stays dull.
 export function chopPackageMat(THREE, mask, grid, extra = {}) {
-  const m = new THREE.MeshLambertMaterial({ map: mask, color: 0xffffff, ...extra });
+  const { spec = null, gloss = null, ...rest } = extra;
+  const m = spec
+    ? new THREE.MeshPhongMaterial({
+      map: mask, color: 0xffffff, shininess: spec.shininess,
+      specular: new THREE.Color(spec.specular), ...rest,
+    })
+    : new THREE.MeshLambertMaterial({ map: mask, color: 0xffffff, ...rest });
   const cell = new THREE.Vector2(1 / grid.cols, 1 / grid.rows);
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uCell = { value: cell };
     sh.vertexShader = 'attribute vec2 aCell;\nvarying vec2 vCell;\n' + sh.vertexShader
       .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvCell = aCell;');
-    sh.fragmentShader = 'uniform vec2 uCell;\nvarying vec2 vCell;\n' + sh.fragmentShader
-      .replace('#include <map_fragment>', `
+    sh.fragmentShader = 'uniform vec2 uCell;\nvarying vec2 vCell;\nfloat chopGloss;\n'
+      + sh.fragmentShader
+        .replace('#include <map_fragment>', `
         vec4 chopM = texture2D( map, vCell + clamp( vMapUv, 0.0015, 0.9985 ) * uCell );
         float scaled = chopM.b * 4.0;
         float band = min( 3.0, floor( scaled ) );
@@ -765,10 +896,13 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
         vec3 base = mix( vec3( 1.0 ), vColor, chopM.r );
         base = mix( base, food, amt );
         diffuseColor.rgb *= base * ( 0.045 + 0.955 * chopM.g );
+        chopGloss = ${gloss || '1.0'};
       `)
-      .replace('#include <color_fragment>', '');
+        .replace('#include <color_fragment>', '')
+        .replace('#include <specularmap_fragment>', 'float specularStrength = chopGloss;');
   };
-  m.customProgramCacheKey = () => 'chopPkg' + grid.cols + 'x' + grid.rows;
+  m.customProgramCacheKey = () => 'chopPkg' + grid.cols + 'x' + grid.rows
+    + (spec ? 'P' + (gloss ? gloss.length : 0) : 'L');
   return m;
 }
 

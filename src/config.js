@@ -54,6 +54,23 @@ export const TUNING = {
   pickupLip: 1.58,
   pickupRadius: 0.62,
   pickupReach: 1.25,
+
+  // --- Corked-aisle counterplay (round 3) ---
+  // The cop is priced as a cost inside the exit flood, so "out the back, along the
+  // rear cross-aisle, down another aisle" emerges as a route only when it is
+  // genuinely cheaper. copThreat* applies ONLY downstream of the runner: without
+  // that filter a cop merely BEHIND the thief prices the ground he is standing on,
+  // the flood hands him a sidestep instead of a sprint, and the stern chase leaks
+  // from 1.3% caught to 79%.
+  copThreatR: 3.00, copThreatW: 110.0, copLead: 0.30, threatAhead: 3.00,
+  fleeEvery: 0.17, fleeMove: 0.70, fleeNear: 12.0,
+  thiefLook: 8.60, thiefBlockCos: 0.60,
+  // Shoulder barge: decided by where the cop stands at the moment of commitment.
+  // Hold the lane centre and you have him; drift off one side and he goes past the
+  // other for a 0.45s stumble.
+  jukeRange: 5.20, jukeAhead: 0.34, jukeHold: 0.85, jukeLat: 1.75, jukeLip: 0.97,
+  grabSlack: 0.45, bargeGrace: 0.50, stumbleT: 0.45, stumbleMul: 0.72,
+  nerveLo: 0.55, nerveHi: 1.55,
 };
 
 export const CAMERAS = [

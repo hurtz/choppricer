@@ -145,6 +145,29 @@ export const LEGAL = [
 
 export const PANEL_HEAD = ['NUTRITION FACTS', 'INGREDIENTS', 'DIRECTIONS', 'NUTRITION'];
 
+// ROUND 3. Mid-size copy that is meant to be genuinely READ at a metre. The
+// round-2 face had a legible wordmark sitting over a grey smear, and the blind
+// critic's sharpest note was that a logo on an otherwise-illegible panel reads
+// as MORE artificial than a blank panel would. These two bands sit between the
+// display type and the unreadable legal block and fill exactly that hole.
+export const SUBDESC = [
+  'MADE WITH REAL INGREDIENTS', 'A FAMILY FAVORITE SINCE 1946',
+  'BAKED — NEVER FRIED', 'NO HIGH FRUCTOSE CORN SYRUP',
+  'PACKED AT THE PEAK OF SEASON', 'SLOW SIMMERED IN SMALL BATCHES',
+  'GOOD SOURCE OF FIBER', 'READY IN 5 MINUTES',
+  'KETTLE COOKED FOR EXTRA CRUNCH', 'NATURALLY GLUTEN FREE',
+  'GROWN AND PACKED IN THE U.S.A.', 'RESEALABLE STAY-FRESH POUCH',
+];
+
+export const CLAIMS = [
+  '8 SERVINGS PER CONTAINER', '12 CT · 1.2 OZ EACH', 'NO ARTIFICIAL COLORS',
+  'EXCELLENT SOURCE OF CALCIUM', '0g TRANS FAT PER SERVING',
+  'SEE SIDE PANEL FOR RECIPES', 'KEEP REFRIGERATED AFTER OPENING',
+  'CERTIFIED SUSTAINABLY SOURCED', '100% SATISFACTION GUARANTEED',
+  'PACKED BY WEIGHT NOT VOLUME', 'ENRICHED WITH IRON & B VITAMINS',
+  'BEST IF USED BY DATE ON END',
+];
+
 // Shelf-tag description lines — caps, abbreviated, the way a real tag prints.
 export const TAG_DESC = [
   'ASST VARIETIES', 'FAMILY SIZE', 'SELECTED VAR', 'ALL VARIETIES',
