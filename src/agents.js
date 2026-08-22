@@ -222,8 +222,12 @@ const R5 = {
   // round 3's "97% still caught" pathology with the sign flipped, and it is a
   // direct consequence of this round's change, so it is this round's problem.
   // See the sweep in the header. Both numbers come DOWN together.
-  bargeStagger: 0.55,    // was 1.25 (round 4, from round 3's 0.90)
-  bargeDump: 0.40,       // was 0.85 — the thief's adrenaline top-up on contact
+  bargeStagger: 0.55,    // was 1.25 (round 4, from round 3's 0.90). THE ONLY
+                         // ONE OF THE THREE BARGE COSTS THAT STILL DOES
+                         // ANYTHING — see the ablation in the header. 1.25 s of
+                         // the cop lying in the aisle was priced against a man
+                         // who could then sprint for 3.1 s; against a 1.4 s
+                         // tank the same 1.25 s is unrecoverable.
   bargeWindFrac: 0.48,   // was the absolute `bargeWind: 1.50`. 1.50 s against
                          // the old 3.1 s tank was 48% of it; against a 1.4 s
                          // tank the same absolute number is a total wipe every
@@ -381,7 +385,13 @@ const K = {
   // against a 3.10 s tank; as an ABSOLUTE number against the 1.40 s tank it
   // wipes the cop out every single time and stops discriminating anything, so
   // it is a fraction of max now and holds the 48% it was actually tuned to.
-  get bargeDump()     { return R5.bargeDump; },            // thief adrenaline on contact
+  // MEASURED INERT, n=250, and left at its round-4 value for that reason:
+  // 0.40 vs 0.85 produced byte-identical results on every field in the bench.
+  // `s.adren` is ~1.0 at the moment of any barge that happens early in a chase
+  // — which is all of them — so `Math.max(s.adren, bargeDump)` never fires. It
+  // was never a live constant; round 4 shipped it inside a bundle and I did not
+  // ablate it on its own. Do not tune it, delete it or measure it in isolation.
+  get bargeDump()     { return T.bargeDump     ?? 0.85; }, // thief adrenaline on contact
   // How much of the cop this particular thief wants to risk. Rolled per subject
   // so two identical-looking dispatches do not always play out the same way.
   get nerveLo()       { return T.nerveLo       ?? 0.55; }, // he will chance your shoulder

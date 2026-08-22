@@ -214,7 +214,9 @@ function paintHousing(ctx, p, rnd) {
   const idS = p.chin >= 30 ? 2 : 1;
   drawText(ctx, p.chinId, hx + Math.max(8, p.bx), cy + (idS === 1 ? 4 : 0), idS,
     st.ink, 'rgba(0,0,0,0.45)');
-  if (hw > 190) {
+  // No silkscreen under a label-maker strip: the strip is going to be stuck
+  // straight over the model number, which is where people actually put them.
+  if (hw > 190 && !labelFor(p)) {
     drawTextR(ctx, p.brand, hx + hw - (p.chin >= 30 ? 26 : 20), cy + 2, 1, st.sub, null);
   }
   const on = p.cam >= 0 && !p.ledDead;
@@ -455,55 +457,77 @@ function strip(ctx, x, y, txt, age = 1) {
   return sw;
 }
 
-// Where a label-maker strip goes on a given chin: after the silkscreened channel
-// number, before the brand. Computed rather than hand-placed, because the chins
-// are now five different heights and the strips used to land on top of the
-// brand text.
+// Which chins carry a label-maker strip, and what it says. Keyed on the SLOT —
+// the physical monitor — not on the channel, because the strip is stuck to the
+// plastic and stays there whatever gets plugged in behind it. Slot 8's strip is
+// the exception and reads off the wiring, because that is the whole story of
+// that panel.
+export function labelFor(p) {
+  switch (p.slot) {
+    case 0: return ['PUBLIC VIEW', 1];
+    case 4: return ['BAD FOCUS', 1];
+    case 5: return ['CH6 GHOST', 1];
+    case 7: return ['DOORS X241', 1];
+    case 8: return [p.cam >= 0 ? 'DOOR 2  NEW' : 'DOOR 2  NOT WIRED', 0];
+    default: return null;
+  }
+}
+
+// Right-aligned to just inside the power LED, which is where the model number
+// was, which is what a strip gets stuck over. Computed rather than hand-placed:
+// the chins are now five different heights and widths.
 function chinStrip(ctx, p, txt, age) {
   const idS = p.chin >= 30 ? 2 : 1;
-  const x = p.hx + Math.max(8, p.bx) + textW(p.chinId, idS) + 14;
+  const w = textW(txt, 1) + 12;
+  const x = p.hx + p.hw - (p.chin >= 30 ? 13 : 10) - 10 - w;
   const y = p.y + p.h + Math.round((p.chin - 14) / 2);
-  const brandLeft = p.hx + p.hw - (p.chin >= 30 ? 26 : 20) - textW(p.brand, 1);
-  if (x + textW(txt, 1) + 12 > brandLeft - 6 && p.hw > 190) return;   // no room
+  const idRight = p.hx + Math.max(8, p.bx) + textW(p.chinId, idS);
+  if (x < idRight + 8) return;                      // no room; leave it bare
   strip(ctx, x, y, txt, age);
 }
 
 function paintClutter(ctx, panels, wall, rnd) {
-  const bySlot = (i) => panels.find((p) => p.slot === i) || panels[i] || panels[0];
+  // Every piece of clutter below is stuck to a NAMED monitor, so a wall that was
+  // built with fewer slots than the table declares simply does not get that
+  // piece. Nothing here is allowed to relocate itself onto a substitute panel —
+  // "BAD FOCUS" taped to the channel that is in focus is worse than no label.
+  const bySlot = (i) => panels.find((p) => p.slot === i);
   if (!panels.length) return;
 
   // yellow note on the bottom-left corner of a top-left monitor's glass
   const a = bySlot(2);
-  stickyNote(ctx, a.x - 6, a.y + a.h - 40, 46, 42, -0.09,
-    'rgba(220,208,122,0.94)', 'rgba(192,176,92,0.94)', 3, rnd);
+  if (a) {
+    stickyNote(ctx, a.x - 6, a.y + a.h - 40, 46, 42, -0.09,
+      'rgba(220,208,122,0.94)', 'rgba(192,176,92,0.94)', 3, rnd);
+  }
 
   // pink one taped along the top bezel of the big door monitor, dipping just
   // onto the glass. Kept clear of the camera id and the REC dot.
   const b = bySlot(7);
-  stickyNote(ctx, b.x + b.w - 116, b.y - 26, 38, 34, 0.13,
-    'rgba(220,146,158,0.93)', 'rgba(192,118,132,0.93)', 2, rnd);
+  if (b) {
+    stickyNote(ctx, b.x + b.w - 116, b.y - 26, 38, 34, 0.13,
+      'rgba(220,146,158,0.93)', 'rgba(192,118,132,0.93)', 2, rnd);
+  }
 
-  // label-maker strips on the chins
-  chinStrip(ctx, b, 'DOORS X241', 1);
+  // every chin that carries a strip, including the one whose text is decided by
+  // whether config wired the second door camera or not
+  for (const p of panels) {
+    const l = labelFor(p);
+    if (l) chinStrip(ctx, p, l[0], l[1]);
+  }
+
   const knocked = bySlot(4);
-  chinStrip(ctx, knocked, 'BAD FOCUS', 1);
-  chinStrip(ctx, bySlot(0), 'PUBLIC VIEW', 1);
-  chinStrip(ctx, bySlot(5), 'CH6 GHOST', 1);
-
-  // The second door monitor. Its strip says what the install actually is: a
-  // fresh white label if the channel is wired, and the truth if it is not.
-  const d2 = bySlot(8);
-  if (d2) chinStrip(ctx, d2, d2.cam >= 0 ? 'DOOR 2  NEW' : 'DOOR 2  NOT WIRED', 0);
-
-  // masking tape over the dead power LED, because that is what people do
-  // instead of fixing it
-  ctx.save();
-  ctx.translate(knocked.hx + knocked.hw - 24,
-    knocked.y + knocked.h + Math.round((knocked.chin - 14) / 2) + 2);
-  ctx.rotate(-0.07);
-  ctx.fillStyle = 'rgba(206,190,150,0.55)';
-  ctx.fillRect(0, 0, 30, 9);
-  ctx.restore();
+  if (knocked) {
+    // masking tape over the dead power LED, because that is what people do
+    // instead of fixing it
+    ctx.save();
+    ctx.translate(knocked.hx + knocked.hw - 24,
+      knocked.y + knocked.h + Math.round((knocked.chin - 14) / 2) + 2);
+    ctx.rotate(-0.07);
+    ctx.fillStyle = 'rgba(206,190,150,0.55)';
+    ctx.fillRect(0, 0, 30, 9);
+    ctx.restore();
+  }
 
   // dust and thumbprints along the bottom bezel lip of every panel
   for (const p of panels) {

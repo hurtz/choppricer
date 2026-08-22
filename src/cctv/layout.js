@@ -222,7 +222,11 @@ export function layoutWall(cams) {
 
   const live = Math.min(n, SLOTS.length);
   const slotCam = assign(cams, live);
-  const panels = SLOTS.map((s, i) => panelFrom(s, slotCam[i], i));
+  // Two dark panels on a nine-channel wall is an install with history. Nine dark
+  // panels on a two-channel wall is a mistake, so the surplus slots are simply
+  // not mounted.
+  const mounted = Math.min(SLOTS.length, live + 2);
+  const panels = SLOTS.slice(0, mounted).map((s, i) => panelFrom(s, slotCam[i], i));
   const tiles = new Array(n).fill(null);
   for (const p of panels) {
     if (p.cam >= 0) tiles[p.cam] = { x: p.x, y: p.y, w: p.w, h: p.h };

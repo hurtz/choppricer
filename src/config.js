@@ -100,4 +100,10 @@ export const CAMERAS = [
   { id: 'CAM 06', label: 'BACK WALL',   pos: [0, 4.6, STORE.maxZ - 1],  look: [0, 1.0, STORE.maxZ - 9] },
   { id: 'CAM 07', label: 'EXIT DOORS',  pos: [EXIT.x - 1, 4.2, EXIT.z + 6], look: [EXIT.x, 1.0, EXIT.z] },
   { id: 'CAM 08', label: 'PRODUCE',     pos: [STORE.maxX - 1, 4.6, STORE.maxZ - 6], look: [STORE.maxX - 9, 1.0, STORE.maxZ - 10] },
+  // Door 2 had no camera, so a subject in its vestibule sat in no frustum at all.
+  // Filing him under EXIT DOORS anyway measured WORSE than the least-wrong channel
+  // (-1pp for the reader, +5 for the guesser) because the roster then named a
+  // channel showing an empty doorway 35m away. Label must contain DOOR or EXIT so
+  // the wall pairs it with CAM 07 in the right-hand column.
+  { id: 'CAM 09', label: 'DOOR 2',     pos: [EXIT2.x + 1, 4.2, EXIT2.z + 6], look: [EXIT2.x, 1.0, EXIT2.z] },
 ];

@@ -79,8 +79,8 @@
    "verdict": "Edge density mean 41.0 -> 44.2, spread 5.6 -> 7.0. Warm-band pixels 37.7-40.7% -> 7.7-11.3% (references 5.6-11.4%). Mean saturation 0.33-0.35 -> 0.23-0.25 (references 0.27-0.32)."
   },
   "cctv": {
-   "round": 2,
-   "state": "critiquing",
+   "round": 3,
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -96,6 +96,11 @@
      "round": 2,
      "path": "../shots/cctv_r2_wall.png",
      "t": 1787413408.61835
+    },
+    {
+     "round": 3,
+     "path": "../shots/cctv_r3_wall.png",
+     "t": 1787431977.303798
     }
    ],
    "gaps": [
@@ -104,9 +109,10 @@
      "text": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
     }
    ],
-   "updated": 1787413681.5197399,
-   "note": "CA cut from ~40px to ~1px corner-only; timestamp on one line; new tone curve with highlight shoulder; office clutter (sticky notes, label strips, taped LED); fixed a resize() bug that shattered the wall.",
-   "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
+   "updated": 1787432064.598946,
+   "note": "New src/cctv/layout.js owns all wall geometry. Irregular accreted layout instead of 3x3 (which would have given 157x118 screens, too small for the roster overlay): 416x234 primary carrying FRONT END, a 2011 2x2 whose bottom pair are 16:10 replacements on old brackets so the rows do not line up, door cameras paired in the right column by label match. Deliberately did NOT make the hero panel follow selection because tiles stability is a documented contract two other agents depend on. Unclaimed slots stay physical monitors: slot 8 showed a blue NO SIGNAL card reading DOOR 2 NOT WIRED, and adding CAM 09 flips it to DOOR 2 NEW. Grade re-judged over the new store - chroma .60->.74 because colour packaging is what makes 4:2:0 visible at all; there was nothing to smear before.",
+   "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself.",
+   "verdict": "Wall is N-camera driven; verified boot-clean at 1,2,4,6,7,8,9,10,11,16 cameras with no degenerate tiles and nothing outside the HUD-safe band. CAM 09 DOOR 2 now added and live."
   },
   "agents": {
    "round": 5,
@@ -226,6 +232,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787432064.598948,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 3,
+   "state": "passed",
+   "text": "New src/cctv/layout.js owns all wall geometry. Irregular accreted layout instead of 3x3 (which would have given 157x118 screens, too small for the roster overlay): 416x234 primary carrying FRONT END, a 2011 2x2 whose bottom pair are 16:10 replacements on old brackets so the rows do not line up, door cameras paired in the right column by label match. Deliberately did NOT make the hero panel follow selection because tiles stability is a documented contract two other agents depend on. Unclaimed slots stay physical monitors: slot 8 showed a blue NO SIGNAL card reading DOOR 2 NOT WIRED, and adding CAM 09 flips it to DOOR 2 NEW. Grade re-judged over the new store - chroma .60->.74 because colour packaging is what makes 4:2:0 visible at all; there was nothing to smear before."
+  },
+  {
+   "t": 1787431977.303798,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 3,
+   "state": "building",
+   "text": "Wall is now N-camera driven: new src/cctv/layout.js turns config.CAMERAS (any length) into physical monitor slots + one tile per camera. Verified boot-clean at 1,2,4,6,7,8,9,10,11,16 cameras \u2014 no crash, no degenerate or out-of-band tiles. Layout is an accreted LP wall, not a grid: 416x234 primary panel centre (FRONT END), 2x2 of mismatched 4:3 + 16:10 left, putty-beige antique + a 16:9 on a desk stand under the primary, and the two DOOR cameras paired in the right column. Hardware variety: 4 housing generations (graphite/putty/silver/gloss black), 5 sizes, 3 aspects, per-panel bezel thickness+white point+sheen, one taped-over dead LED, one crooked snow-filled test monitor, the DVR on its own shelf, shift sheet/camera map/clipboard/coax coil, cables re-derived from housing positions. Unclaimed slots render as real dark panels: with 8 cameras the DOOR 2 monitor shows a NO SIGNAL card and a chin strip reading DOOR 2 NOT WIRED; add CAM 09 and it lights up and the strip flips to DOOR 2 NEW. Grade re-judged against the new store: wall chroma .60->.74, blocky .18->.23, bloom .85->1.06 thr .72->.64, contrast 1.26->1.35, black .055->.072, noise .042->.056; floor pushed harder on the terms that read without hurting play (scan .048->.078, vign .30->.37, bloom .55->1.00, contrast 1.14->1.27, chroma .35->.62). 8.4ms/frame median both modes. createCCTV gained an optional 4th arg {cameras} so the 9th can be proven without editing config.js."
+  },
   {
    "t": 1787431779.448587,
    "piece": "store",
@@ -603,5 +625,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787431779.4485881
+ "updated": 1787432064.5989492
 }
