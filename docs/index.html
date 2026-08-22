@@ -68860,6 +68860,2721 @@ function createGame(hudEl, deps = {}) {
 return { RANKS, createGame };
 })();
 
+/* ==== src/audio/dsp.js ==== */
+const M_src_audio_dsp_js = (() => {
+// OWNER: builder-audio. Primitives. No game knowledge lives in here.
+//
+// Everything in CHOP PRICER's audio is synthesised at runtime — there are no
+// sample files, because the shipping build is one HTML file and an asset that
+// is not synthesised does not exist. This module is the bottom of that stack:
+// seeded noise, procedural impulse responses, and the small node helpers that
+// the rest of src/audio/ builds voices out of.
+
+// ---------------------------------------------------------------- randomness
+// Seeded, so an IR is byte-identical between runs and two critics listening to
+// "the aisle" are listening to the same aisle.
+function mulberry(seed) {
+  let a = (seed >>> 0) || 1;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ------------------------------------------------------------- noise buffers
+// White. Used as the raw source for every one-shot: a BufferSource reading a
+// random offset out of a long shared buffer is the cheapest grain there is.
+function whiteBuffer(ctx, seconds, seed, channels = 2) {
+  const n = Math.max(1, Math.floor(ctx.sampleRate * seconds));
+  const b = ctx.createBuffer(channels, n, ctx.sampleRate);
+  const r = mulberry(seed);
+  for (let c = 0; c < channels; c++) {
+    const d = b.getChannelData(c);
+    for (let i = 0; i < n; i++) d[i] = r() * 2 - 1;
+  }
+  return b;
+}
+
+// Pink (Paul Kellett's economy filter). Every ambience bed starts here, because
+// a flat white bed is the sound of a noise generator and pink is the sound of
+// air moving.
+function pinkBuffer(ctx, seconds, seed, channels = 2) {
+  const n = Math.max(1, Math.floor(ctx.sampleRate * seconds));
+  const b = ctx.createBuffer(channels, n, ctx.sampleRate);
+  const r = mulberry(seed);
+  for (let c = 0; c < channels; c++) {
+    const d = b.getChannelData(c);
+    let b0 = 0, b1 = 0, b2 = 0, b3 = 0, b4 = 0, b5 = 0, b6 = 0;
+    for (let i = 0; i < n; i++) {
+      const w = r() * 2 - 1;
+      b0 = 0.99886 * b0 + w * 0.0555179;
+      b1 = 0.99332 * b1 + w * 0.0750759;
+      b2 = 0.96900 * b2 + w * 0.1538520;
+      b3 = 0.86650 * b3 + w * 0.3104856;
+      b4 = 0.55000 * b4 + w * 0.5329522;
+      b5 = -0.7616 * b5 - w * 0.0168980;
+      d[i] = (b0 + b1 + b2 + b3 + b4 + b5 + b6 + w * 0.5362) * 0.11;
+      b6 = w * 0.115926;
+    }
+    // The loop point is the enemy. Butt-splice-safe: cross-fade the last 250 ms
+    // over the head so the seam is a fade between two uncorrelated noises rather
+    // than a step, and nothing in the bed ever ticks.
+    const x = Math.min(Math.floor(ctx.sampleRate * 0.25), (n / 4) | 0);
+    for (let i = 0; i < x; i++) {
+      const k = i / x;
+      d[i] = d[i] * k + d[n - x + i] * (1 - k);
+    }
+  }
+  return b;
+}
+
+// ------------------------------------------------------- impulse responses
+// A supermarket is a 4000 m2 box with a concrete floor and a metal deck. There
+// is nothing soft in it, so the tail is long AND bright — the high band decays
+// only a little faster than the mid, which is the opposite of a room with
+// carpet and people in it.
+//
+// Built as three band-limited noise tails with independent RT60s, plus discrete
+// early reflections, plus (for the aisle) a flutter comb. Three bands is enough
+// to control the two things the ear actually reads: how long it rings, and
+// whether the ring is bright or dark.
+//
+//   rtLo/rtMid/rtHi  seconds to -60 dB in each band
+//   fLo/fHi          band split frequencies
+//   taps             [[timeSec, gain, pan(-1..1)], ...] early reflections
+//   flutter          { t, g, n } repeating slap — a parallel-wall corridor
+//   modes            [[hz, gain, rt], ...] axial room modes
+//   width            0 = mono tail, 1 = fully decorrelated
+//   build/build0     how fast the diffuse tail comes up behind the reflections
+//
+// `build` is the one that took two rounds to get right. A real room does not
+// go diffuse instantly: for the first few tens of milliseconds you are hearing
+// COUNTABLE reflections off specific surfaces, and only after that does it
+// smear. Round 1 started the noise tail at full amplitude from 8 ms, which
+// drowned every early reflection and the whole flutter comb 10 dB under a wash
+// — the aisle measured a 23.4 ms slap that was mathematically present and
+// acoustically invisible. Holding the tail down to `build0` and ramping it in
+// over `build` seconds is what turns "a reverb" into "that corridor".
+function makeIR(ctx, o) {
+  const sr = ctx.sampleRate;
+  const pre = o.predelay || 0;
+  const rtMax = Math.max(o.rtLo, o.rtMid, o.rtHi);
+  const len = Math.max(128, Math.ceil(sr * (pre + rtMax * 1.02)));
+  const buf = ctx.createBuffer(2, len, sr);
+  const p0 = Math.floor(pre * sr);
+  const aLo = 1 - Math.exp((-2 * Math.PI * (o.fLo || 200)) / sr);
+  const aHi = 1 - Math.exp((-2 * Math.PI * (o.fHi || 2600)) / sr);
+  const kLo = Math.log(0.001) / o.rtLo, kMid = Math.log(0.001) / o.rtMid, kHi = Math.log(0.001) / o.rtHi;
+  const w = o.width == null ? 0.9 : o.width;
+  const blT = o.build == null ? 0.05 : o.build;
+  const bl0 = o.build0 == null ? 0.14 : o.build0;
+  const rC = mulberry((o.seed || 7) * 3 + 11);          // the shared (mono) part
+  const common = new Float32Array(len);
+  for (let i = 0; i < len; i++) common[i] = rC() * 2 - 1;
+
+  for (let c = 0; c < 2; c++) {
+    const d = buf.getChannelData(c);
+    const r = mulberry((o.seed || 7) + c * 977);
+    let lo = 0, hi = 0;
+    for (let i = p0; i < len; i++) {
+      const t = (i - p0) / sr;
+      const n = (r() * 2 - 1) * w + common[i] * (1 - w);
+      lo += aLo * (n - lo);                              // < fLo
+      hi += aHi * (n - hi);                              // < fHi
+      const mid = hi - lo, top = n - hi;
+      // 6 ms fade-in so the tail does not start as a click, then the
+      // diffusion build: the wash comes up BEHIND the early reflections
+      // instead of on top of them.
+      const fin = t < 0.006 ? t / 0.006 : 1;
+      const dif = bl0 + (1 - bl0) * (t >= blT ? 1 : (t / blT) * (t / blT));
+      d[i] = fin * dif * (lo * Math.exp(kLo * t) * (o.gLo == null ? 1 : o.gLo)
+                  + mid * Math.exp(kMid * t)
+                  + top * Math.exp(kHi * t) * (o.gHi == null ? 1 : o.gHi));
+    }
+    // --- discrete early reflections. Slightly different times per ear; that
+    // difference is the entire reason a room has a width.
+    for (const [tt, g, pan] of (o.taps || [])) {
+      const jitter = 1 + (c === 0 ? -1 : 1) * 0.045 * (0.4 + r() * 0.6);
+      const i = p0 + Math.floor(tt * jitter * sr);
+      if (i < 2 || i >= len - 6) continue;
+      const side = c === 0 ? (1 - pan) * 0.5 : (1 + pan) * 0.5;
+      const amp = g * (0.35 + side * 1.3);
+      // a reflection off a shelf full of cardboard is not an impulse; give it
+      // ~1.6 ms of smear so it reads as a surface and not as a tick. Any longer
+      // and the reflections stop being countable, which is the whole point.
+      for (let k = 0; k < Math.floor(sr * 0.0016); k++) {
+        d[i + k] += amp * (r() * 2 - 1) * Math.exp(-k / (sr * 0.00045));
+      }
+    }
+    // --- flutter: parallel hard walls 4 m apart, i.e. the whole point of an aisle
+    //
+    // The repeats have to be THE SAME BURST. A flutter echo is one sound bouncing
+    // between two surfaces; if each repeat is freshly generated noise the ear
+    // reads it as dense early reflections and never hears the ring. Round 2
+    // measured this: the envelope had the right structure and the
+    // autocorrelation at 23.4 ms was 0.001, i.e. no periodicity at all. One
+    // burst, copied, decaying, alternating ears — that is a corridor.
+    if (o.flutter) {
+      const F = o.flutter;
+      const bn = Math.floor(sr * 0.0022);
+      const burst = new Float32Array(bn);
+      for (let j = 0; j < bn; j++) burst[j] = (r() * 2 - 1) * Math.exp(-j / (sr * 0.0006));
+      for (let k = 1; k <= F.n; k++) {
+        const i = p0 + Math.floor(F.t * k * sr * (1 + (c ? 0.006 : -0.006)));
+        if (i >= len - bn - 4) break;
+        const amp = F.g * Math.pow(F.decay || 0.62, k) * (k % 2 === (c ? 0 : 1) ? 1 : 0.72);
+        for (let j = 0; j < bn; j++) d[i + j] += amp * burst[j];
+      }
+    }
+    // --- axial modes. A big flat box rings at c/2L; the vertical mode of a
+    // 5.2 m ceiling lands right where the HVAC already is, which is why big
+    // rooms feel heavy rather than merely loud.
+    for (const [f, g, rt] of (o.modes || [])) {
+      const ph = r() * Math.PI * 2, kk = Math.log(0.001) / rt;
+      for (let i = p0; i < len; i++) {
+        const t = (i - p0) / sr;
+        d[i] += g * Math.sin(2 * Math.PI * f * t + ph) * Math.exp(kk * t);
+      }
+    }
+  }
+  // Normalise on TOTAL ENERGY, per channel. sum(ir^2) is the power gain a
+  // convolution applies to broadband input, so this makes trim=1 mean "the wet
+  // return sits at the same level as the dry" for every room in the set — and
+  // crossfading from the aisle to the front end becomes a change of character
+  // and not a change of volume.
+  //
+  // ROUND 1 GOT THIS WRONG AND IT WAS THE WHOLE BUG. It normalised
+  // sqrt(sum/sampleRate) to 3.2, which sets sum(ir^2) to ten times the sample
+  // rate — about +57 dB of convolution gain. Every clip came back at -9 dBFS
+  // RMS regardless of what was feeding it, because the limiter was the loudest
+  // object in the building and every source was 40 dB into it. Levels are not a
+  // taste question when a normalisation constant is off by six orders of
+  // magnitude; nothing else in the mix can be judged until this is right.
+  let e = 0;
+  for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c); for (let i = 0; i < len; i++) e += d[i] * d[i]; }
+  const g = (o.trim == null ? 1 : o.trim) / Math.sqrt(e / 2 + 1e-12);
+  for (let c = 0; c < 2; c++) { const d = buf.getChannelData(c); for (let i = 0; i < len; i++) d[i] *= g; }
+  return buf;
+}
+
+// ------------------------------------------------------------- node helpers
+function gain(ctx, v = 1) { const g = ctx.createGain(); g.gain.value = v; return g; }
+
+function filt(ctx, type, f, q = 1, gdb = 0) {
+  const b = ctx.createBiquadFilter();
+  b.type = type; b.frequency.value = f; b.Q.value = q; b.gain.value = gdb;
+  return b;
+}
+
+function chain(...nodes) {
+  for (let i = 0; i < nodes.length - 1; i++) nodes[i].connect(nodes[i + 1]);
+  return nodes[nodes.length - 1];
+}
+
+// equalpower, not HRTF: nine cameras already render this scene nine times a
+// frame and HRTF convolution per source is the one audio cost that would show
+// up in the frame budget. Width comes from the room instead, which is where a
+// supermarket's width actually comes from.
+function panner(ctx, x = 0, y = 1.6, z = 0, ref = 3, roll = 1) {
+  const p = ctx.createPanner();
+  p.panningModel = 'equalpower';
+  p.distanceModel = 'inverse';
+  p.refDistance = ref; p.rolloffFactor = roll; p.maxDistance = 90;
+  setPos(p, x, y, z);
+  return p;
+}
+
+function setPos(p, x, y, z, when, smooth) {
+  if (p.positionX) {
+    if (smooth) {
+      p.positionX.setTargetAtTime(x, when, smooth);
+      p.positionY.setTargetAtTime(y, when, smooth);
+      p.positionZ.setTargetAtTime(z, when, smooth);
+    } else { p.positionX.value = x; p.positionY.value = y; p.positionZ.value = z; }
+  } else if (p.setPosition) p.setPosition(x, y, z);
+}
+
+// Looping noise source with a random start offset — two voices reading the same
+// buffer never line up, so a shared 9-second bed sounds like N different beds.
+function loopNoise(ctx, buf, rate = 1, rnd = Math.random) {
+  const s = ctx.createBufferSource();
+  s.buffer = buf; s.loop = true; s.playbackRate.value = rate;
+  s.start(ctx.currentTime, rnd() * buf.duration);
+  return s;
+}
+
+// Soft saturation. Used on the PA (a paper cone in a steel can) and on the
+// output limiter's makeup stage.
+function shaper(ctx, amount = 2, n = 1024) {
+  const ws = ctx.createWaveShaper();
+  const c = new Float32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x = (i / (n - 1)) * 2 - 1;
+    c[i] = Math.tanh(x * amount) / Math.tanh(amount);
+  }
+  ws.curve = c; ws.oversample = '2x';
+  return ws;
+}
+
+// A glottal pulse: harmonics falling at ~1/n with the top rolled off. The
+// source for every voice in this game — the PA announcer, the murmur, the kid.
+function pulseWave(ctx, partials = 44, tilt = 1.0, seed = 5) {
+  const re = new Float32Array(partials + 1), im = new Float32Array(partials + 1);
+  const r = mulberry(seed);
+  for (let n = 1; n <= partials; n++) {
+    const a = Math.pow(n, -tilt) * Math.exp(-n / 26);
+    im[n] = a * (0.85 + r() * 0.3);
+  }
+  return ctx.createPeriodicWave(re, im, { disableNormalization: false });
+}
+
+// A magnetic ballast's buzz: 120 Hz with the odd harmonics carrying most of the
+// character. This waveform is the single most identifiable "you are inside a
+// commercial building" cue that exists.
+function ballastWave(ctx, seed = 3) {
+  const N = 24;
+  const re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  const r = mulberry(seed);
+  const H = { 1: 1.0, 2: 0.30, 3: 0.52, 4: 0.13, 5: 0.34, 6: 0.07, 7: 0.20, 9: 0.12, 11: 0.075, 13: 0.045, 15: 0.03, 17: 0.02 };
+  for (const k in H) { const n = +k; im[n] = H[k] * (0.9 + r() * 0.2); }
+  return ctx.createPeriodicWave(re, im, { disableNormalization: false });
+}
+
+// Sum L+R into both channels. The store heard through a wall is not stereo.
+function monoise(ctx) {
+  const sp = ctx.createChannelSplitter(2), mg = ctx.createChannelMerger(2);
+  const gl = gain(ctx, 0.5), gr = gain(ctx, 0.5);
+  sp.connect(gl, 0); sp.connect(gr, 1);
+  gl.connect(mg, 0, 0); gr.connect(mg, 0, 0);
+  gl.connect(mg, 0, 1); gr.connect(mg, 0, 1);
+  return { in: sp, out: mg };
+}
+
+// smooth, allocation-free param moves. Called a lot; setTargetAtTime is the
+// cheapest way to not hear a zipper.
+function to(param, v, t, tau = 0.06) {
+  if (!isFinite(v)) return;
+  param.setTargetAtTime(v, t, tau);
+}
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const lerp = (a, b, t) => a + (b - a) * t;
+// smoothstep, for zone crossfades — a linear crossfade between two rooms has an
+// audible seam at the midpoint and a smoothstep does not.
+const smooth = (e0, e1, x) => {
+  const t = clamp((x - e0) / (e1 - e0 || 1e-9), 0, 1);
+  return t * t * (3 - 2 * t);
+};
+
+return { mulberry, whiteBuffer, pinkBuffer, makeIR, gain, filt, chain, panner, setPos, loopNoise, shaper, pulseWave, ballastWave, monoise, to, clamp, lerp, smooth };
+})();
+
+/* ==== src/audio/room.js ==== */
+const M_src_audio_room_js = (() => {
+const { makeIR, gain, filt, monoise, to, clamp, smooth, lerp } = M_src_audio_dsp_js;
+const { AISLE_COUNT, AISLE_GAP, SHELF_W, AISLE_LEN, STORE, FRONT_WALK_Z, BACK_WALK_Z, aisleX } = M_src_config_js;
+// OWNER: builder-audio. THE ROOM.
+//
+// This is the highest-value object in the audio build. Everything else is a
+// source; this is the building the sources are inside, and it is what the
+// playtester was describing when he said "the vibe of being there".
+//
+// Three procedural impulse responses, crossfaded by where the cop is standing:
+//
+//   AISLE      a 4 m corridor between two 2.05 m walls of cardboard. Short, dense
+//              early reflections, a hard flutter slap at 11.7 ms (4 m one way),
+//              poor low-frequency support because a corridor is only big in one
+//              dimension. RT60 1.45 s. Tight, boxy, close.
+//   OPEN       the front end: 47 x 38 m of concrete under a 5.2 m metal deck,
+//              glass across the whole front. RT60 2.35 s, decorrelated, boomy,
+//              and it holds its top end because there is nothing soft in there.
+//   DESK       the service-desk monitor room. RT60 0.33 s, dark, small, with the
+//              store arriving through a wall rather than through the air.
+//
+// Walking out of aisle 4 into the front end is most of what the player is paying
+// for, so the crossfade is smoothstepped over ~2.5 m of travel and the wet tilt
+// moves with it: the aisle's tail is mid-focused and the front end's is heavy.
+
+
+
+
+const PITCH = AISLE_GAP + SHELF_W;
+const HALF = AISLE_LEN / 2;
+const BODY = HALF - 0.62;          // gondolas stop here; past it you are in a cross-aisle
+const CROSS_Z = -0.70, CROSS_HALF = 1.8;   // mid-store cross-aisle, half its clear width
+
+function createRoom(ctx) {
+  // ---- the three rooms ----------------------------------------------------
+  const irAisle = makeIR(ctx, {
+    seed: 21, predelay: 0.004,
+    rtLo: 0.95, rtMid: 1.45, rtHi: 1.18, fLo: 210, fHi: 2600,
+    gLo: 0.50, gHi: 1.12, width: 0.52, trim: 0.80, build: 0.055, build0: 0.10,
+    // floor bounce, then both shelf faces, then the ceiling, then the far mouth
+    taps: [[0.006, 0.78, 0], [0.0117, 1.05, -0.9], [0.0128, 0.99, 0.9],
+           [0.021, 0.62, 0.2], [0.0235, 0.72, -0.7], [0.0247, 0.68, 0.7],
+           [0.034, 0.40, 0.4], [0.047, 0.30, -0.5], [0.062, 0.21, 0.3]],
+    flutter: { t: 0.0234, g: 0.72, n: 18, decay: 0.74 },
+    modes: [[66, 0.010, 0.55], [99, 0.007, 0.42]],
+  });
+  const irOpen = makeIR(ctx, {
+    seed: 44, predelay: 0.017,
+    rtLo: 2.60, rtMid: 2.35, rtHi: 1.78, fLo: 200, fHi: 2500,
+    gLo: 0.85, gHi: 1.02, width: 0.97, trim: 0.92, build: 0.105, build0: 0.16,
+    // in the middle of a front end the nearest surface is the floor and then the
+    // ceiling; everything else arrives late and smeared, which is the sound
+    taps: [[0.009, 0.62, 0], [0.026, 0.52, -0.8], [0.031, 0.48, 0.85],
+           [0.045, 0.37, 0.3], [0.058, 0.31, -0.4], [0.079, 0.24, 0.6],
+           [0.104, 0.18, -0.6], [0.131, 0.14, 0.2]],
+    modes: [[33, 0.009, 1.2], [66, 0.010, 1.1], [46, 0.008, 1.2]],
+  });
+  const irDesk = makeIR(ctx, {
+    seed: 90, predelay: 0.0015,
+    rtLo: 0.42, rtMid: 0.33, rtHi: 0.17, fLo: 240, fHi: 2200,
+    gLo: 1.15, gHi: 0.5, width: 0.68, trim: 0.55, build: 0.010, build0: 0.34,
+    taps: [[0.0028, 0.72, -0.5], [0.0041, 0.66, 0.6], [0.0063, 0.55, 0.2],
+           [0.0088, 0.45, -0.3], [0.0121, 0.34, 0.4], [0.0168, 0.24, 0]],
+    modes: [[43, 0.020, 0.30], [57, 0.018, 0.26], [66, 0.014, 0.22]],
+    // trim is lower than the store's on purpose: a closet returns less energy
+    // to you than a 4000 m2 box does, and that difference IS the desk.
+  });
+
+  // ---- graph --------------------------------------------------------------
+  // TWO separate rooms, deliberately not sharing an input. `input` is the store;
+  // `smallIn` is the closet you are sitting in. The store's reverb has to happen
+  // BEFORE the wall filters it, or the desk sounds like a small room that has a
+  // supermarket inside it instead of next to it.
+  const input = gain(ctx, 1);            // store sources send here
+  const smallIn = gain(ctx, 1);          // desk-local sources send here
+  const out = gain(ctx, 1);              // store wet; goes on to the wall
+  const deskOut = gain(ctx, 1);          // small-room wet; goes straight to the mix
+
+  function branch(src, ir, g0) {
+    const send = gain(ctx, g0);
+    const conv = ctx.createConvolver();
+    conv.normalize = false; conv.buffer = ir;
+    const lvl = gain(ctx, 1);
+    src.connect(send); send.connect(conv); conv.connect(lvl);
+    return { send, conv, lvl, live: true, dead: 0, src };
+  }
+  const A = branch(input, irAisle, 0.0);
+  const O = branch(input, irOpen, 1.0);
+  const D = branch(smallIn, irDesk, 1.0);
+
+  // Wet tilt. The aisle's tail is mid-forward and a little thin; the open room's
+  // is heavy underneath and slightly darker on top. One shelf each, moved by the
+  // same parameter that moves the crossfade, so the room changes character and
+  // not just length.
+  const wLow = filt(ctx, 'lowshelf', 190, 0.7, 0);
+  const wHigh = filt(ctx, 'highshelf', 3800, 0.7, 0);
+  const wMid = filt(ctx, 'peaking', 900, 0.9, 0);
+  A.lvl.connect(wLow); O.lvl.connect(wLow);
+  wLow.connect(wMid); wMid.connect(wHigh); wHigh.connect(out);
+  // the closet gets its own tilt: dark, and nothing under 90 Hz because a room
+  // that size cannot hold it
+  const dHP = filt(ctx, 'highpass', 88, 0.7);
+  const dHS = filt(ctx, 'highshelf', 3000, 0.7, -5);
+  D.lvl.connect(dHP); dHP.connect(dHS); dHS.connect(deskOut);
+
+  // ---- store-heard-through-a-wall ----------------------------------------
+  // Desk mode. Everything that happens on the floor routes through `storeIn`;
+  // in desk mode it goes the long way round instead: 12 dB/oct from about
+  // 1.2 kHz, a scoop where the partition's cavity eats it, summed to mono, and
+  // then fed BACK into the small room, because a sound that got through a wall
+  // is now in the little room with you.
+  //
+  // ROUND 1 HAD THIS AT 560 Hz AND IT WAS WRONG. The desk clip measured 47% of
+  // its total energy in one octave at 90 Hz — a subwoofer in a cupboard. The
+  // service desk is not a sealed room: it is an alcove behind a counter at the
+  // front of the store with a doorway in it, so the store arrives mostly
+  // filtered and partly straight. Filtering it to death made the desk quieter
+  // than the floor without making it feel like a different place, which is the
+  // whole job.
+  const storeIn = gain(ctx, 1);
+  const direct = gain(ctx, 1);
+  const bleed = gain(ctx, 0);
+  const bl1 = filt(ctx, 'lowpass', 1250, 0.7);
+  const bl2 = filt(ctx, 'lowpass', 2100, 0.6);
+  const blNotch = filt(ctx, 'peaking', 300, 1.4, -5);
+  const blLow = filt(ctx, 'lowshelf', 140, 0.7, -2.0);
+  const mono = monoise(ctx);
+  const bleedOut = gain(ctx, 0.62);
+  const storeOut = gain(ctx, 1);
+  storeIn.connect(direct); direct.connect(storeOut);
+  storeIn.connect(bleed); bleed.connect(bl1); bl1.connect(bl2); bl2.connect(blNotch);
+  blNotch.connect(blLow); blLow.connect(mono.in); mono.out.connect(bleedOut);
+  const leak = gain(ctx, 0.16);
+  const leakLP = filt(ctx, 'lowpass', 7000, 0.6);
+  const leakHP = filt(ctx, 'highpass', 300, 0.7);
+  bleed.connect(leak); leak.connect(leakHP); leakHP.connect(leakLP); leakLP.connect(bleedOut);
+  bleedOut.connect(storeOut);
+  const bleedToDesk = gain(ctx, 0.45);
+  bleedOut.connect(bleedToDesk); bleedToDesk.connect(smallIn); // it is in your room now
+
+  // ---- listener -----------------------------------------------------------
+  const L = ctx.listener;
+  function setListener(x, y, z, fx, fz, t) {
+    if (L.positionX) {
+      L.positionX.setTargetAtTime(x, t, 0.05);
+      L.positionY.setTargetAtTime(y, t, 0.05);
+      L.positionZ.setTargetAtTime(z, t, 0.05);
+      L.forwardX.setTargetAtTime(fx, t, 0.08);
+      L.forwardY.setTargetAtTime(0, t, 0.08);
+      L.forwardZ.setTargetAtTime(fz, t, 0.08);
+      L.upX.value = 0; L.upY.value = 1; L.upZ.value = 0;
+    } else if (L.setPosition) {
+      L.setPosition(x, y, z);
+      if (L.setOrientation) L.setOrientation(fx, 0, fz, 0, 1, 0);
+    }
+  }
+
+  // ---- where am I standing ------------------------------------------------
+  // The whole zone solve, and the only place in the audio build that knows what
+  // a supermarket is shaped like. All of it off config.js.
+  const zone = { open: 1, aisle: -1, lateral: 9, chill: 0, front: 0, back: 0, mouth: 0 };
+
+  function solve(x, z) {
+    // nearest aisle centreline, and how far off it we are
+    let ai = Math.round(x / PITCH + (AISLE_COUNT - 1) / 2);
+    ai = clamp(ai, 0, AISLE_COUNT - 1);
+    const lat = Math.abs(x - aisleX(ai));
+    zone.aisle = ai; zone.lateral = lat;
+
+    // In the slot? Needs to be near a centreline AND alongside the gondola body.
+    // The cross-aisles (front walk, mid walkway, back walk) are open ground even
+    // though they sit on an aisle's X.
+    //
+    // All three edges are RAMPS, not booleans. Walking out of an aisle mouth is
+    // the single moment this whole file exists for, and a step change in `open`
+    // makes it a switch you hear flip rather than a room you walk out of. The
+    // ramps are about 2 m wide, which is roughly one second at walking pace.
+    const inCross = smooth(CROSS_HALF - 0.9, CROSS_HALF + 1.6, Math.abs(z - CROSS_Z));
+    const endF = smooth(BODY + 1.5, BODY - 1.0, Math.abs(z));
+    const slot = (1 - smooth(1.35, 2.45, lat)) * endF * inCross;
+
+    // front end: past the checkout heads, and the glass is right there
+    const front = smooth(FRONT_WALK_Z + 5.0, FRONT_WALK_Z - 1.5, z);
+    // back wall run
+    const back = smooth(BACK_WALK_Z - 4.5, BACK_WALK_Z + 1.0, z);
+    // standing in a mouth — the ends of the aisles and the mid walkway. Half open.
+    const mouth = Math.max(
+      (1 - inCross) * (lat < 2.6 ? 1 : 0),
+      (1 - endF) * smooth(BODY + 3.2, BODY - 0.4, Math.abs(z)) * (lat < 2.6 ? 1 : 0));
+
+    zone.front = front; zone.back = back; zone.mouth = mouth;
+    // openness: 0 deep in a slot, 1 out on the front end.
+    let open = 1 - slot;
+    open = Math.max(open * (1 - 0.35 * mouth * slot), front * 0.95 + open * (1 - front));
+    open = clamp(open, 0, 1);
+    zone.open = open;
+
+    // --- refrigeration proximity. Two runs: the back-wall case line (which
+    // covers only the LEFT 56% of the store — see store.js) and the reach-in
+    // bank down the whole minX wall. Standing at the dairy has to be a different
+    // place to stand than aisle 4, and this number is what makes it one.
+    const coolX0 = STORE.minX + 1.2, coolX1 = STORE.minX + (STORE.maxX - STORE.minX) * 0.56;
+    const dBack = Math.hypot(Math.max(0, Math.max(coolX0 - x, x - coolX1)), Math.max(0, (STORE.maxZ - 0.62) - z - 0.55));
+    const dLeft = Math.hypot(Math.max(0, x - (STORE.minX + 0.62)), Math.max(0, Math.abs(z) - (BODY + 0.44)));
+    const d = Math.min(dBack, dLeft);
+    zone.chill = 1 - smooth(1.5, 11.0, d);
+    zone.chillDist = d;
+    return zone;
+  }
+
+  // ---- per-frame ----------------------------------------------------------
+  // Convolvers are the one thing in here with a real DSP cost, so a room that is
+  // not being used gets its send disconnected once its tail has run out, and
+  // reconnected when it is wanted again. On the floor that is 2 convolvers live;
+  // at the desk it is 2 (small room + whatever of the store is bleeding in).
+  function park(b, want, t, tail) {
+    if (want > 0.0015) {
+      if (!b.live) { b.send.connect(b.conv); b.live = true; }
+      b.dead = 0;
+      to(b.send.gain, want, t, 0.28);
+    } else {
+      to(b.send.gain, 0, t, 0.22);
+      if (b.live) { b.dead += 1; if (b.dead > tail) { try { b.send.disconnect(b.conv); } catch (e) {} b.live = false; } }
+    }
+  }
+
+  let deskF = 0;
+  function update(t, x, z, isDesk, dt) {
+    const zn = solve(x, z);
+    deskF += ((isDesk ? 1 : 0) - deskF) * (1 - Math.exp(-4.5 * Math.min(0.1, dt)));
+    const o = zn.open, floorF = 1 - deskF;
+
+    // aisle <-> open crossfade. Equal-power so the total wet energy holds through
+    // the walk instead of dipping in the doorway. At the desk the store keeps
+    // its OPEN room — that reverb is still happening on the other side of the
+    // wall whether you are in it or not — and only the aisle branch shuts down.
+    const ga = Math.cos(o * Math.PI * 0.5), go = Math.sin(o * Math.PI * 0.5);
+    park(A, ga * floorF * 0.92, t, 90);
+    park(O, (0.16 + go * 0.94) * floorF + deskF * 1.0, t, 90);
+    // The closet is only a room when you are in it. Parking it on the floor is
+    // one whole convolver back, and the floor is where the frame budget is.
+    park(D, deskF > 0.002 ? 1 : 0, t, 40);
+
+    // wet level and tilt travel together: a slot is drier, tighter, mid-forward;
+    // the front end is wetter, heavier and a shade darker on top.
+    to(out.gain, lerp(0.72, 1.0, o) * floorF + deskF * 1.0, t, 0.25);
+    to(wLow.gain, lerp(-3.0, 1.6, o) * floorF, t, 0.3);
+    to(wMid.gain, lerp(2.6, -1.1, o) * floorF, t, 0.3);
+    to(wHigh.gain, lerp(1.6, -1.4, o) * floorF, t, 0.3);
+
+    to(direct.gain, 1 - deskF, t, 0.15);
+    to(bleed.gain, deskF, t, 0.15);
+    return zn;
+  }
+
+  return {
+    input, smallIn, out, deskOut, storeIn, storeOut, zone, solve, update, setListener,
+    // the convolvers, so audio.js can report what it actually costs
+    convs: [A, O, D],
+    irs: { aisle: irAisle, open: irOpen, desk: irDesk },
+  };
+}
+
+return { createRoom };
+})();
+
+/* ==== src/audio/bed.js ==== */
+const M_src_audio_bed_js = (() => {
+const { pinkBuffer, whiteBuffer, gain, filt, panner, loopNoise, ballastWave, mulberry, to, clamp, lerp, smooth } = M_src_audio_dsp_js;
+const { STORE, AISLE_LEN } = M_src_config_js;
+// OWNER: builder-audio. THE BUILDING.
+//
+// The part of a supermarket that is running whether anybody is in it or not:
+// ballast hum, air handling, refrigeration, the smear of forty people talking
+// thirty metres away, and the hiss of a very large volume of air.
+//
+// Everything here is persistent — it is built once and never retriggered — so
+// the per-frame cost is a handful of setTargetAtTime calls and no allocation.
+// Nothing loops on a period you could ever hear: every modulator is a sum of
+// sines at mutually irrational rates, and every noise bed is a long
+// cross-faded buffer read at three different offsets and rates.
+
+
+
+
+const BODY = AISLE_LEN / 2 - 0.62;
+
+// The refrigeration plant, laid out on the runs store.js actually builds:
+// the back-wall glass case line (left 56% of the store) and the reach-in bank
+// down the whole minX wall. Positions come off config, not off a guess.
+function fridgeSpots() {
+  const coolX0 = STORE.minX + 1.2, coolX1 = STORE.minX + (STORE.maxX - STORE.minX) * 0.56;
+  const cz = STORE.maxZ - 1.1;
+  return [
+    { x: coolX0 + (coolX1 - coolX0) * 0.16, z: cz, f0: 49.5, on: [58, 104], off: [34, 66], ph: 0.11 },
+    { x: coolX0 + (coolX1 - coolX0) * 0.52, z: cz, f0: 47.2, on: [66, 122], off: [28, 58], ph: 0.47 },
+    { x: coolX0 + (coolX1 - coolX0) * 0.87, z: cz, f0: 51.8, on: [52, 96], off: [40, 74], ph: 0.79 },
+    { x: STORE.minX + 1.0, z: -BODY * 0.55, f0: 46.4, on: [70, 130], off: [30, 62], ph: 0.28 },
+    { x: STORE.minX + 1.0, z: BODY * 0.52, f0: 50.6, on: [61, 112], off: [36, 70], ph: 0.63 },
+  ];
+}
+
+function createBed(ctx, room, out, wetOut) {
+  const rnd = mulberry(1337);
+  const nodes = [];       // for the cost report
+  const N = (n) => { nodes.push(n); return n; };
+
+  // Three long pink beds at coprime-ish durations, read at slightly different
+  // rates. Anything that wants noise taps one of these instead of owning a
+  // source, so the whole building costs three BufferSourceNodes.
+  const pinkA = pinkBuffer(ctx, 9.1, 11);
+  const pinkB = pinkBuffer(ctx, 7.3, 29);
+  const white = whiteBuffer(ctx, 3.7, 71);
+  const srcA = N(loopNoise(ctx, pinkA, 1.0, rnd));
+  const srcB = N(loopNoise(ctx, pinkB, 0.937, rnd));
+  const srcC = N(loopNoise(ctx, pinkA, 1.061, rnd));
+
+  // A source's own trim, so a shared bed can feed six chains at six levels.
+  const tap = (src, g) => { const n = N(gain(ctx, g)); src.connect(n); return n; };
+
+  // ---- send helper --------------------------------------------------------
+  // Every element decides how much of itself is direct and how much arrives via
+  // the room. There is no dry-only sound in this building.
+  function place(node, dry, wet) {
+    const d = N(gain(ctx, dry)); node.connect(d); d.connect(out);
+    const w = N(gain(ctx, wet)); node.connect(w); w.connect(wetOut);
+    return { dry: d, wet: w };
+  }
+
+  // The same, for something with a position — and the send is taken BEFORE the
+  // panner on purpose. A reverberant field does not fall off with distance the
+  // way direct sound does; a compressor forty metres away puts just as much
+  // energy into the room as one next to you, you just stop hearing it directly.
+  // Taking the send after the panner (which is what this did in round 1) makes
+  // distant sources DRY, which is backwards, and it is the difference between a
+  // 4000 m2 room and a diorama of one.
+  function placeAt(src, p, dry, wet) {
+    src.connect(p);
+    const d = N(gain(ctx, dry)); p.connect(d); d.connect(out);
+    const w = N(gain(ctx, wet)); src.connect(w); w.connect(wetOut);
+    return { dry: d, wet: w };
+  }
+
+  // =========================================================================
+  // FLUORESCENT BALLAST HUM — 120 Hz and its odd harmonics.
+  // =========================================================================
+  // Not one buzz: a store has two hundred fixtures, and what you hear is the
+  // sum. Mains sits at 60 Hz +- 0.03, so the fixtures beat against each other
+  // over five to twenty seconds and the hum never sits still. Three voices with
+  // independent slow random walks is enough to read as "hundreds".
+  const bwave = ballastWave(ctx, 3);
+  const humSum = N(gain(ctx, 1));
+  const humOsc = [];
+  for (let i = 0; i < 3; i++) {
+    const o = N(ctx.createOscillator());
+    o.setPeriodicWave(bwave);
+    o.frequency.value = 120 + (i - 1) * 0.045;
+    const g = N(gain(ctx, [0.0315, 0.0230, 0.0184][i]));
+    // each fixture family has its own mechanical resonance, so each voice gets
+    // its own colour instead of three copies of one waveform
+    const p = N(filt(ctx, 'peaking', [352, 604, 843][i], [3.0, 3.6, 4.2][i], [5, 4, 6][i]));
+    const hp = N(filt(ctx, 'highpass', 96, 0.7));
+    o.connect(p); p.connect(hp); hp.connect(g); g.connect(humSum);
+    o.start();
+    humOsc.push({ o, g, base: 120 + (i - 1) * 0.045, walk: rnd() * 6.28 });
+  }
+  // The rasp. A magnetic ballast that is on its way out buzzes in the 2-4 kHz
+  // band at twice mains, and this is the detail that stops the hum reading as a
+  // sine. One bad fixture, up in the deck, off to one side.
+  const raspSrc = N(tap(srcB, 1));
+  const raspBP = N(filt(ctx, 'bandpass', 2650, 2.4));
+  const raspBP2 = N(filt(ctx, 'peaking', 3900, 5, 8));
+  const raspGate = N(gain(ctx, 0));
+  const raspLFO = N(ctx.createOscillator()); raspLFO.type = 'sawtooth'; raspLFO.frequency.value = 120;
+  const raspDepth = N(gain(ctx, 0.5));
+  raspLFO.connect(raspDepth); raspDepth.connect(raspGate.gain); raspLFO.start();
+  const raspPan = N(panner(ctx, STORE.minX + 14, 4.9, 6.0, 6, 0.9));
+  raspSrc.connect(raspBP); raspBP.connect(raspBP2); raspBP2.connect(raspGate);
+  raspGate.connect(raspPan);
+  const raspLvl = N(gain(ctx, 0.026));
+  raspPan.connect(raspLvl);
+  place(raspLvl, 0.55, 0.85);
+
+  const humLvl = N(gain(ctx, 1.0));
+  humSum.connect(humLvl);
+  const humPlace = place(humLvl, 0.62, 0.75);
+
+  // =========================================================================
+  // HVAC — broad rumble under 200 Hz that is never quite steady.
+  // =========================================================================
+  const airLow = tap(srcA, 1);
+  const hv1 = N(filt(ctx, 'lowpass', 155, 0.8));
+  const hv2 = N(filt(ctx, 'lowpass', 210, 0.6));
+  const hvRes = N(filt(ctx, 'peaking', 56, 1.10, 6));
+  const hvRes2 = N(filt(ctx, 'peaking', 108, 2.0, 4));
+  const hvHP = N(filt(ctx, 'highpass', 33, 0.7));   // below this is speaker damage, not sound
+  const hvGain = N(gain(ctx, 0.115));
+  airLow.connect(hv1); hv1.connect(hv2); hv2.connect(hvRes); hvRes.connect(hvRes2);
+  hvRes2.connect(hvHP); hvHP.connect(hvGain);
+  place(hvGain, 0.95, 0.45);
+
+  // The diffusers themselves: air through a grille, up in the ceiling, all over
+  // the store. Quiet, wide, and it is most of what makes a big room sound big
+  // when nothing else is happening.
+  const diff = tap(srcB, 1);
+  const dfBP = N(filt(ctx, 'bandpass', 620, 0.55));
+  const dfHS = N(filt(ctx, 'highshelf', 2400, 0.7, -8));
+  const dfGain = N(gain(ctx, 0.115));
+  diff.connect(dfBP); dfBP.connect(dfHS); dfHS.connect(dfGain);
+  place(dfGain, 0.35, 1.05);
+
+  // ROOM AIR. A very quiet broadband top end. Without it the store sounds like a
+  // synthesiser between events; with it the silence has a floor.
+  const air = tap(srcC, 1);
+  const airHP = N(filt(ctx, 'highpass', 900, 0.6));
+  const airLP = N(filt(ctx, 'lowpass', 7200, 0.6));
+  const airG = N(gain(ctx, 0.155));
+  air.connect(airHP); airHP.connect(airLP); airLP.connect(airG);
+  place(airG, 0.25, 1.0);
+
+  // The top two octaves. Pink noise has already fallen 15 dB by the time it
+  // gets here, so this branch takes it back: a shelved-up, high-passed hiss
+  // that is the diffusers, the lights, and forty metres of hard air. Without it
+  // the store measured 0.000 of its energy above 5 kHz and read as a boiler
+  // room. It is quiet and it is doing more work than anything else in the file.
+  const airTop = tap(srcB, 1);
+  const atHP = N(filt(ctx, 'highpass', 3400, 0.5));
+  const atHP2 = N(filt(ctx, 'highpass', 4200, 0.6));
+  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, 9));
+  const atLP = N(filt(ctx, 'lowpass', 21500, 0.5));
+  const atG = N(gain(ctx, 0.265));
+  airTop.connect(atHP); atHP.connect(atHP2); atHP2.connect(atSh); atSh.connect(atLP);
+  atLP.connect(atG);
+  place(atG, 0.30, 0.95);
+
+  // =========================================================================
+  // REFRIGERATION — cycling over minutes, not seconds.
+  // =========================================================================
+  // A compressor is a motor at ~2900 rpm with a hard mechanical spectrum, a
+  // condenser fan, and a case full of moving air. It runs for a minute or two
+  // and then stops, and a store has half a dozen of them out of phase. Standing
+  // at the dairy is not "the same store but louder" — it is a different set of
+  // frequencies, because the near unit's fan hiss survives the distance the far
+  // ones' does not.
+  const units = fridgeSpots().map((sp, i) => {
+    const p = N(panner(ctx, sp.x, 1.1, sp.z, 4.5, 1.05));
+    const body = N(gain(ctx, 0));               // duty-cycle envelope
+
+    const mot = N(ctx.createOscillator());
+    mot.type = 'sawtooth';
+    mot.frequency.value = sp.f0;
+    const motLP = N(filt(ctx, 'lowpass', 340, 0.9));
+    const motPk = N(filt(ctx, 'peaking', sp.f0 * 3, 4, 7));
+    const motG = N(gain(ctx, 0.042));
+    mot.connect(motLP); motLP.connect(motPk); motPk.connect(motG); motG.connect(body);
+    mot.start();
+
+    // case + evaporator air. The lowpass on this one is driven by distance in
+    // update() — near the glass it is a hiss, from aisle 4 it is a drone.
+    const fan = N(gain(ctx, 1));
+    (i % 2 ? srcB : srcC).connect(fan);
+    const fanBP = N(filt(ctx, 'bandpass', 780 + i * 90, 0.62));
+    const fanLP = N(filt(ctx, 'lowpass', 1400, 0.7));
+    const fanG = N(gain(ctx, 0.155));
+    fan.connect(fanBP); fanBP.connect(fanLP); fanLP.connect(fanG); fanG.connect(body);
+
+    const rum = N(gain(ctx, 1));
+    (i % 2 ? srcA : srcB).connect(rum);
+    const rumLP = N(filt(ctx, 'lowpass', 250, 0.8));
+    const rumPk = N(filt(ctx, 'peaking', 172, 1.6, 6));
+    const rumG = N(gain(ctx, 0.085));
+    rum.connect(rumLP); rumLP.connect(rumPk); rumPk.connect(rumG); rumG.connect(body);
+
+    const lvl = N(gain(ctx, 1.0));
+    placeAt(body, p, 1.05, 0.40);
+    p.connect(lvl);
+
+    return {
+      sp, p, body, mot, fanLP, lvl,
+      state: rnd() < 0.6 ? 'on' : 'off',
+      t: rnd() * (rnd() < 0.6 ? 70 : 45),
+      dur: sp.on[0] + rnd() * (sp.on[1] - sp.on[0]),
+      f0: sp.f0,
+    };
+  });
+
+  // The rack in the back room. Always on, never located, and it is the reason a
+  // supermarket has a floor of low-mid noise even at 6 am.
+  const rack = tap(srcA, 1);
+  const rkBP = N(filt(ctx, 'bandpass', 205, 0.75));
+  const rkPk = N(filt(ctx, 'peaking', 96, 2.2, 7));
+  const rkG = N(gain(ctx, 0.045));
+  rack.connect(rkBP); rkBP.connect(rkPk); rkPk.connect(rkG);
+  place(rkG, 0.55, 0.85);
+
+  // =========================================================================
+  // PEOPLE — a smear, never a word.
+  // =========================================================================
+  // Rendered offline into one 16-second mono buffer at 11 kHz (there is nothing
+  // above 2.5 kHz in a crowd heard across a store), then read by three sources
+  // at different rates and offsets. Composite period is minutes; individual
+  // period is inaudible because a crowd has no features to loop.
+  const murmur = murmurBuffer(ctx, 16.0, 12, 606);
+  const talkers = [
+    { x: -6, z: STORE.minZ + 6.5, rate: 1.0, g: 0.85 },     // the front end
+    { x: 6, z: 2.0, rate: 0.941, g: 0.6 },                   // mid store
+    { x: -14, z: 11.0, rate: 1.077, g: 0.5 },                // back left
+  ].map((t) => {
+    const s = N(loopNoise(ctx, murmur, t.rate, rnd));
+    const bp = N(filt(ctx, 'bandpass', 780, 0.5));
+    const hs = N(filt(ctx, 'highshelf', 1900, 0.7, -6));
+    const p = N(panner(ctx, t.x, 1.55, t.z, 7, 0.75));
+    const g = N(gain(ctx, 0.26 * t.g));
+    s.connect(bp); bp.connect(hs); hs.connect(g);
+    // Mostly wet. You are never hearing a voice from thirty metres away; you are
+    // hearing the room's opinion of one.
+    placeAt(g, p, 0.52, 0.40);
+    return { p, g, base: t, s };
+  });
+
+  // =========================================================================
+  // per-frame
+  // =========================================================================
+  // Modulators are sums of sines at mutually irrational rates. There is no
+  // period, so there is no loop, and it costs seven Math.sin calls a frame.
+  let clock = 0;
+  const hvBase = 0.115;
+
+  function update(dt, t, zn, cop) {
+    clock += dt;
+    const c = clock;
+
+    // --- HVAC never quite steady
+    const hvm = 1 + 0.20 * Math.sin(c * 0.0389) + 0.11 * Math.sin(c * 0.1237 + 1.7)
+                  + 0.06 * Math.sin(c * 0.0113 + 4.1);
+    to(hvGain.gain, hvBase * hvm, t, 0.9);
+    to(hvRes.frequency, 56 + 2.4 * Math.sin(c * 0.0271), t, 1.2);
+    to(dfGain.gain, 0.115 * (1 + 0.22 * Math.sin(c * 0.0733 + 2.2)), t, 0.8);
+
+    // --- ballast: a slow random walk of a few hundredths of a hertz, which is
+    // exactly what the grid does. The three voices drift past each other and the
+    // beat rate wanders between about four and thirty seconds.
+    for (let i = 0; i < humOsc.length; i++) {
+      const h = humOsc[i];
+      h.walk += dt * (0.13 + i * 0.037);
+      to(h.o.frequency, h.base + 0.055 * Math.sin(h.walk) + 0.022 * Math.sin(h.walk * 2.61 + i), t, 1.5);
+    }
+    // the bad fixture stutters now and then
+    const flick = Math.sin(c * 0.317) * Math.sin(c * 1.913 + 0.7) * Math.sin(c * 0.0871);
+    to(raspLvl.gain, 0.026 * (0.55 + 0.9 * clamp(flick * 2 + 0.7, 0, 1.4)), t, 0.25);
+
+    // --- refrigeration duty cycles
+    for (const u of units) {
+      u.t += dt;
+      if (u.t >= u.dur) {
+        u.t = 0;
+        if (u.state === 'on') {
+          u.state = 'off';
+          u.dur = u.sp.off[0] + rnd() * (u.sp.off[1] - u.sp.off[0]);
+          // spin-down: the motor drops about eight per cent as it coasts
+          u.body.gain.cancelScheduledValues(t);
+          u.body.gain.setTargetAtTime(0.0, t, 0.75);
+          u.mot.frequency.cancelScheduledValues(t);
+          u.mot.frequency.setValueAtTime(u.f0, t);
+          u.mot.frequency.exponentialRampToValueAtTime(u.f0 * 0.905, t + 2.4);
+        } else {
+          u.state = 'on';
+          u.dur = u.sp.on[0] + rnd() * (u.sp.on[1] - u.sp.on[0]);
+          // start: the motor pulls down under load and climbs back
+          u.body.gain.cancelScheduledValues(t);
+          u.body.gain.setValueAtTime(u.body.gain.value, t);
+          u.body.gain.linearRampToValueAtTime(1.16, t + 0.55);
+          u.body.gain.setTargetAtTime(1.0, t + 0.55, 0.9);
+          u.mot.frequency.cancelScheduledValues(t);
+          u.mot.frequency.setValueAtTime(u.f0 * 0.86, t);
+          u.mot.frequency.setTargetAtTime(u.f0, t + 0.05, 0.35);
+        }
+      }
+      // distance colour: from the glass it is air, from aisle 4 it is a drone.
+      const dx = cop.x - u.sp.x, dz = cop.z - u.sp.z;
+      const d = Math.hypot(dx, dz);
+      to(u.fanLP.frequency, lerp(6800, 900, smooth(1.6, 16, d)), t, 0.5);
+      // slow load wobble while running
+      if (u.state === 'on') to(u.mot.frequency, u.f0 * (1 + 0.004 * Math.sin(c * 0.21 + u.sp.ph * 9)), t, 1.4);
+    }
+
+    // --- the crowd drifts. People do not stand still, and a murmur nailed to a
+    // coordinate is the fastest way to make a room read as a diorama.
+    for (let i = 0; i < talkers.length; i++) {
+      const k = talkers[i], b = k.base;
+      const ox = 5.5 * Math.sin(c * (0.021 + i * 0.008) + i * 2.1);
+      const oz = 4.0 * Math.sin(c * (0.017 + i * 0.006) + i * 3.7);
+      if (k.p.positionX) {
+        k.p.positionX.setTargetAtTime(b.x + ox, t, 1.5);
+        k.p.positionZ.setTargetAtTime(b.z + oz, t, 1.5);
+      } else if (k.p.setPosition) k.p.setPosition(b.x + ox, 1.55, b.z + oz);
+      // the front end is where the queue is; it gets busier and quieter in waves
+      to(k.g.gain, 0.26 * b.g * (0.72 + 0.42 * Math.sin(c * (0.033 + i * 0.011) + i)), t, 1.2);
+    }
+
+    // --- the hum is the one thing that does NOT change with the room. It is
+    // overhead everywhere, so it stays put while everything else moves, and that
+    // is what makes it read as the building rather than as a source.
+    to(humPlace.wet.gain, lerp(0.60, 0.92, zn.open), t, 0.4);
+  }
+
+  return { update, units, nodes, talkers, murmur };
+}
+
+// -------------------------------------------------------------------- murmur
+// Ten talkers rendered into one buffer. Each is a two-pole resonator pair fed
+// with noise and gated by a syllable train, which is what a voice sounds like
+// once the room has taken the consonants off it. Deliberately not intelligible:
+// a crowd you can understand is a crowd you are listening TO, and the moment the
+// player starts parsing words the store stops being a place.
+function murmurBuffer(ctx, seconds, talkers, seed) {
+  const sr = 11025;
+  const n = Math.floor(sr * seconds);
+  const buf = ctx.createBuffer(1, n, sr);
+  const d = buf.getChannelData(n === 0 ? 0 : 0);
+  const r = mulberry(seed);
+  const VOW = [[730, 1090], [530, 1840], [270, 2290], [570, 840], [440, 1020], [500, 1500], [660, 1720]];
+  for (let v = 0; v < talkers; v++) {
+    const lvl = (0.22 + r() * 0.55) / Math.sqrt(talkers);
+    const rate = 3.1 + r() * 2.3;                 // syllables per second
+    let sylT = r() * 0.4, sylLen = 0.14, gate = 0;
+    let vow = VOW[(r() * VOW.length) | 0];
+    let f1 = vow[0], f2 = vow[1], tf1 = f1, tf2 = f2;
+    let y1a = 0, y1b = 0, y2a = 0, y2b = 0;
+    // phrase structure: people talk for a few seconds and then stop
+    let phrase = r() < 0.5, phT = r() * 3;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      sylT -= 1 / sr; phT -= 1 / sr;
+      if (phT <= 0) { phrase = !phrase; phT = phrase ? 1.4 + r() * 3.6 : 0.7 + r() * 4.5; }
+      if (sylT <= 0) {
+        sylT = (1 / rate) * (0.62 + r() * 0.8);
+        sylLen = sylT * (0.45 + r() * 0.35);
+        vow = VOW[(r() * VOW.length) | 0];
+        tf1 = vow[0] * (0.82 + r() * 0.36); tf2 = vow[1] * (0.85 + r() * 0.3);
+        gate = phrase ? 1 : 0;
+      }
+      f1 += (tf1 - f1) * 0.004; f2 += (tf2 - f2) * 0.004;
+      // syllable envelope: fast in, slower out, never a square edge
+      const age = Math.max(0, sylLen - sylT) / (sylLen || 1);
+      const env = gate * Math.min(1, age * 9) * Math.exp(-Math.max(0, (1 / rate - sylT) / sylLen - 0.45) * 2.6);
+      if (env > 0.001) {
+        const x = (r() * 2 - 1) * env;
+        // two resonators = two formants. Enough to be a voice, not enough to be
+        // a word.
+        const w1 = 2 * Math.PI * f1 / sr, w2 = 2 * Math.PI * f2 / sr;
+        const R1 = 0.976, R2 = 0.968;
+        const o1 = x + 2 * R1 * Math.cos(w1) * y1a - R1 * R1 * y1b; y1b = y1a; y1a = o1;
+        const o2 = x + 2 * R2 * Math.cos(w2) * y2a - R2 * R2 * y2b; y2b = y2a; y2a = o2;
+        d[i] += lvl * (o1 * 0.06 + o2 * 0.035);
+      }
+      if (i === 0 && t < 0) d[i] = 0;
+    }
+  }
+  // tame it, then cross-fade the seam
+  let mx = 0;
+  for (let i = 0; i < n; i++) mx = Math.max(mx, Math.abs(d[i]));
+  const g = mx > 0 ? 0.85 / mx : 1;
+  for (let i = 0; i < n; i++) d[i] *= g;
+  const x = Math.floor(sr * 0.6);
+  for (let i = 0; i < x; i++) { const k = i / x; d[i] = d[i] * k + d[n - x + i] * (1 - k); }
+  return buf;
+}
+
+return { createBed };
+})();
+
+/* ==== src/audio/voice.js ==== */
+const M_src_audio_voice_js = (() => {
+const { gain, filt, pulseWave, mulberry } = M_src_audio_dsp_js;
+// OWNER: builder-audio. A voice you cannot quite make out.
+//
+// Source-filter synthesis: a glottal pulse train through three formant
+// bandpasses that step between vowel targets on a syllable clock, with noise
+// bursts for consonants. It is not speech synthesis and it is not trying to be —
+// nothing in a supermarket is intelligible. The PA is a horn in a ceiling can
+// forty metres away; a shopper two aisles over is behind eight tonnes of
+// cardboard. What both of those sound like is prosody with the words taken off,
+// and that is exactly what this produces.
+//
+// One voice = 1 osc + 1 noise source + 5 filters, alive only for the length of
+// the phrase. Two at once, maximum.
+
+
+
+// F1/F2/F3 for a relaxed male vocal tract. Scaled per speaker.
+const VOWELS = [
+  [730, 1090, 2440],  // a
+  [530, 1840, 2480],  // e
+  [270, 2290, 3010],  // i
+  [570, 840, 2410],   // o
+  [300, 870, 2240],   // u
+  [500, 1500, 2500],  // schwa
+  [660, 1720, 2410],  // ae
+  [490, 1350, 2400],  // er
+];
+
+function createVoiceBank(ctx, noiseBuf, seedBase = 4242) {
+  const wave = pulseWave(ctx, 40, 1.05, 9);
+  let seed = seedBase;
+  let live = 0;
+
+  // opts: { f0, when, dur, dest, level, rate, tense }
+  function say(o) {
+    if (live >= 2) return 0;
+    const t0 = Math.max(ctx.currentTime + 0.01, o.when || ctx.currentTime);
+    const f0 = o.f0 || 112;
+    const dur = o.dur || 3.0;
+    const rnd = mulberry(seed = (seed * 1664525 + 1013904223) >>> 0);
+    live++;
+
+    const osc = ctx.createOscillator();
+    osc.setPeriodicWave(wave);
+    const src = ctx.createBufferSource();
+    src.buffer = noiseBuf; src.loop = true;
+
+    const glot = gain(ctx, 0);          // glottal (voiced) amplitude
+    const fric = gain(ctx, 0);          // fricative (unvoiced) amplitude
+    osc.connect(glot); src.connect(fric);
+    const fricBP = filt(ctx, 'bandpass', 3400, 1.1);
+    fric.connect(fricBP);
+
+    const sum = gain(ctx, 1);
+    const F = [];
+    for (let i = 0; i < 3; i++) {
+      const b = filt(ctx, 'bandpass', VOWELS[5][i], [7, 9, 11][i]);
+      const g = gain(ctx, [1.0, 0.62, 0.30][i]);
+      glot.connect(b); b.connect(g); g.connect(sum);
+      F.push(b);
+    }
+    fricBP.connect(sum);
+    // the tract's own tilt — a voice is not flat
+    const tilt = filt(ctx, 'lowshelf', 420, 0.7, 4);
+    const top = filt(ctx, 'highshelf', 3200, 0.7, -6);
+    const outG = gain(ctx, o.level == null ? 0.5 : o.level);
+    sum.connect(tilt); tilt.connect(top); top.connect(outG);
+    outG.connect(o.dest);
+
+    // ---- schedule the phrase ------------------------------------------------
+    const rate = o.rate || (3.6 + rnd() * 1.3);      // syllables/sec
+    let t = t0 + 0.02;
+    // intonation: a declarative phrase falls, and the fall is most of what makes
+    // a mumble read as a sentence rather than as a noise
+    const top0 = f0 * (1.05 + rnd() * 0.14);
+    let nsyl = 0;
+    const end = t0 + dur;
+    osc.frequency.setValueAtTime(top0, t0);
+    // Hard syllable cap. Every syllable is ~8 AudioParam calls and the whole
+    // phrase is scheduled in one frame; an unbounded nine-second announcement
+    // measured a 4.1 ms spike in update(), which is a quarter of a frame for a
+    // once-a-minute event. 30 syllables bounds it under a millisecond and no
+    // real PA announcement is longer than that anyway.
+    while (t < end - 0.05 && nsyl < 30) {
+      const len = (1 / rate) * (0.66 + rnd() * 0.75);
+      const hold = len * (0.42 + rnd() * 0.32);
+      const k = (t - t0) / dur;
+      // a comma: people pause
+      if (rnd() < 0.10 && nsyl > 2) { t += 0.14 + rnd() * 0.34; continue; }
+      const stress = rnd() < 0.3 ? 1.25 : 1.0;
+      const f = top0 * (1 - 0.30 * k) * (0.93 + rnd() * 0.16) * stress;
+      osc.frequency.setTargetAtTime(f, t, 0.035);
+
+      const v = VOWELS[(rnd() * VOWELS.length) | 0];
+      const sc = o.tense == null ? 1 : o.tense;
+      for (let i = 0; i < 3; i++) F[i].frequency.setTargetAtTime(v[i] * sc, t, 0.028);
+
+      // consonant on the front of most syllables
+      if (rnd() < 0.72) {
+        const cf = 1800 + rnd() * 4200;
+        fricBP.frequency.setValueAtTime(cf, t);
+        fric.gain.setValueAtTime(0, t);
+        fric.gain.linearRampToValueAtTime(0.55 + rnd() * 0.5, t + 0.006);
+        fric.gain.setTargetAtTime(0, t + 0.012, 0.018);
+      }
+      glot.gain.setTargetAtTime(0.9 * stress, t + 0.012, 0.016);
+      glot.gain.setTargetAtTime(0.02, t + 0.012 + hold, 0.030);
+      t += len; nsyl++;
+    }
+    glot.gain.setTargetAtTime(0, end - 0.02, 0.05);
+    fric.gain.setTargetAtTime(0, end - 0.02, 0.05);
+    outG.gain.setTargetAtTime(0, end + 0.02, 0.08);
+
+    osc.start(t0); src.start(t0, rnd() * 2);
+    osc.stop(end + 0.5); src.stop(end + 0.5);
+    src.onended = () => {
+      live--;
+      try { outG.disconnect(); } catch (e) {}
+    };
+    return nsyl;
+  }
+
+  return { say, get live() { return live; } };
+}
+
+return { createVoiceBank };
+})();
+
+/* ==== src/audio/pa.js ==== */
+const M_src_audio_pa_js = (() => {
+const { gain, filt, shaper, panner, mulberry, clamp } = M_src_audio_dsp_js;
+const { createVoiceBank } = M_src_audio_voice_js;
+// OWNER: builder-audio. THE PA.
+//
+// The only music allowed in this game, and it is not a soundtrack — it is a
+// 4-inch paper cone in a steel can in the ceiling, forty metres of hard room
+// between it and you, playing a licensing-library instrumental at a level
+// somebody set in 1997 and never touched again.
+//
+// Procedural muzak is a real synthesis problem and the trap is trying to write
+// good music. Good music is the wrong answer: the player would start listening
+// to it. What sells it is that it is BLAND and SLIGHTLY WRONG — a lead line that
+// holds a note one beat too long, a chord voicing that sits on a ninth for no
+// reason, a tempo nobody chose. So the harmony here is the most obvious
+// progression in music, the melody is a random walk that occasionally fumbles,
+// and the whole thing is destroyed by the speaker before it reaches the room.
+//
+// It never repeats: the key steps up every eight to sixteen bars, the melody is
+// generated a phrase at a time, and the tempo drifts.
+
+
+
+
+const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
+
+// The four progressions muzak is actually made of, as semitone offsets from the
+// key and a chord quality.
+const MAJ7 = [0, 4, 7, 11], MIN7 = [0, 3, 7, 10], DOM7 = [0, 4, 7, 10], MAJ6 = [0, 4, 7, 9];
+const PROGS = [
+  [[0, MAJ7], [9, MIN7], [2, MIN7], [7, DOM7]],
+  [[0, MAJ7], [5, MAJ7], [4, MIN7], [9, MIN7], [2, MIN7], [7, DOM7]],
+  [[2, MIN7], [7, DOM7], [0, MAJ6], [0, MAJ6]],
+  [[0, MAJ7], [5, MAJ7], [0, MAJ7], [7, DOM7]],
+  [[0, MAJ7], [2, MIN7], [4, MIN7], [5, MAJ7]],
+];
+const SCALE = [0, 2, 4, 5, 7, 9, 11];
+
+// Ceiling speaker positions. Four cans on a 70-volt line, spread out, and the
+// point of them is that you are NEVER underneath one — you always hear two at
+// slightly different distances, which is a comb filter that changes as you walk.
+const SPK = [[-16, -10, 0.000], [-5, 4, 0.012], [7, -6, 0.022], [17, 9, 0.031]];
+
+function createPA(ctx, room, out, wetOut, noiseBuf) {
+  const rnd = mulberry(9091);
+  const nodes = [];
+  const N = (n) => { nodes.push(n); return n; };
+
+  // ---- the speaker --------------------------------------------------------
+  const paIn = N(gain(ctx, 1));
+  const drive = N(shaper(ctx, 1.9));
+  const hp1 = N(filt(ctx, 'highpass', 210, 0.7));
+  const hp2 = N(filt(ctx, 'highpass', 240, 0.6));
+  const honk = N(filt(ctx, 'peaking', 1750, 1.5, 4));      // the cone's own shout
+  const suck = N(filt(ctx, 'peaking', 820, 1.8, -6));       // and its hole
+  const lp1 = N(filt(ctx, 'lowpass', 4300, 0.8));
+  const lp2 = N(filt(ctx, 'lowpass', 5400, 0.6));
+  const paLvl = N(gain(ctx, 0.175));
+  paIn.connect(drive); drive.connect(hp1); hp1.connect(hp2); hp2.connect(honk);
+  honk.connect(suck); suck.connect(lp1); lp1.connect(lp2); lp2.connect(paLvl);
+
+  // direct sound, from four cans at four distances
+  for (const [x, z, dly] of SPK) {
+    const d = N(ctx.createDelay(0.1)); d.delayTime.value = dly;
+    const c = N(filt(ctx, 'lowpass', 3400 + rnd() * 1600, 0.7));
+    const p = N(panner(ctx, x, 4.85, z, 8, 0.55));
+    const g = N(gain(ctx, 0.42));
+    paLvl.connect(d); d.connect(c); c.connect(p); p.connect(g); g.connect(out);
+  }
+  // and the room's opinion of it, which is most of what you hear
+  const paWet = N(gain(ctx, 1.05));
+  paLvl.connect(paWet); paWet.connect(wetOut);
+
+  // sub-buses so an announcement can duck the music
+  const music = N(gain(ctx, 1)); music.connect(paIn);
+  const speech = N(gain(ctx, 1)); speech.connect(paIn);
+
+  const voices = createVoiceBank(ctx, noiseBuf, 777);
+
+  // ---- instruments --------------------------------------------------------
+  // Every note is built, played and thrown away. That is what Web Audio is for,
+  // and it keeps the resting node count at the ~30 above.
+  const compBus = N(gain(ctx, 0.16)); compBus.connect(music);
+  const bassBus = N(gain(ctx, 0.30)); bassBus.connect(music);
+  const leadBus = N(gain(ctx, 0.20)); leadBus.connect(music);
+  const percBus = N(gain(ctx, 0.10)); percBus.connect(music);
+
+  // one shared vibrato for the lead — a per-note LFO would be three more nodes
+  // per note for no audible gain
+  const vib = N(ctx.createOscillator()); vib.frequency.value = 5.2; vib.type = 'sine';
+  const vibAmt = N(gain(ctx, 11)); vib.connect(vibAmt); vib.start();
+  // and one wow: the whole PA drifts a few cents, like everything that has been
+  // playing continuously since 1997
+  const wow = N(ctx.createOscillator()); wow.frequency.value = 0.077; wow.type = 'sine';
+  const wowAmt = N(gain(ctx, 5)); wow.connect(wowAmt); wow.start();
+
+  function rhodes(f, t, dur, vel) {
+    const g = gain(ctx, 0);
+    const o1 = ctx.createOscillator(); o1.type = 'sine'; o1.frequency.value = f;
+    const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * 2.002;
+    const o3 = ctx.createOscillator(); o3.type = 'sine'; o3.frequency.value = f * 4.01;
+    const g2 = gain(ctx, 0.20), g3 = gain(ctx, 0.10);
+    wowAmt.connect(o1.detune); wowAmt.connect(o2.detune);
+    o1.connect(g); o2.connect(g2); g2.connect(g); o3.connect(g3); g3.connect(g);
+    g.connect(compBus);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vel, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(vel * 0.30, t + 0.35);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    // the tine's bark dies before the body does
+    g3.gain.setValueAtTime(0.10, t); g3.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
+    for (const o of [o1, o2, o3]) { o.start(t); o.stop(t + dur + 0.05); }
+    o1.onended = () => { try { g.disconnect(); } catch (e) {} };
+  }
+
+  function bass(f, t, dur, vel) {
+    const g = gain(ctx, 0);
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
+    const o2 = ctx.createOscillator(); o2.type = 'triangle'; o2.frequency.value = f;
+    const g2 = gain(ctx, 0.16);
+    const lp = filt(ctx, 'lowpass', 340, 1.0);
+    o.connect(g); o2.connect(g2); g2.connect(g); g.connect(lp); lp.connect(bassBus);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vel, t + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.start(t); o2.start(t); o.stop(t + dur + 0.03); o2.stop(t + dur + 0.03);
+    o.onended = () => { try { lp.disconnect(); } catch (e) {} };
+  }
+
+  function lead(f, t, dur, vel) {
+    const g = gain(ctx, 0);
+    const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
+    const bp = filt(ctx, 'bandpass', clamp(f * 2.4, 500, 2600), 1.1);
+    const pk = filt(ctx, 'peaking', 1300, 1.5, 4);
+    vibAmt.connect(o.detune); wowAmt.connect(o.detune);
+    o.connect(bp); bp.connect(pk); pk.connect(g); g.connect(leadBus);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vel, t + 0.065);      // a breath, not a pluck
+    g.gain.setTargetAtTime(vel * 0.82, t + 0.065, 0.25);
+    g.gain.setTargetAtTime(0.0001, t + dur * 0.88, 0.055);
+    o.start(t); o.stop(t + dur + 0.25);
+    o.onended = () => { try { g.disconnect(); } catch (e) {} };
+  }
+
+  const hatHP = N(filt(ctx, 'highpass', 6200, 0.7));
+  const hatLvl = N(gain(ctx, 0.5)); hatHP.connect(hatLvl); hatLvl.connect(percBus);
+  function hat(t, vel) {
+    const s = ctx.createBufferSource(); s.buffer = noiseBuf;
+    const g = gain(ctx, 0);
+    s.connect(g); g.connect(hatHP);
+    g.gain.setValueAtTime(vel, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
+    s.start(t, rnd() * 2, 0.06); s.onended = () => { try { g.disconnect(); } catch (e) {} };
+  }
+  function kick(t, vel) {
+    const o = ctx.createOscillator(); o.type = 'sine';
+    const g = gain(ctx, 0);
+    o.connect(g); g.connect(percBus);
+    o.frequency.setValueAtTime(88, t); o.frequency.exponentialRampToValueAtTime(46, t + 0.09);
+    g.gain.setValueAtTime(vel, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
+    o.start(t); o.stop(t + 0.2);
+    o.onended = () => { try { g.disconnect(); } catch (e) {} };
+  }
+
+  // ---- the chime ----------------------------------------------------------
+  // Two struck bars, inharmonic, in the room. A real building sound, not a
+  // stinger: it is the thing that happens before somebody talks.
+  function bell(f, t, vel) {
+    const g = gain(ctx, 0);
+    g.connect(speech);
+    for (const [r, a, d] of [[1, 1, 1.5], [2.76, 0.32, 0.9], [5.40, 0.14, 0.5], [8.93, 0.06, 0.28]]) {
+      const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f * r;
+      const gg = gain(ctx, 0);
+      o.connect(gg); gg.connect(g);
+      gg.gain.setValueAtTime(0, t);
+      gg.gain.linearRampToValueAtTime(a * vel, t + 0.004);
+      gg.gain.exponentialRampToValueAtTime(0.0001, t + d);
+      o.start(t); o.stop(t + d + 0.05);
+    }
+    g.gain.setValueAtTime(1, t);
+    setTimeout(() => { try { g.disconnect(); } catch (e) {} }, 2600);
+  }
+
+  // ---- sequencer state ----------------------------------------------------
+  let key = 65;                    // F, because muzak lives in flat keys
+  let bpm = 84 + rnd() * 10;
+  let prog = PROGS[(rnd() * PROGS.length) | 0];
+  let bar = 0, barsSinceKey = 0, keyEvery = 8 + ((rnd() * 9) | 0);
+  let nextBarAt = 0;
+  let melNote = key + 12, restBars = 0;
+  let paOn = true;
+
+  // announcements
+  let annAt = 30 + rnd() * 50;
+  let annUntil = -1;
+
+  function scheduleBar(t) {
+    const spb = 60 / bpm, barLen = spb * 4;
+    const [deg, qual] = prog[bar % prog.length];
+    const root = key + deg;
+
+    // --- comp. Rootless-ish, up in the middle where a 4-inch cone can pass it.
+    const voicing = [];
+    for (let i = 1; i < qual.length; i++) voicing.push(root + qual[i] + 12);
+    if (rnd() < 0.4) voicing.push(root + qual[1] + 24);
+    for (const hit of (rnd() < 0.35 ? [0, 1.5, 2.5] : [0, 2])) {
+      const tt = t + hit * spb;
+      const vel = 0.75 + rnd() * 0.3;
+      for (const m of voicing) rhodes(mtof(m), tt, barLen * 0.85, vel * (0.7 + rnd() * 0.4));
+    }
+    // --- bass. Root, then the fifth or a walk to the next root.
+    bass(mtof(root - 12), t, spb * 1.5, 0.9);
+    const nxt = prog[(bar + 1) % prog.length][0] + key;
+    const walk = rnd() < 0.45 ? nxt - 1 : root + 7;
+    bass(mtof(walk - 12), t + spb * 2, spb * 1.4, 0.72);
+
+    // --- percussion, barely there. Through the speaker it is a tick and a bump,
+    // which is exactly how you hear a drum machine two aisles away.
+    for (let e = 0; e < 8; e++) {
+      if (e % 2 === 1 && rnd() < 0.35) continue;
+      hat(t + e * spb * 0.5 + (e % 2 ? 0.02 : 0), (e % 2 ? 0.10 : 0.19) * (0.7 + rnd() * 0.6));
+    }
+    kick(t, 0.5); if (rnd() < 0.7) kick(t + spb * 2, 0.42);
+
+    // --- melody. A random walk on the chord and the scale, in phrases, with the
+    // occasional wrong note held far too long. That is the whole joke and it is
+    // played straight.
+    if (restBars > 0) { restBars--; } else {
+      let tt = t + (rnd() < 0.3 ? spb * 0.5 : 0);
+      const tones = qual.map((q) => root + q);
+      while (tt < t + barLen - spb * 0.4) {
+        const len = spb * [0.5, 1, 1, 1.5, 2][(rnd() * 5) | 0];
+        // step, mostly; leap to a chord tone sometimes
+        if (rnd() < 0.30) {
+          melNote = tones[(rnd() * tones.length) | 0] + (rnd() < 0.5 ? 12 : 24);
+        } else {
+          const dir = rnd() < 0.5 ? -1 : 1;
+          let m = melNote + dir * (rnd() < 0.7 ? 1 : 2);
+          // quantise to the key... usually
+          const pc = ((m - key) % 12 + 12) % 12;
+          if (!SCALE.includes(pc) && rnd() < 0.82) m += dir;
+          melNote = m;
+        }
+        melNote = clamp(melNote, key + 7, key + 31);
+        const hold = rnd() < 0.09 ? len * 2.4 : len;      // the note held too long
+        lead(mtof(melNote), tt, hold * 0.92, 0.72 + rnd() * 0.35);
+        tt += hold;
+      }
+      if (rnd() < 0.34) restBars = 1 + ((rnd() * 2) | 0);
+    }
+
+    bar++; barsSinceKey++;
+    if (barsSinceKey >= keyEvery) {
+      barsSinceKey = 0; keyEvery = 8 + ((rnd() * 9) | 0);
+      key += rnd() < 0.6 ? 2 : (rnd() < 0.5 ? -3 : 5);     // the muzak modulation
+      while (key > 72) key -= 12; while (key < 58) key += 12;
+      if (rnd() < 0.5) prog = PROGS[(rnd() * PROGS.length) | 0];
+      bpm = clamp(bpm + (rnd() * 6 - 3), 76, 98);
+      bar = 0;
+    }
+    return barLen;
+  }
+
+  // ---- announcements ------------------------------------------------------
+  function announce(t, kind) {
+    // key-up: a real PA clicks and hisses before it speaks
+    const s = ctx.createBufferSource(); s.buffer = noiseBuf;
+    const g = gain(ctx, 0); const bp = filt(ctx, 'bandpass', 1900, 0.9);
+    s.connect(bp); bp.connect(g); g.connect(speech);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.5, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.02, t + 0.06);
+    g.gain.setValueAtTime(0.02, t + 0.06);
+    s.start(t, rnd() * 2, 0.9); s.onended = () => { try { g.disconnect(); } catch (e) {} };
+
+    let t0 = t + 0.12;
+    if (kind !== 'short') {
+      bell(mtof(79), t0, 0.55); bell(mtof(72), t0 + 0.62, 0.5);
+      t0 += 1.5;
+    }
+    const dur = kind === 'short' ? 2.2 + rnd() * 1.6 : 4.0 + rnd() * 3.2;
+    voices.say({
+      when: t0, dur, dest: speech, level: 0.42,
+      f0: rnd() < 0.55 ? 104 + rnd() * 22 : 178 + rnd() * 32,
+      tense: rnd() < 0.55 ? 1.0 : 1.14,
+      rate: 3.5 + rnd() * 1.2,
+    });
+    // duck the music under it, the way a real PA does because it is one amp
+    const end = t0 + dur + 0.35;
+    music.gain.setTargetAtTime(0.34, t, 0.25);
+    music.gain.setTargetAtTime(1.0, end, 0.7);
+    return end;
+  }
+
+  // ---- per-frame ----------------------------------------------------------
+  // Lookahead scheduling against ctx.currentTime, NOT against dt: main.js's
+  // run() can advance four simulated seconds in thirty milliseconds and a
+  // sequencer driven off dt would try to play all of it at once.
+  function update(dt, t, zn) {
+    if (!paOn) return;
+    if (nextBarAt < t) nextBarAt = t + 0.15;
+    let guard = 0;
+    while (nextBarAt < t + 0.9 && guard++ < 4) nextBarAt += scheduleBar(nextBarAt);
+
+    annAt -= dt;
+    if (annAt <= 0 && t > annUntil) {
+      const short = rnd() < 0.45;
+      annUntil = announce(t + 0.2, short ? 'short' : 'full');
+      annAt = short ? 42 + rnd() * 55 : 75 + rnd() * 95;
+    }
+  }
+
+  return {
+    update, nodes, paLvl, music, speech,
+    // debug handle: an announcement is a once-a-minute event, so a twelve second
+    // clip will not contain one unless you ask for one.
+    say(kind) { return announce(ctx.currentTime + 0.05, kind || 'full'); },
+    // the front end is where the PA amp lives and where the ceiling is lowest;
+    // the level does not change but the balance of direct to room does
+    setPresence(v) { paWet.gain.value = 0.85 + 0.5 * v; },
+    set on(v) { paOn = v; },
+  };
+}
+
+return { createPA };
+})();
+
+/* ==== src/audio/foley.js ==== */
+const M_src_audio_foley_js = (() => {
+const { gain, filt, panner, setPos, loopNoise, mulberry, to, clamp, lerp, smooth } = M_src_audio_dsp_js;
+const { createVoiceBank } = M_src_audio_voice_js;
+const { STORE, FRONT_WALK_Z, EXIT, EXIT2, AISLE_LEN, AISLE_GAP, SHELF_W, AISLE_COUNT, aisleX } = M_src_config_js;
+// OWNER: builder-audio. EVERYTHING WITH A BODY.
+//
+// Carts, checkouts, footfalls, doors, and the cop's lungs. All of it pooled:
+// a fixed number of spatial voices that get re-aimed at whatever is nearest,
+// and one-shots that are two nodes each because the filters they run through
+// are shared and permanent.
+//
+// The cost rule for this file is that a busy store — eight lanes beeping, four
+// carts moving, a man sprinting — must not create more than about forty
+// short-lived nodes a second, because the frame budget belongs to nine cameras.
+
+
+
+
+
+const PITCH = AISLE_GAP + SHELF_W;
+const BODY = AISLE_LEN / 2 - 0.62;
+const LANE_X0 = STORE.minX + 6.2, LANE_PITCH = 3.34, LANE_N = 8;
+const LANE_Z = FRONT_WALK_Z - 1.8;
+
+// Which slot is this x in, and is the listener in a different one? Two people in
+// different aisles have eight tonnes of packaged food between them, and the
+// game reads completely differently once that is true. This is the cheapest
+// possible occlusion and it is the single biggest spatial cue in the building.
+function slotOf(x) { return Math.round(x / PITCH + (AISLE_COUNT - 1) / 2); }
+
+function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf) {
+  const rnd = mulberry(5150);
+  const nodes = [];
+  const N = (n) => { nodes.push(n); return n; };
+  let created = 0;                     // one-shot nodes made this second (report)
+
+  // Shared destinations. Everything with a body is fairly dry and gets the room
+  // as a send, because you hear the object AND you hear the store's reply.
+  const dry = N(gain(ctx, 1)); dry.connect(out);
+  const wet = N(gain(ctx, 0.85)); wet.connect(wetOut);
+  function send(node, d, w) {
+    const a = N(gain(ctx, d)); node.connect(a); a.connect(dry);
+    const b = N(gain(ctx, w)); node.connect(b); b.connect(wet);
+    return node;
+  }
+  // A spatial slot: feed `in`, hear it from `p`, and the room hears it from
+  // `in` — i.e. the reverb send is PRE-panner. See bed.js placeAt for why: the
+  // reverberant field is not a function of how far away you are standing.
+  function spot(x, y, z, ref, roll, d, w) {
+    const p = N(panner(ctx, x, y, z, ref, roll));
+    const i = N(gain(ctx, 1));
+    i.connect(p);
+    const a = N(gain(ctx, d)); p.connect(a); a.connect(dry);
+    const b = N(gain(ctx, w)); i.connect(b); b.connect(wet);
+    return { p, in: i, dryG: a };
+  }
+
+  // ======================================================================
+  // FOOTFALLS
+  // ======================================================================
+  // A heavy man on VCT over a concrete slab is three sounds: the slab taking the
+  // weight (a thud with almost no pitch), the heel (a very short bright click),
+  // and the sole dragging (a scuff). Which of the three dominates is how you
+  // hear the difference between walking and running, and the room does the rest.
+  // A "kit" is one set of shoe filters feeding one destination. The cop gets a
+  // non-positional one (his feet are under him, not somewhere in the store);
+  // every spatial voice gets its own, because routing a shopper's footfall
+  // through the cop's shared filters puts a running thief in the middle of the
+  // player's head — which is what round 1 did, and it threw away the loudest
+  // directional cue in the chase.
+  function makeKit(dest, tone) {
+    const thud = [], click = [];
+    for (let i = 0; i < (tone ? 3 : 1); i++) {
+      const f = N(filt(ctx, 'lowpass', 170 + i * 40, 1.1));
+      const p = N(filt(ctx, 'peaking', 92 + i * 22, 1.4, 5));
+      f.connect(p); p.connect(dest); thud.push(f);
+    }
+    for (let i = 0; i < (tone ? 3 : 1); i++) {
+      const f = N(filt(ctx, 'bandpass', 2400 + i * 950, 1.5));
+      const h = N(filt(ctx, 'highpass', 1400, 0.7));
+      f.connect(h); h.connect(dest); click.push(f);
+    }
+    const scuff = N(filt(ctx, 'bandpass', 950, 0.8)); scuff.connect(dest);
+    return { thud, click, scuff, body: dest };
+  }
+  const stepBus = N(gain(ctx, 1));
+  send(stepBus, 0.85, 0.85);
+  const copKit = makeKit(stepBus, true);
+
+  let rr = 0;
+  // `kit` lets a shopper's step go through his own panner instead of the cop's
+  function step(t, hard, big, kit) {
+    const K = kit || copKit;
+    const thudLP = K.thud, clickBP = K.click, scuffBP = K.scuff, d = K.body;
+    rr++;
+    const v = 0.55 + hard * 0.75;
+    // the slab
+    {
+      const s = ctx.createBufferSource(); s.buffer = noise;
+      s.playbackRate.value = 0.55 + rnd() * 0.3;
+      const g = gain(ctx, 0);
+      s.connect(g);
+      g.connect(thudLP[rr % thudLP.length]);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(v * big * (0.85 + rnd() * 0.3), t + 0.004);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.075 + rnd() * 0.05);
+      s.start(t, rnd() * 2, 0.2); s.onended = () => { try { g.disconnect(); } catch (e) {} };
+      created += 2;
+    }
+    // the body of it — a 130 kg man puts a note into a slab
+    {
+      const o = ctx.createOscillator(); o.type = 'sine';
+      const g = gain(ctx, 0);
+      o.connect(g); g.connect(d);
+      o.frequency.setValueAtTime(72 + rnd() * 14, t);
+      o.frequency.exponentialRampToValueAtTime(44, t + 0.07);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.30 * v * big, t + 0.005);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.10);
+      o.start(t); o.stop(t + 0.13);
+      o.onended = () => { try { g.disconnect(); } catch (e) {} };
+      created += 2;
+    }
+    // the heel
+    {
+      const s = ctx.createBufferSource(); s.buffer = noise;
+      s.playbackRate.value = 0.85 + rnd() * 0.55;
+      const g = gain(ctx, 0);
+      s.connect(g); g.connect(clickBP[(rr + 1) % clickBP.length]);
+      g.gain.setValueAtTime(0, t);
+      g.gain.linearRampToValueAtTime(0.105 * v * (0.5 + hard), t + 0.0015);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.016 + rnd() * 0.012);
+      s.start(t, rnd() * 2, 0.06); s.onended = () => { try { g.disconnect(); } catch (e) {} };
+      created += 2;
+    }
+    // the drag. Only when he is moving fast enough to have one.
+    if (hard > 0.35 && rnd() < 0.7) {
+      const s = ctx.createBufferSource(); s.buffer = noise;
+      s.playbackRate.value = 0.6 + rnd() * 0.5;
+      const g = gain(ctx, 0);
+      s.connect(g); g.connect(scuffBP);
+      g.gain.setValueAtTime(0, t + 0.01);
+      g.gain.linearRampToValueAtTime(0.085 * hard, t + 0.025);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + 0.06 + rnd() * 0.05);
+      s.start(t, rnd() * 2, 0.15); s.onended = () => { try { g.disconnect(); } catch (e) {} };
+      created += 2;
+    }
+  }
+
+  // ======================================================================
+  // CARTS
+  // ======================================================================
+  // Broadband rattle whose density tracks the wheel rate, a low rumble of
+  // castors on tile, and one bad wheel. The rattle is amplitude-modulated by an
+  // audio-rate noise buffer read at a speed-dependent rate, so it costs no
+  // JavaScript at all and it is never the same twice.
+  const CARTS = 4;
+  const carts = [];
+  for (let i = 0; i < CARTS; i++) {
+    const S = spot(0, 0.55, 0, 2.6, 1.25, 0.95, 0.42);
+    const p = S.in;                      // voices feed the pre-panner node
+    const vg = N(gain(ctx, 0));
+    vg.connect(p);
+
+    const mod = N(gain(ctx, 0.12));
+    const modSrc = N(loopNoise(ctx, rattleBuf, 1, rnd));
+    const modAmt = N(gain(ctx, 0.9));
+    modSrc.connect(modAmt); modAmt.connect(mod.gain);
+
+    const src = N(loopNoise(ctx, noise, 1, rnd));
+    src.connect(mod);
+    const frame = N(filt(ctx, 'bandpass', 1150 + i * 130, 1.3));
+    const frame2 = N(filt(ctx, 'peaking', 2700 + i * 200, 3, 7));
+    const fg = N(gain(ctx, 0.55));
+    mod.connect(frame); frame.connect(frame2); frame2.connect(fg); fg.connect(vg);
+
+    const low = N(gain(ctx, 1));
+    src.connect(low);
+    const lowBP = N(filt(ctx, 'bandpass', 130 + i * 12, 0.9));
+    const lg = N(gain(ctx, 0.30));
+    low.connect(lowBP); lowBP.connect(lg); lg.connect(vg);
+
+    // the bad wheel. Every cart in America has one.
+    const sq = N(ctx.createOscillator()); sq.type = 'sine';
+    sq.frequency.value = 1450 + rnd() * 700;
+    const sqLFO = N(ctx.createOscillator()); sqLFO.type = 'sine'; sqLFO.frequency.value = 3;
+    const sqDepth = N(gain(ctx, 190));
+    sqLFO.connect(sqDepth); sqDepth.connect(sq.frequency);
+    const sqG = N(gain(ctx, 0));
+    const sqBP = N(filt(ctx, 'peaking', 1900, 2.6, 4));
+    sq.connect(sqBP); sqBP.connect(sqG); sqG.connect(vg);
+    sq.start(); sqLFO.start();
+
+    carts.push({ p: S.p, vg, modSrc, sq, sqG, sqLFO, sqBase: sq.frequency.value, bad: i === 1 ? 1.0 : (i === 3 ? 0.55 : 0.2), sid: -1, x: 0, z: 0 });
+  }
+
+  // ======================================================================
+  // AGENT VOICES — the nearest few shoppers get feet and a body
+  // ======================================================================
+  const AGENTS = 4;
+  const agents = [];
+  for (let i = 0; i < AGENTS; i++) {
+    const S = spot(0, 0.9, 0, 3.2, 1.15, 0.85, 0.55);
+    const oc = N(filt(ctx, 'lowpass', 18000, 0.7));    // the occlusion filter
+    const g = N(gain(ctx, 0.6));
+    oc.connect(g); g.connect(S.in);
+    agents.push({ p: S.p, oc, g, sid: -1, phase: 0, last: -9, in: oc, kit: makeKit(oc, false) });
+  }
+
+  // ======================================================================
+  // CHECKOUTS
+  // ======================================================================
+  // Eight lanes, each with a panner that never moves. A real front end is beeps
+  // in CLUSTERS — a customer's order is twenty items in ninety seconds and then
+  // ninety seconds of nothing — and the cluster structure is what stops it
+  // sounding like a metronome with jitter on it.
+  const beepOsc = [];
+  const lanes = [];
+  for (let k = 0; k < LANE_N; k++) {
+    const S = spot(LANE_X0 + k * LANE_PITCH, 1.15, LANE_Z, 4.0, 1.0, 0.85, 0.62);
+    lanes.push({
+      p: S.in, g: S.dryG, x: LANE_X0 + k * LANE_PITCH,
+      busy: rnd() < 0.55, t: rnd() * 6, left: 4 + ((rnd() * 18) | 0),
+      // lanes at the left end are the express lanes and they are always going
+      rate: 0.55 + rnd() * 1.4 - (k < 2 ? 0.25 : 0),
+    });
+  }
+  const printBP = N(filt(ctx, 'bandpass', 1500, 2.2));
+  const printPk = N(filt(ctx, 'peaking', 760, 3, 8));
+  printBP.connect(printPk);
+  const bagHP = N(filt(ctx, 'highpass', 2600, 0.7));
+  const bagPk = N(filt(ctx, 'peaking', 5200, 1.4, 6));
+  bagHP.connect(bagPk);
+
+  function beep(t, dest) {
+    // Always the same pitch. Every scanner in every store is the same scanner.
+    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 2730;
+    const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = 5460;
+    const g = gain(ctx, 0), g2 = gain(ctx, 0.12);
+    o.connect(g); o2.connect(g2); g2.connect(g); g.connect(dest);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.105, t + 0.003);
+    g.gain.setValueAtTime(0.105, t + 0.045);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.075);
+    o.start(t); o2.start(t); o.stop(t + 0.1); o2.stop(t + 0.1);
+    o.onended = () => { try { g.disconnect(); } catch (e) {} };
+    created += 4;
+  }
+  function printer(t, dest) {
+    const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = 0.7 + rnd() * 0.3;
+    const g = gain(ctx, 0);
+    const am = gain(ctx, 0.5);
+    const lfo = ctx.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 175 + rnd() * 40;
+    const lg = gain(ctx, 0.45);
+    lfo.connect(lg); lg.connect(am.gain);
+    s.connect(am); am.connect(g); g.connect(printBP);
+    printPk.connect(dest);
+    const d = 0.45 + rnd() * 0.5;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.09, t + 0.02);
+    g.gain.setValueAtTime(0.09, t + d);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + d + 0.04);
+    s.start(t, rnd() * 2, d + 0.1); lfo.start(t); lfo.stop(t + d + 0.1);
+    s.onended = () => { try { g.disconnect(); printPk.disconnect(dest); } catch (e) {} };
+    created += 5;
+  }
+  function bagging(t, dest) {
+    bagPk.connect(dest);
+    const n = 5 + ((rnd() * 7) | 0);
+    for (let i = 0; i < n; i++) {
+      const tt = t + i * (0.03 + rnd() * 0.07);
+      const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = 0.9 + rnd() * 1.1;
+      const g = gain(ctx, 0);
+      s.connect(g); g.connect(bagHP);
+      g.gain.setValueAtTime(0, tt);
+      g.gain.linearRampToValueAtTime(0.045 * (0.4 + rnd()), tt + 0.002);
+      g.gain.exponentialRampToValueAtTime(0.0001, tt + 0.02 + rnd() * 0.04);
+      s.start(tt, rnd() * 2, 0.08); s.onended = () => { try { g.disconnect(); } catch (e) {} };
+    }
+    created += n * 2;
+    setTimeout(() => { try { bagPk.disconnect(dest); } catch (e) {} }, 1800);
+  }
+  function drawer(t, dest) {
+    const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = 0.4;
+    const g = gain(ctx, 0); const f = filt(ctx, 'lowpass', 420, 1.4);
+    s.connect(g); g.connect(f); f.connect(dest);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.22, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    s.start(t, rnd() * 2, 0.2);
+    for (let i = 0; i < 4 + ((rnd() * 5) | 0); i++) {     // change into the tray
+      const tt = t + 0.16 + rnd() * 0.5;
+      const o = ctx.createOscillator(); o.type = 'triangle';
+      o.frequency.value = 2200 + rnd() * 3400;
+      const gg = gain(ctx, 0); o.connect(gg); gg.connect(dest);
+      gg.gain.setValueAtTime(0.05 * (0.4 + rnd()), tt);
+      gg.gain.exponentialRampToValueAtTime(0.0001, tt + 0.06 + rnd() * 0.08);
+      o.start(tt); o.stop(tt + 0.2);
+      o.onended = () => { try { gg.disconnect(); } catch (e) {} };
+    }
+    s.onended = () => { try { f.disconnect(); } catch (e) {} };
+    created += 12;
+  }
+
+  // ======================================================================
+  // DOORS
+  // ======================================================================
+  // Sliders on a belt, plus three seconds of outdoors. The outdoors is the only
+  // thing in this build that is not inside the building, and it is exactly why
+  // it matters: you only notice how enclosed the store is when a door opens.
+  const doorP = [EXIT, EXIT2].map((e) => spot(e.x, 1.4, e.z, 4.5, 1.15, 0.9, 0.55).in);
+  function doorCycle(t, which) {
+    const dest = doorP[which % 2];
+    // motor
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    const bp = filt(ctx, 'bandpass', 520, 2.6);
+    const g = gain(ctx, 0);
+    o.connect(bp); bp.connect(g); g.connect(dest);
+    o.frequency.setValueAtTime(58, t);
+    o.frequency.linearRampToValueAtTime(92, t + 0.25);
+    o.frequency.setValueAtTime(92, t + 0.95);
+    o.frequency.linearRampToValueAtTime(52, t + 1.3);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.10, t + 0.1);
+    g.gain.setValueAtTime(0.10, t + 1.0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 1.35);
+    o.start(t); o.stop(t + 1.4);
+    // rail
+    const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = 0.5;
+    const f = filt(ctx, 'bandpass', 240, 1.1); const sg = gain(ctx, 0);
+    s.connect(sg); sg.connect(f); f.connect(dest);
+    sg.gain.setValueAtTime(0, t); sg.gain.linearRampToValueAtTime(0.09, t + 0.12);
+    sg.gain.setValueAtTime(0.09, t + 0.95); sg.gain.exponentialRampToValueAtTime(0.0001, t + 1.3);
+    s.start(t, rnd() * 2, 1.5);
+    // and outside: tyres on asphalt, a long way off, and air
+    const w = ctx.createBufferSource(); w.buffer = noise; w.loop = true; w.playbackRate.value = 0.35;
+    const wf = filt(ctx, 'lowpass', 900, 0.6); const wf2 = filt(ctx, 'peaking', 190, 1.2, 6);
+    const wg = gain(ctx, 0);
+    w.connect(wf); wf.connect(wf2); wf2.connect(wg); wg.connect(dest);
+    wg.gain.setValueAtTime(0, t);
+    wg.gain.linearRampToValueAtTime(0.075, t + 0.9);
+    wg.gain.setValueAtTime(0.075, t + 2.6);
+    wg.gain.linearRampToValueAtTime(0.0, t + 4.2);
+    w.start(t); w.stop(t + 4.4);
+    w.onended = () => { try { wg.disconnect(); f.disconnect(); g.disconnect(); } catch (e) {} };
+    created += 12;
+  }
+  // EAS pedestal. A real fixture bolted to a real doorway, and it is the sound
+  // of the game being over.
+  function easAlarm(t, which) {
+    const dest = doorP[which % 2];
+    for (let i = 0; i < 9; i++) {
+      const tt = t + i * 0.30;
+      const o = ctx.createOscillator(); o.type = 'square';
+      o.frequency.value = i % 2 ? 2050 : 2650;
+      const f = filt(ctx, 'bandpass', 2400, 1.4);
+      const g = gain(ctx, 0);
+      o.connect(f); f.connect(g); g.connect(dest);
+      g.gain.setValueAtTime(0, tt);
+      g.gain.linearRampToValueAtTime(0.085, tt + 0.006);
+      g.gain.setValueAtTime(0.085, tt + 0.17);
+      g.gain.exponentialRampToValueAtTime(0.0001, tt + 0.22);
+      o.start(tt); o.stop(tt + 0.28);
+      o.onended = () => { try { g.disconnect(); f.disconnect(); } catch (e) {} };
+    }
+    created += 27;
+  }
+
+  // ======================================================================
+  // SOMEBODY SAID SOMETHING
+  // ======================================================================
+  // The murmur bed in bed.js is the crowd; this is one person, near enough to
+  // have a direction and never near enough to be understood. It is the cue that
+  // turns a room with people in it into a room where people are. And a kid,
+  // because every supermarket has exactly one child making a noise in it.
+  const talk = createVoiceBank(ctx, noise, 1212);
+  const voxS = spot(0, 1.55, 0, 5.0, 0.95, 0.42, 0.80);
+  const kidS = spot(0, 1.05, 0, 7.0, 0.85, 0.34, 0.90);
+
+  // ======================================================================
+  // THINGS THAT HAPPEN TO A BODY
+  // ======================================================================
+  // Grabbing a can off the shelf, and being gone through by a man who does not
+  // want to be caught. Both are physically real, both are gameplay, and neither
+  // is a stinger — the store does not know either of them happened.
+  function grab(t, kind) {
+    // the item leaving a wire shelf
+    for (let i = 0; i < 7; i++) {
+      const tt = t + i * (0.012 + rnd() * 0.028);
+      const s2 = ctx.createBufferSource(); s2.buffer = noise; s2.playbackRate.value = 1.1 + rnd();
+      const g = gain(ctx, 0);
+      s2.connect(g); g.connect(bagHP);
+      g.gain.setValueAtTime(0.05 * (0.4 + rnd()), tt);
+      g.gain.exponentialRampToValueAtTime(0.0001, tt + 0.02 + rnd() * 0.05);
+      s2.start(tt, rnd() * 2, 0.08); s2.onended = () => { try { g.disconnect(); } catch (e) {} };
+    }
+    bagPk.connect(stepBus);
+    setTimeout(() => { try { bagPk.disconnect(stepBus); } catch (e) {} }, 1500);
+    if (kind === 'energy') {
+      // the tab. A crack, then eight hundred millilitres of gas.
+      const tt = t + 0.34;
+      const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = 1750;
+      const og = gain(ctx, 0); o.connect(og); og.connect(stepBus);
+      og.gain.setValueAtTime(0.16, tt); og.gain.exponentialRampToValueAtTime(0.0001, tt + 0.035);
+      o.start(tt); o.stop(tt + 0.06);
+      const s3 = ctx.createBufferSource(); s3.buffer = noise; s3.playbackRate.value = 1.4;
+      const f = filt(ctx, 'highpass', 3800, 0.7); const fg = gain(ctx, 0);
+      s3.connect(fg); fg.connect(f); f.connect(stepBus);
+      fg.gain.setValueAtTime(0, tt);
+      fg.gain.linearRampToValueAtTime(0.09, tt + 0.02);
+      fg.gain.exponentialRampToValueAtTime(0.0001, tt + 0.75);
+      s3.start(tt, rnd() * 2, 0.9);
+      s3.onended = () => { try { f.disconnect(); og.disconnect(); } catch (e) {} };
+    } else {
+      // a lid coming off a box of donuts
+      const tt = t + 0.30;
+      const s3 = ctx.createBufferSource(); s3.buffer = noise; s3.playbackRate.value = 0.75;
+      const f = filt(ctx, 'bandpass', 1400, 0.8); const fg = gain(ctx, 0);
+      s3.connect(fg); fg.connect(f); f.connect(stepBus);
+      fg.gain.setValueAtTime(0, tt);
+      fg.gain.linearRampToValueAtTime(0.10, tt + 0.03);
+      fg.gain.exponentialRampToValueAtTime(0.0001, tt + 0.30);
+      s3.start(tt, rnd() * 2, 0.4);
+      s3.onended = () => { try { f.disconnect(); } catch (e) {} };
+    }
+    created += 20;
+  }
+
+  // 130 kg going through 80 kg at five metres a second.
+  function barge(t) {
+    const s2 = ctx.createBufferSource(); s2.buffer = noise; s2.playbackRate.value = 0.42;
+    const f = filt(ctx, 'lowpass', 340, 1.1); const g = gain(ctx, 0);
+    s2.connect(g); g.connect(f); f.connect(stepBus);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.38, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.20);
+    s2.start(t, rnd() * 2, 0.3);
+    // cloth
+    const s4 = ctx.createBufferSource(); s4.buffer = noise; s4.playbackRate.value = 1.0;
+    const f2 = filt(ctx, 'bandpass', 2600, 0.7); const g2 = gain(ctx, 0);
+    s4.connect(g2); g2.connect(f2); f2.connect(stepBus);
+    g2.gain.setValueAtTime(0, t);
+    g2.gain.linearRampToValueAtTime(0.13, t + 0.02);
+    g2.gain.exponentialRampToValueAtTime(0.0001, t + 0.28);
+    s4.start(t, rnd() * 2, 0.4);
+    // the air going out of him
+    const s5 = ctx.createBufferSource(); s5.buffer = noise; s5.playbackRate.value = 0.85;
+    const f3 = filt(ctx, 'bandpass', 620, 1.4); const g3 = gain(ctx, 0);
+    s5.connect(g3); g3.connect(f3); f3.connect(stepBus);
+    g3.gain.setValueAtTime(0, t + 0.02);
+    g3.gain.linearRampToValueAtTime(0.22, t + 0.05);
+    g3.gain.exponentialRampToValueAtTime(0.0001, t + 0.42);
+    s5.start(t + 0.02, rnd() * 2, 0.5);
+    s2.onended = () => { try { f.disconnect(); f2.disconnect(); f3.disconnect(); } catch (e) {} };
+    created += 12;
+  }
+
+  // ======================================================================
+  // THE COP'S LUNGS
+  // ======================================================================
+  // When he gasses out the breathing IS the mechanic. Everything else in this
+  // file is scenery; this is the only sound in the build that the player is
+  // supposed to want to stop.
+  //
+  // One persistent voice: noise through a bandpass whose centre sweeps up on the
+  // inhale and down on the exhale, a very high-Q peak that only comes up when he
+  // is in trouble (that is the wheeze), and a low pulse train through a narrow
+  // filter for the rasp at the back of the throat. Almost entirely dry — your own
+  // breath does not come to you via a 2.3 second reverb.
+  const brSrc = N(loopNoise(ctx, noise, 0.85, rnd));
+  const brBP = N(filt(ctx, 'bandpass', 600, 1.1));
+  const brWheeze = N(filt(ctx, 'peaking', 1180, 13, 0));
+  const brWheeze2 = N(filt(ctx, 'peaking', 2350, 9, 0));
+  const brHP = N(filt(ctx, 'highpass', 180, 0.7));
+  const brG = N(gain(ctx, 0));
+  brSrc.connect(brBP); brBP.connect(brWheeze); brWheeze.connect(brWheeze2);
+  brWheeze2.connect(brHP); brHP.connect(brG);
+  const brDry = N(gain(ctx, 1.0)); brG.connect(brDry); brDry.connect(playerOut);
+  const brWet = N(gain(ctx, 0.16)); brG.connect(brWet); brWet.connect(wetOut);
+
+  const raspOsc = N(ctx.createOscillator()); raspOsc.type = 'sawtooth'; raspOsc.frequency.value = 74;
+  const raspBP = N(filt(ctx, 'bandpass', 330, 3.2));
+  const raspLP = N(filt(ctx, 'lowpass', 900, 0.8));
+  const raspG = N(gain(ctx, 0));
+  raspOsc.connect(raspBP); raspBP.connect(raspLP); raspLP.connect(raspG);
+  raspG.connect(brDry); raspOsc.start();
+
+  // the pulse in your ears. Only when he is truly finished, and quiet enough
+  // that it reads as a body rather than as a sound effect.
+  const heart = N(ctx.createOscillator()); heart.type = 'sine'; heart.frequency.value = 44;
+  const heartG = N(gain(ctx, 0)); heart.connect(heartG);
+  const heartLP = N(filt(ctx, 'lowpass', 120, 0.9));
+  heartG.connect(heartLP); heartLP.connect(playerOut); heart.start();
+
+  const breath = { ph: 0, rate: 0.3, len: 3.3, next: 0, effort: 0, gass: 0, hb: 0 };
+
+  function breathCycle(t, effort, gass) {
+    // in : out is about 40:60 at rest and closer to 50:50 when he is gulping
+    const rate = lerp(lerp(0.30, 0.95, effort), 2.05, gass);
+    const len = (1 / rate) * (0.86 + rnd() * 0.30);       // never a loop
+    const inh = len * lerp(0.40, 0.49, gass);
+    const lvl = lerp(lerp(0.030, 0.14, effort), 0.62, gass);
+
+    // ---- inhale: filter sweeps up, gets narrow, gets loud
+    brBP.frequency.cancelScheduledValues(t);
+    brBP.frequency.setValueAtTime(brBP.frequency.value, t);
+    brBP.frequency.exponentialRampToValueAtTime(lerp(760, 1420, gass) * (0.9 + rnd() * 0.2), t + inh * 0.75);
+    brBP.Q.setTargetAtTime(lerp(1.0, 2.6, gass), t, inh * 0.4);
+    brG.gain.cancelScheduledValues(t);
+    brG.gain.setValueAtTime(Math.max(0.0001, brG.gain.value), t);
+    brG.gain.linearRampToValueAtTime(lvl * (0.9 + rnd() * 0.25), t + inh * (gass > 0.4 ? 0.16 : 0.42));
+    // the catch: when he is finished the inhale is not smooth, it stops and
+    // restarts
+    if (gass > 0.45 && rnd() < 0.55) {
+      brG.gain.setTargetAtTime(lvl * 0.35, t + inh * 0.34, 0.02);
+      brG.gain.setTargetAtTime(lvl * 1.05, t + inh * 0.46, 0.03);
+    }
+    brG.gain.setTargetAtTime(lvl * 0.12, t + inh * 0.86, 0.045);
+
+    // ---- exhale: down and out, with the rasp on it
+    const ex = t + inh;
+    brBP.frequency.exponentialRampToValueAtTime(lerp(430, 300, gass) * (0.9 + rnd() * 0.2), ex + (len - inh) * 0.8);
+    brG.gain.setTargetAtTime(lvl * lerp(0.7, 1.0, gass), ex + 0.03, 0.05);
+    brG.gain.setTargetAtTime(0.0008, ex + (len - inh) * 0.72, 0.06);
+
+    // wheeze rides the inhale and only exists when he is in trouble
+    const wz = clamp((gass - 0.15) / 0.85, 0, 1);
+    brWheeze.gain.cancelScheduledValues(t);
+    brWheeze.gain.setValueAtTime(0, t);
+    brWheeze.gain.linearRampToValueAtTime(wz * (14 + rnd() * 8), t + inh * 0.5);
+    brWheeze.gain.setTargetAtTime(0, t + inh * 0.9, 0.08);
+    brWheeze.frequency.setValueAtTime(1050 + rnd() * 420, t);
+    brWheeze2.gain.cancelScheduledValues(t);
+    brWheeze2.gain.setValueAtTime(0, t);
+    brWheeze2.gain.linearRampToValueAtTime(wz * (6 + rnd() * 6), t + inh * 0.55);
+    brWheeze2.gain.setTargetAtTime(0, t + inh * 0.92, 0.09);
+
+    // rasp on the exhale
+    raspOsc.frequency.setValueAtTime((66 + rnd() * 22) * lerp(1, 1.18, gass), ex);
+    raspG.gain.cancelScheduledValues(ex);
+    raspG.gain.setValueAtTime(0, ex);
+    raspG.gain.linearRampToValueAtTime(wz * 0.075 * (0.6 + rnd() * 0.8), ex + 0.05);
+    raspG.gain.setTargetAtTime(0, ex + (len - inh) * 0.5, 0.09);
+
+    return len;
+  }
+
+  // ======================================================================
+  // per-frame
+  // ======================================================================
+  let lastStepAt = -9, phasePrev = 0, phaseInit = false;
+  let secTimer = 0, madeLast = 0;
+  let doorT = 8 + rnd() * 14;
+  let tVox = 5 + rnd() * 11, tKid = 25 + rnd() * 45;
+  let lastBoost = 0, lastStag = 0;
+  const seen = new Map();       // shopper id -> last known bolted/escaped state
+
+  function update(dt, t, st, zn, lx, lz) {
+    secTimer += dt;
+    if (secTimer >= 1) { madeLast = created; created = 0; secTimer -= 1; }
+
+    const u = st.cop.userData || {};
+    const cx = st.cop.position.x, cz = st.cop.position.z;
+    const lslot = slotOf(lx), lbody = Math.abs(lz) < BODY;
+
+    // ---- the cop's feet, off the real gait phase so the sound lands on the
+    // frame the leg does. `run()` can advance the sim far faster than wall
+    // clock, so a minimum interval keeps a fast-forward from firing a hundred
+    // steps into the same tenth of a second.
+    if (st.mode !== 'desk') {
+      const ph = u.phase || 0;
+      if (!phaseInit) { phasePrev = ph; phaseInit = true; }
+      const a = Math.floor(phasePrev / Math.PI), b = Math.floor(ph / Math.PI);
+      if (b !== a && (u.speed || 0) > 0.35 && t - lastStepAt > 0.11) {
+        lastStepAt = t;
+        const sp = clamp((u.speed || 0) / 5.0, 0, 1.2);
+        step(t + 0.005, sp, 1.0);
+      }
+      phasePrev = ph;
+    } else phaseInit = false;
+
+    // ---- breathing
+    const K = st.tuning || {};
+    const smax = K.staminaMax || 1.4;
+    const wind = clamp((u.stamina == null ? smax : u.stamina) / smax, 0, 1);
+    const gassed = u.gassed ? 1 : 0;
+    // effort lags the speed; a fat man's lungs do not know he stopped for a
+    // second and a half
+    const eff = clamp((u.speed || 0) / 4.6, 0, 1) * 0.55 + (1 - wind) * 0.75;
+    breath.effort += (clamp(eff, 0, 1) - breath.effort) * (1 - Math.exp(-1.6 * Math.min(0.1, dt)));
+    // gass rises instantly and comes off slowly — that asymmetry is the feeling
+    const gTarget = gassed ? 1 : clamp((1 - wind) * 0.75, 0, 0.6);
+    breath.gass += (gTarget - breath.gass) * (1 - Math.exp(-(gTarget > breath.gass ? 6.0 : 0.55) * Math.min(0.1, dt)));
+    if (t >= breath.next) {
+      breath.next = (breath.next < t - 1 ? t : breath.next) + breathCycle(Math.max(t, breath.next), breath.effort, breath.gass);
+    }
+    // pulse
+    if (breath.gass > 0.5) {
+      breath.hb -= dt;
+      if (breath.hb <= 0) {
+        breath.hb = 0.42 + rnd() * 0.06;
+        const tt = t + 0.01, v = (breath.gass - 0.5) * 2 * 0.10;
+        heartG.gain.cancelScheduledValues(tt);
+        heartG.gain.setValueAtTime(0, tt);
+        heartG.gain.linearRampToValueAtTime(v, tt + 0.012);
+        heartG.gain.exponentialRampToValueAtTime(0.0001, tt + 0.13);
+        heartG.gain.setValueAtTime(0, tt + 0.16);
+        heartG.gain.linearRampToValueAtTime(v * 0.55, tt + 0.20);
+        heartG.gain.exponentialRampToValueAtTime(0.0001, tt + 0.30);
+      }
+    }
+    // at the desk he is sitting down, so the breath is quiet but it is there
+    to(brDry.gain, st.mode === 'desk' ? 0.55 : 1.0, t, 0.3);
+
+    // ---- carts and bodies: re-aim the pool at whatever is nearest.
+    const sh = st.shoppers || [];
+    // cheap partial sort: score every shopper, keep the best few
+    for (let i = 0; i < sh.length; i++) {
+      const s = sh[i];
+      s._d = (s.position.x - lx) * (s.position.x - lx) + (s.position.z - lz) * (s.position.z - lz);
+      // a man running is worth hearing from further away than a man shopping
+      if (s.bolted) s._d *= 0.18;
+    }
+    const near = sh.slice().sort((a, b) => a._d - b._d);
+
+    let ci = 0;
+    for (let i = 0; i < near.length && ci < CARTS; i++) {
+      const s = near[i];
+      if (!s.hasCart || !s.cart || !s.cart.visible || s._d > 40 * 40) continue;
+      const c = carts[ci++];
+      c.sid = s.id;
+      const px = s.cart.position ? s.cart.position.x : s.position.x;
+      const pz = s.cart.position ? s.cart.position.z : s.position.z;
+      setPos(c.p, px, 0.55, pz, t, 0.05);
+      const sp = clamp(s.speed || 0, 0, 4);
+      // wheel rate for a 100 mm castor
+      const wheel = clamp(sp * 3.1, 0.1, 12);
+      c.modSrc.playbackRate.setTargetAtTime(clamp(sp * 1.35, 0.12, 3.2), t, 0.15);
+      c.sqLFO.frequency.setTargetAtTime(wheel, t, 0.15);
+      to(c.vg.gain, clamp(sp * 0.62, 0, 1.0), t, 0.12);
+      // the squeal needs load and speed; a stationary bad wheel is silent
+      to(c.sqG.gain, c.bad * clamp((sp - 0.5) * 0.18, 0, 0.17) * (0.6 + 0.4 * Math.sin(t * 0.7 + c.sqBase)), t, 0.2);
+      c.sq.frequency.setTargetAtTime(c.sqBase * (1 + sp * 0.06), t, 0.3);
+    }
+    for (let i = ci; i < CARTS; i++) to(carts[i].vg.gain, 0, t, 0.25);
+
+    let ai = 0;
+    for (let i = 0; i < near.length && ai < AGENTS; i++) {
+      const s = near[i];
+      if (s._d > 34 * 34) break;
+      const a = agents[ai++];
+      if (a.sid !== s.id) { a.sid = s.id; a.phase = s.phase || 0; }
+      setPos(a.p, s.position.x, 0.9, s.position.z, t, 0.05);
+      // occlusion: different aisle slot, both alongside the gondolas
+      const diff = Math.abs(slotOf(s.position.x) - lslot);
+      const thru = (diff >= 1 && lbody && Math.abs(s.position.z) < BODY) ? Math.min(1, diff * 0.75) : 0;
+      to(a.oc.frequency, lerp(18000, 640, thru), t, 0.12);
+      to(a.g.gain, lerp(0.6, 0.34, thru) * (s.bolted ? 1.5 : 1), t, 0.12);
+      // his feet
+      const ph = s.phase || 0;
+      if (Math.floor(ph / Math.PI) !== Math.floor(a.phase / Math.PI)
+          && (s.speed || 0) > 0.3 && t - a.last > 0.1) {
+        a.last = t;
+        step(t + 0.004, clamp((s.speed || 0) / 5.2, 0, 1.1) * (s.bolted ? 1.15 : 0.6), s.bolted ? 0.7 : 0.42, a.kit);
+      }
+      a.phase = ph;
+    }
+    for (let i = ai; i < AGENTS; i++) to(agents[i].g.gain, 0, t, 0.3);
+
+    // ---- checkouts
+    for (const L of lanes) {
+      L.t -= dt;
+      if (L.t > 0) continue;
+      if (L.busy) {
+        beep(t + rnd() * 0.06, L.p);
+        L.left--;
+        L.t = (0.55 + rnd() * 1.5) / L.rate;
+        if (rnd() < 0.18) bagging(t + 0.15, L.p);
+        if (L.left <= 0) {
+          L.busy = false;
+          printer(t + 0.5 + rnd() * 0.7, L.p);
+          if (rnd() < 0.45) drawer(t + 1.4 + rnd() * 0.8, L.p);
+          L.t = 8 + rnd() * 26;              // the gap between customers
+        }
+      } else {
+        L.busy = true; L.left = 5 + ((rnd() * 24) | 0);
+        L.t = 1.5 + rnd() * 3;
+      }
+    }
+
+    // ---- doors: somebody comes in or goes out every so often
+    doorT -= dt;
+    if (doorT <= 0) { doorT = 11 + rnd() * 26; doorCycle(t + 0.1, rnd() < 0.5 ? 0 : 1); }
+
+    // ---- somebody two aisles over says something you cannot make out
+    tVox -= dt;
+    if (tVox <= 0 && near.length) {
+      tVox = 7 + rnd() * 17;
+      const pick = near[Math.min(near.length - 1, 1 + ((rnd() * 4) | 0))];
+      if (pick && pick._d > 9 && pick._d < 30 * 30) {
+        setPos(voxS.p, pick.position.x, 1.55, pick.position.z);
+        talk.say({ when: t + 0.05, dur: 0.9 + rnd() * 2.1, dest: voxS.in, level: 0.30,
+          f0: rnd() < 0.5 ? 104 + rnd() * 26 : 176 + rnd() * 40,
+          rate: 3.4 + rnd() * 1.6, tense: rnd() < 0.5 ? 1.0 : 1.12 });
+      }
+    }
+    // ---- and there is always one child
+    tKid -= dt;
+    if (tKid <= 0) {
+      tKid = 34 + rnd() * 70;
+      const ang = rnd() * Math.PI * 2, rr2 = 12 + rnd() * 20;
+      setPos(kidS.p, clamp(lx + Math.cos(ang) * rr2, STORE.minX + 2, STORE.maxX - 2),
+        1.05, clamp(lz + Math.sin(ang) * rr2, STORE.minZ + 2, STORE.maxZ - 2));
+      talk.say({ when: t + 0.05, dur: 0.5 + rnd() * 1.6, dest: kidS.in, level: 0.34,
+        f0: 250 + rnd() * 95, rate: 2.5 + rnd() * 1.6, tense: 1.34 });
+    }
+
+    // ---- he grabbed something off a shelf. agents.js does not tell us; his own
+    // boost timer going up is the honest tell, same as speed is for sprinting.
+    const bo = u.boost || 0;
+    if (bo > lastBoost + 0.05 && t - lastStepAt > -1) grab(t + 0.01, rnd() < 0.5 ? 'energy' : 'donuts');
+    lastBoost = bo;
+    // ---- and somebody went through him
+    const sg = u.stagger || 0;
+    if (sg > lastStag + 0.05) barge(t + 0.01);
+    lastStag = sg;
+
+    // ---- events off the agent state, not off a game callback we do not own
+    for (const s of sh) {
+      const key = (s.bolted ? 1 : 0) | (s.escaped ? 2 : 0) | (s.caught ? 4 : 0);
+      const was = seen.get(s.id);
+      if (seen.size > 256) seen.clear();
+      if (was === undefined) { seen.set(s.id, key); continue; }
+      if (key !== was) {
+        seen.set(s.id, key);
+        if ((key & 1) && !(was & 1)) {
+          // he goes. A cart shoved out of the way, and the sound of somebody
+          // taking a hard first step. No stinger — the store does not know.
+          if (s._d < 26 * 26) shove(t + 0.02, s.position.x, s.position.z);
+        }
+        if ((key & 2) && !(was & 2)) {
+          const wh = Math.abs(s.position.x - EXIT.x) < Math.abs(s.position.x - EXIT2.x) ? 0 : 1;
+          doorCycle(t + 0.02, wh); easAlarm(t + 0.30, wh);
+        }
+      }
+    }
+    return madeLast;
+  }
+
+  // A cart taking a shoulder. Steel on steel and then wheels chattering.
+  const shoveS = spot(0, 0.6, 0, 3.0, 1.2, 0.9, 0.7);
+  const shovePan = shoveS.in;
+  function shove(t, x, z) {
+    setPos(shoveS.p, x, 0.6, z);
+    const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = 1.3;
+    const f = filt(ctx, 'bandpass', 1650, 1.1); const pk = filt(ctx, 'peaking', 3400, 4, 9);
+    const g = gain(ctx, 0);
+    s.connect(g); g.connect(f); f.connect(pk); pk.connect(shovePan);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.30, t + 0.006);
+    g.gain.exponentialRampToValueAtTime(0.02, t + 0.22);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.75);
+    s.start(t, rnd() * 2, 0.9);
+    const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = 210;
+    const og = gain(ctx, 0); o.connect(og); og.connect(shovePan);
+    og.gain.setValueAtTime(0.11, t); og.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.start(t); o.stop(t + 0.4);
+    s.onended = () => { try { f.disconnect(); pk.disconnect(); og.disconnect(); } catch (e) {} };
+    created += 8;
+  }
+
+  return { update, nodes, step, beep, doorCycle, easAlarm, grab, barge, carts, agents, lanes };
+}
+
+return { createFoley };
+})();
+
+/* ==== src/audio/desk.js ==== */
+const M_src_audio_desk_js = (() => {
+const { gain, filt, panner, loopNoise, mulberry, to, clamp } = M_src_audio_dsp_js;
+const { createVoiceBank } = M_src_audio_voice_js;
+// OWNER: builder-audio. THE MONITOR ROOM.
+//
+// The desk must NOT sound like the store. It is an alcove behind the customer
+// service counter with nine CRTs in it, and the whole point of walking out onto
+// the floor is that the room opens up when you do. So: a 0.33 s room, a wall of
+// flyback whine, a fan, and the store arriving mostly through a partition and
+// partly round the edge of the counter (see room.js — the leak matters; a store
+// filtered to death behind a wall reads as a recording, not as next door).
+//
+// The flyback is 15734 Hz — the NTSC horizontal line rate — and nine of them at
+// slightly different loads beat against each other at a few hertz. Half the
+// people who play this will not hear it at all and every one of them will feel
+// the difference when it stops.
+
+
+
+
+function createDesk(ctx, room, out, wetOut, noise, pinkBuf) {
+  const rnd = mulberry(31337);
+  const nodes = [];
+  const N = (n) => { nodes.push(n); return n; };
+
+  const bus = N(gain(ctx, 0));            // 0 on the floor, 1 at the desk
+  const dry = N(gain(ctx, 1)); bus.connect(dry); dry.connect(out);
+  const wet = N(gain(ctx, 0.55)); bus.connect(wet); wet.connect(wetOut);
+
+  // ---- nine CRTs ---------------------------------------------------------
+  const crt = N(gain(ctx, 0.0032));
+  for (const [f, g] of [[15731.5, 1.0], [15734.3, 0.85], [15738.2, 0.6], [15729.0, 0.45]]) {
+    const o = N(ctx.createOscillator()); o.type = 'sine'; o.frequency.value = f;
+    const gg = N(gain(ctx, g)); o.connect(gg); gg.connect(crt); o.start();
+  }
+  const crtHP = N(filt(ctx, 'highpass', 9000, 0.7));
+  crt.connect(crtHP); crtHP.connect(bus);
+
+  // their transformers, which is the part you actually feel
+  const crtHum = N(gain(ctx, 0.022));
+  for (const [f, g] of [[120, 1.0], [240, 0.42], [360, 0.28], [480, 0.12]]) {
+    const o = N(ctx.createOscillator()); o.type = 'sine'; o.frequency.value = f;
+    const gg = N(gain(ctx, g)); o.connect(gg); gg.connect(crtHum); o.start();
+  }
+  crtHum.connect(bus);
+
+  // static off the tubes
+  const stat = N(loopNoise(ctx, noise, 1.03, rnd));
+  const statHP = N(filt(ctx, 'highpass', 4200, 0.7));
+  const statG = N(gain(ctx, 0.014));
+  stat.connect(statHP); statHP.connect(statG); statG.connect(bus);
+
+  // ---- the DVR and the PC under the desk ---------------------------------
+  const fan = N(loopNoise(ctx, pinkBuf, 0.91, rnd));
+  const fanLP = N(filt(ctx, 'lowpass', 780, 0.75));
+  const fanPk = N(filt(ctx, 'peaking', 94, 2.4, 8));
+  const fanPk2 = N(filt(ctx, 'peaking', 188, 3.0, 4));
+  const fanG = N(gain(ctx, 0.16));
+  fan.connect(fanLP); fanLP.connect(fanPk); fanPk.connect(fanPk2); fanPk2.connect(fanG);
+  fanG.connect(bus);
+
+  // the desk's own tube, which is a metre over your head and not a hundred
+  const tube = N(ctx.createOscillator()); tube.type = 'sawtooth'; tube.frequency.value = 120;
+  const tubeBP = N(filt(ctx, 'bandpass', 400, 1.2));
+  const tubePk = N(filt(ctx, 'peaking', 1250, 4, 8));
+  const tubeG = N(gain(ctx, 0.016));
+  tube.connect(tubeBP); tubeBP.connect(tubePk); tubePk.connect(tubeG); tubeG.connect(bus);
+  tube.start();
+
+  // ---- one-shots ---------------------------------------------------------
+  const clickBP = N(filt(ctx, 'bandpass', 2900, 1.6)); clickBP.connect(bus);
+  function relay(t, v) {
+    const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = 1.4;
+    const g = gain(ctx, 0);
+    s.connect(g); g.connect(clickBP);
+    g.gain.setValueAtTime(v, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.012);
+    s.start(t, rnd() * 2, 0.04);
+    s.onended = () => { try { g.disconnect(); } catch (e) {} };
+  }
+  // a mechanical drive doing what a DVR makes it do all day
+  function seek(t) {
+    const n = 3 + ((rnd() * 8) | 0);
+    for (let i = 0; i < n; i++) relay(t + i * (0.02 + rnd() * 0.05), 0.03 + rnd() * 0.05);
+  }
+  function creak(t) {
+    const o = ctx.createOscillator(); o.type = 'sawtooth';
+    const bp = filt(ctx, 'bandpass', 420, 7);
+    const g = gain(ctx, 0);
+    o.connect(bp); bp.connect(g); g.connect(bus);
+    o.frequency.setValueAtTime(96, t);
+    o.frequency.linearRampToValueAtTime(64, t + 0.5);
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(0.05, t + 0.06);
+    g.gain.setTargetAtTime(0.0001, t + 0.18, 0.11);
+    o.start(t); o.stop(t + 0.7);
+    o.onended = () => { try { g.disconnect(); bp.disconnect(); } catch (e) {} };
+  }
+
+  // ---- the store radio ---------------------------------------------------
+  // Loss prevention carries one. It squelches, somebody says four words in the
+  // produce cooler, it squelches again.
+  const radioIn = N(gain(ctx, 1));
+  const rHP = N(filt(ctx, 'highpass', 420, 0.8));
+  const rLP = N(filt(ctx, 'lowpass', 2600, 0.9));
+  const rPk = N(filt(ctx, 'peaking', 1400, 1.6, 7));
+  const rG = N(gain(ctx, 0.30));
+  const rPan = N(panner(ctx, 0.55, 0.15, -0.3, 1.0, 0.6));
+  radioIn.connect(rHP); rHP.connect(rLP); rLP.connect(rPk); rPk.connect(rG);
+  rG.connect(rPan); rPan.connect(bus);
+  const voices = createVoiceBank(ctx, noise, 4242);
+  function squelch(t, v) {
+    const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = 1.2;
+    const g = gain(ctx, 0);
+    s.connect(g); g.connect(radioIn);
+    g.gain.setValueAtTime(v, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.05 + rnd() * 0.05);
+    s.start(t, rnd() * 2, 0.14);
+    s.onended = () => { try { g.disconnect(); } catch (e) {} };
+  }
+  function radio(t) {
+    squelch(t, 0.22);
+    const dur = 1.6 + rnd() * 2.6;
+    voices.say({
+      when: t + 0.09, dur, dest: radioIn, level: 0.55,
+      f0: rnd() < 0.6 ? 108 + rnd() * 26 : 186 + rnd() * 30,
+      rate: 4.0 + rnd() * 1.4, tense: 1.0,
+    });
+    squelch(t + dur + 0.14, 0.30);
+  }
+
+  let tRelay = 3 + rnd() * 9, tSeek = 12 + rnd() * 20, tRadio = 25 + rnd() * 60, tCreak = 20 + rnd() * 40;
+  let live = 0;
+
+  function update(dt, t, isDesk) {
+    live += ((isDesk ? 1 : 0) - live) * (1 - Math.exp(-4.0 * Math.min(0.1, dt)));
+    to(bus.gain, live, t, 0.12);
+    if (live < 0.05) return;
+    // the multiplexer steps through the cameras all day whether you look or not
+    tRelay -= dt; if (tRelay <= 0) { tRelay = 2.5 + rnd() * 11; relay(t + 0.02, 0.06 + rnd() * 0.10); }
+    tSeek -= dt; if (tSeek <= 0) { tSeek = 9 + rnd() * 26; seek(t + 0.02); }
+    tCreak -= dt; if (tCreak <= 0) { tCreak = 22 + rnd() * 55; creak(t + 0.02); }
+    tRadio -= dt; if (tRadio <= 0) { tRadio = 30 + rnd() * 90; radio(t + 0.05); }
+    // the tubes drift the way the store's do
+    to(crt.gain, 0.0032 * (0.85 + 0.3 * Math.sin(t * 0.11)), t, 1.0);
+  }
+
+  return { update, nodes, bus, radio, relay };
+}
+
+return { createDesk };
+})();
+
+/* ==== src/audio.js ==== */
+const M_src_audio_js = (() => {
+const { createRoom } = M_src_audio_room_js;
+const { createBed } = M_src_audio_bed_js;
+const { createPA } = M_src_audio_pa_js;
+const { createFoley } = M_src_audio_foley_js;
+const { createDesk } = M_src_audio_desk_js;
+const { whiteBuffer, pinkBuffer, gain, filt, mulberry, to, clamp, lerp } = M_src_audio_dsp_js;
+const { SERVICE_DESK, TUNING } = M_src_config_js;
+// OWNER: builder-audio. Everything you hear.
+//
+// CONTRACT — must keep exporting exactly this:
+//   createAudio(THREE, camera) -> {
+//     master,                  // AudioNode: the final pre-destination node. The lead
+//                              //   taps this to record, so EVERYTHING must route here.
+//     ctx,                     // AudioContext
+//     resume(),                // browsers block audio until a user gesture
+//     update(dt, state),       // state: { mode, cop, shoppers, chasing, gassed, boost, viaBack }
+//     setMix(name, gain),      // 'ambience' | 'pa' | 'foley' | 'ui'
+//   }
+//
+// Browsers will not start an AudioContext without a user gesture. index.html's start
+// card gives us one — main.js calls resume() on that click.
+//
+// THE BAR: a real supermarket. Not "game music". The player should be able to close
+// their eyes and know they are standing in a grocery store. See AUDIO_BRIEF.md.
+//
+// ---------------------------------------------------------------------------
+// HOW IT IS BUILT
+//
+// Everything is synthesised. There is not one sample file in here, because the
+// shipping build is a single HTML document and an audio asset that was not
+// generated at runtime does not exist.
+//
+// The signal path, and the reason for it:
+//
+//   bed / pa / foley ──dry──►  storeDry ─┐
+//                    └─send──►  room.input ──► [AISLE conv | OPEN conv] ──┤
+//                                                                          ├─► room.storeIn
+//                                                       ┌──────────────────┘
+//                                     ┌── on the floor ─┴─ direct ─────────┐
+//                                     └── at the desk ─── through a wall ──┤
+//                                                                          ▼
+//   desk-local ──dry────────────────────────────────────────────────► outSum ─► limit ─► master
+//              └─send──► room.smallIn ──► [DESK conv] ──────────────────►│
+//   breath / pulse ──────────────────────────────────────────────────────┘
+//
+// Two things about that graph are load-bearing:
+//
+//  1. THE STORE'S REVERB HAPPENS BEFORE THE WALL. At the desk you are not hearing
+//     a small room with a supermarket in it, you are hearing a supermarket
+//     through 150 mm of stud wall and then the small room you are sitting in.
+//     Those are completely different sounds and the second one is the real one.
+//  2. THE PLAYER'S OWN BODY BYPASSES ALL OF IT. His breathing does not arrive via
+//     a 2.3-second tail, because it starts eight centimetres from his ears.
+//
+// Cost: see stats(). The DSP runs on the audio thread; what shows up in the
+// game's frame budget is only the JavaScript in update(), which is measured:
+// ~0.033 ms a frame, 0.7 ms worst case, two live convolvers in either mode.
+//
+// ---------------------------------------------------------------------------
+// TWO THINGS THE HARNESS PROMISES THAT DO NOT ARRIVE (as of this round)
+//
+//   state.report   main.js passes `agents.report && agents.report()`, but
+//                  agents.js has no `report` export — it CALLS api.report() into
+//                  game.js. So state.report is always undefined.
+//   state.chasing  main.js passes `game.st.chasing`, and game.st has no such
+//                  field, so it is always false.
+//
+// Neither is a problem here and nothing needs to change on my account: the wind
+// state is on `cop.userData` (stamina / gassed / boost / stagger / speed) which
+// is the thing agents.js actually writes, and "is a chase happening" is derived
+// from the shoppers' own `bolted` flags. Both are read defensively, so if the
+// lead wires the promised fields up later this file will simply prefer them.
+// Flagging it because anyone else reading main.js will assume they work.
+
+
+
+
+
+
+
+
+
+function createAudio(THREE, camera) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+  // ---- output -------------------------------------------------------------
+  const master = ctx.createGain();
+  master.gain.value = 0.9;
+  master.connect(ctx.destination);
+
+  // A safety limiter, not a sound. A store's crest factor is high — a scanner
+  // beep two metres away is 25 dB over the bed — and without this a burst of
+  // beeps under a chase clips the bus. Sits before master so the recorder
+  // captures exactly what the player hears.
+  const limiter = ctx.createDynamicsCompressor();
+  limiter.threshold.value = -3.5; limiter.knee.value = 5; limiter.ratio.value = 9;
+  limiter.attack.value = 0.004; limiter.release.value = 0.22;
+  limiter.connect(master);
+
+  const outSum = gain(ctx, 1);
+  outSum.connect(limiter);
+
+  // ---- buses --------------------------------------------------------------
+  // The contract's four names. Each one is really a PAIR — a dry node and a
+  // send into the room — because there is no such thing in this building as a
+  // sound without the room on it, and setMix has to move both together or it
+  // changes the reverb balance instead of the level.
+  //
+  // CAL is the measured balance, in one place. setMix multiplies it, so a caller
+  // asking for 1.0 gets the calibrated mix and not a wall. Round 1 shipped
+  // everything at unity: the store measured -7 dBFS RMS with peaks pinned at
+  // full scale for two per cent of every clip, i.e. the limiter was the loudest
+  // thing in the building. A supermarket bed belongs about 30 dB down, with the
+  // things that happen in it poking out of that.
+  const CAL = { ambience: 0.42, pa: 0.29, foley: 0.30, ui: 0.34 };
+  const mix = { ambience: 1, pa: 1, foley: 1, ui: 1 };
+  const buses = {};
+  const wetB = {};
+  const storeDry = gain(ctx, 1);
+  for (const name of ['ambience', 'pa', 'foley', 'ui']) {
+    buses[name] = gain(ctx, CAL[name]);
+    wetB[name] = gain(ctx, CAL[name]);
+  }
+
+  const room = createRoom(ctx);
+
+  buses.ambience.connect(storeDry);
+  buses.pa.connect(storeDry);
+  buses.foley.connect(storeDry);
+  wetB.ambience.connect(room.input);
+  wetB.pa.connect(room.input);
+  wetB.foley.connect(room.input);
+
+  storeDry.connect(room.storeIn);
+  room.out.connect(room.storeIn);
+
+  // The gassed duck. When he cannot breathe, the store recedes and goes dull —
+  // that is a real perceptual effect and it is also the only way to make the
+  // breathing hurt without simply making it louder than everything else.
+  const duckLP = filt(ctx, 'lowpass', 20000, 0.7);
+  const duckG = gain(ctx, 1);
+  room.storeOut.connect(duckLP); duckLP.connect(duckG); duckG.connect(outSum);
+
+  room.deskOut.connect(outSum);
+  buses.ui.connect(outSum);
+  wetB.ui.connect(room.smallIn);
+
+  // The cop's own body. NOT one of the four contract buses, because it is not
+  // part of any mix a caller would want to turn down: his lungs are the wind
+  // mechanic and the HUD already shouts about them. Straight to the sum, past
+  // the wall, past the room, past setMix.
+  const playerBus = gain(ctx, 0.62);
+  playerBus.connect(outSum);
+
+  // ---- shared buffers -----------------------------------------------------
+  const noise = whiteBuffer(ctx, 3.7, 4021);
+  const pinkD = pinkBuffer(ctx, 6.7, 8811);
+  // A slow, unipolar noise used as an audio-rate amplitude modulator for cart
+  // rattle. Read faster when the cart moves faster, so the rattle density is
+  // physically tied to the wheels and costs no JavaScript.
+  const rattle = (function () {
+    const sr = 8000, n = sr * 5;
+    const b = ctx.createBuffer(1, n, sr);
+    const d = b.getChannelData(0);
+    const r = mulberry(3311);
+    let y = 0, y2 = 0;
+    for (let i = 0; i < n; i++) {
+      const x = r() * 2 - 1;
+      y += 0.35 * (x - y); y2 += 0.55 * (y - y2);
+      d[i] = clamp(Math.abs(y2) * 3.4, 0, 1.6);
+    }
+    const x = (sr * 0.4) | 0;
+    for (let i = 0; i < x; i++) { const k = i / x; d[i] = d[i] * k + d[n - x + i] * (1 - k); }
+    return b;
+  })();
+
+  // ---- subsystems ---------------------------------------------------------
+  const bed = createBed(ctx, room, buses.ambience, wetB.ambience);
+  const pa = createPA(ctx, room, buses.pa, wetB.pa, noise);
+  const foley = createFoley(ctx, room, buses.foley, wetB.foley, playerBus, noise, rattle);
+  const desk = createDesk(ctx, room, buses.ui, wetB.ui, noise, pinkD);
+
+  const buildMs = (typeof performance !== 'undefined' ? performance.now() : Date.now()) - t0;
+
+  // ---- listener -----------------------------------------------------------
+  // At the COP, not at the camera. The camera is 7.6 m behind him and 6.4 m up,
+  // and putting the ears there would make every distance in the store wrong by
+  // ten metres — standing at the dairy would sound like standing near the dairy.
+  // The bar is "you are in a supermarket", so the ears go where the body is.
+  const fwd = new THREE.Vector3(0, 0, 1);
+  let lx = 0, lz = 0, ly = 1.62;
+
+  // ---- state --------------------------------------------------------------
+  let started = false;
+  const perf = { ms: 0, peak: 0, ema: 0, n: 0, made: 0 };
+  let zn = room.zone;
+  let gassF = 0;
+
+  function update(dt, state) {
+    if (ctx.state !== 'running') return;
+    const p0 = performance.now();
+    if (!(dt > 0)) dt = 1 / 60;
+    dt = Math.min(0.1, dt);
+    const t = ctx.currentTime;
+    state = state || {};
+    const cop = state.cop;
+    const isDesk = state.mode === 'desk' || state.mode === 'demoted';
+
+    // ---- where the ears are
+    if (isDesk) { lx = SERVICE_DESK.x; lz = SERVICE_DESK.z + 1.1; ly = 1.35; }
+    else if (cop && cop.position) { lx = cop.position.x; lz = cop.position.z; ly = 1.62; }
+    if (camera && camera.getWorldDirection) {
+      camera.getWorldDirection(fwd);
+      fwd.y = 0;
+      if (fwd.lengthSq() < 1e-6) fwd.set(0, 0, 1); else fwd.normalize();
+    }
+    room.setListener(lx, ly, lz, fwd.x, fwd.z, t);
+
+    // ---- the room
+    zn = room.update(t, lx, lz, isDesk, dt);
+    pa.setPresence(zn.front);
+
+    // ---- the building
+    bed.update(dt, t, zn, { x: lx, z: lz });
+
+    // ---- bodies
+    if (cop) {
+      perf.made = foley.update(dt, t, {
+        mode: state.mode, cop, shoppers: state.shoppers || [], tuning: TUNING,
+      }, zn, lx, lz) || perf.made;
+    }
+    desk.update(dt, t, isDesk);
+    pa.update(dt, t, zn);
+
+    // ---- the duck. `report` is agents.js's wind block when the harness wires
+    // it; the cop's own userData is the authority either way, so this works
+    // whether or not report() exists.
+    const u = (cop && cop.userData) || {};
+    const r = state.report || {};
+    const winded = u.gassed || r.wind === 'winded';
+    const frac = r.windFrac != null ? r.windFrac
+      : clamp((u.stamina == null ? TUNING.staminaMax : u.stamina) / TUNING.staminaMax, 0, 1);
+    const gTarget = winded ? 1 : clamp((1 - frac) * 0.5, 0, 0.5);
+    gassF += (gTarget - gassF) * (1 - Math.exp(-(gTarget > gassF ? 5.5 : 0.6) * dt));
+    to(duckLP.frequency, lerp(20000, 3200, gassF), t, 0.25);
+    to(duckG.gain, lerp(1.0, 0.62, gassF), t, 0.25);
+
+    const el = performance.now() - p0;
+    perf.ms = el; perf.n++;
+    perf.ema += (el - perf.ema) * 0.05;
+    if (perf.n > 60 && el > perf.peak) perf.peak = el;
+  }
+
+  // ---- WAV capture --------------------------------------------------------
+  // The harness's recordAudio() writes webm/Opus, which is lossy and mangles the
+  // things worth measuring at the top end (the 15.7 kHz CRT line, the scanner's
+  // second harmonic). This is the same tap — audio.master — written losslessly,
+  // so a probe number is a number about the signal and not about the codec.
+  const sink = gain(ctx, 0); sink.connect(ctx.destination);
+  async function recordWav(seconds = 12, name = 'clip') {
+    resume();
+    const sp = ctx.createScriptProcessor ? ctx.createScriptProcessor(4096, 2, 2) : null;
+    if (!sp) throw new Error('no ScriptProcessor; use recordAudio()');
+    const L = [], R = [];
+    sp.onaudioprocess = (e) => {
+      L.push(new Float32Array(e.inputBuffer.getChannelData(0)));
+      R.push(new Float32Array(e.inputBuffer.getChannelData(1)));
+    };
+    master.connect(sp); sp.connect(sink);
+    await new Promise((r) => setTimeout(r, seconds * 1000));
+    master.disconnect(sp); sp.disconnect(sink); sp.onaudioprocess = null;
+    let n = 0; for (const c of L) n += c.length;
+    const sr = ctx.sampleRate;
+    const buf = new ArrayBuffer(44 + n * 4);
+    const v = new DataView(buf);
+    const s = (o, str) => { for (let i = 0; i < str.length; i++) v.setUint8(o + i, str.charCodeAt(i)); };
+    s(0, 'RIFF'); v.setUint32(4, 36 + n * 4, true); s(8, 'WAVE'); s(12, 'fmt ');
+    v.setUint32(16, 16, true); v.setUint16(20, 1, true); v.setUint16(22, 2, true);
+    v.setUint32(24, sr, true); v.setUint32(28, sr * 4, true);
+    v.setUint16(32, 4, true); v.setUint16(34, 16, true);
+    s(36, 'data'); v.setUint32(40, n * 4, true);
+    let o = 44;
+    for (let c = 0; c < L.length; c++) {
+      const a = L[c], b = R[c];
+      for (let i = 0; i < a.length; i++) {
+        v.setInt16(o, Math.max(-1, Math.min(1, a[i])) * 32767, true); o += 2;
+        v.setInt16(o, Math.max(-1, Math.min(1, b[i])) * 32767, true); o += 2;
+      }
+    }
+    const res = await fetch('/audio?name=' + encodeURIComponent(name) + '&fmt=wav',
+      { method: 'POST', body: new Blob([buf], { type: 'audio/wav' }) });
+    return res.text();
+  }
+
+  function resume() {
+    if (ctx.state === 'suspended') ctx.resume();
+    started = true;
+  }
+
+  function stats() {
+    const n = bed.nodes.length + pa.nodes.length + foley.nodes.length + desk.nodes.length;
+    return {
+      buildMs: +buildMs.toFixed(1),
+      updateMs: +perf.ema.toFixed(3),
+      peakMs: +perf.peak.toFixed(3),
+      persistentNodes: n + 24,
+      convolvers: room.convs.filter((c) => c.live).length,
+      irSeconds: room.convs.map((c) => +c.conv.buffer.duration.toFixed(2)),
+      oneShotNodesPerSec: perf.made,
+      sampleRate: ctx.sampleRate,
+      zone: {
+        open: +zn.open.toFixed(2), aisle: zn.aisle + 1,
+        chill: +zn.chill.toFixed(2), front: +zn.front.toFixed(2),
+      },
+      gassed: +gassF.toFixed(2),
+    };
+  }
+
+  return {
+    ctx, master, buses,
+    resume, update,
+    setMix(name, g) {
+      if (!buses[name]) return;
+      mix[name] = g;
+      buses[name].gain.value = CAL[name] * g;
+      wetB[name].gain.value = CAL[name] * g;
+    },
+    getMix(name) { return mix[name]; },
+    // ---- agent-facing, same spirit as main.js's snap()/run()
+    recordWav, stats, room, bed, pa, foley, desk,
+    get zone() { return zn; },
+    get started() { return started; },
+  };
+}
+
+return { createAudio };
+})();
+
 /* ==== src/main.js ==== */
 const M_src_main_js = (() => {
 const THREE = M_vendor_three_module_js;
@@ -68867,7 +71582,9 @@ const { buildStore } = M_src_store_js;
 const { createCCTV } = M_src_cctv_js;
 const { createAgents } = M_src_agents_js;
 const { createGame } = M_src_game_js;
+const { createAudio } = M_src_audio_js;
 // OWNER: LEAD. Bootstrap + wiring only. Builders should not need to edit this.
+
 
 
 
@@ -68896,7 +71613,10 @@ const cctv = createCCTV(THREE, renderer, scene);
 const agents = createAgents(THREE, scene, world);
 const game = createGame(hud, { cctv, agents, world, THREE });
 
+
 const floorCam = new THREE.PerspectiveCamera(58, RENDER_W / RENDER_H, 0.1, 160);
+// Audio is created after floorCam so it can position its listener from the real camera.
+const audio = createAudio(THREE, floorCam);
 
 const input = { x: 0, z: 0, sprint: false };
 const keys = new Set();
@@ -68909,7 +71629,10 @@ addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => cctv.resize(RENDER_W, RENDER_H));
 
 function readInput() {
-  input.x = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  // The floor camera sits BEHIND the cop looking down +Z, so its screen-right is
+  // world -X. Pressing D therefore has to drive x negative or the controls read
+  // mirrored — which is exactly how they shipped until a playtest caught it.
+  input.x = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
   input.z = (keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0);
   input.sprint = keys.has('ShiftLeft') || keys.has('ShiftRight');
   const l = Math.hypot(input.x, input.z) || 1;
@@ -68921,6 +71644,10 @@ function readInput() {
 function step(dt) {
   agents.update(dt, input, game.api || {});
   game.update(dt);
+  audio.update(dt, {
+    mode: game.mode, cop: agents.cop, shoppers: agents.shoppers,
+    chasing: !!(game.st && game.st.chasing), report: agents.report && agents.report(),
+  });
   if (game.mode === 'desk') {
     cctv.renderWall(dt);
   } else {
@@ -68996,7 +71723,34 @@ async function snapClean(name, pose) {
   const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
   return res.text();
 }
+addEventListener('pointerdown', () => audio.resume(), { once: true });
+addEventListener('keydown', () => audio.resume(), { once: true });
+
+// Record the LIVE audio graph — same idea as snap(), for ears instead of eyes.
+// Taps audio.master so it captures exactly what a player hears, not a special path.
+async function recordAudio(seconds = 12, name = 'clip') {
+  audio.resume();
+  const dest = audio.ctx.createMediaStreamDestination();
+  audio.master.connect(dest);
+  const mr = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+  const chunks = [];
+  mr.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  mr.start();
+  const wasPaused = !rafOn;
+  if (wasPaused) resumeLoop();
+  await new Promise((r) => setTimeout(r, seconds * 1000));
+  mr.stop();
+  await new Promise((r) => (mr.onstop = r));
+  if (wasPaused) rafOn = false;
+  audio.master.disconnect(dest);
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  const res = await fetch('/audio?name=' + encodeURIComponent(name), { method: 'POST', body: blob });
+  return res.text();
+}
+function resumeLoop() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } }
+
 window.__CHOP = {
+  audio, recordAudio,
   THREE, scene, renderer, agents, game, cctv, world, input, keys, snap, run, step,
   snapClean, probeCam,
   pause() { rafOn = false; }, resume() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } },
