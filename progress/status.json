@@ -183,6 +183,11 @@
      "round": 2,
      "path": "../shots/game_r2_desk.png",
      "t": 1787416411.945306
+    },
+    {
+     "round": 3,
+     "path": "../shots/game_r3_floor.png",
+     "t": 1787430098.6298869
     }
    ],
    "gaps": [
@@ -199,13 +204,29 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787418081.817565,
-   "note": "Confirms the coupling I flagged: observer catch fell 79.4% -> 59.7% once the chase stopped being unlosable, and points fell 1532 -> 912. The old figure was inflated by a chase that auto-caught. The skill separation survives the correction, which is the result that matters.",
+   "updated": 1787430382.460624,
+   "note": "Two-door HUD deliberately REFUSES to read s.doorPref - printing the hidden preference would hand back the exact variable the two-door fix exists to hide. Reads the margin instead: outside doorBias no preference can change his destination, so it locks to ROUTE COMMITTED; inside the band it says BOTH DOORS LIVE and breaks ties on which door is closing faster. Measured naive-vs-biased read: disagree 6.2%, all inside the band where the panel already declines to commit. Attributed the stand-down fix via a FIX.close switch rather than seed-matched before/after, because eval.js patches Math.random so any change in RNG draw count re-rolls the stream.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
-   "verdict": "PASS (re-measured against the FIXED chase). Observer 59.7% catch / 0 demotions / 912 pts-per-shift; random guesser 32.7% / 1.33 demotions / 133 pts. Reader still outscores guesser ~6.9:1 and keeps the job. 6x200s per policy."
+   "verdict": "PASS, separation WIDER than round 3: observer 76.4% catch / 1416 pts / 0.00 demotions vs random 54.8% / 323 / 1.23. That is +21.6pp catch and 4.4x points. 3 seeds x 20 shifts x 240s = 240 shift-minutes, 1467 resolved thieves."
   }
  },
  "log": [
+  {
+   "t": 1787430382.460625,
+   "piece": "game",
+   "role": "builder",
+   "round": 3,
+   "state": "passed",
+   "text": "Two-door HUD deliberately REFUSES to read s.doorPref - printing the hidden preference would hand back the exact variable the two-door fix exists to hide. Reads the margin instead: outside doorBias no preference can change his destination, so it locks to ROUTE COMMITTED; inside the band it says BOTH DOORS LIVE and breaks ties on which door is closing faster. Measured naive-vs-biased read: disagree 6.2%, all inside the band where the panel already declines to commit. Attributed the stand-down fix via a FIX.close switch rather than seed-matched before/after, because eval.js patches Math.random so any change in RNG draw count re-rolls the stream."
+  },
+  {
+   "t": 1787430098.629888,
+   "piece": "game",
+   "role": "builder",
+   "round": 3,
+   "state": "building",
+   "text": "TWO DOORS in the HUD: pursuit panel now shows HIS door vs the OTHER door with route metres for HIM and for YOU (green = you'd reach it first), a lock/OPEN state derived from the doorBias margin (never from the hidden doorPref), world-projected DOOR tags on the floor, and a flashing 'SUBJECT BREAKING FOR THE REAR' band + orange brackets + prompt flip for chase.viaBack. Stale-aisle bug fixed: a loss now closes the case (no marker, DISPATCHED TO -> STAND DOWN, prompt -> SUBJECT GONE [Q]). Re-measured desk phase, 3 seeds x 20 shifts x 240s (240 shift-min): observer 76.4% catch / 1416 pts-shift / 0.00 demotions-shift / 0.00 complaints-min; random 54.8% / 323 / 1.23 / 1.18. Separation +21.6pp catch, 4.4x points, INTACT. Attributed A-B on the stand-down fix (FIX.close): observer complaints-min 0.063 -> 0.000, i.e. every complaint a correct reader still took came from obeying a stale objective after a loss."
+  },
   {
    "t": 1787428559.548616,
    "piece": "agents",
@@ -535,5 +556,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787428559.548617
+ "updated": 1787430382.460626
 }

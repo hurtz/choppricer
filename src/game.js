@@ -37,6 +37,17 @@ const aisleIdx = (x) => clamp(Math.round(x / PITCH + (AISLE_COUNT - 1) / 2), 0, 
 const inAisle = (z) => z > -HALF - 0.35 && z < HALF + 0.35;
 
 // CAM 01..04 cover aisle pairs; 05 front end, 06 back wall, 07 exit, 08 produce.
+// These are INDICES into CAMERAS, so 6 is CAM 07 EXIT DOORS and 4 is CAM 05.
+//
+// ROUND 3, AND DELIBERATELY NOT CHANGED. The vestibule test names Door 1 because
+// CAM 07 is bolted to Door 1: config's CAMERAS was written for a one-door store
+// and nothing in it is aimed at Door 2 — CAM 07 faces -Z from x=-21.9 and CAM 05
+// faces +Z from x=0, so a man standing in the Door 2 vestibule at x=14.5 is in
+// neither frustum. I tried filing him under EXIT DOORS anyway; that is a worse
+// lie than the one it replaces, because the roster would then name a channel
+// whose picture is of a doorway thirty-five metres away with nobody in it.
+// FRONT END is the least-wrong channel available. The real fix is a ninth camera
+// on Door 2, which lives in config.js and is reported, not taken.
 function camFor(x, z) {
   if (z <= -HALF - 0.35) return d2(x, z, EXIT.x, EXIT.z) < 10 ? 6 : 4;
   if (z >= HALF + 0.35) return x > STORE.maxX - 11 ? 7 : 5;
@@ -85,7 +96,7 @@ const HOLD = { dur: 9.0, cool: 21.0 };
 
 // Sub-fixes, individually switchable so the bench in ./game/eval.js can attribute
 // the change instead of guessing. Ship values are all true.
-const FIX = { post: true, hold: true, roster: true, harass: true };
+const FIX = { post: true, hold: true, roster: true, harass: true, close: true };
 const ROWS = 3;                 // roster rows the analytics panel can physically fit
 
 export function createGame(hudEl, deps = {}) {
@@ -126,6 +137,111 @@ export function createGame(hudEl, deps = {}) {
     stamina: TUNING.staminaMax, staminaMax: TUNING.staminaMax,
     boost: 0, gassed: false, speed: 0, nearest: null, chase: null,
   };
+
+  // ---- ROUND 3: THERE ARE TWO DOORS -----------------------------------------
+  // Everything in this file that said DOOR 1 was a lie about half the time as of
+  // this round, and the HUD repeating a lie is worse than the HUD saying nothing.
+  //
+  // The hard part is not "which door is nearer", it is being HONEST about it.
+  // agents.js gives each subject a hidden door preference — people leave by the
+  // door they came in by — and a running man will pay `doorBias` metres of extra
+  // route to use his. That preference is exactly the thing the two-door design
+  // exists to hide: if this panel read `s.doorPref` and printed the answer the
+  // instant he bolted, it would hand the player the hidden variable back and
+  // re-flatten the chase at the HUD layer. So nothing below ever looks at it.
+  //
+  // What it reads instead is the margin. Route metres to each door, from where
+  // he ACTUALLY IS. If the nearer door is nearer by more than doorBias, no
+  // preference he could be holding can send him to the other one — that is a
+  // provable statement about the geometry, and the panel locks. Inside the band,
+  // both doors are still live and the panel says so, breaking the tie only on
+  // which door is measurably closing faster, which is an observation about a man
+  // running and not a peek at his file.
+  const DOORS_FALLBACK = [{ id: 'door1', label: 'DOOR 1', x: EXIT.x, z: EXIT.z }];
+  function exitsOf() {
+    const a = agentsOf();
+    const e = a && a.exits;
+    return (e && e.length) ? e : DOORS_FALLBACK;
+  }
+  const doorBias = () => { const a = agentsOf(); return (a && a.K && a.K.doorBias) || 7.5; };
+  const thiefCruise = () => { const a = agentsOf(); return (a && a.thiefCruise) ? a.thiefCruise() : TUNING.thiefRun; };
+
+  // One flood per door, cached. agents.js exposes the combined field (metres to
+  // the NEAREST way out) and exitOf(); neither can answer "how far to the OTHER
+  // one", which is the whole question a two-door chase asks. nav is rebuilt when
+  // store.js changes the collider set, so key the cache on the nav itself.
+  let doorNav = null, doorKey = '', doorF = null;
+  function doorFields() {
+    const a = agentsOf();
+    if (!a || !a.nav) return null;
+    const ex = exitsOf();
+    const key = ex.map((e) => `${e.x.toFixed(2)},${e.z.toFixed(2)}`).join(';');
+    if (doorNav !== a.nav || doorKey !== key || !doorF) {
+      try { doorF = ex.map((e) => a.nav.field(e.x, e.z)); doorNav = a.nav; doorKey = key; }
+      catch { doorF = null; doorNav = null; doorKey = ''; }
+    }
+    return doorF;
+  }
+  // Route metres from (x,z) to every door. Straight lines through six gondolas
+  // read short by a third, so this falls back to one only when nav is mid-rebuild.
+  function doorDists(x, z) {
+    const a = agentsOf(), fs = doorFields();
+    const ex = exitsOf();
+    if (a && a.nav && fs && fs.length === ex.length) {
+      const d = fs.map((f) => a.nav.at(f, x, z));
+      if (d.every((v) => isFinite(v))) return d;
+    }
+    return ex.map((e) => d2(x, z, e.x, e.z));
+  }
+  // Which door did this man actually leave by / is he standing at. Used for the
+  // log lines, where guessing is not required — he is at the thing.
+  function doorLabelOf(s) {
+    const ex = exitsOf();
+    const a = agentsOf();
+    if (!s) return ex[0].label;
+    // s.exitI is initialised to 0 on every shopper in the building and only
+    // becomes true at startShove(), so trusting it early makes every line in the
+    // game say DOOR 1 again — which is exactly the bug this round is about.
+    const atDoor = s.escaped || s.state === 'shove';
+    if (atDoor && s.exitI != null && ex[s.exitI]) return ex[s.exitI].label;
+    if (a && a.exitOf) {
+      const e = a.exitOf(s.position.x, s.position.z);
+      if (e && e.exit) return e.exit.label;
+    }
+    return ex[0].label;
+  }
+  const EMA_TAU = 0.40;      // s — smoothing window for "which door is closing"
+  function doorRead(s, f, dt) {
+    const ex = exitsOf();
+    const him = doorDists(s.position.x, s.position.z);
+    const cop = G.cop;
+    const you = doorDists(cop.x, cop.z);
+    let near = 0;
+    for (let i = 1; i < him.length; i++) if (him[i] < him[near]) near = i;
+    let second = Infinity;
+    for (let i = 0; i < him.length; i++) if (i !== near) second = Math.min(second, him[i]);
+    // Can his preference still overrule the geometry? That is the whole question.
+    const sure = ex.length < 2 || (second - him[near]) > doorBias();
+
+    // Smoothed closure rate, so a lean is "he is running at that one" and not
+    // one frame of noise. Rebased whenever the chase changes hands.
+    const prev = (f && f.dEma && f.dEma.length === him.length) ? f.dEma : null;
+    const ema = prev ? him.map((v, i) => prev[i] + (v - prev[i]) * Math.min(1, dt / EMA_TAU)) : him.slice();
+    if (f) f.dEma = ema;
+    let pick = near;
+    if (!sure && prev) {
+      const rate = him.map((v, i) => (ema[i] - v) / EMA_TAU);      // m/s of closure
+      let b = 0;
+      for (let i = 1; i < rate.length; i++) if (rate[i] > rate[b]) b = i;
+      let other = -Infinity;
+      for (let i = 0; i < rate.length; i++) if (i !== b) other = Math.max(other, rate[i]);
+      if (rate[b] - other > 0.8) pick = b;
+    }
+    return {
+      i: pick, label: ex[pick].label, x: ex[pick].x, z: ex[pick].z,
+      dist: him[pick], him, you, sure, near, all: ex,
+    };
+  }
 
   const G = {
     st, tel, now: 0, log: [], alarm: null, cams: CAMERAS,
@@ -283,7 +399,7 @@ export function createGame(hudEl, deps = {}) {
     // A bolting thief no longer runs thiefRun forever: that is his opening
     // ceiling. He fades to a cruise, so timing the countdown off thiefRun told
     // the player the door was closer than it was.
-    const runSpeed = (a && a.thiefCruise) ? a.thiefCruise() : TUNING.thiefRun;
+    const runSpeed = thiefCruise();
     for (const s of shoppersOf()) {
       if (!s.guilty || s.escaped || s.caught) continue;
       if (s.state !== 'drift' && s.state !== 'bolt') continue;
@@ -294,7 +410,12 @@ export function createGame(hudEl, deps = {}) {
       if (!best || eta < best.eta) best = { eta, s };
     }
     if (best) {
-      G.alarm = { text: 'DOOR 1 — SUBJECT IN THE VESTIBULE', count: Math.max(0, best.eta) };
+      // Which vestibule. Two doors 35 m apart and one alarm text that always
+      // said DOOR 1 sent the player to the wrong end of the front wall.
+      G.alarm = {
+        text: `${doorLabelOf(best.s)} — SUBJECT IN THE VESTIBULE`,
+        count: Math.max(0, best.eta),
+      };
       return;
     }
     if (softAlarm && softAlarm.until > G.now) { G.alarm = { text: softAlarm.text }; return; }
@@ -324,11 +445,15 @@ export function createGame(hudEl, deps = {}) {
   // is a plain stuck-shopper recycle, which fired twice in the same 50 minutes.
   // If it ever reads zero as well, delete this too.
   function stallWatch(dt) {
+    const a = agentsOf();
     for (const s of shoppersOf()) {
       if (!s.guilty || s.escaped || s.caught) continue;
       if (s.state !== 'drift' && s.state !== 'bolt') { s.__best = Infinity; s.__stall = 0; continue; }
       // Progress, not velocity: a wedged thief walks into the wall at full speed.
-      const de = d2(s.position.x, s.position.z, EXIT.x, EXIT.z);
+      // Metres of ROUTE to the nearest way out, not a straight line to Door 1 —
+      // a man walking steadily at Door 2 was reading as a man making no progress.
+      const de = (a && a.exitDistOf) ? a.exitDistOf(s) : d2(s.position.x, s.position.z, EXIT.x, EXIT.z);
+      if (!isFinite(de)) { s.__stall = 0; continue; }
       if (de < (s.__best == null ? Infinity : s.__best) - 0.5) { s.__best = de; s.__stall = 0; continue; }
       s.__stall = (s.__stall || 0) + dt;
       if (s.__stall > 16 && st.mode === 'desk') {
@@ -384,7 +509,13 @@ export function createGame(hudEl, deps = {}) {
       if (s.escaped || s.caught || !s.guilty) continue;
       if (s.state === 'bolt' || s.state === 'react') chase = s;
     }
-    if (chase) return chase;
+    if (chase) { f.closed = null; return chase; }
+    // THE CASE IS OVER. Reported twice by the chase critic and it was the worst
+    // thing on this screen: your man goes out the door, and the HUD quietly
+    // re-points the reticle at the nearest STRANGER in the aisle you were sent
+    // to, still saying PROCEED. Obeying your own HUD then files a complaint
+    // against you. Nothing is your objective until dispatch says so again.
+    if (f.closed) return null;
     if (f.dialogue && f.dialogueId != null) {          // look at whoever is yelling
       const d = list.find((s) => s.id === f.dialogueId && !s.escaped && s.mesh.visible);
       if (d) return d;
@@ -428,15 +559,52 @@ export function createGame(hudEl, deps = {}) {
       const flee = sh.state === 'bolt' || sh.state === 'react';
       const r = recOf(sh);
       f.subjCode = r.code;
+      f.tgtId = sh.id;
       f.target = { x: sh.position.x, z: sh.position.z, code: r.code, state: flee ? 'flee' : 'walk' };
       f.dist = d2(sh.position.x, sh.position.z, cop.x, cop.z);
-      f.exitDist = d2(sh.position.x, sh.position.z, EXIT.x, EXIT.z);
       if (flee) {
-        if (!f.exitDist0 || f.chaseId !== sh.id) { f.chaseId = sh.id; f.exitDist0 = Math.max(2, f.exitDist); }
-      } else { f.exitDist0 = 0; f.chaseId = null; }
+        if (f.chaseId !== sh.id) {                 // new chase: rebase everything
+          f.chaseId = sh.id; f.dEma = null; f.doorI = null;
+          f.exitDist0 = 0; f.viaBack = false; f.backT = 0; f.backSaid = false;
+        }
+        const dr = doorRead(sh, f, dt);
+        f.door = dr;
+        f.exitDist = dr.dist;
+        // The bar is "how much of his run to the door he has done". He can make
+        // it longer by turning round, so the baseline is the worst it has ever
+        // been rather than the first reading — the bar retreats to zero and sits
+        // there while he runs away from every exit, which is the truth.
+        f.exitDist0 = Math.max(f.exitDist0, f.exitDist, 2);
+        f.eta = f.exitDist / Math.max(0.5, thiefCruise());
+        if (f.doorI == null) f.doorI = dr.i;
+        else if (dr.i !== f.doorI) {
+          f.doorI = dr.i;
+          if (dr.sure) logLine(L.fill(L.DOOR_SWITCH, dr.label), true);
+        }
+        // agents.js flags the rear break in telemetry the frame he commits. Hold
+        // it briefly so a single frame of route noise cannot strobe the callout.
+        const ch = tel.chase;
+        if (ch && ch.id === sh.id && ch.viaBack) f.backT = 0.45;
+        else f.backT = Math.max(0, f.backT - dt);
+        const back = f.backT > 0;
+        // Announced on four channels at once and none of them a full-screen
+        // stamp: a stamp lands in the middle of the 3D view at the exact second
+        // the player needs to watch a man turn round. The brackets ON him go
+        // orange, the band under the pursuit panel flashes, the prompt band
+        // changes what it is asking for, and it goes in the log. Once per chase.
+        if (back && !f.viaBack && !f.backSaid) {
+          f.backSaid = true;
+          logLine(L.pick(L.VIA_BACK_LOG), true);
+        }
+        f.viaBack = back;
+      } else {
+        f.exitDist = 0; f.exitDist0 = 0; f.chaseId = null; f.door = null;
+        f.viaBack = false; f.backT = 0; f.dEma = null; f.doorI = null; f.eta = 0;
+      }
       f.confronted = sh.angry > 0;
     } else {
       f.target = null; f.dist = 0; f.exitDist = 0; f.exitDist0 = 0; f.chaseId = null;
+      f.door = null; f.viaBack = false; f.backT = 0; f.dEma = null; f.doorI = null; f.eta = 0;
     }
 
     // dialogue reveal
@@ -452,11 +620,25 @@ export function createGame(hudEl, deps = {}) {
     // prompt
     f.prompt = '';
     if (!f.dialogue) {
-      if (f.target && f.target.state === 'flee') f.prompt = 'PURSUE — DO NOT LOSE HIM';
-      else if (!f.target) f.prompt = f.clearLine;
+      if (f.closed) f.prompt = L.STAND_DOWN;
+      else if (f.target && f.target.state === 'flee') {
+        f.prompt = f.viaBack ? L.VIA_BACK_PROMPT : 'PURSUE — DO NOT LOSE HIM';
+      } else if (!f.target) f.prompt = f.clearLine;
       else if (f.dist > 9) f.prompt = `PROCEED TO ${f.where || `AISLE ${f.aisle + 1}`}`;
       else f.prompt = 'ESTABLISH CONTACT';
     }
+  }
+
+  // Whatever it was, it is over. Everything on the floor HUD that names a place
+  // or points at a person is now stale, so all of it goes at once.
+  function closeCase(line) {
+    const f = G.floor; if (!f) return;
+    f.closed = { line, t: G.now };
+    f.target = null; f.subjId = null; f.tgtId = null; f.chaseId = null;
+    f.door = null; f.exitDist = 0; f.exitDist0 = 0; f.eta = 0;
+    f.viaBack = false; f.backT = 0; f.dEma = null; f.doorI = null;
+    f.dialogue = null; f.dialogueId = null;
+    f.prompt = L.STAND_DOWN;
   }
 
   // ------------------------------------------------------------- the write-up
@@ -488,7 +670,8 @@ export function createGame(hudEl, deps = {}) {
     if (n === 1) { w.all = L.pick(L.COP_WARNING).slice(); w.per = 1.6; w.lines = [w.all[0]]; }
     if (n === 2) {
       const a = L.pick(L.ESCORT), b = L.pick(L.ESCORT.filter((x) => x !== a));
-      w.all = [a, b]; w.per = 1.1; w.lines = [a];
+      const door = w.subject ? doorLabelOf(w.subject) : null;
+      w.all = [L.fill(a, door), L.fill(b, door)]; w.per = 1.1; w.lines = [w.all[0]];
       if (w.subject) { w.subject.mesh.visible = false; w.subject.cart.visible = false; }
     }
     if (n === 3) { w.all = L.pick(L.MANAGER).slice(); w.per = 1.95; w.lines = [w.all[0]]; }
@@ -546,9 +729,13 @@ export function createGame(hudEl, deps = {}) {
     const same = sel && (post ? sel.id === G.desk.sel : sel.aisle === idx);
     G.floor = {
       aisle: idx, post: p, where: postLabel(p), subjId: same ? sel.id : null,
-      target: null, dist: 0, exitDist: 0, exitDist0: 0, chaseId: null,
+      target: null, tgtId: null, dist: 0, exitDist: 0, exitDist0: 0, chaseId: null,
       confronted: false, dialogue: null, dialogueId: null, prompt: '', t: 0,
       stampT: 0, stampText: '', stampSub: '', clearLine: L.pick(L.AISLE_CLEAR),
+      // two doors: which one he is running at, and how sure the box is
+      door: null, doorI: null, dEma: null, eta: 0,
+      viaBack: false, backT: 0, backSaid: false, closed: null,
+      standDown: L.STAND_DOWN_DEST, backLine: L.VIA_BACK, backSub: L.VIA_BACK_SUB,
     };
     st.mode = 'floor';
     // The hold deliberately survives leaving the desk. Parking the OTHER one
@@ -581,9 +768,18 @@ export function createGame(hudEl, deps = {}) {
     if (evt === 'catch') { if (s) openWriteup(s); else { st.points += 100; st.caught++; refreshRank(); } }
     if (evt === 'escape') {
       st.escaped++;
-      const line = L.pick(L.ESCAPE_LOG);
+      const door = s ? doorLabelOf(s) : null;
+      const line = L.fill(L.pick(L.ESCAPE_LOG), door);
       logLine(line, true);
-      if (st.mode === 'floor') stampIt('SUBJECT LOST', line);
+      // Only YOUR man ending it ends your assignment. A thief resolving at the
+      // other end of the store while you are mid-chase is a ticker line, not a
+      // stand-down order.
+      const f = G.floor;
+      const mine = f && s && (f.tgtId === s.id || f.subjId === s.id || f.chaseId === s.id);
+      if (st.mode === 'floor' && mine) {
+        stampIt('SUBJECT LOST', line);
+        if (FIX.close) closeCase(L.STAND_DOWN);
+      }
       softAlarm = { text: 'MERCHANDISE LOSS — SHIFT TOTAL UPDATED', until: G.now + 5 };
     }
     if (evt === 'harass') {
@@ -603,7 +799,12 @@ export function createGame(hudEl, deps = {}) {
     get frozen() { return st.mode === 'writeup' || st.mode === 'demoted'; },
     onBolt(s) {
       const r = recOf(s);
-      if (G.floor) { G.floor.chaseId = null; G.floor.exitDist0 = 0; G.floor.subjId = s.id; }
+      if (G.floor) {
+        const f = G.floor;
+        f.chaseId = null; f.exitDist0 = 0; f.subjId = s.id;
+        f.closed = null;                 // a man running reopens any case
+        f.dEma = null; f.doorI = null; f.viaBack = false; f.backT = 0; f.backSaid = false;
+      }
       logLine(`${r.code} IS RUNNING`, true);
     },
     onCatch(s) {

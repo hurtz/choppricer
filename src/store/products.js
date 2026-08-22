@@ -16,21 +16,35 @@
 import { rr, ri, pick } from './kit.js';
 
 // h,s,l triples -> brand colours. Grocery packaging is loud and saturated.
+//
+// ROUND 5. Measured against the references rather than eyeballed: a hue
+// histogram of reference/store_01 and _02 (both Langenstein's, the closest
+// thing here to a "normal" store) puts 11-15% of the frame in the blue band at
+// s > 0.32 and 7-8% in the warm 15-60 degree band. Round 4's renders came back
+// at 0.7-1.8% blue against 38-41% warm — an almost exact inversion.
+//
+// Two things were doing it. The illuminant (fixed in store.js — every lamp in
+// the rig was warm) and this table: `blue` sat at l = 34-42, which under any
+// light at all renders as navy, not as the Windex/Ziploc blue that dominates
+// those two photographs. Blues and teals come up ten to twelve points of
+// lightness, the warm families come down slightly, and `cream` and `brown` —
+// which between them were most of the tan — lose a member each. Nothing here
+// is a stylistic choice; it is what a supermarket shelf measures.
 const C = {
-  red:     [[352, 78, 46], [8, 82, 50], [0, 68, 40], [346, 70, 55]],
+  red:     [[354, 82, 48], [6, 85, 52], [0, 74, 42], [344, 74, 57]],
   orange:  [[24, 92, 52], [32, 95, 55], [16, 85, 48], [38, 90, 58]],
-  yellow:  [[46, 95, 55], [52, 92, 58], [42, 88, 50]],
-  green:   [[96, 55, 34], [138, 48, 34], [82, 62, 40], [116, 40, 28]],
-  teal:    [[176, 55, 38], [190, 60, 42], [166, 45, 34]],
-  blue:    [[214, 72, 40], [222, 66, 34], [202, 78, 42], [232, 55, 38]],
-  navy:    [[224, 60, 22], [216, 55, 26]],
-  purple:  [[280, 45, 40], [296, 40, 44], [268, 50, 36]],
-  pink:    [[334, 70, 58], [318, 62, 60]],
-  cream:   [[40, 45, 82], [36, 30, 88], [44, 55, 78]],
-  white:   [[40, 12, 90], [200, 8, 88], [30, 15, 92]],
-  brown:   [[26, 50, 30], [20, 42, 26], [32, 38, 34]],
-  black:   [[220, 12, 16], [30, 10, 14]],
-  silver:  [[210, 8, 68], [40, 6, 72]],
+  yellow:  [[48, 96, 58], [54, 94, 60], [42, 90, 52]],
+  green:   [[96, 58, 38], [138, 52, 36], [82, 66, 44], [116, 46, 32]],
+  teal:    [[178, 68, 46], [190, 74, 50], [166, 56, 42]],
+  blue:    [[212, 82, 50], [220, 76, 45], [202, 88, 52], [232, 66, 46]],
+  navy:    [[224, 70, 28], [216, 62, 32]],
+  purple:  [[280, 52, 46], [296, 46, 48], [268, 58, 42]],
+  pink:    [[334, 76, 60], [318, 68, 62]],
+  cream:   [[42, 40, 86], [38, 24, 91]],
+  white:   [[40, 8, 93], [205, 7, 92], [30, 10, 95]],
+  brown:   [[26, 46, 32], [20, 38, 28]],
+  black:   [[220, 14, 18], [30, 10, 15]],
+  silver:  [[208, 9, 74], [40, 6, 78]],
 };
 const mix = (...keys) => keys.flatMap((k) => C[k]);
 
@@ -65,56 +79,56 @@ export const DEPTS = [
     sign: ['BREAD', 'BAKING NEEDS', 'FLOUR / SUGAR', 'COOKIES'],
     kinds: [K.bag, K.midBox, K.smallBox, K.wideBox, K.tallBox, K.pouch, K.tallJar, K.smallBag],
     soft: [K.bag, K.pouch, K.tallJar, K.smallBag],
-    colors: mix('cream', 'brown', 'red', 'yellow', 'white', 'orange', 'blue', 'green'),
+    colors: mix('cream', 'white', 'red', 'yellow', 'brown', 'orange', 'blue'),
   },
   {
     name: 'canned', key: 'canned', blade: 'CANNED GOODS',
     sign: ['CANNED VEGETABLES', 'SOUPS / BROTH', 'CANNED FRUITS', 'PORK & BEANS'],
     kinds: [K.can, K.can, K.bigCan, K.jar, K.tallJar, K.midBox, K.pouch, K.smallBox],
     soft: [K.jar, K.tallJar, K.pouch],
-    colors: mix('red', 'green', 'silver', 'blue', 'orange', 'white'),
+    colors: mix('red', 'red', 'green', 'silver', 'blue', 'orange', 'white', 'yellow'),
   },
   {
     name: 'pasta', key: 'pasta', blade: 'PASTA / SAUCE',
     sign: ['SPAGHETTI / SAUCES', 'RICE & DRY BEANS', 'MEXICAN', 'ASIAN'],
     kinds: [K.jar, K.midBox, K.smallBox, K.tallBox, K.tallJar, K.bigCan, K.pouch, K.squat],
     soft: [K.jar, K.tallJar, K.pouch, K.squat],
-    colors: mix('red', 'yellow', 'green', 'brown', 'cream', 'orange'),
+    colors: mix('red', 'red', 'yellow', 'green', 'green', 'cream', 'orange'),
   },
   {
     name: 'snacks', key: 'snacks', blade: 'SNACKS / CHIPS',
     sign: ['CHIPS & SNACKS', 'CANDIES', 'CRACKERS', 'NUTS'],
     kinds: [K.bag, K.bag, K.smallBag, K.wideBox, K.midBox, K.pouch, K.tinyBox, K.tallJar],
     soft: [K.bag, K.smallBag, K.pouch, K.tallJar],
-    colors: mix('orange', 'red', 'yellow', 'blue', 'green', 'purple', 'teal'),
+    colors: mix('orange', 'red', 'yellow', 'blue', 'blue', 'green', 'purple', 'teal', 'black'),
   },
   {
     name: 'soda', key: 'soda', blade: 'SODA / JUICE',
     sign: ['SOFT DRINKS', 'JUICES', 'BOTTLED WATER', 'SPORTS DRINKS'],
     kinds: [K.sodaBtl, K.case12, K.sodaBtl, K.bottle, K.jug, K.case12, K.squat, K.can],
     soft: [K.sodaBtl, K.bottle, K.jug, K.squat],
-    colors: mix('red', 'blue', 'green', 'orange', 'purple', 'white', 'teal'),
+    colors: mix('red', 'blue', 'blue', 'green', 'orange', 'purple', 'white', 'teal', 'silver'),
   },
   {
     name: 'breakfast', key: 'breakfast', blade: 'CEREAL / COFFEE',
     sign: ['CEREAL', 'COFFEE / TEA', 'BREAKFAST FOODS', 'SYRUP / JAM'],
     kinds: [K.cerealBox, K.cerealBox, K.midBox, K.jar, K.tallBox, K.smallBox, K.tallJar, K.pouch],
     soft: [K.jar, K.tallJar, K.pouch],
-    colors: mix('yellow', 'red', 'blue', 'orange', 'brown', 'green'),
+    colors: mix('yellow', 'yellow', 'red', 'red', 'blue', 'orange', 'brown', 'purple'),
   },
   {
     name: 'paper', key: 'paper', blade: 'PAPER / CLEANING',
     sign: ['PAPER GOODS', 'LAUNDRY', 'CLEANING SUPPLIES', 'TRASH BAGS'],
     kinds: [K.jug, K.wideBox, K.bag, K.jug, K.midBox, K.cerealBox, K.squat, K.bottle],
     soft: [K.jug, K.bag, K.squat, K.bottle],
-    colors: mix('blue', 'white', 'teal', 'green', 'orange', 'purple'),
+    colors: mix('blue', 'blue', 'blue', 'white', 'white', 'teal', 'green', 'yellow', 'orange'),
   },
   {
     name: 'health', key: 'health', blade: 'HEALTH / BEAUTY',
     sign: ['HEALTH & BEAUTY', 'BABY CARE', 'VITAMINS', 'PET SUPPLIES'],
     kinds: [K.smallBox, K.bottle, K.tinyBox, K.midBox, K.smallBag, K.jar, K.squat, K.pouch],
     soft: [K.bottle, K.jar, K.squat, K.pouch, K.smallBag],
-    colors: mix('white', 'teal', 'purple', 'blue', 'pink', 'cream', 'green'),
+    colors: mix('white', 'white', 'teal', 'purple', 'blue', 'pink', 'silver', 'green'),
   },
 ];
 
@@ -122,7 +136,7 @@ export const FROZEN = {
   name: 'frozen', key: 'frozen', blade: 'FROZEN', sign: ['FROZEN'],
   kinds: [K.wideBox, K.midBox, K.smallBag, K.bag, K.tallBox, K.pouch],
   soft: [K.smallBag, K.bag, K.pouch],
-  colors: mix('white', 'blue', 'teal', 'red', 'green', 'silver', 'orange'),
+  colors: mix('white', 'blue', 'blue', 'teal', 'red', 'green', 'silver', 'orange', 'yellow'),
 };
 
 // Atlas-cell pools. Cell i of each atlas was drawn with department i%8's
@@ -209,7 +223,7 @@ export function fillBackRow(B, rng, dept, opts) {
     for (let k = 0; k < n && a < a1 - w * 0.5; k++) {
       col.setHSL(hsl[0] / 360, Math.min(1, hsl[1] / 100 * rr(rng, 1.1, 1.45)),
         Math.min(0.92, hsl[2] / 100 * rr(rng, 0.80, 1.22)));
-      col.multiplyScalar(lit * (litAt ? litAt(a + w / 2) : 1) * 0.70 * rr(rng, 0.90, 1.08));
+      col.multiplyScalar(lit * (litAt ? litAt(a + w / 2) : 1) * 0.82 * rr(rng, 0.90, 1.08));
       const back = pd / 2 + 0.008;
       const cx = isZ ? lip - face * back : a + w / 2;
       const cz = isZ ? a + w / 2 : lip - face * back;
@@ -358,9 +372,16 @@ export function fillShelf(B, rng, dept, opts) {
       // same shelf under the dead one two units down the strip; round 3 lit
       // every facing on a run identically, which is a large part of why the
       // whole frame sat in one narrow value band.
-      const shade = lit * (litAt ? litAt(a) : 1) * 0.70 * rr(rng, 0.90, 1.10);
+      // ROUND 5 — EXPOSURE. This constant was 0.70, which put every facing at
+      // 50-90% before a light touched it; combined with an all-warm rig the
+      // measured mean VALUE of a render was 0.44-0.45 against 0.49-0.66 for the
+      // reference photographs. A supermarket is not a dim room. 0.82 with the
+      // lightness range opened at the top is what a facing under a live 4 ft
+      // lamp actually returns, and the print does not sink because the mask's
+      // brightness channel still carries the ink.
+      const shade = lit * (litAt ? litAt(a) : 1) * 0.82 * rr(rng, 0.90, 1.10);
       const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.30, 1.60));
-      const vLit = Math.min(0.95, baseHsl[2] / 100 * rr(rng, 0.80, 1.30));
+      const vLit = Math.min(0.97, baseHsl[2] / 100 * rr(rng, 0.86, 1.38));
       // Set per INSTANCE below, not once per variety: eight identical facings
       // in a row at one exact colour is a flat field with no internal edges,
       // and a photographed shelf has none of those. Cartons that came off the

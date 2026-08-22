@@ -22,6 +22,9 @@ export const STORE = {
 export const FRONT_WALK_Z = STORE.minZ + 3.5; // cross-aisle in front of checkouts
 export const BACK_WALK_Z  = STORE.maxZ - 2.5; // cross-aisle along the back wall
 export const EXIT = { x: STORE.minX + 3.0, z: STORE.minZ + 0.4 };
+// Second exit, 35m from Door 1. Two doors is what inverted the door-camping
+// exploit — one door made the thief's destination public knowledge.
+export const EXIT2 = { x: EXIT.x + 35.0, z: STORE.minZ + 0.4 };
 export const SERVICE_DESK = { x: STORE.maxX - 4.0, z: STORE.minZ + 2.0 };
 
 // --- Chase tuning. The second bar lives in these numbers. ---

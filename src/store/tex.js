@@ -1075,3 +1075,141 @@ export function coolerBackTex(THREE) {
   g.fillStyle = 'rgba(180,205,215,0.25)'; g.fillRect(0, 0, W, H);
   return tex(THREE, c, { rx: 1, ry: 1 });
 }
+
+// ---------------------------------------------------------------------------
+// WHAT IS OUTSIDE THE FRONT DOOR. Round 4's storefront was a single flat plate
+// of 0xd9e6ee — one of the loudest CG shapes in the frame, because a real
+// storefront is the brightest thing in the picture AND the most structured:
+// blown-out sky over a dark canopy soffit, a car park washing out to nothing,
+// bollards and a cart corral in near-silhouette against it. The value range
+// matters more than the content: the top of the glass clips to white and the
+// bottom sits two stops under the sales floor.
+export function outsideTex(THREE) {
+  const W = 256, H = 256;
+  const [c, g] = cv(W, H);
+  const rng = makeRng(0x0d0072);
+  // sky -> haze -> asphalt
+  const sky = g.createLinearGradient(0, 0, 0, H);
+  sky.addColorStop(0.00, '#ffffff');
+  sky.addColorStop(0.30, '#f4f8fb');
+  sky.addColorStop(0.52, '#e8eef0');
+  sky.addColorStop(0.58, '#cfd4d1');
+  sky.addColorStop(0.66, '#a9aca4');
+  sky.addColorStop(1.00, '#8e9089');
+  g.fillStyle = sky; g.fillRect(0, 0, W, H);
+  // canopy soffit eating the top third — this is what stops the plate reading
+  // as one flat sheet of light
+  g.fillStyle = '#6d6a60'; g.fillRect(0, 0, W, H * 0.16);
+  g.fillStyle = '#4b4841'; g.fillRect(0, H * 0.155, W, 3);
+  for (let x = 6; x < W; x += 26) { g.fillStyle = '#7e7a6e'; g.fillRect(x, 0, 2, H * 0.155); }
+  // distant treeline / low buildings on the horizon
+  g.fillStyle = 'rgba(96,104,92,0.55)';
+  for (let x = -10; x < W; x += 9) {
+    g.beginPath();
+    g.ellipse(x + rr(rng, -3, 3), H * 0.545, rr(rng, 5, 13), rr(rng, 3, 9), 0, 0, 6.29);
+    g.fill();
+  }
+  g.fillStyle = 'rgba(120,124,128,0.6)';
+  for (let i = 0; i < 5; i++) {
+    const w = rr(rng, 18, 44);
+    g.fillRect(rng() * W, H * 0.50 - rr(rng, 4, 14), w, 18);
+  }
+  // parked cars: flat silhouettes, roofline only
+  for (let i = 0; i < 7; i++) {
+    const x = rng() * W, w = rr(rng, 22, 40), h = w * rr(rng, 0.22, 0.30);
+    const y = H * rr(rng, 0.60, 0.72);
+    g.fillStyle = `rgba(${ri(rng, 40, 130)},${ri(rng, 42, 130)},${ri(rng, 46, 135)},0.72)`;
+    g.beginPath();
+    g.moveTo(x, y + h); g.lineTo(x + w * 0.10, y + h * 0.35);
+    g.lineTo(x + w * 0.34, y); g.lineTo(x + w * 0.68, y);
+    g.lineTo(x + w * 0.92, y + h * 0.40); g.lineTo(x + w, y + h);
+    g.closePath(); g.fill();
+    g.fillStyle = 'rgba(255,255,255,0.45)';
+    g.fillRect(x + w * 0.20, y + h * 0.30, w * 0.5, 1.5);
+  }
+  // asphalt: sun glare band, then dirt
+  const asf = g.createLinearGradient(0, H * 0.72, 0, H);
+  asf.addColorStop(0, '#9b9c94'); asf.addColorStop(1, '#6f7069');
+  g.fillStyle = asf; g.fillRect(0, H * 0.72, W, H * 0.28);
+  for (let i = 0; i < 260; i++) {
+    g.fillStyle = `rgba(${ri(rng, 60, 190)},${ri(rng, 60, 190)},${ri(rng, 60, 185)},0.20)`;
+    g.fillRect(rng() * W, H * 0.72 + rng() * H * 0.28, rr(rng, 1, 9), rr(rng, 1, 3));
+  }
+  // painted stall lines running away
+  g.strokeStyle = 'rgba(250,246,230,0.55)'; g.lineWidth = 1.6;
+  for (let i = 0; i < 9; i++) {
+    const x = i * (W / 8) + 4;
+    g.beginPath(); g.moveTo(x, H); g.lineTo(x * 0.72 + W * 0.14, H * 0.755); g.stroke();
+  }
+  return tex(THREE, c, { rx: 1, ry: 1 });
+}
+
+// AUTOMATIC-DOOR DECALS + the hours plate. 4 cells across, one row.
+//   0 CAUTION / AUTOMATIC DOOR   1 IN     2 OUT    3 store hours block
+export function doorDecalAtlas(THREE) {
+  const W = 512, H = 128, COLS = 4;
+  const [c, g] = cv(W, H);
+  const cw = W / COLS;
+  g.clearRect(0, 0, W, H);
+  const cell = (i, fn) => { g.save(); g.translate(i * cw, 0); fn(); g.restore(); };
+  cell(0, () => {
+    g.fillStyle = '#f5c11f'; g.fillRect(6, 22, cw - 12, 84);
+    g.fillStyle = '#1a1a1a'; g.fillRect(6, 22, cw - 12, 22);
+    g.fillStyle = '#f5c11f'; g.font = 'bold 15px Helvetica, Arial'; g.textAlign = 'center';
+    g.fillText('CAUTION', cw / 2, 39);
+    g.fillStyle = '#1a1a1a'; g.font = 'bold 17px Helvetica, Arial';
+    g.fillText('AUTOMATIC', cw / 2, 68);
+    g.fillText('DOOR', cw / 2, 88);
+    g.strokeStyle = '#1a1a1a'; g.lineWidth = 3; g.strokeRect(6, 22, cw - 12, 84);
+  });
+  cell(1, () => {
+    g.fillStyle = '#1f6f3a'; g.beginPath(); g.arc(cw / 2, 64, 44, 0, 6.29); g.fill();
+    g.fillStyle = '#ffffff'; g.font = 'bold 34px Helvetica, Arial'; g.textAlign = 'center';
+    g.fillText('IN', cw / 2, 76);
+  });
+  cell(2, () => {
+    g.fillStyle = '#a8331f'; g.beginPath(); g.arc(cw / 2, 64, 44, 0, 6.29); g.fill();
+    g.fillStyle = '#ffffff'; g.font = 'bold 28px Helvetica, Arial'; g.textAlign = 'center';
+    g.fillText('OUT', cw / 2, 74);
+  });
+  cell(3, () => {
+    g.fillStyle = 'rgba(255,255,255,0.94)'; g.fillRect(10, 10, cw - 20, 108);
+    g.fillStyle = '#23262a'; g.font = 'bold 14px Helvetica, Arial'; g.textAlign = 'center';
+    g.fillText('STORE HOURS', cw / 2, 30);
+    g.font = '11px Helvetica, Arial';
+    const rows = ['MON - SAT   6A - 11P', 'SUNDAY      7A - 10P', 'PHARMACY   9A - 8P'];
+    rows.forEach((t, i) => g.fillText(t, cw / 2, 52 + i * 17));
+    g.fillStyle = '#a8331f'; g.fillRect(10, 10, cw - 20, 6);
+  });
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return t;
+}
+
+// EXIT boxes over the two doors. Cell 0 = Door 1, cell 1 = Door 2 — the same
+// sign with a different sub-legend, because the chase dispatches by door and
+// the player has to be able to tell which one he is looking at.
+export function exitSignAtlas(THREE) {
+  const W = 512, H = 160, COLS = 2;
+  const [c, g] = cv(W, H);
+  const cw = W / COLS;
+  for (let i = 0; i < COLS; i++) {
+    g.save(); g.translate(i * cw, 0);
+    g.fillStyle = '#101418'; g.fillRect(0, 0, cw, H);
+    g.fillStyle = '#1d2228'; g.fillRect(4, 4, cw - 8, H - 8);
+    // the lit legend: emissive green on black, with the diffuser's bloom
+    g.shadowColor = '#7bef6a'; g.shadowBlur = 22;
+    g.fillStyle = '#8ef07a';
+    g.font = 'bold 84px Helvetica, Arial'; g.textAlign = 'center';
+    g.fillText('EXIT', cw / 2, 92);
+    g.shadowBlur = 0;
+    g.fillStyle = 'rgba(190,246,180,0.85)';
+    g.font = 'bold 22px Helvetica, Arial';
+    g.fillText(i ? 'DOOR 2' : 'DOOR 1', cw / 2, 128);
+    g.strokeStyle = '#39424a'; g.lineWidth = 4; g.strokeRect(4, 4, cw - 8, H - 8);
+    g.restore();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace; t.anisotropy = 8;
+  return t;
+}

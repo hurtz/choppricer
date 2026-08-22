@@ -331,7 +331,11 @@ export function createHUD(hudEl) {
       const d = Math.hypot(f.target.x - G.cop.x, f.target.z - G.cop.z);
       const cl = { x: Math.max(40, Math.min(W - 40, p.x)), y: Math.max(96, Math.min(560, p.y)) };
       const off = p.behind || p.x < 26 || p.x > W - 26;
-      const c = f.target.state === 'flee' ? RED : (f.confronted ? '#8fa8ff' : AMB);
+      // Orange brackets = he has broken for the rear. The cue that a man has
+      // turned round belongs ON the man, not in a panel the player is not
+      // looking at while chasing one.
+      const c = f.target.state === 'flee' ? (f.viaBack ? '#ff7a2e' : RED)
+        : (f.confronted ? '#8fa8ff' : AMB);
       ctx.strokeStyle = c; ctx.lineWidth = 2;
       const bw = off ? 26 : Math.max(26, Math.min(150, 380 / Math.max(1.2, d))) ;
       const bh2 = bw * 1.9;
@@ -340,7 +344,13 @@ export function createHUD(hudEl) {
         ctx.beginPath(); ctx.moveTo(px - sx * bw * 0.28, py); ctx.lineTo(px, py);
         ctx.lineTo(px, py - sy * bh2 * 0.24); ctx.stroke();
       });
-      const lbl = off ? (p.x < W / 2 ? '◀ ' : '') + `AISLE ${f.aisle + 1}` : f.target.code;
+      // Off-screen, this used to print the DISPATCHED aisle no matter where the
+      // man had got to — so a subject twenty metres up the front walk was
+      // labelled with an aisle he had left. Off-screen or on, the tag names who
+      // it is pointing at; only a plain zone sweep names the zone.
+      const zone = f.where || `AISLE ${f.aisle + 1}`;
+      const who = f.target.code || zone;
+      const lbl = off ? (p.x < W / 2 ? '◀ ' : '') + who : who;
       const lw = lbl.length * 8 + 18;
       ctx.fillStyle = 'rgba(3,7,4,0.85)'; ctx.fillRect(cl.x - lw / 2, cl.y - bh2 / 2 - 24, lw, 18);
       box(cl.x - lw / 2, cl.y - bh2 / 2 - 24, lw, 18, c);
@@ -353,29 +363,120 @@ export function createHUD(hudEl) {
       tx(dl, cl.x, dy2 + 14, { s: 13, w: 'bold', c, a: 'center' });
     }
 
+    // --- THE DOORS, ON THE FLOOR ----------------------------------------------
+    // The panel above tells you which door in words. This puts the word on the
+    // actual door, forty metres away down the front wall, so "cut across" has
+    // somewhere to point. Both are drawn while both are still live; once the
+    // geometry has locked him into one, the other stops mattering and goes.
+    if (f && f.door && f.target && f.target.state === 'flee' && G.cop) {
+      const dr = f.door;
+      dr.all.forEach((e, i) => {
+        const his = i === dr.i;
+        if (!his && dr.sure) return;
+        const p = projectFromCop(G.cop, e.x, 2.62, e.z);
+        const off = p.behind || p.x < 60 || p.x > W - 60;
+        const cx = Math.max(56, Math.min(W - 56, p.x));
+        const cy = Math.max(92, Math.min(524, p.y));
+        const c = his ? (dr.sure ? RED : AMB) : DIM;
+        const lbl = (off && p.x < W / 2 ? '◀ ' : '') + e.label + (off && p.x >= W / 2 ? ' ▶' : '');
+        const bw = lbl.length * 8 + 20;
+        // These land on packed shelving forty metres away, which is the busiest
+        // surface in the game. The plate has to be near-opaque or the tag is
+        // just texture; the unchosen door is dimmed by colour, not by alpha.
+        ctx.globalAlpha = his ? 1 : 0.85;
+        ctx.fillStyle = 'rgba(3,7,4,0.94)'; ctx.fillRect(cx - bw / 2, cy - 9, bw, 20);
+        box(cx - bw / 2, cy - 9, bw, 20, c);
+        tx(lbl, cx, cy + 6, { s: 12, w: 'bold', c, a: 'center' });
+        // a stem down to the threshold, so the tag reads as attached to a door
+        ctx.strokeStyle = c; ctx.lineWidth = 1;
+        ctx.beginPath(); ctx.moveTo(cx, cy + 11); ctx.lineTo(cx, cy + 26); ctx.stroke();
+        ctx.globalAlpha = 1;
+      });
+    }
+
     topBand(G, 52, 'ON FOOT — UNIT 1');
 
     // dispatched-to callout
     panel(10, 62, 262, 54, 'DISPATCHED TO');
-    const dest = (f && f.where) || `AISLE ${(f?.aisle ?? 0) + 1}`;
-    tx(dest, 20, 104, { s: dest.length > 9 ? 21 : 28, w: 'bold', c: AMB, ls: 2, max: 200 });
+    // A closed case has no destination. Leaving the aisle number up here is half
+    // of the stale-objective bug: the biggest text on the screen kept naming a
+    // place the player had no reason to be.
+    const dest = f && f.closed ? (f.standDown || 'STAND DOWN')
+      : ((f && f.where) || `AISLE ${(f?.aisle ?? 0) + 1}`);
+    tx(dest, 20, 104, {
+      s: dest.length > 9 ? 21 : 28, w: 'bold',
+      c: f && f.closed ? DIM : AMB, ls: 2, max: 200,
+    });
     tx(G.cams[G.desk.cam]?.id || '', 252, 104, { s: 11, c: DIM, a: 'right' });
 
-    // pursuit bar
+    // --- pursuit panel --------------------------------------------------------
+    // TWO DOORS, 35 m apart, and he is going to exactly one of them. Everything
+    // in here is the same question asked twice: can you get to that door before
+    // he does, or do you have to run him down on the way? So each door carries
+    // both halves of the race — his route metres and yours — and YOUR number
+    // goes green on the door you would win. That is the whole decision.
     if (f && f.target && f.target.state === 'flee') {
-      const px = 300, pw = 680, bar = 100;
-      panel(px, 62, pw, 78, 'PURSUIT — SUBJECT FLEEING', { accent: RED, line: RED_D });
+      const px = 300, pw = 680, py = 62;
+      const dr = f.door;
+      const back = !!f.viaBack;
+      panel(px, py, pw, 78, 'PURSUIT — SUBJECT FLEEING',
+        { accent: back ? '#ff7a2e' : RED, line: RED_D });
+
+      // door chips, laid out left-to-right by where the doors actually are
+      const chips = dr ? dr.all.map((e, i) => ({ e, i })).sort((a, b) => a.e.x - b.e.x) : [];
+      const cw = 106, chh = 56, cy = py + 20;
+      const cx0 = px + pw - 12 - chips.length * cw - (chips.length - 1) * 8;
+      chips.forEach(({ e, i }, k) => {
+        const x = cx0 + k * (cw + 8);
+        const his = i === dr.i;
+        const c = his ? (dr.sure ? RED : AMB) : LINE;
+        ctx.fillStyle = his ? 'rgba(52,10,7,0.75)' : 'rgba(255,255,255,0.03)';
+        ctx.fillRect(x, cy, cw, chh);
+        box(x, cy, cw, chh, his ? c : LINE);
+        // title strip: filled when this is the one he is running at
+        ctx.fillStyle = his ? c : 'rgba(255,255,255,0.06)';
+        ctx.fillRect(x, cy, cw, 15);
+        tx(e.label + (his && !dr.sure ? ' ?' : ''), x + 6, cy + 12,
+          { s: 11, w: 'bold', c: his ? '#07100a' : DIM, ls: 1.1 });
+        const him = dr.him[i], you = dr.you[i];
+        const win = you < him - 0.5;              // you would be standing there first
+        tx('HIM', x + 6, cy + 31, { s: 9, c: DIM });
+        tx(isFinite(him) ? `${him.toFixed(1)}m` : '—', x + cw - 6, cy + 31,
+          { s: 13, w: 'bold', c: his ? c : DIM, a: 'right' });
+        tx('YOU', x + 6, cy + 49, { s: 9, c: DIM });
+        tx(isFinite(you) ? `${you.toFixed(1)}m` : '—', x + cw - 6, cy + 49,
+          { s: 13, w: 'bold', c: win ? GRN : '#ff9a2e', a: 'right' });
+      });
+
+      // his run to that door, as a track
+      const tx0 = px + 12, tw = Math.max(120, cx0 - 16 - tx0), bar = py + 38;
       const prog = 1 - Math.min(1, f.exitDist / Math.max(0.001, f.exitDist0));
-      ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(px + 12, bar, pw - 24, 14);
-      ctx.fillStyle = RED; ctx.fillRect(px + 12, bar, (pw - 24) * prog, 14);
-      box(px + 12, bar, pw - 24, 14, RED_D);
-      const mx = px + 12 + (pw - 24) * prog;
-      ctx.fillStyle = '#fff'; ctx.fillRect(mx - 1, bar - 4, 3, 22);
-      tx('SUBJECT', px + 14, bar - 8, { s: 10, c: DIM });
-      tx('DOOR 1', px + pw - 14, bar - 8, { s: 10, c: RED, a: 'right' });
-      tx(`GAP ${f.dist.toFixed(1)}m`, px + 14, bar + 32, { s: 13, w: 'bold', c: AMB });
-      tx(`${(f.exitDist).toFixed(1)}m TO EXIT`, px + pw - 14, bar + 32,
-        { s: 13, w: 'bold', c: RED, a: 'right' });
+      ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(tx0, bar, tw, 16);
+      ctx.fillStyle = back ? '#7a3a12' : RED; ctx.fillRect(tx0, bar, tw * prog, 16);
+      box(tx0, bar, tw, 16, RED_D);
+      const mx = tx0 + tw * prog;
+      ctx.fillStyle = '#fff'; ctx.fillRect(mx - 1, bar - 4, 3, 24);
+      tx(f.subjCode || 'SUBJECT', tx0 + 2, bar - 6, { s: 10, c: DIM });
+      tx(dr ? (dr.sure ? 'ROUTE COMMITTED' : 'BOTH DOORS LIVE') : '', tx0 + tw, bar - 6,
+        { s: 10, w: 'bold', c: dr && dr.sure ? RED : AMB, a: 'right' });
+      tx(`GAP ${f.dist.toFixed(1)}m`, tx0 + 2, bar + 34, { s: 13, w: 'bold', c: AMB });
+      tx(f.eta ? `OUT IN ${f.eta.toFixed(1)}s` : '', tx0 + tw, bar + 34,
+        { s: 13, w: 'bold', c: back ? '#ff9a2e' : RED, a: 'right' });
+
+      // --- THE COMMITMENT MOMENT ---------------------------------------------
+      // He has turned and broken for the rear cross-aisle. It is the one
+      // irreversible decision in this chase and it is worth thirty metres, and
+      // until now the player found out about it by losing. Say it out loud.
+      if (back) {
+        const fl = (G.now % 0.8) < 0.5;
+        ctx.fillStyle = fl ? 'rgba(128,44,8,0.95)' : 'rgba(58,20,4,0.95)';
+        ctx.fillRect(px, 146, pw, 34);
+        box(px, 146, pw, 34, fl ? '#ff7a2e' : '#7a3a12');
+        tx('▲ ' + (f.backLine || 'SUBJECT BREAKING FOR THE REAR'), px + 16, 169,
+          { s: 15, w: 'bold', c: fl ? '#ffd9b3' : '#ff9a2e', ls: 1.8 });
+        tx(f.backSub || '', px + pw - 16, 169,
+          { s: 11, w: 'bold', c: fl ? '#ffb98a' : '#a3521c', a: 'right' });
+      }
     }
 
     // --- stamina: the whole game is this bar

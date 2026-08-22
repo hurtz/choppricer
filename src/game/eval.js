@@ -25,6 +25,12 @@ import { BEHAVIOUR_GUILTY } from './lines.js';
 const HALF = AISLE_LEN / 2;
 const d2 = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 const GUILTY = new Set(BEHAVIOUR_GUILTY);
+// "How close is this man to being gone." There are two doors now and they are
+// 35 m apart, so this is route metres to whichever way out he is nearest — the
+// number agents.js exposes for exactly this. Falls back to the old straight line
+// to Door 1 only if the contract addition is not there.
+const doorDist = (agents, s) => (agents && agents.exitDistOf ? agents.exitDistOf(s)
+  : d2(s.position.x, s.position.z, EXIT.x, EXIT.z));
 
 // A yield the browser will not throttle. setTimeout(0) is clamped to ~1s in a
 // backgrounded tab, and every agent here runs its tab in the background, which
@@ -110,7 +116,10 @@ function makeDriver(ctx) {
     input.x = dir.x; input.z = -dir.z;              // main.js hands W as -1
     // Bank the wind on the approach. Sprint once he is moving, or when he is
     // close enough to the doors that arriving late is the same as not arriving.
-    const toDoor = d2(t.position.x, t.position.z, EXIT.x, EXIT.z);
+    // ROUND 3: metres of ROUTE to the door HE is nearest, not a straight line to
+    // Door 1 — with two doors 35 m apart that test was measuring the wrong wall
+    // for half the store and the bot was walking while a man left by Door 2.
+    const toDoor = doorDist(agents, t);
     input.sprint = running || gap > 16 || toDoor < 14;
   };
 }
@@ -182,17 +191,17 @@ function observer(ctx, opts) {
       }
       if (!lit.length) return;
       // Closest to the door first — that is the one about to stop being yours.
-      lit.sort((a, b) => camUrgency(game, a) - camUrgency(game, b));
+      lit.sort((a, b) => camUrgency(ctx, game, a) - camUrgency(ctx, game, b));
       cam = lit[0]; phase = 'switch'; timer = tSwitch;
     },
   };
 }
-function camUrgency(game, i) {
+function camUrgency(ctx, game, i) {
   let best = 1e9;
   for (const row of game._g.desk.subjects) {
     if (row.cam !== i || !row.flagged) continue;
     const s = game.bot.shopper(row.id);
-    if (s) best = Math.min(best, d2(s.position.x, s.position.z, EXIT.x, EXIT.z));
+    if (s) best = Math.min(best, doorDist(ctx.agents, s));
   }
   return best;
 }

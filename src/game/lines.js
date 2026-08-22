@@ -122,7 +122,7 @@ export const COP_WARNING = [
 ];
 
 export const ESCORT = [
-  'SUBJECT ESCORTED TO DOOR 1',
+  'SUBJECT ESCORTED TO %D',
   'SUBJECT DECLINED A BAG',
   'SUBJECT LEFT ON FOOT, NORTHBOUND',
   'SUBJECT SAID SOMETHING AT THE DOOR. UNCLEAR.',
@@ -175,11 +175,39 @@ export const PROMO_SUB = [
 
 // ------------------------------------------------------------------- failures
 export const ESCAPE_LOG = [
-  'SUBJECT EXITED VIA DOOR 1. NO PURSUIT LOGGED.',
+  'SUBJECT EXITED VIA %D. NO PURSUIT LOGGED.',
   'MERCHANDISE LOSS RECORDED AGAINST THIS SHIFT.',
   'SUBJECT REACHED THE PARKING LOT. LOT IS NOT OURS.',
-  'DOOR SENSOR DID NOT ALARM. DOOR SENSOR IS OUT.',
+  '%D SENSOR DID NOT ALARM. THAT SENSOR IS OUT.',
 ];
+
+// ------------------------------------------------------------- the two doors
+// ROUND 3: there are two ways out of this building and the subject picks one.
+// Everything here is the DVR reporting an observation, not a prediction — the
+// box does not know which door he came in by and neither do you. It only ever
+// says what the geometry can still allow. Machine voice, no editorialising.
+export const DOOR_OPEN = 'BOTH DOORS LIVE';
+export const DOOR_LOCK = 'ROUTE COMMITTED';
+
+// He has turned and gone for the rear cross-aisle. This is the one decision in
+// the chase that is irreversible and worth thirty metres, and the player used to
+// find out about it by losing. Say it out loud, and say what to do about it.
+export const VIA_BACK = 'SUBJECT BREAKING FOR THE REAR';
+export const VIA_BACK_SUB = 'HE IS NOT GOING TO THE FRONT — CUT ACROSS';
+export const VIA_BACK_PROMPT = 'HE IS GOING ROUND THE BACK — TAKE ANOTHER AISLE';
+export const VIA_BACK_LOG = [
+  'SUBJECT TURNED. SUBJECT IS RUNNING THE OTHER WAY.',
+  'SUBJECT BROKE FOR THE REAR CROSS-AISLE. DELIBERATE.',
+  'SUBJECT HEADED AWAY FROM BOTH DOORS. NOT A MISTAKE.',
+];
+// He was going to one door and now he is going to the other one.
+export const DOOR_SWITCH = 'SUBJECT CHANGED DOORS — NOW %D';
+
+// -------------------------------------------------- the case is over, sir
+// Whatever happened has happened. The prompt band must stop telling a man to
+// walk at an aisle that no longer contains anybody.
+export const STAND_DOWN = 'SUBJECT GONE — [Q] RETURN TO POST';
+export const STAND_DOWN_DEST = 'STAND DOWN';
 
 // -------------------------------------------------------------- the demotion
 export const HR_HEAD = ['CHOP FOODS #4417 — PERSONNEL ACTION',
@@ -218,3 +246,6 @@ export const AISLE_CLEAR = [
 ];
 
 export const pick = (a, r) => a[Math.floor((r === undefined ? Math.random() : r) * a.length) % a.length];
+// %D is the door somebody actually used. There are two of them now; a log line
+// that always says DOOR 1 is a log line that is wrong half the time.
+export const fill = (s, door) => String(s).replace(/%D/g, door || 'DOOR 1');

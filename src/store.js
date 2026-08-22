@@ -4,7 +4,7 @@
 // Read all layout numbers from ./config.js. Never hardcode aisle positions.
 import {
   AISLE_COUNT, AISLE_LEN, AISLE_GAP, SHELF_W, SHELF_H, CEIL_H, STORE,
-  FRONT_WALK_Z, BACK_WALK_Z, EXIT, SERVICE_DESK, CAMERAS, aisleX,
+  FRONT_WALK_Z, BACK_WALK_Z, EXIT, EXIT2, SERVICE_DESK, CAMERAS, aisleX,
 } from './config.js';
 import { makeRng, rr, ri, pick, Batch, Quads } from './store/kit.js';
 import { DEPTS, FROZEN, fillShelf, fillBackRow } from './store/products.js';
@@ -18,7 +18,7 @@ const P = {
   deck:     0xf0e8d4,   // shelf boards, cream steel
   deckDark: 0xd9cfb6,
   shelfUnder: 0x453f33, // undersides read far darker than tops — see buildRun
-  peg:      0xb3a992,   // gondola back panel, shadowed behind the product
+  peg:      0xc6bda6,   // gondola back panel, shadowed behind the product
   upright:  0xcfc3a6,
   // ROUND 4: the toe kick is the darkest thing in a supermarket. Round 3 had
   // it barely darker than the open floor, which is most of why the frame sat in
@@ -72,6 +72,10 @@ function textures(THREE) {
     promo: TX.promoAtlas(THREE),
     glow: TX.glowTex(THREE),
     coolerBack: TX.coolerBackTex(THREE),
+    // round-5: the two storefronts
+    outside: TX.outsideTex(THREE),
+    decal: TX.doorDecalAtlas(THREE),
+    exit: TX.exitSignAtlas(THREE),
     wallSign: TX.wallSignAtlas(THREE, [
       { t: 'PRODUCE', bg: '#6f8a3f', fg: '#fdf7e6' },
       { t: 'MEAT & SEAFOOD', bg: '#a3402c', fg: '#fdf7e6' },
@@ -274,7 +278,9 @@ export function buildStore(THREE, scene) {
   const Qrail = new Quads(), Qsign = new Quads(), Qblade = new Quads();
   const Qlane = new Quads(), Qpromo = new Quads(), Qwsign = new Quads();
   const Qstrip = new Quads(), Qglass = new Quads();
-  const Qcool = new Quads(), Qbright = new Quads(), Qshadow = new Quads();
+  // round-5 storefronts: the daylight plate, the door decals, the lit EXIT boxes
+  const Qout = new Quads(), Qdecal = new Quads(), Qexit = new Quads();
+  const Qcool = new Quads(), Qshadow = new Quads();
   // Qtag: one shelf-edge tag per SKU run, width keyed to that SKU's facing.
   // Qcav: the gradient that darkens the back of every shelf cavity.
   const Qtag = new Quads(), Qcav = new Quads();
@@ -304,6 +310,14 @@ export function buildStore(THREE, scene) {
   // config; nothing here is a second copy of the floor plan.
   const WRW = 1.30;
   const EDGE_X = STORE.maxX - WRW / 2 - 0.04;
+  // MID-STORE CROSS-AISLE — see the GONDOLA RUNS block for why it exists and
+  // how the colliders open up for it. Declared here because the floor's
+  // analytic mirror tests the reflected ray against the gondola bodies and has
+  // to know that they now stop 3.6 m short of each other in the middle.
+  const CROSS_Z = -0.70;                    // slightly forward of centre
+  const CROSS_CLEAR = 3.60;                 // clear width between endcap faces
+  const XA0 = CROSS_Z - CROSS_CLEAR / 2, XA1 = CROSS_Z + CROSS_CLEAR / 2;
+  const inCross = (z, pad = 0.9) => z > XA0 - pad && z < XA1 + pad;
   const RUN_DEPTS = [];
   for (let i = 0; i < AISLE_COUNT - 1; i++) {
     RUN_DEPTS.push({
@@ -319,14 +333,25 @@ export function buildStore(THREE, scene) {
   T.burn = FL.burnishTex(THREE);
   T.wallLUT = FL.wallLUT(THREE, RUN_DEPTS, STORE.minX, SW);
   T.patch = FL.tilePatchTex(THREE);
+  // ROUND 5 — CHROMA ON THE BIG SURFACES. A hue mask over the round-4 renders
+  // put 25-40% of every frame in the saturated warm band, and the two biggest
+  // contributors were not the product at all: they were the FLOOR and the
+  // CEILING, each tinted with a swatch that is itself 18-22% saturated and then
+  // multiplied over a map that is another 15-17%. Multiplication compounds
+  // chroma, so a 17% map under a 22% tint lands at 31% before the wear pass
+  // touches it. The reference photographs run their largest surfaces at half
+  // that and spend the chroma budget on the product and the accent bands
+  // instead. Same hue, same value, less saturation — the floor is still warm
+  // beige VCT, it has just stopped being orange.
   const floorMat = FL.reflectiveFloor(THREE, {
-    map: T.floor, wall: T.wallLUT, burnish: T.burn,
+    map: T.floor, wall: T.wallLUT, burnish: T.burn, tint: 0xcfc8b9,
     ceilH: CEIL_H, shelfH: SHELF_H, pitch: PITCH, runHalf: SHELF_W / 2 + 0.02,
     fixPitch: FIX_L + STRIP_GAP, fixLen: FIX_L, rowOff: PITCH / 2,
     minX: STORE.minX, spanX: SW,
     runMax: Math.max(...RUN_DEPTS.slice(0, AISLE_COUNT - 1)
       .map((r) => Math.abs(Math.round(r.x / PITCH)))),
     edgeX: EDGE_X, rowExt: aisleX(AISLE_COUNT - 1) + 1.4,
+    crossZ: CROSS_Z, crossA: XA0, crossB: XA1, bodyZ: HALF - 0.62 + 0.58,
   });
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(SW, SD), floorMat);
   floor.rotation.x = -Math.PI / 2;
@@ -423,8 +448,19 @@ export function buildStore(THREE, scene) {
   fix(CX, bandY - 0.70, bz0 - 0.07, SW, 0.05, 0.05, 0x9c9276);
   fix(STORE.minX + 0.06, bandY, CZ, 0.05, 1.5, SD, P.sage);
   fix(STORE.maxX - 0.06, bandY, CZ, 0.05, 1.5, SD, P.sage);
-  fix(CX, bandY, STORE.minZ + 0.06, SW, 1.5, 0.05, P.sage, BfixF);
+  // ROUND 5 — the same fault round 4b found on the BACK wall, still sitting on
+  // the front one. A 47 m unbroken slab of 0x7d8b58 whose normal points +Z,
+  // i.e. directly away from the key light, so it renders as a near-black green
+  // void across the top of every shot that includes a door. Same fix: cream
+  // field, terracotta reveals, panelised by pilasters.
+  fix(CX, bandY, STORE.minZ + 0.06, SW, 1.5, 0.05, 0xe8dfc6, BfixF);
+  fix(CX, bandY + 0.76, STORE.minZ + 0.07, SW, 0.13, 0.05, P.terra, BfixF);
   fix(CX, bandY - 0.83, STORE.minZ + 0.07, SW, 0.14, 0.05, P.terra, BfixF);
+  fix(CX, bandY - 0.70, STORE.minZ + 0.07, SW, 0.05, 0.05, 0x9c9276, BfixF);
+  for (let px = STORE.minX + 3.1; px < STORE.maxX - 2; px += 5.3) {
+    fix(px, bandY, STORE.minZ + 0.10, 0.34, 1.46, 0.04, 0xd9cdae, BfixF);
+    fix(px, bandY, STORE.minZ + 0.115, 0.16, 1.46, 0.035, P.terra, BfixF);
+  }
 
   // Pilasters breaking the run. A decor band is never one continuous ribbon
   // across a 47 m wall; it is panelised, and the breaks are most of what stops
@@ -474,7 +510,7 @@ export function buildStore(THREE, scene) {
     new THREE.PlaneGeometry(SW, SD),
     new THREE.MeshBasicMaterial({
       map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 4.88, SD / 4.88); return t; })(),
-      color: 0xa9a08b,
+      color: 0xaba699,
     }));
   PK.sharpen(THREE, ceilPlane.material, -0.9);
   ceilPlane.rotation.x = Math.PI / 2;    // normal points down
@@ -593,17 +629,18 @@ export function buildStore(THREE, scene) {
     // the housings themselves, seen from underneath as one raised spine
     fix(x, CEIL_H + 0.07, (z0 + z1) / 2, AP_W + 0.06, 0.15, span + 0.05, 0xe6ddc8, BfixC);
   };
-  const lightRowX = (z, x0, x1) => {
+  const lightRowX = (z, x0, x1, skip = null) => {
     const pitch = FIX_L + STRIP_GAP;
     const n = Math.max(1, Math.round((x1 - x0) / pitch));
     const span = n * pitch - STRIP_GAP;
     let x = (x0 + x1) / 2 - span / 2 + FIX_L / 2;
     for (let k = 0; k < n; k++, x += pitch) {
+      if (skip && skip(x)) continue;      // no two fixtures in one tile
       const dead = rng() < 0.045;
       troffer(x, z, 1, dead ? 3 : fixState());
       if (k) fix(x - pitch / 2, DOOR + 0.004, z, STRIP_GAP + 0.03, 0.030, AP_W + 0.10, 0xc6bfaa, BfixC);
     }
-    fix((x0 + x1) / 2, CEIL_H + 0.07, z, span + 0.05, 0.15, AP_W + 0.06, 0xe6ddc8, BfixC);
+    if (!skip) fix((x0 + x1) / 2, CEIL_H + 0.07, z, span + 0.05, 0.15, AP_W + 0.06, 0xe6ddc8, BfixC);
   };
   // Sales floor: strips PARALLEL to the aisles, one over every aisle centreline
   // and one over every gondola run. 2.65 m pitch, nothing crossing them.
@@ -615,6 +652,14 @@ export function buildStore(THREE, scene) {
   // every real store, because the checkstands and the back wall run that way.
   for (let k = 0; k < 4; k++) lightRowX(STORE.minZ + 2.1 + k * 2.30, STORE.minX + 1, STORE.maxX - 1);
   for (let k = 0; k < 2; k++) lightRowX(STORE.maxZ - 1.5 - k * 2.10, STORE.minX + 1, STORE.maxX - 1);
+  // ...and one more turning 90 degrees over the mid-store walkway, which is the
+  // overhead cue that says "this is a cross-aisle" from anywhere in the store.
+  // Skipped where it would land in a tile a longitudinal row already occupies —
+  // an electrician cannot put two troffers in one 600 mm tile either.
+  lightRowX(CROSS_Z, STORE.minX + 1.2, STORE.maxX - 1.2, (x) => {
+    const k = Math.round(x / (PITCH / 2));
+    return Math.abs(x - k * PITCH / 2) < 0.78;
+  });
 
   // How bright the lamps overhead actually are at (x, z), 0.34 under a dead
   // unit to ~1.05 under a fresh one. Fed to products.js as `litAt`.
@@ -830,6 +875,34 @@ export function buildStore(THREE, scene) {
   const EC_D = 0.44;                        // endcap shelf depth
   const ECDECK = [0.22, 0.68, 1.14, 1.60];
 
+  // -------------------------------------------------------------------------
+  // ROUND 5 — THE MID-STORE CROSS-AISLE.
+  // Every run used to be solid for all 26 m, which no supermarket on earth is.
+  // A 26 m gondola is 85 feet; the fire code, the pallet jack and the fact that
+  // nobody will walk to the end of the store and back to reach the next aisle
+  // all say the same thing, so a real store breaks its runs somewhere near the
+  // middle and puts a full-width walkway across.
+  //
+  // It is also the most valuable thing available to the chase. With solid runs
+  // a thief who breaks for the back can only be beaten by attrition — the cop
+  // has to out-run him down the same aisle. A cross-aisle makes that route
+  // contestable BY GEOMETRY: the cop cuts across one bay and meets him.
+  // src/agents.js floods a Dijkstra field from the exits over an occupancy grid
+  // built from `colliders`, so the walkway only exists as far as the chase is
+  // concerned if the COLLIDERS open up. Hence: the segment colliders below stop
+  // at the segment ends, endcaps included, and nothing — no pallet, no parked
+  // cart, no powerup display — is allowed to be sited inside the band.
+  //
+  // Width. AISLE_GAP is 4.0 m and the nav grid is 0.42 m cells inflated by a
+  // 0.52 m body pad, so a lane needs ~1.05 m before a single cell comes free.
+  // 3.6 m clear between endcap FACES leaves 2.55 m of free grid — six cells —
+  // and reads as the widest walkway in the store, which is what a real one is.
+  // (CROSS_Z / CROSS_CLEAR / XA0 / XA1 / inCross are declared up with the floor
+  // block, because the floor's mirror has to be told where the walkway is.)
+  const ECPAD = EC_D + 0.14;                // endcap projection past the body
+  const SEGS = [[-BODY, XA0 - ECPAD], [XA1 + ECPAD, BODY]];
+  const ONE_SEG = [[-BODY, BODY]];
+
   // A real gondola is set to whatever is on it: an 8in clear deck for canned
   // goods, 15in for cereal. Uniform spacing all the way down every run was
   // forcing every SKU to the same height and undoing the size variety — so
@@ -843,15 +916,27 @@ export function buildStore(THREE, scene) {
   // aisle and its paper aisle do not look remotely alike: one is eight tight
   // decks of small tins packed solid, the other is four tall decks of jugs and
   // paper packs with air everywhere.
+  //
+  // ROUND 5 — SPREAD, NOT MEAN. Eleven reference photographs measure 32.1% to
+  // 61.4% edge density: a 29-point spread. Round 4's eight aisles measured 37.3
+  // to 42.9 — 5.6 points. The mean was never the interesting gap; the fact that
+  // a cleaning aisle, a cereal aisle and a chilled aisle in this store all came
+  // out within a point of each other is, because in a real store they look
+  // nothing like each other. So the profiles are pushed much further apart than
+  // is comfortable: 'tight' is now ten shallow decks of tins faced solid with
+  // almost no vacancy, and 'bulky' is four tall decks of jugs and paper packs
+  // with more than twice the air. products.js picks kinds that FIT the deck it
+  // is filling, so the deck plan alone drives the SKU size — a 0.175 m deck
+  // physically cannot take a cereal box.
   const PROFILES = [
-    // canned/dry: nine shallow decks of small tins, faced solid
-    { key: 'tight', steps: [0.190, 0.195, 0.205, 0.215, 0.235], vacancy: 0.22, base: 0.095 },
+    // canned/dry: ten shallow decks of small tins, faced solid, nothing missing
+    { key: 'tight', steps: [0.172, 0.180, 0.188, 0.198, 0.214], vacancy: 0.10, base: 0.082 },
     { key: 'mixed', steps: DECK_STEPS, vacancy: 1.00, base: 0.130 },
     // jugs, paper packs, 12-packs: four tall decks with air above everything
-    { key: 'bulky', steps: [0.395, 0.445, 0.500, 0.445], vacancy: 1.55, base: 0.165 },
+    { key: 'bulky', steps: [0.435, 0.495, 0.560, 0.495], vacancy: 2.15, base: 0.190 },
     // mid-reset: whole bays stripped, tag holders left on the rail
-    { key: 'reset', steps: [0.245, 0.275, 0.315, 0.365, 0.275], vacancy: 1.80, base: 0.140 },
-    { key: 'mixed', steps: [0.235, 0.275, 0.245, 0.315, 0.365], vacancy: 0.70, base: 0.115 },
+    { key: 'reset', steps: [0.245, 0.275, 0.315, 0.365, 0.275], vacancy: 2.30, base: 0.140 },
+    { key: 'mixed', steps: [0.225, 0.265, 0.235, 0.305, 0.355], vacancy: 0.55, base: 0.108 },
   ];
   function deckPlan(r, prof) {
     const ys = [];
@@ -911,7 +996,19 @@ export function buildStore(THREE, scene) {
   function buildRun(idx, x, halfW, faces, opts = {}) {
     const B = newPkg();
     const prof = opts.profile || PROFILES[idx % PROFILES.length];
-    const z0 = -BODY, z1 = BODY, len = z1 - z0;
+    // One package batch for the whole run, but the run is now built in
+    // SEGMENTS with the cross-aisle between them. Keeping the batch outside the
+    // loop is what stops the walkway from costing 49 extra draw calls.
+    for (const seg of (opts.segs || SEGS)) buildSeg(seg[0], seg[1]);
+    flushPkg(B, 'run' + idx);
+    return;
+
+    function buildSeg(zA, zB) {
+    const z0 = zA, z1 = zB, len = z1 - z0, zmid = (z0 + z1) / 2;
+    // which end of THIS segment faces the walkway — the endcap there is the
+    // one shoppers actually stand in front of, and the blades nearest it are
+    // the ones that have to be readable from the cross-aisle.
+    const xEnd = Math.abs(z1 - CROSS_Z) < Math.abs(z0 - CROSS_Z) ? z1 : z0;
     const DECK = deckPlan(rng, prof);
     // A supermarket aisle is lit from a strip four metres straight up, so a
     // gondola is a strong VERTICAL gradient: the top deck is nearly twice as
@@ -921,19 +1018,19 @@ export function buildStore(THREE, scene) {
     const dd = deckDepths(halfW - 0.05, DECK.length);
 
     // kick plate + base
-    fix(x, 0.075, 0, halfW * 2 - 0.10, 0.15, len, P.kick);
+    fix(x, 0.075, zmid, halfW * 2 - 0.10, 0.15, len, P.kick);
     // back panel / pegboard spine. Round 3 skins it with a real perforated
     // panel: it shows in the bottom of every cavity and across the whole of
     // any bare bay, and round 2 put a smooth beige slab there.
     if (faces.length === 2) {
-      fix(x, 1.10, 0, 0.07, 1.90, len, P.peg);
+      fix(x, 1.10, zmid, 0.07, 1.90, len, P.peg);
       for (const s2 of [-1, 1]) {
-        qX(Qpeg, x + s2 * 0.037, 1.10, 0, len, 1.90, s2, [0, 0, len / 0.30, 1.90 / 0.30]);
+        qX(Qpeg, x + s2 * 0.037, 1.10, zmid, len, 1.90, s2, [0, 0, len / 0.30, 1.90 / 0.30]);
       }
     } else {
       const bx = x - faces[0].dir * (halfW - 0.04);
-      fix(bx, 1.10, 0, 0.08, 1.90, len, P.peg);
-      qX(Qpeg, bx + faces[0].dir * 0.042, 1.10, 0, len, 1.90, faces[0].dir,
+      fix(bx, 1.10, zmid, 0.08, 1.90, len, P.peg);
+      qX(Qpeg, bx + faces[0].dir * 0.042, 1.10, zmid, len, 1.90, faces[0].dir,
         [0, 0, len / 0.30, 1.90 / 0.30]);
     }
 
@@ -969,13 +1066,13 @@ export function buildStore(THREE, scene) {
         const head = (DECK[d + 1] !== undefined ? DECK[d + 1] : SHELF_H + 0.03) - DECK[d] - 0.036;
         // cavity gradient: dark under the shelf above, fading down. Also what
         // makes a sold-out void read as a black hole rather than a beige gap.
-        qX(Qcav, lip - f.dir * (dep - 0.01), DECK[d] + head * 0.5, 0, len, head, f.dir, FULL);
+        qX(Qcav, lip - f.dir * (dep - 0.01), DECK[d] + head * 0.5, zmid, len, head, f.dir, FULL);
         // CAVITY AMBIENT OCCLUSION — multiply-blended across the mouth of the
         // cavity, 6 mm proud of the deepest facing and 6 mm behind the rail.
         // Near-black under the deck above, clearing by mid-height, then a hard
         // seam at the deck. This is the round-3 headline change: without it
         // every product is lit identically and the run reads as a decal.
-        qX(Qao, lip - f.dir * 0.006, DECK[d] + head * 0.5, 0, len, head, f.dir, AOU.mouth);
+        qX(Qao, lip - f.dir * 0.006, DECK[d] + head * 0.5, zmid, len, head, f.dir, AOU.mouth);
         // ...and the deck surface itself, which is the biggest flat region in
         // the frame on every shelf below eye level.
         deckAOz(lip, DECK[d] + 0.0015, f.dir, dep, z0, z1);
@@ -1076,23 +1173,36 @@ export function buildStore(THREE, scene) {
       // ray is tested against the gondola bodies before it reaches the ceiling,
       // and a blurred 1-D lookup supplies what that run's wall looks like.)
       // top rail / valance
-      fix(lip - f.dir * 0.05, SHELF_H + 0.02, 0, 0.11, 0.07, len, P.deckDark);
-      // one shelf-top category blade per face, thin so it never reads as a slab
+      fix(lip - f.dir * 0.05, SHELF_H + 0.02, zmid, 0.11, 0.07, len, P.deckDark);
+      // SHELF-TOP CATEGORY BLADES. Round 4 hung exactly one per face, at a
+      // fixed 30% down the run. A real store repeats them every three or four
+      // metres along the whole run and on BOTH faces — reference/store_04 shows
+      // BREAD, SEAFOOD, DINNERS, PIZZA and SNACKS all readable from one
+      // standpoint — and with a walkway cutting the run in half that repetition
+      // stops being decoration: it is how you know which aisle you are looking
+      // into from the middle of the store. One is always planted a blade-length
+      // back from the walkway end of the segment, where a shopper standing in
+      // the cross-aisle reads it.
       if (f.aisle !== undefined) {
         const uv = cellUV(f.aisle % 8, 1, 8);
-        const bz = -BODY * 0.30;
-        fix(lip + f.dir * 0.04, 2.31, bz, 0.028, 0.58, 2.30, 0xe6dfc9);
-        qX(Qblade, lip + f.dir * 0.066, 2.31, bz, 2.24, 0.52, f.dir, uv);
-        for (const s of [-1, 1]) fix(lip - f.dir * 0.05, 2.10, bz + s * 0.95, 0.15, 0.08, 0.04, P.metal);
+        const nB = Math.max(1, Math.round(len / 4.35));
+        for (let k = 0; k < nB; k++) {
+          const t = nB === 1 ? 0.5 : (k + 0.5) / nB;
+          let bz = z0 + 1.35 + t * (len - 2.7);
+          if (k === nB - 1) bz = xEnd + (xEnd === z1 ? -1.42 : 1.42);
+          fix(lip + f.dir * 0.04, 2.31, bz, 0.028, 0.58, 2.30, 0xe6dfc9);
+          qX(Qblade, lip + f.dir * 0.066, 2.31, bz, 2.24, 0.52, f.dir, uv);
+          for (const s of [-1, 1]) fix(lip - f.dir * 0.05, 2.10, bz + s * 0.95, 0.15, 0.08, 0.04, P.metal);
+        }
       }
       // contact shadow where the run meets the floor — the single cheapest cue
       // that anything in this store is actually sitting on the ground. Two
       // passes: a wide soft ambient one and a tight near-black line right at
       // the kick plate, which is what actually sells the contact.
-      qUp(Qshadow, lip + f.dir * 0.06, 0.006, 0, 2.6, len * 1.02, FULL);
-      qUp(Qshadow, lip + f.dir * 0.02, 0.007, 0, 0.46, len * 1.01, FULL);
+      qUp(Qshadow, lip + f.dir * 0.06, 0.006, zmid, 2.6, len * 1.02, FULL);
+      qUp(Qshadow, lip + f.dir * 0.02, 0.007, zmid, 0.46, len * 1.01, FULL);
       // rubber bumper along the foot of the run
-      fix(lip - f.dir * 0.012, 0.048, 0, 0.030, 0.058, len, 0x4a4640);
+      fix(lip - f.dir * 0.012, 0.048, zmid, 0.030, 0.058, len, 0x4a4640);
     }
 
     // wood end panels + endcaps
@@ -1205,10 +1315,10 @@ export function buildStore(THREE, scene) {
     if (opts.upper) {
       const dir = opts.upper, lip = x + dir * halfW;
       for (const uy of [SHELF_H + 0.30, SHELF_H + 0.72]) {
-        fix(lip - dir * (halfW * 0.5), uy - 0.018, 0, halfW + 0.02, 0.036, len, P.deck);
-        fix(lip - dir * (halfW * 0.5), uy - 0.041, 0, halfW, 0.020, len, P.shelfUnder);
+        fix(lip - dir * (halfW * 0.5), uy - 0.018, zmid, halfW + 0.02, 0.036, len, P.deck);
+        fix(lip - dir * (halfW * 0.5), uy - 0.041, zmid, halfW, 0.020, len, P.shelfUnder);
         railRun(lip, uy - 0.020, z0, z1, dir);
-        qX(Qao, lip - dir * 0.006, uy + 0.19, 0, len, 0.38, dir, AOU.mouth);
+        qX(Qao, lip - dir * 0.006, uy + 0.19, zmid, len, 0.38, dir, AOU.mouth);
         deckAOz(lip, uy + 0.0015, dir, halfW, z0, z1);
         fillBackRow(B, rng, faces[0].dept, {
           axis: 'z', a0: z0 + 0.05, a1: z1 - 0.05, lip: lip - dir * 0.22,
@@ -1230,8 +1340,8 @@ export function buildStore(THREE, scene) {
       }
       // decor band with framed department panels along it — round 2 left four
       // metres of flat painted drywall above the perimeter run
-      fix(lip - dir * 0.06, SHELF_H + 1.30, 0, 0.16, 0.70, len, P.sage);
-      fix(lip - dir * 0.06, SHELF_H + 0.93, 0, 0.17, 0.06, len, P.terra);
+      fix(lip - dir * 0.06, SHELF_H + 1.30, zmid, 0.16, 0.70, len, P.sage);
+      fix(lip - dir * 0.06, SHELF_H + 0.93, zmid, 0.17, 0.06, len, P.terra);
       for (let z = z0 + 1.4; z < z1 - 1.0; z += 3.55) {
         fix(lip + dir * 0.03, SHELF_H + 1.32, z, 0.03, 0.62, 2.30, 0xf3ecda);
         qX(Qpromo, lip + dir * 0.058, SHELF_H + 1.32, z, 2.22, 0.54, dir,
@@ -1242,13 +1352,20 @@ export function buildStore(THREE, scene) {
       }
     }
 
-    flushPkg(B, 'run' + idx);
-    const zc = opts.endcaps ? BODY + EC_D + 0.14 : BODY;
-    solid(x - halfW - 0.02, 0, -zc, x + halfW + 0.02, SHELF_H, zc);
+    // COLLIDER, per segment. This is the load-bearing half of the cross-aisle:
+    // the walkway is only walkable because these two boxes stop short of it.
+    const pad = opts.endcaps ? ECPAD : 0.02;
+    solid(x - halfW - 0.02, 0, z0 - pad, x + halfW + 0.02, SHELF_H, z1 + pad);
+    }
   }
 
   // 7 island gondolas between neighbouring aisles + 2 shallow wall runs
-  const RUN_PROFILE = [1, 0, 4, 2, 2, 1, 3];      // matched to each run's departments
+  // Deliberately CLUMPED rather than alternating. Alternating profiles averages
+  // out: every aisle ends up bounded by one dense run and one sparse one and
+  // they all measure the same. Clumping gives aisle 2 two tight runs and aisle
+  // 5 two bulky ones, which is what a real planogram does anyway — you do not
+  // put canned soup opposite paper towels.
+  const RUN_PROFILE = [0, 0, 1, 2, 2, 3, 4];
   for (let i = 0; i < AISLE_COUNT - 1; i++) {
     buildRun(i, aisleX(i) + PITCH / 2, SHELF_W / 2, [
       { dir: -1, dept: DEPTS[i % DEPTS.length], aisle: i },
@@ -1261,11 +1378,13 @@ export function buildStore(THREE, scene) {
   // those two aisles measured 5-7 points of edge density below every other one.
   // A real perimeter wall carries full-depth shelving with an upper overstock
   // deck and a decor band above it. WRW is declared in the FLOOR block.
+  // The two wall runs do NOT break: they lie ALONG the walkway rather than
+  // across it, so a cross-aisle in a real store terminates at them.
   buildRun(90, STORE.minX + WRW / 2 + 0.04, WRW / 2,
-    [{ dir: 1, dept: DEPTS[0], aisle: 0 }], { profile: PROFILES[2], upper: 1 });
+    [{ dir: 1, dept: DEPTS[0], aisle: 0 }], { profile: PROFILES[2], upper: 1, segs: ONE_SEG });
   buildRun(91, STORE.maxX - WRW / 2 - 0.04, WRW / 2,
     [{ dir: -1, dept: DEPTS[(AISLE_COUNT - 1) % DEPTS.length], aisle: AISLE_COUNT - 1 }],
-    { profile: PROFILES[0], upper: -1 });
+    { profile: PROFILES[0], upper: -1, segs: ONE_SEG });
 
   // =========================================================================
   // HANGING AISLE SIGNS  (front mouth + back mouth, both faces)
@@ -1274,8 +1393,14 @@ export function buildStore(THREE, scene) {
   for (let i = 0; i < AISLE_COUNT; i++) {
     const x = aisleX(i);
     const front = cellUV(i % 8, 4, 4), back = cellUV(8 + (i % 8), 4, 4);
-    for (const end of [-1, 1]) {
-      const z = end * (HALF + 0.75);
+    // ROUND 5. Four mouths per aisle now, not two: the store ends AND both
+    // sides of the mid-store walkway. A cross-aisle you cannot navigate from is
+    // just a hole in the shelving — the signs are what make standing in it
+    // worth doing, and every real store hangs a second set exactly here.
+    for (const [z, end] of [
+      [-(HALF + 0.75), -1], [HALF + 0.75, 1],
+      [XA0 - 0.62, 1], [XA1 + 0.62, -1],
+    ]) {
       // panel faces: -Z side and +Z side.
       // ROUND-4 BUG. These quads sat at z +- 0.035 on a carrier box that is
       // exactly 0.07 deep, i.e. EXACTLY coplanar with its own face. Past ~12 m
@@ -1352,7 +1477,8 @@ export function buildStore(THREE, scene) {
   {
     const py = 2.55;
     for (let px = STORE.minX + 9; px < STORE.maxX - 5; px += 3.15) {
-      if (Math.abs(px - EXIT.x) < 4.2) continue;
+      if (Math.abs(px - EXIT.x) < 4.4) continue;
+      if (Math.abs(px - EXIT2.x) < 4.0) continue;
       fix(px, py, STORE.minZ + 0.10, 2.05, 1.30, 0.05, 0xf1e9d5, BfixF);
       qZ(Qpromo, px, py + 0.02, STORE.minZ + 0.135, 1.92, 1.16, 1,
         cellUV((rng() * 4) | 0, 1, 4));
@@ -1362,24 +1488,111 @@ export function buildStore(THREE, scene) {
     fix(CX, 0.28, STORE.minZ + 0.08, SW, 0.56, 0.05, 0xd9cfb6, BfixF);     // dado
   }
 
-  // storefront: bright glazing + entry doors near EXIT
-  const gx0 = EXIT.x - 3.4, gx1 = EXIT.x + 3.4;
-  Qbright.rect([(gx0 + gx1) / 2, 1.7, STORE.minZ + 0.09], [(gx1 - gx0) / 2, 0, 0], [0, 1.55, 0], 0, 0, 1, 1);
-  fix((gx0 + gx1) / 2, 3.45, STORE.minZ + 0.12, gx1 - gx0 + 0.6, 0.55, 0.14, P.terra, BfixF);
-  // mullions, transom bar, push bars and a poster on the glass — a single flat
-  // bright plate is one of the loudest CG shapes in the whole front of store
-  for (let gx = gx0; gx <= gx1 + 0.01; gx += 1.13) {
-    fix(gx, 1.7, STORE.minZ + 0.13, 0.10, 3.2, 0.10, 0x4a4f57, BfixF);
+  // =========================================================================
+  // STOREFRONTS — one per exit
+  // =========================================================================
+  // ROUND 5. src/agents.js moved the chase to TWO ways out 35 m apart, because
+  // one door made the thief's destination public knowledge and camping it beat
+  // actually chasing him by 57 points. Round 4's store built a storefront at
+  // Door 1 and nothing whatever at Door 2 — the chase builder was drawing a
+  // placeholder lit EXIT box and two push-bar leaves there just so it was not a
+  // hole in the wall. This is the real thing, built once and called twice, so
+  // the two doors are the same door and neither reads as the "fake" one.
+  //
+  // No colliders anywhere in here, exactly as Door 1 had none: the front wall's
+  // own collider stops at z = STORE.minZ and the whole assembly stands inside
+  // it. Anything solid at a door would put a wall between a runner and the way
+  // out — and the door beat is priced in TUNING.doorShove, not in geometry.
+  function storefront(cx, halfW, label) {
+    const fz = STORE.minZ;                 // the wall plane
+    const gx0 = cx - halfW, gx1 = cx + halfW, w = gx1 - gx0;
+    // ---- what is outside ---------------------------------------------------
+    // A textured plate, not a flat swatch: blown sky under a dark canopy
+    // soffit, a treeline, parked cars, asphalt with stall lines running away.
+    qZ(Qout, cx, 1.78, fz + 0.06, w, 3.28, 1, FULL);
+    // bollards and a cart corral OUTSIDE, in near-silhouette against it. These
+    // are what tell you the bright plate is a window and not a light box.
+    for (const bx of [gx0 + 0.55, gx0 + 1.75, gx1 - 1.75, gx1 - 0.55]) {
+      fix(bx, 0.52, fz + 0.045, 0.19, 1.04, 0.19, 0x8a7a3a, BfixF);
+      fix(bx, 1.06, fz + 0.045, 0.21, 0.06, 0.21, 0x6d6229, BfixF);
+    }
+    for (const s of [-1, 1]) {
+      const rx = cx + s * (halfW - 0.30);
+      fix(rx, 0.62, fz + 0.05, 0.05, 0.90, 0.05, 0x5c6167, BfixF);
+      fix(rx - s * 0.62, 0.62, fz + 0.05, 0.05, 0.90, 0.05, 0x5c6167, BfixF);
+      fix(rx - s * 0.31, 1.04, fz + 0.05, 0.68, 0.05, 0.05, 0x5c6167, BfixF);
+    }
+    // ---- the shopfront system ---------------------------------------------
+    // sill, jambs, transom and intermediate mullions. Storefront extrusion is
+    // 50 mm dark bronze anodised and it is ALL you see of the frame edge-on.
+    const MUL = 0x3f444b, MUL2 = 0x565c64;
+    fix(cx, 0.115, fz + 0.13, w + 0.10, 0.23, 0.12, MUL, BfixF);       // sill
+    fix(cx, 2.63, fz + 0.13, w + 0.10, 0.11, 0.12, MUL, BfixF);        // transom bar
+    fix(cx, 3.06, fz + 0.13, w + 0.10, 0.07, 0.10, MUL2, BfixF);       // head
+    const nMul = Math.max(4, Math.round(w / 1.15));
+    for (let k = 0; k <= nMul; k++) {
+      const gx = gx0 + (k / nMul) * w;
+      fix(gx, 1.62, fz + 0.13, 0.075, 3.05, 0.11, MUL, BfixF);
+    }
+    for (const gx of [gx0, gx1]) fix(gx, 1.62, fz + 0.14, 0.16, 3.05, 0.13, 0x33383e, BfixF);
+    // fascia band over the opening, and the store's own name plate
+    fix(cx, 3.48, fz + 0.12, w + 0.72, 0.60, 0.15, P.terra, BfixF);
+    fix(cx, 3.48, fz + 0.145, w * 0.62, 0.34, 0.03, 0xf7f0dc, BfixF);
+    // ---- the two operating leaves -----------------------------------------
+    // Held very slightly ajar so the gap between them reads as a way through.
+    const lz = fz + 0.20;
+    for (const s of [-1, 1]) {
+      const lx = cx + s * 0.50;
+      fix(lx, 1.30, lz, 0.94, 2.32, 0.055, 0x8e959c, BfixF);          // leaf frame
+      fix(lx, 1.30, lz + 0.012, 0.80, 2.10, 0.035, 0xc9d6dc, BfixF);  // vision panel
+      fix(lx, 0.30, lz + 0.03, 0.92, 0.42, 0.05, 0x6e757c, BfixF);    // kick plate
+      fix(lx, 2.42, lz + 0.03, 0.92, 0.10, 0.05, 0x6e757c, BfixF);    // top rail
+      // push bar across the leaf and a vertical pull on the stile
+      fix(lx, 1.02, lz + 0.075, 0.76, 0.055, 0.055, 0xb9bec5, BfixF);
+      for (const e of [-1, 1]) fix(lx + e * 0.36, 1.02, lz + 0.055, 0.045, 0.055, 0.05, 0x8b9198, BfixF);
+      fix(lx + s * 0.40, 1.35, lz + 0.085, 0.045, 1.02, 0.045, 0xcfd4d9, BfixF);
+      // decals: CAUTION AUTOMATIC DOOR at head height, IN / OUT below it
+      qZ(Qdecal, lx, 2.16, lz + 0.045, 0.42, 0.21, 1, cellUV(0, 4, 1));
+      qZ(Qdecal, lx, 1.68, lz + 0.045, 0.24, 0.24, 1, cellUV(s > 0 ? 1 : 2, 4, 1));
+    }
+    // the meeting stile, and the header the operators live in
+    fix(cx, 1.30, lz + 0.02, 0.075, 2.32, 0.08, 0x6e757c, BfixF);
+    fix(cx, 2.74, fz + 0.24, 2.36, 0.30, 0.26, 0xb6bcc2, BfixF);       // operator header
+    fix(cx, 2.74, fz + 0.38, 2.36, 0.06, 0.03, 0x6e757c, BfixF);
+    for (const s of [-1, 1]) fix(cx + s * 0.86, 2.56, fz + 0.34, 0.16, 0.09, 0.10, 0x2b2e33, BfixF);  // sensors
+    // the hours plate, on the glass beside the doors where it always is
+    qZ(Qdecal, gx0 + 0.86, 1.55, fz + 0.19, 0.46, 0.34, 1, cellUV(3, 4, 1));
+    // ---- vestibule ---------------------------------------------------------
+    // Two short returns and a soffit. A real entry is a lobby, not a hole, and
+    // the returns are what give the doorway depth from inside the store.
+    for (const s of [-1, 1]) {
+      fix(cx + s * (halfW + 0.02), 1.62, fz + 0.95, 0.10, 3.24, 1.70, 0xe4dbc4, BfixF);
+      fix(cx + s * (halfW - 0.06), 1.62, fz + 1.78, 0.14, 3.24, 0.09, MUL, BfixF);
+    }
+    fix(cx, 3.28, fz + 0.95, w + 0.24, 0.14, 1.72, 0xe9e1cc, BfixF);   // soffit
+    fix(cx, 3.19, fz + 0.95, w - 0.30, 0.05, 1.30, 0xfff6e2, BfixF);   // lit cove
+    // walk-off mat, and the interior bollards that stop a cart at the doors
+    fix(cx, 0.008, fz + 1.05, w * 0.80, 0.016, 1.90, 0x33352f);
+    fix(cx, 0.020, fz + 1.05, w * 0.80 - 0.12, 0.016, 1.74, 0x4a4d45);
+    for (const s of [-1, 1]) {
+      const bx = cx + s * 1.72;
+      drum(bx, 0.46, fz + 1.62, 0.22, 0.92, 0xd8c33a);
+      drum(bx, 0.93, fz + 1.62, 0.24, 0.05, 0x2f3237);
+    }
+    // ---- signage -----------------------------------------------------------
+    // A lit EXIT box on the inside face, which is the thing a fleeing man is
+    // actually running at. Matches the placeholder src/agents.js has been
+    // drawing at Door 2 so that placeholder can now come out.
+    fix(cx, 2.88, fz + 1.86, 1.00, 0.34, 0.11, 0x2a2c30, BfixF);
+    qZ(Qexit, cx, 2.88, fz + 1.925, 0.86, 0.26, 1, cellUV(label, 2, 1));
+    fix(cx, 3.08, fz + 1.86, 1.10, 0.07, 0.24, 0x24262a, BfixF);
+    qUp(Qshadow, cx, 0.006, fz + 1.4, w + 1.2, 3.0, FULL);
   }
-  for (const gx of [gx0, EXIT.x, gx1]) fix(gx, 1.7, STORE.minZ + 0.135, 0.16, 3.2, 0.12, 0x3c4149, BfixF);
-  fix((gx0 + gx1) / 2, 2.62, STORE.minZ + 0.13, gx1 - gx0, 0.11, 0.10, 0x4a4f57, BfixF);
-  fix((gx0 + gx1) / 2, 1.05, STORE.minZ + 0.15, gx1 - gx0, 0.06, 0.08, 0xb9b3a4, BfixF);
-  fix((gx0 + gx1) / 2, 0.22, STORE.minZ + 0.14, gx1 - gx0, 0.44, 0.10, 0x4a4f57, BfixF);
-  for (const px of [gx0 + 1.7, gx1 - 1.7]) {
-    fix(px, 1.75, STORE.minZ + 0.16, 0.70, 0.95, 0.03, 0xf3ecd9, BfixF);
-    qZ(Qpromo, px, 1.75, STORE.minZ + 0.188, 0.64, 0.88, 1, cellUV((rng() * 4) | 0, 1, 4));
-  }
-  fix((gx0 + gx1) / 2, 0.10, STORE.minZ + 1.1, gx1 - gx0, 0.02, 2.2, 0x3b3f45);
+  storefront(EXIT.x, 3.40, 0);
+  // Door 2, on config.js's EXIT2 so there is exactly one source of truth for
+  // where it is. The glazing is trimmed on the right so it stops clear of the
+  // service desk's back shelving, which stands on the same wall 2 m along.
+  storefront(EXIT2.x - 0.30, 2.85, 1);
 
   // service desk
   const sd = SERVICE_DESK;
@@ -1430,15 +1643,31 @@ export function buildStore(THREE, scene) {
       });
     }
     flushPkg(B, 'cooler');
-    // glass doors + mullions
+    // GLASS DOORS. ROUND 5 — real door hardware, because the reflection is only
+    // half of what makes reference/store_04 read: the other half is that a
+    // reach-in door is a heavy extruded frame with a full-height chrome pull, a
+    // black gasket down every meeting stile, and an LED strip INSIDE the frame
+    // washing the case from top to bottom. Those vertical strips are the
+    // brightest verticals in that photograph and there was nothing like them
+    // here. They also give the new mirror something worth reflecting.
     const gz = coolZ - coolD / 2 - 0.02;
     for (let x = coolX0; x < coolX1 - 0.4; x += 0.86) {
       const w = Math.min(0.86, coolX1 - x);
       qZ(Qglass, x + w / 2, 1.18, gz, w - 0.05, 2.02, -1, FULL);
-      fix(x, 1.18, gz, 0.06, 2.10, 0.06, 0xd7d1bf);
-      fix(x + w - 0.10, 1.02, gz - 0.03, 0.035, 0.55, 0.05, 0xe8e3d2);
+      // frame: outer extrusion, dark gasket inside it, then the pull
+      fix(x, 1.18, gz, 0.062, 2.12, 0.075, 0xdad4c2);
+      fix(x, 1.18, gz - 0.030, 0.030, 2.08, 0.030, 0x2c2e2c);
+      fix(x + w - 0.095, 1.06, gz - 0.048, 0.030, 1.32, 0.030, 0xd8dde2);   // pull
+      for (const hy of [0.44, 1.68]) fix(x + w - 0.095, hy, gz - 0.030, 0.028, 0.05, 0.05, 0xb3b8bd);
+      // the LED strip up the inside of the mullion, and its glow on the glass
+      tube(x + 0.045, 1.18, gz + 0.075, 0, 0, 0, 0.013, 1.98, 0xfff9ec);
+      qZ(Qbloom, x + 0.045, 1.18, gz + 0.030, 0.30, 2.10, -1, FULL);
+      // the shelf-edge label strip a door's worth of frozen product carries
+      fix(x + w / 2, 2.22, gz + 0.02, w - 0.10, 0.06, 0.02, 0xf6f1e2);
     }
     fix((coolX0 + coolX1) / 2, 1.18, gz, coolX1 - coolX0, 0.05, 0.07, 0xd7d1bf);
+    fix((coolX0 + coolX1) / 2, 2.24, gz - 0.01, coolX1 - coolX0, 0.09, 0.09, 0xc9c3b1);
+    fix((coolX0 + coolX1) / 2, 0.13, gz - 0.01, coolX1 - coolX0, 0.10, 0.09, 0x8b8574);
     qUp(Qshadow, cmid, 0.006, coolZ - 0.35, cw, 3.4, FULL);
     solid(coolX0, 0, coolZ - coolD / 2 - 0.1, coolX1, 2.3, coolZ + coolD / 2);
   }
@@ -1562,7 +1791,11 @@ export function buildStore(THREE, scene) {
   for (const sgn of [-1, 1]) {
     const wallFace = sgn < 0 ? STORE.minX + WRW + 0.10 : STORE.maxX - WRW - 0.10;
     for (let k = 0; k < 7; k++) {
-      const z = -HALF + 1.4 + k * (AISLE_LEN - 2.8) / 6;
+      let z = -HALF + 1.4 + k * (AISLE_LEN - 2.8) / 6;
+      // Nothing parks in the mouth of the walkway. This one was live: the
+      // k = 3 pallet landed at z = 0, squarely across the end of the new
+      // cross-aisle, which would have corked the perimeter end of it.
+      if (inCross(z, 1.5)) z = z < CROSS_Z ? XA0 - 1.9 : XA1 + 1.9;
       const px = wallFace + sgn * 0.72;
       if (k % 3 === 1) {
         // a wire floor rack of case stock rather than another pallet
@@ -1658,9 +1891,19 @@ export function buildStore(THREE, scene) {
   const Bcart = newPkg();
   // the corral by the doors: nested, so the pitch is a basket depth, not a cart
   for (let k = 0; k < 6; k++) cart(EXIT.x + 2.0 + k * 0.40, STORE.minZ + 2.4, 0.03 * k, false);
+  // ...and one at Door 2, parked on the far side from the service desk so its
+  // colliders sit 2.5 m clear of the lane a runner takes at that door.
+  for (let k = 0; k < 5; k++) {
+    cart(EXIT2.x - 4.2 + k * 0.40, STORE.minZ + 2.4, 3.10 + 0.03 * k, false);
+  }
   cart(aisleX(2) + 1.15, -HALF + 3.4, 0.5, true);
   cart(aisleX(5) - 1.10, HALF - 5.2, -0.8, true);
-  cart(aisleX(6) + 1.20, 2.0, 2.4, true);
+  cart(aisleX(6) + 1.20, 4.6, 2.4, true);         // was z=2.0, inside the walkway
+  // an abandoned cart at the mouth of the walkway — close enough to read as
+  // cross-aisle traffic, far enough out of the band that its 1.2 m collider
+  // never touches the lane a runner uses
+  cart(aisleX(3) + PITCH / 2 + 1.05, XA1 + 1.15, 1.35, true);
+  cart(aisleX(5) + PITCH / 2 - 1.05, XA0 - 1.25, -1.9, false);
   flushPkg(Bcart, 'cartload');
   qUp(Qshadow, sd.x, 0.006, sd.z, 7.6, 3.0, FULL);
 
@@ -1775,9 +2018,12 @@ export function buildStore(THREE, scene) {
       let side = (i + k) % 2 ? 1 : -1;
       if (i === 0) side = 1;
       if (i === AISLE_COUNT - 1) side = -1;
-      putSpot(aisleX(i) + side * PICKUP_LIP,
-        rr(rng, -HALF + 2.4, HALF - 2.4),
-        (i + k) % 2 ? 'donuts' : 'energy');
+      // ...and never in the walkway. These carry no collider, so a display in
+      // the cross-aisle would not block the chase — but it WOULD stand in the
+      // middle of the sightline, and the sightline is the point.
+      let pz = rr(rng, -HALF + 2.4, HALF - 2.4);
+      if (inCross(pz, 1.4)) pz += (pz < CROSS_Z ? -1 : 1) * 3.2;
+      putSpot(aisleX(i) + side * PICKUP_LIP, pz, (i + k) % 2 ? 'donuts' : 'energy');
     }
   }
   // FRONT CROSS-AISLE. Most of a chase actually runs along here, not down an
@@ -1854,7 +2100,7 @@ export function buildStore(THREE, scene) {
     map: T.glow, color: 0x120f0a, transparent: true, opacity: 0.70, depthWrite: false,
   });
   const sm = soup(Qshadow, shadowMat, 'contactShadows'); if (sm) sm.renderOrder = 1;
-  soup(Qpatch, new THREE.MeshBasicMaterial({ map: T.patch, color: 0xd8ccb4 }), 'floorPatches');
+  soup(Qpatch, new THREE.MeshBasicMaterial({ map: T.patch, color: 0xd6d1c3 }), 'floorPatches');
   soup(Qwire, new THREE.MeshPhongMaterial({
     map: T.wire, color: 0xffffff, shininess: 68, specular: 0x8f959c,
     transparent: true, alphaTest: 0.22, side: THREE.DoubleSide, depthWrite: true,
@@ -1865,12 +2111,30 @@ export function buildStore(THREE, scene) {
     map: T.ao, transparent: true, depthWrite: false, blending: THREE.MultiplyBlending,
   });
   const ao = soup(Qao, aoMat, 'shelfAO'); if (ao) ao.renderOrder = 3;
-  const glassMat = new THREE.MeshBasicMaterial({
-    color: 0xcfe4ee, transparent: true, opacity: 0.20, depthWrite: false,
-  });
+  // FREEZER GLASS. Round 4 shipped this as a flat 0.20-opacity blue quad: the
+  // same veil head-on as at eighty degrees, which is the one behaviour glass
+  // never has. It now runs the floor's analytic mirror — sharing the floor's
+  // own uniform bag, so the two cannot disagree about where the lamps are —
+  // with fresnel, a double-glazing ghost that walks off the primary as the
+  // angle opens, and thermal haze at the mullions. Face-on it is now CLEARER
+  // than the old veil (0.04 fresnel + a 0.085 tint against a flat 0.20), so the
+  // product inside the case actually reads; at grazing it goes to mirror.
+  // aspect = door width / door height, so the haze band is the same physical
+  // width along the jamb as along the head.
+  const glassMat = FL.reflectiveGlass(THREE, floorMat.userData.chop, { aspect: 0.40 });
   const gl = soup(Qglass, glassMat, 'coolerGlass'); if (gl) gl.renderOrder = 4;
-  const brightMat = new THREE.MeshBasicMaterial({ color: 0xd9e6ee });
-  soup(Qbright, brightMat, 'storefront');
+  scene.userData.chopGlass = glassMat.userData.chop;
+  // STOREFRONTS. The round-4 flat 0xd9e6ee plate is gone; what is outside is
+  // now a real image with a value range in it, and the door decals and the lit
+  // EXIT boxes ride on top of it. Basic materials throughout — daylight and a
+  // fluorescent EXIT box are both emitters, and neither takes room light.
+  soup(Qout, new THREE.MeshBasicMaterial({ map: T.outside, color: 0xffffff }),
+    'outside', frontGroup);
+  soup(Qdecal, new THREE.MeshBasicMaterial({
+    map: T.decal, color: 0xffffff, transparent: true, depthWrite: false,
+  }), 'doorDecals', frontGroup);
+  soup(Qexit, new THREE.MeshBasicMaterial({ map: T.exit, color: 0xffffff }),
+    'exitSigns', frontGroup);
 
   // =========================================================================
   // LIGHTING
@@ -1890,14 +2154,32 @@ export function buildStore(THREE, scene) {
   // deck tops separate from the deck faces — all cards that were already drawn
   // and were simply being washed out. Overall exposure is held roughly level so
   // the packaging print does not sink.
-  scene.add(new THREE.AmbientLight(0xffeed4, 0.34));
-  const hemi = new THREE.HemisphereLight(0xfff8ea, 0x6d6249, 0.62);
+  //
+  // ROUND 5 — WHY THE PRODUCT WALL WAS SEPIA. It was not the packaging
+  // vocabulary and it was not the exposure: it was that EVERY light in the rig
+  // was warm. Ambient 0xffeed4, hemi sky 0xfff8ea over ground 0x6d6249, key
+  // 0xfff3e0 — the blue channel arrived at a vertical product face at about 86%
+  // of red before any pigment was applied. And a product face is lit almost
+  // entirely by the omnidirectional pair, because the key comes from 68 degrees
+  // above and contributes cos(theta) ~ 0.22 to a vertical facing. So every
+  // white went cream, every blue went navy, and a measured hue histogram put
+  // 38-41% of the frame in the 15-60 degree warm band at s > 0.32 against 7-11%
+  // for reference/store_01 and _02 — with blue at 0.7% against their 11-15%.
+  //
+  // A supermarket runs 4100K lamps and a camera white-balances them. The warmth
+  // in those photographs is PIGMENT — cream walls, terracotta bands, wood end
+  // panels — not the illuminant. So the illuminant goes neutral, the pigments
+  // stay exactly as warm as they were, and the packaging is allowed to be the
+  // colour it is printed. The ground bounce keeps a little warmth because it
+  // genuinely is bouncing off a brown floor.
+  scene.add(new THREE.AmbientLight(0xfff4e6, 0.36));
+  const hemi = new THREE.HemisphereLight(0xfcfdff, 0x736a58, 0.66);
   hemi.position.set(0, CEIL_H, 0);
   scene.add(hemi);
   // Steeper as well as stronger: this used to come in at about 30 degrees off
   // horizontal, i.e. from the side, which is the one direction a supermarket is
   // never lit from and which put the brightest face on the shelf UPRIGHTS.
-  const key = new THREE.DirectionalLight(0xfff3e0, 1.22);
+  const key = new THREE.DirectionalLight(0xfffaf2, 1.24);
   key.position.set(CX + 5, CEIL_H + 16, CZ - 7);
   key.target.position.set(CX, 0, CZ);
   key.castShadow = true;
@@ -1906,11 +2188,11 @@ export function buildStore(THREE, scene) {
   sc.left = -SW * 0.6; sc.right = SW * 0.6; sc.top = SD * 0.6; sc.bottom = -SD * 0.6;
   sc.near = 1; sc.far = 70; sc.updateProjectionMatrix();
   scene.add(key); scene.add(key.target);
-  const fill = new THREE.DirectionalLight(0xe8f0ff, 0.26);
+  const fill = new THREE.DirectionalLight(0xdfeaff, 0.32);
   fill.position.set(CX - 12, CEIL_H + 4, CZ + 14);
   scene.add(fill);
 
-  scene.fog = new THREE.Fog(0xe0d5bd, 30, 105);
+  scene.fog = new THREE.Fog(0xdcd6c6, 32, 110);
 
   return { colliders, powerupSpots };
 }
