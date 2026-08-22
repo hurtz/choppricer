@@ -236,10 +236,21 @@ export function createHUD(hudEl) {
     const ax = 348, aw = 558;
     const cam = G.cams[G.desk.cam];
     panel(ax, by, aw, bh, `MOTION ANALYTICS — ${cam?.id || 'CAM'} / ${cam?.label || ''}`);
-    const subs = G.desk.subjects.filter((s) => s.cam === G.desk.cam).slice(0, 3);
+    const all = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
+    const top = Math.min(G.desk.scroll || 0, Math.max(0, all.length - 3));
+    const subs = all.slice(top, top + 3);
     if (!subs.length) {
       tx('NO SUBJECTS IN FRAME.', ax + 12, by + 44, { s: 13, c: DIM });
       tx('ANALYTICS IS STILL BILLED MONTHLY.', ax + 12, by + 64, { s: 11, c: 'rgba(131,165,140,0.5)' });
+    }
+    // The window is three rows deep because three rows is what fits. Say so,
+    // and give the rest of the list somewhere to be — a hidden row used to mean
+    // the analytics had flagged somebody the terminal would never show you.
+    if (all.length > 3) {
+      const more = all.length - top - 3;
+      reg('scroll', ax + aw - 96, by + 1, 92, 15, more > 0 ? 1 : -(top || 0));
+      tx(more > 0 ? `▼ ${more} MORE  [↓]` : `▲ TOP  [↑]`, ax + aw - 8, by + 12,
+        { s: 10, w: 'bold', c: AMB, a: 'right', ls: 0.6 });
     }
     subs.forEach((s, i) => {
       const ry = by + 22 + i * 22, sel = G.desk.sel === s.id;
@@ -250,32 +261,65 @@ export function createHUD(hudEl) {
       }
       tx(sel ? '▶' : ' ', ax + 11, ry + 15, { s: 12, w: 'bold', c: AMB });
       tx(s.code, ax + 24, ry + 15, { s: 12, w: 'bold', c: sel ? AMB : GRN });
-      tx(s.aisle == null ? '—' : `A${s.aisle + 1}`, ax + 104, ry + 15, { s: 12, c: DIM });
-      tx(s.line, ax + 142, ry + 15,
-        { s: 12, c: s.flagged ? RED : (sel ? '#e9f6ec' : DIM), max: 340, w: s.flagged ? 'bold' : '' });
+      tx(shortWhere(s), ax + 100, ry + 15, { s: 12, c: s.aisle == null ? AMB : DIM });
+      tx(s.line, ax + 152, ry + 15,
+        { s: 12, c: s.flagged ? RED : (sel ? '#e9f6ec' : DIM), max: 306, w: s.flagged ? 'bold' : '' });
+      if (s.held) {
+        ctx.fillStyle = 'rgba(255,227,106,0.16)'; ctx.fillRect(ax + aw - 96, ry + 3, 44, 15);
+        tx('HOLD', ax + aw - 92, ry + 15, { s: 10, w: 'bold', c: '#ffe36a' });
+      }
       tx(`${two(s.dwell / 60)}:${two(s.dwell % 60)}`, ax + aw - 12, ry + 15,
         { s: 11, c: DIM, a: 'right' });
     });
 
-    // --- dispatch
+    // --- dispatch + the PA
     const dx = 914, dw = 356;
     const sel = G.desk.subjects.find((s) => s.id === G.desk.sel);
-    const can = sel && sel.aisle != null;
+    const can = sel && (sel.post || sel.aisle != null);
     panel(dx, by, dw, bh, 'DISPATCH', { accent: can ? AMB : '#4d5f52' });
     if (can) {
       const hot = (G.now % 1.1) < 0.75;
-      reg('dispatch', dx + 8, by + 24, dw - 16, 38, sel.aisle);
-      ctx.fillStyle = hot ? AMB : AMB_D; ctx.fillRect(dx + 8, by + 24, dw - 16, 38);
-      tx(`▶ DISPATCH TO AISLE ${sel.aisle + 1}`, dx + dw / 2, by + 49,
-        { s: 17, w: 'bold', c: '#07100a', a: 'center', ls: 1.6 });
-      tx('[SPACE] · UNIT 1 SELF-DISPATCH', dx + 12, by + 78, { s: 11, c: DIM });
+      const bw = 212;
+      reg('dispatch', dx + 8, by + 22, bw, 40, sel.aisle);
+      ctx.fillStyle = hot ? AMB : AMB_D; ctx.fillRect(dx + 8, by + 22, bw, 40);
+      const dest = sel.where || `AISLE ${sel.aisle + 1}`;
+      tx('▶ DISPATCH', dx + 8 + bw / 2, by + 41, { s: 15, w: 'bold', c: '#07100a', a: 'center', ls: 1.4 });
+      tx(dest, dx + 8 + bw / 2, by + 57, { s: 13, w: 'bold', c: '#07100a', a: 'center', ls: 1.2, max: bw - 12 });
+      holdBtn(G, dx + 230, by + 22, dw - 238, 40);
+      tx('[SPACE] DISPATCH   [F] PA', dx + 12, by + 78, { s: 11, c: DIM });
       tx('POST UNMANNED', dx + dw - 12, by + 78, { s: 11, c: 'rgba(255,74,58,0.75)', a: 'right' });
     } else {
-      tx('SELECT A SUBJECT ROW', dx + 12, by + 44, { s: 14, w: 'bold', c: '#6f8a77' });
-      tx('CLICK A MONITOR OR PRESS [1]-[8]', dx + 12, by + 66, { s: 11, c: '#5d7364' });
-      tx('[TAB] LEAVE POST', dx + dw - 12, by + 66, { s: 11, c: '#5d7364', a: 'right' });
+      tx('SELECT A SUBJECT ROW', dx + 12, by + 42, { s: 14, w: 'bold', c: '#6f8a77' });
+      tx('CLICK A MONITOR OR PRESS [1]-[8]', dx + 12, by + 62, { s: 11, c: '#5d7364' });
+      tx('[↑/↓] ROSTER   [TAB] LEAVE POST', dx + 12, by + 78, { s: 11, c: '#5d7364' });
     }
     burnIn();
+  }
+
+  // The one power this job actually confers. Ready / counting down / live.
+  function holdBtn(G, x, y, w, h) {
+    const H2 = G.hold || {};
+    if (!H2.on) return;
+    const live = H2.live, cool = H2.cool || 0;
+    const ready = !live && cool <= 0;
+    ctx.fillStyle = live ? 'rgba(255,227,106,0.22)' : ready ? 'rgba(255,180,58,0.14)' : 'rgba(255,255,255,0.05)';
+    ctx.fillRect(x, y, w, h);
+    box(x, y, w, h, live ? '#ffe36a' : ready ? AMB : '#3c4a40');
+    if (ready) reg('hold', x, y, w, h, 1);
+    const c = live ? '#ffe36a' : ready ? AMB : '#5d7364';
+    tx('PA', x + w / 2, y + 17, { s: 12, w: 'bold', c, a: 'center', ls: 1.6 });
+    tx(live ? 'HOLDING' : ready ? 'PRICE CHK' : `${Math.ceil(cool)}s`,
+      x + w / 2, y + 32, { s: 11, w: 'bold', c, a: 'center', max: w - 6 });
+    if (!ready && !live && H2.max) {                     // cooldown drains left to right
+      ctx.fillStyle = 'rgba(255,180,58,0.35)';
+      ctx.fillRect(x, y + h - 3, w * (1 - cool / H2.max), 3);
+    }
+  }
+  // "A4" / "FRONT" / "BACK" — where the terminal will send you, not where he is.
+  function shortWhere(s) {
+    if (s.aisle != null) return `A${s.aisle + 1}`;
+    if (!s.where) return '—';
+    return s.where === 'FRONT END' ? 'FRONT' : s.where === 'BACK WALL' ? 'BACK' : s.where;
   }
 
   // ------------------------------------------------------------------ FLOOR
@@ -313,7 +357,8 @@ export function createHUD(hudEl) {
 
     // dispatched-to callout
     panel(10, 62, 262, 54, 'DISPATCHED TO');
-    tx(`AISLE ${(f?.aisle ?? 0) + 1}`, 20, 104, { s: 28, w: 'bold', c: AMB, ls: 2 });
+    const dest = (f && f.where) || `AISLE ${(f?.aisle ?? 0) + 1}`;
+    tx(dest, 20, 104, { s: dest.length > 9 ? 21 : 28, w: 'bold', c: AMB, ls: 2, max: 200 });
     tx(G.cams[G.desk.cam]?.id || '', 252, 104, { s: 11, c: DIM, a: 'right' });
 
     // pursuit bar

@@ -61,8 +61,8 @@
    "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
   },
   "agents": {
-   "round": 1,
-   "state": "gap",
+   "round": 2,
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -73,6 +73,11 @@
      "round": 1,
      "path": "../shots/probe_floor.png",
      "t": 1787412163.112764
+    },
+    {
+     "round": 1,
+     "path": "../shots/agents_r1.png",
+     "t": 1787414521.6668339
     }
    ],
    "gaps": [
@@ -81,9 +86,10 @@
      "text": "Measured 58% catch rate with NO powerup. Bar is near 0% \u2014 powerups are currently pointless and the chase has no tension."
     }
    ],
-   "updated": 1787412163.1127622,
-   "note": "r1 landed: 14 shoppers, thief state machine, stamina, powerups, good fat-cop silhouette.",
-   "gap": "Measured 58% catch rate with NO powerup. Bar is near 0% \u2014 powerups are currently pointless and the chase has no tension."
+   "updated": 1787414622.016993,
+   "note": "Not a tuning problem \u2014 two real bugs. (1) Powerups sat mid-aisle with a 1.42m grab radius, so boostFrac was 0.45 in supposedly-unpowered chases; snapped to shelf lip with a lateral reach gate, now 0.02. (2) Nav routed off the config floor plan, not the store's actual colliders, so thieves ground along unmodelled furniture and escapes only ever came from the two clean aisles; new nav.js builds an occupancy grid from real colliders + Dijkstra field from the exit. (3) Thief had no stamina model.",
+   "gap": "Measured 58% catch rate with NO powerup. Bar is near 0% \u2014 powerups are currently pointless and the chase has no tension.",
+   "verdict": "PASS \u2014 1.5% caught with no powerup (was 71%), 76.9% when a powerup is reached, cop loses by 2.80m / 9.2ft (p10 2.32, p90 3.56). n=400 per mode."
   },
   "game": {
    "round": 1,
@@ -116,6 +122,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787414622.016993,
+   "piece": "agents",
+   "role": "builder",
+   "round": 2,
+   "state": "passed",
+   "text": "Not a tuning problem \u2014 two real bugs. (1) Powerups sat mid-aisle with a 1.42m grab radius, so boostFrac was 0.45 in supposedly-unpowered chases; snapped to shelf lip with a lateral reach gate, now 0.02. (2) Nav routed off the config floor plan, not the store's actual colliders, so thieves ground along unmodelled furniture and escapes only ever came from the two clean aisles; new nav.js builds an occupancy grid from real colliders + Dijkstra field from the exit. (3) Thief had no stamina model."
+  },
+  {
+   "t": 1787414521.6668339,
+   "piece": "agents",
+   "role": "builder",
+   "round": 1,
+   "state": "building",
+   "text": "Root cause was NOT tuning. Two real bugs. (1) Powerups sat on the aisle centreline with a 1.42m grab radius, so a pure-pursuit cop was boosted 45% of every 'no powerup' chase - that WAS the 58-71%. (2) Nav routed off config.js's floor plan, which knows nothing about the produce tables/dump bins/cart corral the store puts IN the lanes; thieves ground along geometry while the cop (who only steers at the thief) walked up - escapes only ever happened from aisles 0-1, the two clean ones. Replaced the ladder graph with grid nav off the real collider set (src/agents/nav.js: occupancy grid + Dijkstra exit field + clearance cost), gated pickups on lateral reach velocity, and gave the thief his own wind (fatigue + adrenaline) so both gas out together. MEASURED n=400 perfect-pursuit bot: no powerup 71% -> 1.5% caught, loses by 2.80m/9.2ft (was 8.78m/28.8ft), closest approach 2.23m; with a powerup reached, 76.9% (60.7% over all chases incl. ones where none was reachable); boost in hand 88.8%. Also fixed: standing still no longer earns harassment complaints."
+  },
   {
    "t": 1787413943.118904,
    "piece": "game",
@@ -269,5 +291,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787413943.118905
+ "updated": 1787414622.016994
 }

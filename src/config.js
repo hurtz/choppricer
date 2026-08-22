@@ -39,6 +39,21 @@ export const TUNING = {
   boostTime: 4.0,
   suspicionRadius: 4.5,  // thief bolts when cop closes inside this
   catchRadius: 1.15,
+
+  // Thief stamina. He fades to a cruise so both parties gas out together and the
+  // gap parks ~2.8m out instead of growing without bound. Adrenaline is a
+  // gap-proportional floor that just exceeds the cop's sprint.
+  thiefWind: 2.60,
+  thiefTired: 0.620,
+  thiefPanic: 0.965,
+  thiefPanicGap: 3.00,
+  thiefPanicBand: 0.90,
+
+  // Powerups sit on the shelf lip and need a real lateral reach, otherwise they
+  // land in the cop's lap mid-aisle and every chase is secretly a boosted one.
+  pickupLip: 1.58,
+  pickupRadius: 0.62,
+  pickupReach: 1.25,
 };
 
 export const CAMERAS = [

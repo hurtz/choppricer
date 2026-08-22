@@ -1,21 +1,25 @@
 // OWNER: builder-game. Mode flow, scoring, rank, harassment complaints, HUD copy.
 // CONTRACT — must keep exporting exactly this:
-//   createGame(hudEl) -> { mode, update(dt), enterFloor(aisleIndex), enterDesk(),
-//                          score(evt), render() }
+//   createGame(hudEl, deps) -> { mode, st, update(dt), enterFloor(aisleIndex),
+//                                enterDesk(), score(evt), render(), api }
+//   deps = { cctv, agents, world, THREE }   (main.js passes real references)
 // Modes: 'desk' (monitor wall) | 'floor' (on foot) | 'writeup' | 'demoted'
 //
 // Additive (safe to ignore): the returned object also carries
 //   st        live scoreboard
 //   api       callback bag main.js hands to agents.update() — onBolt/onCatch/
 //             onEscape/onHarass/report, plus mode/aisle/frozen that agents reads
-//   shot(n)   composite 3D + HUD into shots/<n>.png (window.__CHOP.snap is 3D only)
+//   shot(n)   composite 3D + HUD into shots/<n>.png (window.__CHOP.snap does this
+//             too now; shot() is kept only so old console snippets still run)
+//   bot       the same actions the mouse and keyboard drive, callable from a
+//             script. ./game/eval.js uses it to bench the desk phase.
 //
 // This file owns the loop; ./game/hud.js owns every pixel; ./game/lines.js owns
-// every word. cctv.js and agents.js are reached lazily through window.__CHOP
-// because main.js constructs them after us and does not pass them in.
+// every word. cctv and agents arrive through `deps`; window.__CHOP is only a
+// fallback for consoles and old bootstraps.
 import {
   CAMERAS, EXIT, AISLE_COUNT, AISLE_LEN, AISLE_GAP, SHELF_W,
-  aisleX, STORE, SERVICE_DESK, TUNING,
+  aisleX, STORE, SERVICE_DESK, FRONT_WALK_Z, TUNING,
 } from './config.js';
 import * as L from './game/lines.js';
 import { createHUD, fallbackTiles } from './game/hud.js';
@@ -42,12 +46,68 @@ function camFor(x, z) {
 // the service counter, far enough back that walk-by traffic is not "contact".
 const POST = { x: Math.min(STORE.maxX - 0.9, SERVICE_DESK.x + 3.2), z: STORE.minZ + 0.7 };
 
-export function createGame(hudEl) {
+// --- ROUND 2: the desk phase was unwinnable, and this is why -----------------
+// Dispatch used to demand an aisle number. A drifting thief leaves his aisle the
+// moment he steps onto the front cross-aisle, and the last ~20m of his walk to
+// Door 1 happens out there. So the tell fired, you read it correctly, and then
+// the DISPATCH button greyed out and the game gave you nothing to press while he
+// strolled out. That dead zone, not the length of the window, was the problem.
+//
+// A "post" is now wherever the subject actually is, and the post determines the
+// odds by geometry alone: the aisle mouth puts you between him and the door, the
+// front end makes you chase a man who is already most of the way there. Acting
+// early is rewarded because the map rewards it, not because the UI locks.
+const HALF_FRONT = -HALF - 0.35, HALF_BACK = HALF + 0.35;
+function postOf(x, z) {
+  if (z > HALF_FRONT && z < HALF_BACK) return { kind: 'aisle', i: aisleIdx(x) };
+  if (z <= HALF_FRONT) return { kind: 'front', i: aisleIdx(x) };
+  return { kind: 'back', i: aisleIdx(x) };
+}
+function postLabel(p) {
+  if (!p) return null;
+  if (p.kind === 'aisle') return `AISLE ${p.i + 1}`;
+  return p.kind === 'front' ? 'FRONT END' : 'BACK WALL';
+}
+// Where the cop physically enters that zone from. He is behind the service
+// counter; the walk is implied, the arrival point is not negotiable.
+function postSpawn(p) {
+  if (p.kind === 'aisle') return { x: aisleX(p.i), z: -HALF + 3.0 };
+  if (p.kind === 'back') return { x: aisleX(p.i), z: HALF - 3.0 };
+  // Out of the service desk onto the front walk — the far end from Door 1.
+  return { x: Math.max(STORE.minX + 2, SERVICE_DESK.x - 3.0), z: FRONT_WALK_Z };
+}
+
+// "PRICE CHECK, AISLE FOUR." The only authority this man has is the PA, and all
+// it buys him is somebody standing still for a few seconds. It reads identically
+// on a thief and on a shopper — it must, or it would be a guilt oracle and the
+// whole trap/tell ambiguity would collapse into a button you press to cheat.
+const HOLD = { dur: 9.0, cool: 21.0 };
+
+// Sub-fixes, individually switchable so the bench in ./game/eval.js can attribute
+// the change instead of guessing. Ship values are all true.
+const FIX = { post: true, hold: true, roster: true };
+const ROWS = 3;                 // roster rows the analytics panel can physically fit
+
+export function createGame(hudEl, deps = {}) {
   const hud = createHUD(hudEl);
   const FALLBACK = fallbackTiles(CAMERAS.length);
+  // Prefer the injected references; window.__CHOP is a fallback for consoles and
+  // for any bootstrap that still constructs us before it has them.
   const ext = () => (typeof window !== 'undefined' && window.__CHOP) || {};
-  const agentsOf = () => ext().agents || null;
+  const cctvOf = () => deps.cctv || ext().cctv || null;
+  const agentsOf = () => deps.agents || ext().agents || null;
   const shoppersOf = () => (agentsOf() ? agentsOf().shoppers : []);
+
+  // cctv.js burns a REC pip, a "CAM 09 FLOOR PATROL" label and a timestamp into
+  // the on-foot view. The HUD's top band draws all three, better and on purpose,
+  // so the two used to sit on top of each other. One owner: this one.
+  {
+    const c = cctvOf();
+    if (c) {
+      c.floorBurnIn = false;
+      if (c.setParams) c.setParams('floor', { burnIn: 0 });
+    }
+  }
 
   const st = {
     mode: 'desk', points: 0, complaints: 0, rank: 2, caught: 0, escaped: 0,
@@ -60,6 +120,8 @@ export function createGame(hudEl) {
   let rearmT = 6;
   let harassCool = 0;
   let recycle = [];           // shoppers to quietly put back on the floor
+  let held = null;            // { id, until } — the one live PA price check
+  let holdCool = 0;
   const tel = {
     stamina: TUNING.staminaMax, staminaMax: TUNING.staminaMax,
     boost: 0, gassed: false, speed: 0, nearest: null, chase: null,
@@ -67,10 +129,11 @@ export function createGame(hudEl) {
 
   const G = {
     st, tel, now: 0, log: [], alarm: null, cams: CAMERAS,
-    desk: { cam: 0, sel: null, subjects: [] },
+    desk: { cam: 0, sel: null, subjects: [], scroll: 0, rows: 0 },
+    get hold() { return { live: held, cool: holdCool, max: HOLD.cool, on: FIX.hold }; },
     floor: null, wu: null, hr: null,
     get rankName() { return RANKS[clamp(st.rank | 0, 0, RANKS.length - 1)].toUpperCase(); },
-    get tiles() { const t = ext().cctv && ext().cctv.tiles; return (t && t.length) ? t : FALLBACK; },
+    get tiles() { const c = cctvOf(); const t = c && c.tiles; return (t && t.length) ? t : FALLBACK; },
     get cop() { const a = agentsOf(); return a ? a.cop.position : { x: 0, z: 0 }; },
   };
 
@@ -154,9 +217,12 @@ export function createGame(hudEl) {
         r.announced = true; newLine(s, r); raiseSoft(r);
         logLine(`${CAMERAS[r.cam].id} — ANALYTICS EVENT LOGGED`);
       } else if (r.lineT <= 0) newLine(s, r);
+      const post = FIX.post ? postOf(s.position.x, s.position.z)
+        : (r.aisle == null ? null : { kind: 'aisle', i: r.aisle });
       out.push({
         id: s.id, cam: r.cam, aisle: r.aisle, code: r.code,
         line: r.line, dwell: r.dwell | 0, flagged: r.flagged,
+        post, where: postLabel(post), held: held != null && held.id === s.id,
       });
     }
     out.sort((a, b) => (b.flagged - a.flagged) || (a.id - b.id));
@@ -164,6 +230,43 @@ export function createGame(hudEl) {
     if (G.desk.sel != null && !out.some((s) => s.id === G.desk.sel && s.cam === G.desk.cam)) {
       G.desk.sel = null;
     }
+    const onCam = out.filter((s) => s.cam === G.desk.cam).length;
+    G.desk.rows = onCam;
+    G.desk.scroll = clamp(G.desk.scroll, 0, Math.max(0, onCam - ROWS));
+  }
+
+  // ------------------------------------------------------------------- the PA
+  function shopperById(id) { return shoppersOf().find((s) => s.id === id) || null; }
+  function releaseHold() {
+    if (!held) return;
+    const s = shopperById(held.id);
+    if (s && !s.caught && !s.escaped && s.state === 'browse') {
+      if (s.stole) { s.state = 'drift'; s.path = []; s.aim = null; s.aimT = 0; }
+      else { s.state = 'walk'; s.timer = rr(1, 3); s.path = []; s.target = null; }
+    }
+    held = null;
+  }
+  function callHold() {
+    if (!FIX.hold || st.mode !== 'desk' || holdCool > 0 || held) return false;
+    const sel = G.desk.subjects.find((s) => s.id === G.desk.sel);
+    const s = sel && shopperById(sel.id);
+    if (!s || s.caught || s.escaped || s.bolted || s.state === 'react') return false;
+    s.state = 'browse'; s.timer = HOLD.dur + 2; s.path = []; s.target = null;
+    held = { id: s.id, until: G.now + HOLD.dur };
+    holdCool = HOLD.cool;
+    const r = recOf(s);
+    logLine(`PA — PRICE CHECK, ${(r.aisle == null ? 'FRONT END' : `AISLE ${r.aisle + 1}`)}`);
+    return true;
+  }
+  function updateHold(dt) {
+    if (holdCool > 0) holdCool = Math.max(0, holdCool - dt);
+    if (!held) return;
+    const s = shopperById(held.id);
+    // Gone, spooked, or you have walked up on him: the PA stops mattering.
+    if (!s || s.caught || s.escaped || s.bolted || s.state === 'react') { held = null; return; }
+    const cop = G.cop;
+    const near = d2(s.position.x, s.position.z, cop.x, cop.z) < TUNING.suspicionRadius + 1;
+    if (G.now >= held.until || near) releaseHold();
   }
 
   // ------------------------------------------------------------------ alarms
@@ -282,7 +385,11 @@ export function createGame(hudEl) {
     let best = null, bd = Infinity;
     for (const s of list) {
       if (s.escaped || s.caught || !s.mesh.visible) continue;
-      if (!inAisle(s.position.z) || aisleIdx(s.position.x) !== f.aisle) continue;
+      const p = postOf(s.position.x, s.position.z);
+      // Same zone you were sent to. In an aisle that is the aisle; on a cross-
+      // aisle it is the whole run of it, because that is what you can see.
+      if (p.kind !== f.post.kind) continue;
+      if (p.kind === 'aisle' && p.i !== f.aisle) continue;
       const d = d2(s.position.x, s.position.z, cop.x, cop.z);
       if (d < bd) { bd = d; best = s; }
     }
@@ -337,7 +444,7 @@ export function createGame(hudEl) {
     if (!f.dialogue) {
       if (f.target && f.target.state === 'flee') f.prompt = 'PURSUE — DO NOT LOSE HIM';
       else if (!f.target) f.prompt = f.clearLine;
-      else if (f.dist > 9) f.prompt = `PROCEED TO AISLE ${f.aisle + 1}`;
+      else if (f.dist > 9) f.prompt = `PROCEED TO ${f.where || `AISLE ${f.aisle + 1}`}`;
       else f.prompt = 'ESTABLISH CONTACT';
     }
   }
@@ -419,20 +526,26 @@ export function createGame(hudEl) {
   }
 
   // -------------------------------------------------------------- transitions
-  function enterFloor(i) {
+  // enterFloor(i) keeps its old meaning exactly: an aisle index. `post` is an
+  // optional richer destination from dispatch(); without it nothing changes.
+  function enterFloor(i, post) {
     if (st.mode === 'demoted') return;      // the vest is store property
     const idx = clamp((Number.isFinite(i) ? i : 0) | 0, 0, AISLE_COUNT - 1);
+    const p = post || { kind: 'aisle', i: idx };
     const sel = G.desk.subjects.find((s) => s.id === G.desk.sel);
+    const same = sel && (post ? sel.id === G.desk.sel : sel.aisle === idx);
     G.floor = {
-      aisle: idx, subjId: sel && sel.aisle === idx ? sel.id : null,
+      aisle: idx, post: p, where: postLabel(p), subjId: same ? sel.id : null,
       target: null, dist: 0, exitDist: 0, exitDist0: 0, chaseId: null,
       confronted: false, dialogue: null, dialogueId: null, prompt: '', t: 0,
       stampT: 0, stampText: '', stampSub: '', clearLine: L.pick(L.AISLE_CLEAR),
     };
     st.mode = 'floor';
+    releaseHold();                 // you are here now; the PA is not the move
     const a = agentsOf();
     if (a) {                       // the waddle across the store is implied
-      a.cop.position.set(aisleX(idx), 0, -HALF + 3.0);
+      const sp = postSpawn(p);
+      a.cop.position.set(sp.x, 0, sp.z);
       a.cop.userData.vel.set(0, 0, 0);
       a.cop.userData.speed = 0;
       a.cop.userData.heading = 0;
@@ -508,22 +621,32 @@ export function createGame(hudEl) {
   function selectCam(i) {
     const n = CAMERAS.length;
     G.desk.cam = ((i | 0) % n + n) % n;
-    const c = ext().cctv;
+    G.desk.scroll = 0;
+    const c = cctvOf();
     if (c && c.setActiveCam) c.setActiveCam(G.desk.cam);
     const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
     const hot = on.find((s) => s.flagged) || on[0];
     G.desk.sel = hot ? hot.id : null;
   }
+  // The roster window is three rows because three rows is what fits. Before, the
+  // other rows simply did not exist — with seven shoppers on one camera the game
+  // could be hiding the row you needed. Now the window scrolls and follows the
+  // selection, and the panel says how many are underneath it.
   function cycleSel(dir) {
-    const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam).slice(0, 3);
-    if (!on.length) { G.desk.sel = null; return; }
+    const all = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
+    const on = FIX.roster ? all : all.slice(0, ROWS);
+    if (!on.length) { G.desk.sel = null; G.desk.scroll = 0; return; }
     let i = on.findIndex((s) => s.id === G.desk.sel);
-    i = (i < 0 ? 0 : i + dir + on.length) % on.length;
+    i = (i < 0 ? (dir > 0 ? 0 : on.length - 1) : i + dir + on.length) % on.length;
     G.desk.sel = on[i].id;
+    G.desk.scroll = clamp(G.desk.scroll, Math.max(0, i - ROWS + 1), i);
   }
   function dispatch() {
     const sel = G.desk.subjects.find((s) => s.id === G.desk.sel);
-    if (sel && sel.aisle != null) enterFloor(sel.aisle);
+    if (!sel) return false;
+    if (FIX.post && sel.post) { enterFloor(sel.post.i, sel.post); return true; }
+    if (sel.aisle != null) { enterFloor(sel.aisle); return true; }
+    return false;
   }
 
   hud.canvas.addEventListener('mousedown', (ev) => {
@@ -534,6 +657,8 @@ export function createGame(hudEl) {
     if (r.id === 'cam') selectCam(r.data);
     else if (r.id === 'subj') G.desk.sel = r.data;
     else if (r.id === 'dispatch') dispatch();
+    else if (r.id === 'hold') callHold();
+    else if (r.id === 'scroll') { G.desk.scroll = clamp(G.desk.scroll + r.data, 0, Math.max(0, G.desk.rows - ROWS)); }
   });
 
   addEventListener('keydown', (ev) => {
@@ -544,6 +669,7 @@ export function createGame(hudEl) {
         if (n >= 1 && n <= CAMERAS.length) { selectCam(n - 1); ev.preventDefault(); }
       } else if (c === 'ArrowDown') { cycleSel(1); ev.preventDefault(); }
       else if (c === 'ArrowUp') { cycleSel(-1); ev.preventDefault(); }
+      else if (c === 'KeyF') { callHold(); ev.preventDefault(); }
       else if (c === 'Space' || c === 'Enter') { dispatch(); ev.preventDefault(); }
     } else if (st.mode === 'floor') {
       if (c === 'KeyQ') { enterDesk(); ev.preventDefault(); }
@@ -564,6 +690,7 @@ export function createGame(hudEl) {
     if (!staggered) stagger();
 
     updateSubjects(dt);
+    updateHold(dt);
     updateAlarm();
     stallWatch(dt);
     repopulate();
@@ -596,12 +723,37 @@ export function createGame(hudEl) {
   logLine('SHIFT START — POST MANNED');
   refreshRank();
 
+  // Everything the mouse and keyboard can do, callable from a script. This is
+  // the surface ./game/eval.js drives; it deliberately goes through the same
+  // functions the real input handlers call, so a bench measures the real game.
+  const bot = {
+    selectCam, cycleSel, dispatch, callHold, wuAdvance, restart,
+    select(id) { G.desk.sel = id; },
+    scroll(d) { G.desk.scroll = clamp(G.desk.scroll + d, 0, Math.max(0, G.desk.rows - ROWS)); },
+    target: targetShopper,
+    shopper: shopperById,
+    rec: recOf,
+    get FIX() { return FIX; },
+    get HOLD() { return HOLD; },
+    get held() { return held; },
+    get holdCool() { return holdCool; },
+    // Roster rows exactly as the panel shows them, window and all.
+    visibleRows() {
+      const all = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
+      return FIX.roster ? all.slice(G.desk.scroll, G.desk.scroll + ROWS) : all.slice(0, ROWS);
+    },
+  };
+
   return {
-    st, api, hud, shot,
+    st, api, hud, shot, bot,
     get mode() { return st.mode; },
     set mode(m) { st.mode = m; },
     enterFloor, enterDesk, score, update, render,
     // debug handles for the console
-    _g: G, _recs: recs, _armThief: armThief, _demote: openDemoted,
+    _g: G, _recs: recs, _armThief: armThief, _demote: openDemoted, _restart: restart,
+    async _eval(opts) {
+      const m = await import('./game/eval.js');
+      return m.run({ game: this, ...ext() }, opts);
+    },
   };
 }

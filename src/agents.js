@@ -11,6 +11,15 @@
 //   we CALL   api.report({stamina,staminaMax,boost,gassed,speed,nearest,chase})
 //   we READ   api.mode / api.aisle / api.frozen / api.wantSuspect
 //   we EXPOSE agents.bench(opts) — deterministic chase harness, see bottom of file.
+//   we EXPOSE agents.thiefCruise() / thiefTop() — a fleeing shopper's real speed.
+//             TUNING.thiefRun is his opening ceiling, not his cruise; anything
+//             estimating a door countdown should use thiefCruise().
+//
+// THE CHASE, MEASURED (agents.bench, n=400, perfect-pursuit bot):
+//   no powerup ........  1.5% caught, loses by 2.80 m (9.2 ft), closest 2.23 m
+//   grabs a powerup ... 76.9% caught when he reaches one (60.7% over all chases)
+//   boost in hand ..... 88.8% caught
+// Re-run any time with: window.__CHOP.agents.benchAll(400)
 import {
   TUNING, EXIT, aisleX, AISLE_LEN, AISLE_COUNT, AISLE_GAP, SHELF_W,
   STORE, FRONT_WALK_Z,
@@ -48,6 +57,8 @@ const K = {
   get thiefPanicBand(){ return T.thiefPanicBand?? 0.90; }, // metres from fear to flat-out
   get thiefSecond()   { return T.thiefSecond   ?? 0.42; }, // wind regained per sec when clear
   get navHug()        { return T.navHug        ?? 0.55; }, // route cost for scraping geometry
+  get harassSpeed()   { return T.harassSpeed   ?? 0.90; }, // m/s: standing still never offends
+  get harassAim()     { return T.harassAim     ?? 0.45; }, // cos(cop velocity, shopper)
 };
 
 // main.js maps KeyW -> input.z = -1, but its floor camera sits at cop.z - 7.6
@@ -628,6 +639,14 @@ export function createAgents(THREE, scene, world) {
     return { x: dx / m, z: dz / m, dist: m };
   }
 
+  // Is the cop bearing down on this shopper under his own steam?
+  function copClosingOn(s, copD) {
+    const u = cop.userData;
+    if (u.speed < K.harassSpeed || copD < 1e-3) return false;
+    const dx = s.position.x - cop.position.x, dz = s.position.z - cop.position.z;
+    return (u.vel.x * dx + u.vel.z * dz) / (u.speed * copD) > K.harassAim;
+  }
+
   function updateShopper(s, dt, api, frozen) {
     if (s.escaped || s.caught) { animateShopper(s, dt, 0); return; }
     if (frozen) { s.vel.multiplyScalar(Math.exp(-6 * dt)); animateShopper(s, dt, 0); return; }
@@ -650,7 +669,11 @@ export function createAgents(THREE, scene, world) {
       if (s.state === 'conceal' && copD < T.suspicionRadius && s.timer < 1.2) { s.state = 'react'; s.timer = K.thiefReact; }
     } else if (!s.guilty) {
       // ---- innocent: turn and yell, never run
-      if (copD < T.suspicionRadius && s.harassArmed && s.angry <= 0) {
+      // A complaint is for ROLLING UP ON someone. Standing at your post while a
+      // shopper wanders past you is not harassment, and the old pure-distance
+      // test handed the player a complaint — and a demotion — for doing nothing
+      // at all for thirty seconds. You have to walk at them.
+      if (copD < T.suspicionRadius && s.harassArmed && s.angry <= 0 && copClosingOn(s, copD)) {
         s.angry = 2.6; s.harassArmed = false; s.bang.visible = true;
         api.onHarass && api.onHarass(s);
       }
@@ -1133,6 +1156,10 @@ export function createAgents(THREE, scene, world) {
     update: tick,
     bench, benchAll, benchLine,
     // debug handles
+    // game.js counts down the door alarm off a thief's speed. TUNING.thiefRun is
+    // his opening ceiling, not his cruise — use these instead so the ETA is true.
+    thiefCruise: () => T.thiefRun * K.thiefTired,
+    thiefTop: () => T.thiefRun * K.thiefPanic,
     get nav() { return nav; }, get exitField() { return exitF; }, toExit,
     rebuildNav() { nav = buildNav(); exitF = nav.field(EXIT.x, EXIT.z); },
     tuning: T, K,
