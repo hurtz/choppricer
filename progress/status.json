@@ -191,10 +191,10 @@
      "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
     }
    ],
-   "updated": 1787433420.2365189,
-   "note": "A bug that shipped for FOUR rounds: gassed speed read (wantSprint ? copRun : copWalk) * gassedPenalty, so a gassed cop still holding sprint did 3.13 m/s while a full-tank cop who chose to walk did 2.35. Gassing out was an UPGRADE over pacing yourself, which is why no recovery gate could ever work. Attribution: the gate was worth 5.9 points, no-sprint-while-gassed was worth 32.5. Median chase 3.03 -> 5.83s, catchUnder1s 15.7% -> 14.3%. bargeDump has NEVER been a live constant - 0.40 vs 0.85 is byte-identical on every bench field. The store's cross-aisle replaced the rear-wall route entirely (61% -> 0/150) with a mid-store one used 3x as often, and doubled the median chase, which is what made this round possible at all.",
+   "updated": 1787434055.528398,
+   "note": "Added lungCheck(): asserts gassed-and-holding < copWalk at module load AND per bench run, naming the fix in the failure message. Turns the four-round inversion into an executable invariant instead of a comment. bench() now stamps any non-empty override onto its own result, so a swept number can no longer be quoted as the shipped build - a direct fix for the round-2 methodology failure. Declined the stern chase but mapped it: bargeStagger is spent, thiefTired is POISONED because the bot reads the same constant to predict the thief, so changing it measures the bot rather than the game.",
    "gap": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it.",
-   "verdict": "PASS \u2014 rationing now BEATS always-sprint: 74.7% vs 46.0%. Round 4 had 74.0 vs 81.3 (wrong sign). Wind policy went from worth 0.8 points to worth 28.7. Ladder holds: competent 74.7 / naive 43.3 / camper 21.3 \u2014 chasing beats camping by 53.4."
+   "verdict": "R5 shadow collapsed: 55 getters onto one spelling, 57 constants in K, 45 backed by config.js, 0 shadowing it. Value-preserving confirmed byte-identical across always/ration/chase/camp (46.0 / 74.7 / 43.3 / 21.3)."
   },
   "game": {
    "round": 3,
@@ -242,6 +242,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787434055.528399,
+   "piece": "agents",
+   "role": "builder",
+   "round": 5,
+   "state": "passed",
+   "text": "Added lungCheck(): asserts gassed-and-holding < copWalk at module load AND per bench run, naming the fix in the failure message. Turns the four-round inversion into an executable invariant instead of a comment. bench() now stamps any non-empty override onto its own result, so a swept number can no longer be quoted as the shipped build - a direct fix for the round-2 methodology failure. Declined the stern chase but mapped it: bargeStagger is spent, thiefTired is POISONED because the bot reads the same constant to predict the thief, so changing it measures the bot rather than the game."
+  },
+  {
+   "t": 1787433984.849122,
+   "piece": "agents",
+   "role": "builder",
+   "round": 5,
+   "state": "building",
+   "text": "R5 shadow object collapsed. Every constant in agents.js now reads OVR[k] ?? T[k] ?? fallback, so config.js is live for all 57 (0 shadowing, verified by diffing K against TUNING at runtime). Sweep lever is a separate EMPTY override that bench() stamps onto its own result. Added lungCheck(): asserts gassed-and-holding < copWalk at startup and on every bench, with an actionable message \u2014 the four-round inversion now announces itself instead of hiding. All prose preserved at the point of use. Value-preserving: always 46.0 / ration 74.7 / chase 43.3 / camp 21.3, byte-identical to pre-collapse."
+  },
   {
    "t": 1787433816.4172711,
    "piece": "store",
@@ -659,5 +675,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787433816.417272
+ "updated": 1787434055.5284
 }
