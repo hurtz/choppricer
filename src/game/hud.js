@@ -479,31 +479,90 @@ export function createHUD(hudEl) {
       }
     }
 
-    // --- stamina: the whole game is this bar
+    // --- WIND: A CADENCE INSTRUMENT, NOT A BUDGET ----------------------------
+    // ROUND 5. This panel used to be a 22-segment bar draining a 3.10 s tank
+    // that took 9.1 s to refill, against a 3.0 s median chase — an honest
+    // picture of a one-shot resource, and a resource is not a decision. The
+    // tank is 1.40 s now and comes back in 0.81 s off the key, so a 5.8 s chase
+    // holds 2.6 complete spend-and-refill cycles and the question stops being
+    // "how much is left" and becomes "do I go NOW or in half a second". Four
+    // changes, all of them the same change:
+    //   * SEGMENTS ARE BURSTS. Sized off burstMax rather than a hardcoded 22 —
+    //     at a 1.40 s tank, 22 segments is one every 64 ms, which is noise. Fat
+    //     and countable, because "I have two left" has to land in peripheral
+    //     vision during a chase.
+    //   * THREE STATES, NOT TWO. READY / RECOVERING / WINDED, off the state
+    //     machine agents.js reports, instead of re-deriving it from stamina<eps.
+    //   * THE HEADLINE IS THE DECISION. With wind in hand it is the seconds of
+    //     run you are holding; winded, it is the seconds until you can go —
+    //     and that countdown ONLY MOVES WITH THE KEY UP. agents.js hands it
+    //     over as Infinity while it is held, so the panel says LET GO instead
+    //     of a number. That is the whole lesson of the round, on a readout.
+    //   * THE FLASH MOVED FROM SPENDING TO READY. Pulsing while you sprint
+    //     tells a man holding a key that he is holding a key; flaring the
+    //     instant the tank returns is what a rhythm is cued off. See report().
+    // PULSE runs off `fatigue`, a lagging accumulation, rather than 1-frac
+    // restated — with a tank this fast the bar bounces, and PULSE is the only
+    // element left that can carry a whole chase's worth of wear.
+    //
+    // NOT HERE, DELIBERATELY: anything pointing at a powerup. A drink in hand
+    // is worth +13 points and going to fetch one is worth nothing, because the
+    // detour costs what the drink buys. Opportunism is a reward; a HUD that
+    // sent players shopping mid-chase would be selling a losing plan.
     const t = G.tel, sx = 10, sy = 606, sw = 470, sh = 104;
-    const frac = Math.max(0, Math.min(1, t.stamina / (t.staminaMax || 1)));
-    const gassed = t.gassed || frac <= 0.001;
-    const col = gassed ? RED : frac < 0.34 ? '#ff9a2e' : GRN;
-    panel(sx, sy, sw, sh, 'WIND', { accent: gassed ? RED : AMB, line: gassed ? RED_D : LINE });
-    if (t.sprint && !gassed) {
-      ctx.globalAlpha = 0.35 + 0.35 * Math.sin(G.now * 14);
-      box(sx - 2, sy - 2, sw + 4, sh + 4, col, 2); ctx.globalAlpha = 1;
+    const bMax = t.burstMax || (t.staminaMax || 1);
+    const frac = Math.max(0, Math.min(1, t.windFrac != null ? t.windFrac
+      : t.stamina / (t.staminaMax || 1)));
+    const gassed = t.wind === 'winded' || t.gassed;
+    const burst = gassed ? 0 : (t.burst != null ? t.burst : frac * bMax);
+    const held = !(t.windIn < Infinity);          // key still down: nothing is coming back
+    const boost = t.boost > 0;
+    const lvl = frac < 0.34 ? '#ff9a2e' : GRN;
+    const col = boost ? '#ffe36a' : gassed ? RED : t.wind === 'ready' ? GRN : lvl;
+    const state = boost ? 'SUGAR' : gassed ? 'WINDED'
+      : t.sprint ? 'SPRINTING' : t.wind === 'ready' ? 'READY' : 'RECOVERING';
+
+    panel(sx, sy, sw, sh, 'WIND', { accent: col, line: gassed ? RED_D : LINE });
+    // the tank just came back — go
+    const flare = t.readyAt != null && G.now - t.readyAt < 0.4;
+    if (flare) {
+      ctx.globalAlpha = 0.85 * (1 - (G.now - t.readyAt) / 0.4);
+      box(sx - 3, sy - 3, sw + 6, sh + 6, GRN, 3); ctx.globalAlpha = 1;
     }
-    segbar(sx + 16, sy + 32, sw - 122, 30, frac, { on: col, seg: 22, line: gassed ? RED_D : LINE });
-    tx(`${Math.round(frac * 100)}%`, sx + sw - 14, sy + 56,
-      { s: 26, w: 'bold', c: col, a: 'right', ls: 1 });
+
+    // segments = bursts. Countable, sized off the model.
+    const segs = Math.max(2, Math.min(6, Math.round(bMax / 0.45)));
+    const bw2 = sw - 148;
+    segbar(sx + 16, sy + 28, bw2, 32, boost ? 1 : burst / bMax,
+      { on: col, seg: segs, line: gassed ? RED_D : LINE });
+    // Winded is a full-refill lockout, so the segments stay dark for the whole
+    // 0.81 s. The tank IS filling though, and watching it fill is the thing
+    // that teaches the rhythm — so it gets its own strip rather than nothing.
     if (gassed) {
-      const fl = (G.now % 0.7) < 0.42;
-      tx(fl ? 'WINDED — CANNOT SPRINT' : 'WINDED', sx + 16, sy + 88,
-        { s: 14, w: 'bold', c: RED, ls: 1.6 });
-    } else if (t.boost > 0) {
-      tx(`SUGAR +${t.boost.toFixed(1)}s`, sx + 16, sy + 88, { s: 14, w: 'bold', c: '#ffe36a', ls: 1.4 });
-    } else {
-      tx(t.sprint ? '[SHIFT] SPRINTING' : '[SHIFT] SPRINT   [WASD] MOVE', sx + 16, sy + 88,
-        { s: 12, c: DIM, ls: 1 });
+      ctx.fillStyle = 'rgba(255,255,255,0.06)'; ctx.fillRect(sx + 16, sy + 66, bw2, 6);
+      ctx.fillStyle = held ? RED_D : RED; ctx.fillRect(sx + 16, sy + 66, bw2 * frac, 6);
+      box(sx + 16, sy + 66, bw2, 6, RED_D);
     }
-    tx(`PULSE ${Math.round(96 + (1 - frac) * 88)}`, sx + sw - 14, sy + 88,
-      { s: 12, w: 'bold', c: gassed ? RED : DIM, a: 'right' });
+
+    // state + the one number that is a decision
+    tx(state, sx + sw - 14, sy + 44, { s: 15, w: 'bold', c: col, a: 'right', ls: 1.6 });
+    const flash = (G.now % 0.66) < 0.40;
+    let head, hc = col;
+    if (boost) head = `${t.boost.toFixed(1)}s`;
+    else if (gassed && held) { head = flash ? 'LET GO' : ' '; hc = RED; }
+    else if (gassed) head = `${Math.max(0, t.windIn || 0).toFixed(1)}s`;
+    else head = `${burst.toFixed(1)}s`;
+    tx(head, sx + sw - 14, sy + 78, { s: 26, w: 'bold', c: hc, a: 'right', ls: 1 });
+
+    // bottom row: what the key does, and a pulse that remembers
+    const hint = gassed && held ? 'RELEASE [SHIFT] TO GET IT BACK'
+      : t.sprint ? '[SHIFT] SPRINTING'
+      : '[SHIFT] SPRINT   [WASD] MOVE';
+    tx(hint, sx + 16, sy + 92, { s: 12, w: gassed && held ? 'bold' : '', c: gassed && held ? RED : DIM, ls: 1 });
+    const fat = Math.max(0, Math.min(1, t.fatigue == null ? 1 - frac : t.fatigue));
+    tx(`PULSE ${Math.round(96 + fat * 88)}`, sx + 16 + bw2, sy + 92,
+      { s: 12, w: 'bold', c: fat > 0.66 ? RED : fat > 0.33 ? '#ff9a2e' : DIM, a: 'right' });
+
     if (gassed) { // red frame creep, so you feel it without reading anything
       const a = 0.12 + 0.1 * Math.sin(G.now * 8);
       ctx.strokeStyle = `rgba(255,74,58,${a})`; ctx.lineWidth = 14;

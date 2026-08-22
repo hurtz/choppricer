@@ -97,14 +97,14 @@
 //   copWalk 2.35 -> 2.90 looked like a free buff to the rationing player, since
 //     a cop holding sprint is gassed and never touches copWalk. It is not:
 //     gassed speed is DERIVED from copWalk, so it lifts the always-sprint floor
-//     by more. Spread 25.0 -> 14.2. Built, measured, thrown away — see R5.
+//     by more. Spread 25.0 -> 14.2. Built, measured, thrown away — see K.copWalk.
 //   `bargeDump` (0.85) has NEVER been a live constant. 0.40 vs 0.85 is
 //     byte-identical on every field of the bench, because `s.adren` is ~1.0 at
 //     the moment of any barge and Math.max never fires.
 //   `bargeWind` — round 4's 22-point mechanic — is nearly inert at a fast-
 //     refilling tank: a one-off stamina cost evaporates in 0.8 s. What still
 //     bites is `bargeStagger`, and 1.25 s of it was priced against a man who
-//     could then sprint for 3.1 s. It is 0.55 now. See R5.
+//     could then sprint for 3.1 s. It is 0.55 now. See K.bargeStagger.
 //
 // ---- THE ROUND-4 DISTRIBUTION, RE-MEASURED (n=150, postSpawn('aisle'), -----
 // ---- crowded, no powerup, competent bot, right aisle) ---------------------
@@ -177,14 +177,42 @@
 // ---- SECONDARY, same build ------------------------------------------------
 //   dispatched to the front end .. 32.0%   (round 4: 68.0%)
 //   legacy 'behind' spawn ........  4.7%   (round 4: 90.5%; round-4 lung on
-//     THIS store: 84.0%, so this one IS mine). A stern chase is now close to
-//     unwinnable: the cop's sustainable average is ~4.0 m/s against a 3.08 m/s
-//     cruise, so he reclaims ~0.9 m/s where round 4 reclaimed 2.0. The game
-//     never spawns 'behind', but it is the same arithmetic as "he got through
-//     your shoulder", and that is why barged-and-still-caught fell 59% -> 18%.
-//     Being in FRONT of him is now the whole game. Flagged, see the report.
+//     THIS store: 84.0%, so this one IS mine). See the note below: it is the
+//     one thing this round made worse and I did not fix it.
 //   cans on the shelves, bot ignores them: boostFrac 0.01 — the shelf-lip
 //     reach gate still holds (round 4: 0.02, round 3: 0.001).
+//
+// ---- THE ONE THING THIS ROUND MADE WORSE, AND WHY I LEFT IT ----------------
+// BEING BEHIND HIM IS NOW A VERDICT, NOT A POSITION. The arithmetic: a cop
+// under the best wind policy sustains ~4.0 m/s against a 3.08 m/s cruise, so he
+// reclaims ~0.9 m/s where round 4 reclaimed 2.0. Three metres took 1.5 s and
+// now takes 3.3, which is longer than the run to the door. Two numbers show it:
+//   legacy 'behind' spawn        90.5% -> 4.7%
+//   barged AND got through       59%   -> 18% still caught
+// The game never spawns 'behind', so the live cost is the second line. Two ways
+// to read that one. It is worse: getting past the cop is now close to a win,
+// which is round 3's "97% still caught" pathology with the sign flipped. It is
+// better: only 17 of 79 commitments get through at all, and the 62 the cop
+// covers are caught 82% of the time, so the shoulder is a 64-point swing on one
+// read where round 4's was 39. I think the duel improved and the RECOVERY died,
+// and those are different complaints.
+//
+// Not fixed, deliberately, and here is the map for whoever takes it:
+//   - `bargeStagger` is already down 1.25 -> 0.55 and a further cut to 0.35
+//     measured 76.4% overall / 32% barge-caught, i.e. inside noise of 0.55.
+//     The stagger is not what is left.
+//   - `thiefTired` (his cruise, 0.575) is the obvious lever AND IT IS POISONED:
+//     0.52 measures 42.5%, a 34-point collapse, because the competent bot reads
+//     THE SAME CONSTANT to predict him and to dead-reckon a lost sighting. Any
+//     change there has to move the bot's model with it or it measures the bot,
+//     not the game. Do not sweep it naively; I did.
+//   - The lever I would actually try is giving the THIEF the same rhythm the
+//     cop just got — a cruise that decays under sustained pressure instead of a
+//     flat floor — so that the cop who paced himself still has legs at second
+//     eight and the one who did not does not. That is thematically exact (you
+//     are both fat) and it rewards the skill this round created rather than
+//     handing speed back. It is a new mechanic, not a constant, and it re-opens
+//     every number above, so it is a round, not an afternoon.
 // ===========================================================================
 //
 // ---- WHERE ROUND 4 STARTED (kept: it is what the numbers above beat) -------
@@ -228,39 +256,43 @@ import { makeNav } from './agents/nav.js';
 const T = TUNING;
 
 // ===========================================================================
-// FOR THE LEAD — THE ROUND-5 TUNING ASK. ONE COORDINATED CHANGE, NOT A MENU.
-// Every number below was measured against every other one. Applying a subset
-// is worse than applying none: the regen gate ALONE costs the cop 5.9 points
-// and buys 5.9; no-sprint-while-gassed ALONE makes the naive player 30 points
-// worse with nothing to teach him; the short tank alone does nothing at all
-// because holding the key still dominates. See the ablation in the header.
+// THE ROUND-5 TUNING SET — APPLIED. Kept as a record of what moved together,
+// because the one thing that must not happen to it is being unpicked one line
+// at a time. Every number here was measured against every other one, and a
+// SUBSET IS WORSE THAN NONE: the regen gate alone costs the cop 5.9 points and
+// buys 5.9 back; no-sprint-while-gassed alone makes the naive player 30 points
+// worse with nothing to teach him; the short tank alone does nothing at all,
+// because holding the key still dominates. Ablation in the file header.
 //
-//   CHANGE in TUNING
-//     staminaMax     3.10 -> 1.40      one burst, not a whole chase
-//     staminaRegen   0.34 -> 1.72      0.81 s from empty to full, off the key
-//     gassedRecover  0.26 -> 1.00      (add if absent) WINDED = all or nothing
-//     boostTime      4.00 -> 3.00      swept; 2.20 makes a drink a liability
-//     bargeStagger   1.25 -> 0.55      re-priced against a 1.4 s tank
-//   ADD to TUNING
-//     regenHold       0.00   fraction of regen you get with the key still down
-//     gassedSprintMul 0.35   fraction of the walk->run gap kept while gassed.
-//                            MUST stay under 0.53 or gassing out is an upgrade
-//                            over pacing yourself again — that inequality is
-//                            the whole round.
-//     bargeWindFrac   0.48   replaces the ABSOLUTE `bargeWind: 1.50`, which at
-//                            a 1.4 s tank is a total wipe every time
-//   DELETE from TUNING
-//     bargeWind   (superseded by bargeWindFrac)
-//   UNCHANGED, ON PURPOSE, having been swept
-//     staminaDrain 1.00 · gassedPenalty 0.62 · copWalk 2.35 · copRun 5.05 ·
-//     thiefTired 0.575 · bargeDump 0.85 (measured inert — see K)
+//   CHANGED    staminaMax     3.10 -> 1.40   one burst, not a whole chase
+//              staminaRegen   0.34 -> 1.72   0.81 s empty to full, key up
+//              gassedRecover  0.26 -> 1.00   WINDED is all or nothing
+//              boostTime      4.00 -> 3.00   swept; 2.20 makes a drink a trap
+//              bargeStagger   1.25 -> 0.55   re-priced against a 1.4 s tank
+//   ADDED      regenHold       0.00          regen with the key still down
+//              gassedSprintMul 0.35          MUST stay under 0.53
+//              bargeWindFrac   0.48          replaces the absolute bargeWind
+//   DELETED    bargeWind                     superseded by bargeWindFrac
+//   UNCHANGED, having been swept and left alone on purpose:
+//              staminaDrain 1.00 · gassedPenalty 0.62 · copWalk 2.35 ·
+//              thiefTired 0.575 · bargeDump 0.85 (measured inert)
+//
+// Verified live after the lead applied it, by running the cop into the ground
+// and holding the key: STEADY-STATE 2.043 m/s against a 2.35 m/s fresh walk,
+// which is exactly what lungCheck() computes from the constants. It was 3.13
+// for four rounds. (The lead reported 1.77 from the live build; that does not
+// reproduce here and 2.043 is both the model value and the observed one — 1.77
+// is what the meter reads when he is scraping a gondola. The inequality holds
+// on either number, but the one in this file is the one that is checkable.)
+// That inequality IS the round, so it is asserted at startup rather than
+// described — see lungCheck(). A comment is what this file had last time.
 // ===========================================================================
 
 // ROUND 4's RE-TUNES ARE IN TUNING NOW and this block is gone, as its own note
 // asked. thiefLook 17.0, thiefTired 0.575, thiefAccel 10.5, stumbleT 0.28 and
 // bargeStagger were all local overrides shadowing config; the lead promoted the
 // first four and they read `T.x ?? fallback` again below. bargeStagger did NOT
-// survive promotion unchanged — it is re-priced in R5, because 1.25 s of the
+// survive promotion unchanged — it is re-priced to 0.55, because 1.25 s of the
 // cop lying in an aisle was set against a man who could then sprint for 3.1 s.
 // ---------------------------------------------------------------------------
 // ROUND 5 — THE LUNG. The one thing round 4 failed at, taken.
@@ -290,167 +322,172 @@ const T = TUNING;
 // The ablation table for all three is in the file header. The trade is bought
 // with the tank, not by softening `gassedPenalty` — which is untouched at 0.62,
 // and now bites harder because it is the walk it multiplies.
-const R5 = {
-  staminaMax: 1.40,      // was 3.10 — one fat burst, not a whole chase
-  staminaDrain: 1.00,    // unchanged, so the tank still reads in seconds
-  staminaRegen: 1.72,    // was 0.34 — 0.81 s from empty to full, off the key
-  gassedRecover: 1.00,   // was 0.26 — WINDED means empty, and you get it ALL
-                         // back or none. 0.26 gave a 0.36 s stutter nobody can
-                         // see or count; a full-refill lockout is the thing the
-                         // player is choosing to avoid, and it is what makes
-                         // letting go early a decision rather than a rounding
-                         // error (the duty cycle is identical either way — what
-                         // differs is whether you still HAVE a burst in hand
-                         // when he goes for your shoulder).
-  boostTime: 3.00,       // was 4.00. The game builder's third warning: 4.0 s
-                         // pinned at max against a 1.4 s natural tank is
-                         // roughly three tanks of uninterrupted sprint, so
-                         // either shorten it or admit powerups are the game.
-                         // Shortened — but NOT as far as it wanted to go, and
-                         // the sweep is why. n=120, drink already in hand,
-                         // against a 76.7% no-powerup baseline:
-                         //   2.20 s -> 64.2%  boostFrac 0.53   WORSE THAN NONE
-                         //   3.00 s -> 90.0%  boostFrac 0.76
-                         //   3.50 s -> 94.2%  boostFrac 0.86
-                         //   4.00 s -> 94.2%  boostFrac 0.91  (round 4: 93.0%)
-                         // There is no middle. A drink that runs out mid-
-                         // approach is a LIABILITY: it carries a 7.17 m/s cop
-                         // into a 3.16 m lane he cannot cover both shoulders
-                         // of, the thief jukes, and the barge rate goes 17% ->
-                         // 25% of commitments. Fast is not agile. 3.00 is the
-                         // shortest value that is not a trap, and it holds the
-                         // powerup at about round 4's strength (90 vs 93) while
-                         // cutting the fraction of the chase it OWNS from 91%
-                         // to 76%.
-                         // And the answer to "are powerups now the dominant
-                         // tactic": a drink IN HAND is, at +13 points. GOING TO
-                         // GET ONE is not — `mode:'pickup'`, where the cop has
-                         // to leave his line and reach into the shelf face,
-                         // measures 78.3% against 76.7% for no powerup at all.
-                         // The detour costs almost exactly what the drink buys,
-                         // which is where a powerup should sit: a judgement
-                         // call, not an auto-take. The shelf-lip reach gate is
-                         // what holds that (boostFrac 0.01 under `ignore`).
-  // copWalk: BUILT, MEASURED, THROWN AWAY. Left here so nobody spends an
+// ---------------------------------------------------------------------------
+// HOW A CONSTANT IS READ IN THIS FILE, AND WHY IT IS WORTH A PARAGRAPH.
+//
+// Round 5 shipped its lung through a local `R5` object that K read DIRECTLY,
+// with no `?? T.x` behind it. That was correct while the numbers were a
+// proposal — the whole point was that the file had to run what the report
+// described, and `T.x ?? fallback` would have let config quietly win. The
+// moment the lead applied the block it became the exact bug this file has now
+// caught three times: A VALUE THAT LOOKS LIVE AND IS NOT.
+//   - the gassed-sprint inversion: a penalty state faster than the healthy one,
+//     shipped for four rounds because nobody read the line next to it;
+//   - `bargeDump`: byte-identical at 0.40 and 0.85, because `Math.max` never
+//     fired;
+//   - `R5`: six constants where an edit to config.js would have done nothing at
+//     all, and would not have announced itself, because R5 and TUNING agreed.
+// Agreement is what makes it dangerous. A shadow that DISAGREES gets found in
+// one bench run; a shadow that agrees waits for the next person to tune it.
+//
+// So there is exactly one way to read a constant now, and it is TUNING-first:
+//
+//     get thing() { return t('thing', <fallback>); }
+//
+// `t` is `OVR[k] ?? T[k] ?? fallback`. TUNING always wins over the fallback, so
+// config.js is live for every number in this file. OVR is the sweep lever the
+// bench needs — it is EMPTY in normal operation, so it cannot shadow anything
+// by accident, and `bench()` stamps any non-empty override onto its own result
+// (`res.override`) so a measurement taken under one can never be quoted as if
+// it were the shipped build. The fallbacks below are the round-5 values; they
+// exist so the file still runs if a key is missing from config, not as a second
+// source of truth.
+// ---------------------------------------------------------------------------
+const OVR = {};                      // debug sweep only — see agents.override
+const t = (k, fallback) => OVR[k] ?? T[k] ?? fallback;
+const K = {
+  get copGrip()       { return t('copGrip', 0.78); }, // lateral accel fraction at top speed
+
+  // ======== ROUND 5, THE LUNG ==============================================
+  // Why these five numbers moved together, and what each of them is holding up.
+  // The ablation is in the file header; this is the per-constant reasoning.
+  //
+  // copWalk — BUILT, MEASURED, THROWN AWAY, and left here so nobody spends an
   // afternoon on it. Rationing means spending most of a chase NOT sprinting,
   // and at 2.35 m/s against the thief's 3.08 m/s cruise every second off the
   // key hands back 0.73 m — so raising the walk to 2.90 looked like the obvious
   // way to buy the rationing player back the ground the short tank costs him,
-  // and I assumed it would be a pure buff to him because a cop holding sprint
-  // is gassed and never touches copWalk. WRONG, and wrong in the one direction
-  // that matters: gassed speed is DERIVED from copWalk (copWalk + (copRun -
-  // copWalk) x gassedSprintMul) x gassedPenalty, so raising the walk raises the
-  // floor the always-sprint player is standing on too — and by more, because he
+  // and I assumed it was a pure buff to him because a cop holding sprint is
+  // gassed and never touches copWalk. WRONG, and wrong in the one direction
+  // that matters: gassed speed is DERIVED from copWalk — (copWalk + (copRun -
+  // copWalk) x gassedSprintMul) x gassedPenalty — so raising the walk raises
+  // the floor the always-sprint player stands on too, and by more, because he
   // is on it the whole chase. n=120, competent bot, right aisle:
   //     copWalk 2.35   ration 76.7%   always 51.7%   spread 25.0
   //     copWalk 2.90   ration 71.7%   always 57.5%   spread 14.2
   // It costs the good player 5 points, hands the naive one 5.8, and takes 43%
-  // off the thing this whole round exists to create. copWalk stays at 2.35.
-  copWalk: 2.35,
-  regenHold: 0.00,       // THE GATE. Fraction of regen you get while the key is
-                         // still down. Zero: a man sprinting is not recovering.
-  gassedSprintMul: 0.35, // Fraction of the walk->run gap you keep while gassed.
-                         // THE FIX, and the constant that actually flips the
-                         // sign. It used to be effectively 1.00: a gassed cop
-                         // leaning on the key did copRun x gassedPenalty =
-                         // 3.13 m/s while a cop with a FULL TANK who chose to
-                         // walk did 2.35. At 0.35 he does 2.04 — he can still
-                         // lean into it, he is still slower than his own walk,
-                         // so letting go is strictly better and the dominance
-                         // is properly reversed.
-                         // Swept on the shipped build, n=120:
-                         //   0.00   always 43.3%   ration 75.0%   spread 31.7
-                         //   0.35   always 51.7%   ration 76.7%   spread 25.0
-                         // Zero costs the naive player 8.4 points and buys the
-                         // careful one 1.7. That is a floor-lowering wearing a
-                         // difficulty knob, and the floor is not what this
-                         // round is about. The ceiling is what the gate buys.
-                         // MUST stay under (copWalk/gassedPenalty - copWalk) /
-                         // (copRun - copWalk) = (3.79 - 2.35) / 2.70 = 0.533,
-                         // or a gassed man leaning on the key outruns a fresh
-                         // man walking and the whole thing inverts again.
+  // off the thing the whole round exists to create. It stays at 2.35.
+  get copWalk()       { return t('copWalk',      2.35); },
+  // 3.10 -> 1.40. One fat burst, not a whole chase.
+  get staminaMax()    { return t('staminaMax',   1.40); },
+  // Unchanged at 1.00, on purpose: the tank still reads directly in seconds.
+  get staminaDrain()  { return t('staminaDrain', 1.00); },
+  // 0.34 -> 1.72, i.e. 0.81 s from empty to full WITH THE KEY UP. Tank plus
+  // refill is a 2.21 s cycle against a 5.83 s median chase — 2.6 complete
+  // spend-and-refill cycles, which is what makes the rhythm countable and a
+  // mistake survivable instead of terminal.
+  get staminaRegen()  { return t('staminaRegen', 1.72); },
+  // 0.26 -> 1.00. WINDED means empty, and you get it ALL back or none. 0.26
+  // gave a 0.36 s stutter nobody can see or count; a full-refill lockout is the
+  // thing the player is choosing to avoid, and it is what makes letting go
+  // EARLY a decision rather than a rounding error — the duty cycle is identical
+  // either way, what differs is whether you still HAVE a burst in hand when he
+  // goes for your shoulder.
+  get gassedRecover() { return t('gassedRecover', 1.00); }, // frac needed to un-gas
+  // 4.00 -> 3.00, and NOT the 2.2 the shorter tank suggests. The game builder's
+  // third warning was that 4.0 s pinned at max against a 1.4 s natural tank is
+  // three tanks of free sprint: shorten it or admit powerups are the game. The
+  // sweep says shorten it only so far. n=120, drink in hand, 76.7% baseline:
+  //     2.20 s -> 64.2%  boostFrac 0.53   WORSE THAN NO DRINK AT ALL
+  //     3.00 s -> 90.0%  boostFrac 0.76   <- shipped
+  //     3.50 s -> 94.2%  boostFrac 0.86
+  //     4.00 s -> 94.2%  boostFrac 0.91   (round 4 measured 93.0%)
+  // There is no middle. A drink that runs out mid-approach is a LIABILITY: it
+  // carries a 7.17 m/s cop into a 3.16 m lane he cannot cover both shoulders
+  // of, the thief jukes, and commitments-that-get-through go 17% -> 25%. Fast
+  // is not agile. 3.00 is the shortest value that is not a trap, and it holds
+  // the powerup at about round 4's strength (90 vs 93) while cutting the
+  // fraction of the chase it OWNS from 91% to 76%.
+  // "Are powerups the dominant tactic now?" A drink IN HAND is, at +13 points
+  // (87.3% at n=150). GOING TO GET ONE is not: `mode:'pickup'`, where the cop
+  // has to leave his line and reach into the shelf face, measures 75.3% against
+  // 74.7% for no powerup at all. The detour costs almost exactly what the drink
+  // buys, which is where a powerup should sit — a judgement call, not an
+  // auto-take — and the shelf-lip reach gate is what holds it there
+  // (boostFrac 0.01 under `ignore`), not the timer.
+  get boostTime()     { return t('boostTime',    3.00); },
+  // THE GATE. Fraction of the regen you get while the sprint key is STILL DOWN.
+  // Zero: a man sprinting is not getting his breath back. On its own this is a
+  // 5.9-point nerf and nothing else, which is why round 4 priced it and refused
+  // to ship it alone; it only becomes a mechanic next to gassedSprintMul.
+  get regenHold()     { return t('regenHold',    0.00); },
+  // THE FIX — the constant that actually flips the sign, and the one four
+  // rounds of "stamina management pays nothing" was hiding behind. It used to
+  // be effectively 1.00: a gassed cop leaning on the key did copRun x
+  // gassedPenalty = 3.13 m/s while a cop with a FULL TANK who chose to walk did
+  // 2.35, so blowing your lungs out was an UPGRADE over pacing yourself. At
+  // 0.35 he does 2.04 — he can still lean into it, he is still slower than his
+  // own walk, and letting go is strictly better. Swept, n=120:
+  //     0.00   always 43.3%   ration 75.0%   spread 31.7
+  //     0.35   always 51.7%   ration 76.7%   spread 25.0
+  // Zero costs the naive player 8.4 points and buys the careful one 1.7 — a
+  // floor-lowering wearing a difficulty knob, and the floor is not what this is
+  // about. MUST stay under (copWalk/gassedPenalty - copWalk) / (copRun -
+  // copWalk) = (3.79 - 2.35) / 2.70 = 0.533, or a gassed man leaning on the key
+  // outruns a fresh man walking and the whole thing inverts again.
+  get gassedSprintMul(){return t('gassedSprintMul', 0.35); },
   // ---- what a shoulder costs, RE-PRICED against a 1.4 s tank ---------------
-  // Round 4 tuned the barge so that getting through the cop was worth
-  // something but not everything: 41% of the men who got past escaped, 59% were
-  // still run down. Those numbers were set against a cop who could sprint for
-  // 3.1 s and reclaim 2 m/s. Shorten the tank and the SAME two constants make a
-  // successful barge a foregone conclusion — measured, n=250, competent bot:
-  // 28 got through and 0 of them were caught, whatever the wind policy. That is
-  // round 3's "97% still caught" pathology with the sign flipped, and it is a
-  // direct consequence of this round's change, so it is this round's problem.
-  // See the sweep in the header. Both numbers come DOWN together.
-  bargeStagger: 0.55,    // was 1.25 (round 4, from round 3's 0.90). THE ONLY
-                         // ONE OF THE THREE BARGE COSTS THAT STILL DOES
-                         // ANYTHING — see the ablation in the header. 1.25 s of
-                         // the cop lying in the aisle was priced against a man
-                         // who could then sprint for 3.1 s; against a 1.4 s
-                         // tank the same 1.25 s is unrecoverable.
-  bargeWindFrac: 0.48,   // was the absolute `bargeWind: 1.50`. 1.50 s against
-                         // the old 3.1 s tank was 48% of it; against a 1.4 s
-                         // tank the same absolute number is a total wipe every
-                         // single time, which stops it discriminating anything.
-                         // Held at the fraction it was actually tuned to — but
-                         // ALSO MEASURED NEARLY INERT NOW, and that is the more
-                         // interesting result. Round 4 called this the mechanic
-                         // that made the barge a tactic, worth 22 points of
-                         // barge outcome. Ablated at n=250 on the shipped
-                         // build, 0.001 vs 0.48 moves the overall rate 76.4% ->
-                         // 75.6% and barged-and-still-caught 32% -> 23%, i.e.
-                         // two trials. A one-off stamina cost cannot mean much
-                         // when the tank refills in 0.81 s; what a barge takes
-                         // now is TIME, not wind. Kept because it is free and
-                         // it is the right fiction, not because it is load-
-                         // bearing. If the lead wants one fewer constant this
-                         // is the one to drop.
-};
-const K = {
-  get copGrip()       { return T.copGrip       ?? 0.78; }, // lateral accel fraction at top speed
-  // --- ROUND 5 lung. copWalk / staminaMax / staminaDrain / staminaRegen /
-  // gassedRecover / boostTime / bargeStagger ALREADY EXIST in TUNING at their
-  // round-4 values, and `T.x ?? fallback` means TUNING would win — so these
-  // read R5 directly and want promoting, or the file would be running numbers
-  // the report does not describe. regenHold / gassedSprintMul / bargeWindFrac
-  // are new names and read TUNING first. Once the lead applies the block, R5
-  // and TUNING agree and this whole object can go back to `T.x ?? fallback`.
-  // copWalk is here only so the sweep in R5 could reach it; it is UNCHANGED at
-  // 2.35 and does not need promoting.
-  get copWalk()       { return R5.copWalk; },
-  get staminaMax()    { return R5.staminaMax; },
-  get staminaDrain()  { return R5.staminaDrain; },
-  get staminaRegen()  { return R5.staminaRegen; },
-  get gassedRecover() { return R5.gassedRecover; },        // stamina frac needed to un-gas
-  get boostTime()     { return R5.boostTime; },
-  get regenHold()     { return T.regenHold      ?? R5.regenHold; },
-  get gassedSprintMul(){return T.gassedSprintMul?? R5.gassedSprintMul; },
-  get bargeWindFrac() { return T.bargeWindFrac  ?? R5.bargeWindFrac; },
+  // Round 4 tuned the barge so getting through the cop was worth something but
+  // not everything: 41% of the men who got past escaped, 59% were still run
+  // down. Those numbers were set against a cop who could sprint for 3.1 s and
+  // reclaim 2 m/s. Shorten the tank and the same constants make a successful
+  // barge a foregone conclusion — n=250, competent bot, 28 got through and 0 of
+  // them were caught, whatever the wind policy. That is round 3's "97% still
+  // caught" pathology with the sign flipped, and it is a direct consequence of
+  // this round's change, so it was this round's problem.
+  //
+  // bargeWindFrac replaces the ABSOLUTE `bargeWind: 1.50`, which was 48% of the
+  // old 3.1 s tank and would be a total wipe every single time against a 1.4 s
+  // one — it would stop discriminating anything. Held at the fraction it was
+  // actually tuned to. BUT ALSO MEASURED NEARLY INERT, which is the more
+  // interesting result: round 4 called this the mechanic that made the barge a
+  // tactic, worth 22 points of barge outcome, and ablating it at n=250 on the
+  // shipped build (0.001 vs 0.48) moves the overall rate 76.4% -> 75.6% and
+  // barged-and-still-caught 32% -> 23%. Two trials. A ONE-OFF STAMINA COST
+  // CANNOT MEAN MUCH WHEN THE TANK REFILLS IN 0.81 s; what a barge takes now is
+  // TIME, not wind. Kept because it is free and it is the right fiction, not
+  // because it is load-bearing. If the lead ever wants one fewer constant in
+  // config.js, this is the one to drop.
+  get bargeWindFrac() { return t('bargeWindFrac', 0.48); },
   get bargeWind()     { return K.bargeWindFrac * K.staminaMax; }, // s of tank, gone
+  // =========================================================================
   // ROUND 4 — he was accelerating at 15.0 against the cop's copAccel of 9.0, so
   // every corner, every shopper, every stumble, the thief got back to speed 67%
   // harder than the man chasing him. The stated speed gap is 6% (5.35 vs 5.05);
   // the gap the bench actually measured over a long chase was 26%, and almost
   // all of the difference was this. A shoplifter with a jacket full of steaks
   // does not out-accelerate anybody.
-  get thiefAccel()    { return T.thiefAccel    ?? 10.5; },
-  get thiefCorner()   { return T.thiefCorner   ?? 0.55; }, // speed mult on a 90 degree cut
-  get thiefReact()    { return T.thiefReact    ?? 0.22; }, // seconds of "oh shit" before the bolt
-  get pickupRadius()  { return T.pickupRadius  ?? 0.62; },
-  get pickupReach()   { return T.pickupReach   ?? 1.25; }, // m/s toward the shelf face
-  get shopperCount()  { return T.shopperCount  ?? 14; },
-  get thiefCount()    { return T.thiefCount    ?? 2; },
+  get thiefAccel()    { return t('thiefAccel', 10.5); },
+  get thiefCorner()   { return t('thiefCorner', 0.55); }, // speed mult on a 90 degree cut
+  get thiefReact()    { return t('thiefReact', 0.22); }, // seconds of "oh shit" before the bolt
+  get pickupRadius()  { return t('pickupRadius', 0.62); },
+  get pickupReach()   { return t('pickupReach', 1.25); }, // m/s toward the shelf face
+  get shopperCount()  { return t('shopperCount', 14); },
+  get thiefCount()    { return t('thiefCount', 2); },
   // A powerup is an item ON A SHELF, not a floor pickup. Sitting it on the aisle
   // centreline put it directly under a pure-pursuit chase: the bench measured the
   // "no powerup" cop boosted 45% of the chase because he ran over free cans.
   // Push it to the shelf lip so grabbing one costs you a deliberate swerve.
-  get pickupLip()     { return T.pickupLip     ?? 1.58; }, // metres off centreline
-  get thiefCornerFree(){return T.thiefCornerFree?? 0.985; },//cos above which a turn is free
+  get pickupLip()     { return t('pickupLip', 1.58); }, // metres off centreline
+  get thiefCornerFree(){return t('thiefCornerFree', 0.985); },//cos above which a turn is free
   // The thief's own wind. He is a shoplifter with a jacket full of steaks, not a
   // sprinter — thiefRun is his first-few-seconds ceiling, not his cruise.
-  get thiefWind()     { return T.thiefWind     ?? 2.60; }, // sec of flat-out running
-  get thiefTired()    { return T.thiefTired    ?? 0.575; },// x thiefRun once blown
-  get thiefPanic()    { return T.thiefPanic    ?? 0.965; },// x thiefRun with footsteps on him
-  get thiefPanicGap() { return T.thiefPanicGap ?? 3.00; }, // metres at which fear starts
-  get thiefPanicBand(){ return T.thiefPanicBand?? 0.90; }, // metres from fear to flat-out
-  get thiefSecond()   { return T.thiefSecond   ?? 0.42; }, // wind regained per sec when clear
+  get thiefWind()     { return t('thiefWind', 2.60); }, // sec of flat-out running
+  get thiefTired()    { return t('thiefTired', 0.575); },// x thiefRun once blown
+  get thiefPanic()    { return t('thiefPanic', 0.965); },// x thiefRun with footsteps on him
+  get thiefPanicGap() { return t('thiefPanicGap', 3.00); }, // metres at which fear starts
+  get thiefPanicBand(){ return t('thiefPanicBand', 0.90); }, // metres from fear to flat-out
+  get thiefSecond()   { return t('thiefSecond', 0.42); }, // wind regained per sec when clear
   // ROUND 4 — the reason no unboosted stern chase was EVER won, in one number.
   // thiefPanic 0.965 x thiefRun 5.35 = 5.16 m/s and copRun is 5.05. The panic
   // surge was documented as "always available": a thief with footsteps on him
@@ -463,14 +500,14 @@ const K = {
   // down. This is also what makes the cop's OWN stamina a decision — sprint the
   // whole way and you arrive gassed at a man who still has his surge; sit two
   // metres off him and spend it, and the last stretch is yours.
-  get thiefAdren()    { return T.thiefAdren    ?? 4.20; }, // sec of adrenaline
-  get thiefAdrenBack(){ return T.thiefAdrenBack?? 0.17; }, // regained per sec when clear
+  get thiefAdren()    { return t('thiefAdren', 4.20); }, // sec of adrenaline
+  get thiefAdrenBack(){ return t('thiefAdrenBack', 0.17); }, // regained per sec when clear
   // Seconds with your shoulder on a push-bar. A door is not a teleport; this is
   // the beat that makes a chase to the doors contestable at the doors.
-  get doorShove()     { return T.doorShove     ?? 0.85; }, // sec at the staff-end door
-  get navHug()        { return T.navHug        ?? 0.55; }, // route cost for scraping geometry
-  get harassSpeed()   { return T.harassSpeed   ?? 0.90; }, // m/s: standing still never offends
-  get harassAim()     { return T.harassAim     ?? 0.45; }, // cos(cop velocity, shopper)
+  get doorShove()     { return t('doorShove', 0.85); }, // sec at the staff-end door
+  get navHug()        { return t('navHug', 0.55); }, // route cost for scraping geometry
+  get harassSpeed()   { return t('harassSpeed', 0.90); }, // m/s: standing still never offends
+  get harassAim()     { return t('harassAim', 0.45); }, // cos(cop velocity, shopper)
 
   // --- ROUND 3: counterplay in a corked aisle -------------------------------
   // The cop is a cost in the escape flood, not just a body to swerve round.
@@ -484,19 +521,19 @@ const K = {
   // squeezes from everywhere, and the cork is back. The curve is flat from
   // there: 55, 70 and 90 all measure within a point of each other, because what
   // is left is the thief you walked in on top of, which no route can help.
-  get copThreatR()    { return T.copThreatR    ?? 3.00; }, // m
-  get copThreatW()    { return T.copThreatW    ?? 110.0; }, // route-cost mult at the centre
-  get copLead()       { return T.copLead       ?? 0.30; }, // s of cop velocity the flood leads by
-  get fleeEvery()     { return T.fleeEvery     ?? 0.17; }, // s between escape-field rebuilds
-  get fleeMove()      { return T.fleeMove      ?? 0.70; }, // m of cop movement that forces one
-  get fleeNear()      { return T.fleeNear      ?? 12.0; }, // m: past this, rebuild lazily
+  get copThreatR()    { return t('copThreatR', 3.00); }, // m
+  get copThreatW()    { return t('copThreatW', 110.0); }, // route-cost mult at the centre
+  get copLead()       { return t('copLead', 0.30); }, // s of cop velocity the flood leads by
+  get fleeEvery()     { return t('fleeEvery', 0.17); }, // s between escape-field rebuilds
+  get fleeMove()      { return t('fleeMove', 0.70); }, // m of cop movement that forces one
+  get fleeNear()      { return t('fleeNear', 12.0); }, // m: past this, rebuild lazily
   // How far ahead OF HIM BY ROUTE the cop has to be before he counts as an
   // obstacle rather than a pursuer. Not decoration: at 1.2 m a cop cutting the
   // inside of an aisle end briefly registers as a roadblock, the flood peels the
   // thief sideways for no reason, and a plain stern chase leaks from 1.3% caught
   // to 15%. Three metres is a body and a half plus the ground he covers deciding
   // — brief cut-ins do not qualify, being parked in the aisle mouth does.
-  get threatAhead()   { return T.threatAhead   ?? 3.00; }, // m of route
+  get threatAhead()   { return t('threatAhead', 3.00); }, // m of route
   // He sees the uniform standing in the mouth of his aisle. He does not stroll
   // up to five metres to confirm it. Seeing the way out blocked IS the tell.
   //
@@ -511,27 +548,33 @@ const K = {
   // dispatch and the chase is whatever distance the dispatch actually bought
   // you. It still needs line of sight and it still needs him to be ON the
   // route, so a cop at his post across the store never trips it.
-  get thiefLook()     { return T.thiefLook     ?? 17.0; }, // m
-  get thiefBlockCos() { return T.thiefBlockCos ?? 0.60; }, // cop must be this near his route line
+  get thiefLook()     { return t('thiefLook', 17.0); }, // m
+  get thiefBlockCos() { return t('thiefBlockCos', 0.60); }, // cop must be this near his route line
   // The squeeze. 1.58 m of usable half-lane against a 1.15 m catch radius means
   // a shelf-hugging thief clears a centred cop by 0.43 m — thin, readable, and
   // beatable by a cop who steps to the right shoulder. That margin IS the duel.
-  get jukeRange()     { return T.jukeRange     ?? 5.20; }, // m at which he commits
+  get jukeRange()     { return t('jukeRange', 5.20); }, // m at which he commits
   // How far off the lane centreline you can drift and still have both his
   // shoulders covered. 1.58 m of half-lane minus the 1.15 m the grab reaches
   // leaves 0.43 m of daylight either side; give it a little back so holding the
   // middle is a real position and not a pixel.
-  get grabSlack()     { return T.grabSlack     ?? 0.45; }, // m
-  get bargeGrace()    { return T.bargeGrace    ?? 0.50; }, // s of no-grab while he is through you
-  get jukeAhead()     { return T.jukeAhead     ?? 0.34; }, // cos: how "in the way" you must be
-  get jukeHold()      { return T.jukeHold      ?? 0.85; }, // s the chosen shoulder is locked in
-  get jukeLat()       { return T.jukeLat       ?? 1.75; }, // lateral steering authority
-  get jukeLip()       { return T.jukeLip       ?? 0.97; }, // fraction of the usable half-lane
-  get stumbleT()      { return T.stumbleT      ?? 0.28; }, // s of lost pace after squeezing past
-  get bargeStagger()  { return R5.bargeStagger; },         // s the COP spends shaking it off
-  get bargeSlow()     { return T.bargeSlow     ?? 0.22; }, // x speed while shaking it off
-  get bargeThru()     { return T.bargeThru     ?? 0.95; }, // m he ends up past you
-  get stumbleMul()    { return T.stumbleMul    ?? 0.72; },
+  get grabSlack()     { return t('grabSlack', 0.45); }, // m
+  get bargeGrace()    { return t('bargeGrace', 0.50); }, // s of no-grab while he is through you
+  get jukeAhead()     { return t('jukeAhead', 0.34); }, // cos: how "in the way" you must be
+  get jukeHold()      { return t('jukeHold', 0.85); }, // s the chosen shoulder is locked in
+  get jukeLat()       { return t('jukeLat', 1.75); }, // lateral steering authority
+  get jukeLip()       { return t('jukeLip', 0.97); }, // fraction of the usable half-lane
+  get stumbleT()      { return t('stumbleT', 0.28); }, // s of lost pace after squeezing past
+  // 1.25 -> 0.55 (round 3 had 0.90). THE ONLY ONE OF THE THREE BARGE COSTS THAT
+  // STILL DOES ANYTHING — see bargeWindFrac above and bargeDump below, both
+  // measured inert. 1.25 s of the cop lying in the aisle was priced against a
+  // man who could then sprint for 3.1 s and reclaim 2 m/s; against a 1.4 s tank
+  // the same 1.25 s is simply unrecoverable, and getting past the cop went from
+  // "worth something" to "decided it".
+  get bargeStagger()  { return t('bargeStagger', 0.55); }, // s the COP spends shaking it off
+  get bargeSlow()     { return t('bargeSlow', 0.22); }, // x speed while shaking it off
+  get bargeThru()     { return t('bargeThru', 0.95); }, // m he ends up past you
+  get stumbleMul()    { return t('stumbleMul', 0.72); },
   // ROUND 4 — what a shoulder actually costs the man who takes it. Two things
   // had to be true before getting through somebody meant anything, and I found
   // them one at a time by taking each back out again. n=200, competent bot,
@@ -567,11 +610,11 @@ const K = {
   // — which is all of them — so `Math.max(s.adren, bargeDump)` never fires. It
   // was never a live constant; round 4 shipped it inside a bundle and I did not
   // ablate it on its own. Do not tune it, delete it or measure it in isolation.
-  get bargeDump()     { return T.bargeDump     ?? 0.85; }, // thief adrenaline on contact
+  get bargeDump()     { return t('bargeDump', 0.85); }, // thief adrenaline on contact
   // How much of the cop this particular thief wants to risk. Rolled per subject
   // so two identical-looking dispatches do not always play out the same way.
-  get nerveLo()       { return T.nerveLo       ?? 0.55; }, // he will chance your shoulder
-  get nerveHi()       { return T.nerveHi       ?? 1.55; }, // he wants no part of you
+  get nerveLo()       { return t('nerveLo', 0.55); }, // he will chance your shoulder
+  get nerveHi()       { return t('nerveHi', 1.55); }, // he wants no part of you
   // ROUND 4 — which door is HIS door. Two exits killed the camper, but a
   // strengthened pursuit bot then found the next degenerate thing: if every
   // subject always walks at the geometrically nearest way out, his destination
@@ -588,8 +631,46 @@ const K = {
   // he takes the other one, because the cop is still priced into the same
   // field. The aisle number is then the only thing in the game that tells you
   // where the man ACTUALLY is, which is what the desk phase is for.
-  get doorBias()      { return T.doorBias      ?? 7.5; },  // m of route he will pay
+  get doorBias()      { return t('doorBias', 7.5); },  // m of route he will pay
 };
+
+// ---------------------------------------------------------------------------
+// THE INEQUALITY, CHECKED OUT LOUD. A warning comment is what this file had for
+// four rounds while a gassed cop holding sprint outran a fresh cop walking, so
+// a comment is demonstrably not enough. The relation the whole round rests on:
+//
+//     gassed-and-holding  <  copWalk        (2.043 < 2.35 as shipped)
+//
+// If a future tune inverts it, every wind number in this file becomes a lie at
+// the same instant and the bench will keep printing confident percentages. So
+// it is asserted at startup and re-asserted by bench(), which refuses to report
+// a wind comparison without it. Cheap, and it fails in the direction of noise.
+// ---------------------------------------------------------------------------
+function lungCheck() {
+  const walk = K.copWalk;
+  const gassedHold = (walk + (T.copRun - walk) * K.gassedSprintMul) * T.gassedPenalty;
+  const gassedIdle = walk * T.gassedPenalty;
+  const bound = (walk / T.gassedPenalty - walk) / (T.copRun - walk);
+  const ok = gassedHold < walk;
+  return {
+    ok, gassedHold: +gassedHold.toFixed(3), gassedIdle: +gassedIdle.toFixed(3),
+    copWalk: walk, gassedSprintMulMax: +bound.toFixed(3),
+    gassedSprintMul: K.gassedSprintMul,
+    // Seconds of sprint in a tank, and seconds to put it back. Printed together
+    // because the ratio is the duty cycle and the duty cycle is the design.
+    burst: +(K.staminaMax / K.staminaDrain).toFixed(2),
+    refill: +(K.staminaMax / K.staminaRegen).toFixed(2),
+    why: ok ? null
+      : 'INVERTED: a gassed cop holding sprint is faster than a fresh cop '
+        + 'walking, so holding the key is dominant again and every wind number '
+        + 'in agents.js is stale. Lower TUNING.gassedSprintMul below '
+        + bound.toFixed(3) + ', or raise TUNING.copWalk.',
+  };
+}
+{
+  const L = lungCheck();
+  if (!L.ok && typeof console !== 'undefined') console.warn('[agents] lung', L);
+}
 
 // main.js maps KeyW -> input.z = -1, but its floor camera sits at cop.z - 7.6
 // looking toward +Z, so +Z is "up the screen". Flip here so W runs away from
@@ -1779,7 +1860,7 @@ export function createAgents(THREE, scene, world) {
       // On its own this is a 25-point nerf and nothing else (round 4 measured
       // it, priced it, and refused to ship it alone — correctly). It only
       // becomes a mechanic next to the other two thirds: no-sprint-while-gassed
-      // below, and the short fast tank in R5. See the R5 block.
+      // below, and the short fast tank. See the lung block in K.
       const held = wantSprint ? K.regenHold : 1;
       u.stamina += K.staminaRegen * dt * held * (moving ? 1 : 1.6);
     }
@@ -3082,6 +3163,14 @@ export function createAgents(THREE, scene, world) {
     const res = {
       mode, spawn, bot: opts.bot ?? 'cut', lag: opts.lag ?? 0.16,
       misaim: opts.misaim ?? 0, n, crowd,
+      // Non-null means THIS RUN WAS NOT THE SHIPPED BUILD. See agents.override.
+      // A swept number that does not carry this is how a file ends up running
+      // constants its own report does not describe.
+      override: Object.keys(OVR).length ? { ...OVR } : null,
+      // Null when the lung inequality holds. Non-null means the wind numbers on
+      // this object do not describe a game where managing your wind pays, and
+      // it says which constant broke it. See lungCheck().
+      lungBroken: lungCheck().ok ? null : lungCheck(),
       catchRate: +(caught.length / n * 100).toFixed(1),
       escaped: esc.length, stalled: stall.length,
       // Seconds from DISPATCH (not from the bolt) to the grab. If this is ~1s
@@ -3259,12 +3348,16 @@ export function createAgents(THREE, scene, world) {
       fleeF = null; fleeBuf = null; fleeT = 0; fleeCx = fleeCz = 1e9;
     },
     tuning: T, K,
-    // ROUND 5 debug handles. R5 is mutable on purpose: the tank/regen/gate
-    // sweep in this round's report was run by poking these from the console,
-    // and anyone re-deriving the TUNING ask needs the same lever. crossBands()
-    // is how the back-route metric now finds the store's corridors instead of
-    // assuming where they are.
-    R5, crossBands,
+    // ROUND 5 debug handles.
+    // `override` is the sweep lever every number in this round's report was
+    // measured with: set a key, run bench(), delete the key. It is EMPTY in
+    // normal operation and TUNING wins over the fallbacks, so it cannot shadow
+    // config.js the way `R5` did — and bench() stamps whatever is in it onto
+    // its own result as `res.override`, so a swept measurement announces
+    // itself instead of being quoted as the shipped build. Leave it empty.
+    // crossBands() is how the back-route metric finds the store's corridors
+    // from the nav grid instead of assuming where they are.
+    override: OVR, crossBands, lungCheck,
     get thieves() { return shoppers.filter((s) => s.guilty); },
   };
 }

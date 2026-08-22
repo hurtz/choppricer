@@ -136,6 +136,13 @@ export function createGame(hudEl, deps = {}) {
   const tel = {
     stamina: TUNING.staminaMax, staminaMax: TUNING.staminaMax,
     boost: 0, gassed: false, speed: 0, nearest: null, chase: null,
+    // ROUND 5 wind state machine, straight off agents.js's report(). Defaults
+    // so the first frame renders a full tank rather than a NaN.
+    wind: 'ready', windIn: 0, fatigue: 0, windFrac: 1,
+    burst: TUNING.staminaMax / TUNING.staminaDrain,
+    burstMax: TUNING.staminaMax / TUNING.staminaDrain,
+    refill: TUNING.staminaMax / TUNING.staminaRegen,
+    readyAt: null,        // when the tank last came back — the flash fires here
   };
 
   // ---- ROUND 3: THERE ARE TWO DOORS -----------------------------------------
@@ -837,7 +844,17 @@ export function createGame(hudEl, deps = {}) {
       score('harass', s);
     },
     // agents.js does not report the sprint key itself; speed is the honest tell.
-    report(t) { Object.assign(tel, t); tel.sprint = t.speed > TUNING.copWalk + 0.35; },
+    report(t) {
+      // THE FLASH MOVED. It used to pulse the panel frame while you were
+      // sprinting, which tells a man holding a key that he is holding a key.
+      // What drives a rhythm is the moment the tank comes BACK, so the edge is
+      // latched here and the panel flares on it. `prev` guards the first report
+      // of a session, which would otherwise flare for no reason.
+      const prev = tel.wind;
+      Object.assign(tel, t);
+      tel.sprint = t.speed > TUNING.copWalk + 0.35;
+      if (prev && prev !== 'ready' && tel.wind === 'ready') tel.readyAt = G.now;
+    },
   };
 
   // ------------------------------------------------------------------- input

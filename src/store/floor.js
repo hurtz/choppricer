@@ -526,8 +526,13 @@ uniform sampler2D uBurn;
       Vd.x + ( burn - 0.5 ) * 0.055 + ( tj - 0.5 ) * uTileTilt * near,
       ny,
       Vd.z + ( tj2 - 0.5 ) * uTileTilt * near ) );
-    // sealed VCT: F0 about 0.04, and grazing incidence takes it to a mirror.
-    float fres = 0.040 + 0.960 * pow( 1.0 - ny, 5.0 );
+    // Sealed VCT: F0 about 0.04, and grazing incidence takes it toward a
+    // mirror — but only toward one. Wax has micro-texture, so the specular
+    // never quite reaches unity and the tile pattern stays faintly readable
+    // through the reflection all the way to the vanishing point, which is what
+    // reference/store_05 shows. Letting it hit 1.0 blew the mid-field out into
+    // stage lighting.
+    float fres = 0.040 + 0.820 * pow( 1.0 - ny, 5.0 );
     // wax is not uniform; a burnished floor is glossier where the machine ran
     float gloss = uGloss * ( 0.62 + 0.66 * burn );
     gloss *= 1.0 - near * ( uTileVar * ( 0.5 - tj ) * 0.5 + seam * uSeam );

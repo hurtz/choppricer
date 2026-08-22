@@ -93,8 +93,13 @@ function mulberry32(a) {
 // plays. Any other choice measures the desk read through somebody else's
 // mistakes. Nothing here reads a thief's hidden state: the route is computed
 // from his position, the same way the HUD's door read is.
-function makeDriver(ctx) {
+function makeDriver(ctx, opts = {}) {
   const { agents, input } = ctx;
+  // Wind policy, sliceable so "was rebuilding this worth it" is a measurement
+  // rather than a claim. 'ration' ships; 'always' is the old driver's key-down
+  // behaviour on the SAME routing, which isolates the wind decision from the
+  // plan it is made against.
+  const always = opts.wind === 'always';
   const st = {
     path: [], repath: 0, gx: 0, gz: 0, dry: 0, leash: 0, was: 'desk',
     navRef: null, copF: null, copBuf: null, cfT: 0, planT: 0, route: [],
@@ -177,7 +182,7 @@ function makeDriver(ctx) {
       // Bank the wind on the approach: arriving winded loses the chase before
       // it starts, and the tank refills in 0.81 s of NOT holding the key, so
       // there is no reason to still be on it when you get there.
-      sprint = gap > 12;
+      sprint = always ? gap > 16 : gap > 12;
     } else {
       st.cfT -= dt;
       if (!st.copF || st.cfT <= 0) {
@@ -218,7 +223,7 @@ function makeDriver(ctx) {
       }
       // Spend it when the intercept needs it, when he is inside grabbing range,
       // or when he is stalled on a push-bar. Never to arrive four seconds early.
-      sprint = u.boost > 0 || gap < 3.4 || t.state === 'shove' || slack < 0.35;
+      sprint = always || u.boost > 0 || gap < 3.4 || t.state === 'shove' || slack < 0.35;
     }
 
     st.repath -= dt;
@@ -397,7 +402,7 @@ async function shift(ctx, policyName, opts) {
   const rnd = mulberry32(opts.seed);
   Math.random = rnd;
 
-  const drive = makeDriver(ctx);
+  const drive = makeDriver(ctx, opts);
   const bot = POLICIES[policyName](ctx, { ...opts, rnd });
 
   agents.reset();

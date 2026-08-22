@@ -1,8 +1,8 @@
 {
  "pieces": {
   "store": {
-   "round": 5,
-   "state": "critiquing",
+   "round": 6,
+   "state": "building",
    "shots": [
     {
      "round": 0,
@@ -53,6 +53,11 @@
      "round": 5,
      "path": "../shots/r5_cross.png",
      "t": 1787431779.448586
+    },
+    {
+     "round": 6,
+     "path": "../shots/b7_a.png",
+     "t": 1787433816.41727
     }
    ],
    "gaps": [
@@ -73,8 +78,8 @@
      "text": "The two surfaces filling the largest solid angle of the frame \u2014 ceiling and floor \u2014 are still flat-shaded planes with a texture on them. (1) The floor returns ZERO specular under a lit ceiling; every real photo shows the ceiling light rows mirrored as long vertical smears. 'Until light physically bounces off the floor, nothing further up the list will matter.' (2) Ceiling troffers are emissive quads coplanar with the tile, not recessed housings with tube shapes and a shadow line. (3) BINARY TELLS: an unlit pink placeholder cube on a grey stick, untextured grey cart proxies, a blank grey plane where a sign texture failed. Any one ends the test alone."
     }
    ],
-   "updated": 1787431779.4485812,
-   "note": "Cross-aisle: runs built in segments with per-segment colliders, walkway verified unblocked x=-22 to +22 with a uniform 2.50m clear band, no pinch or pocket. Sightline works. Door 2 storefront built from config EXIT2. Freezer glass reflects with Fresnel + double-glazing ghost displaced by 2*gap*tan(theta), sharing the floor's uniform bag so the two mirrors cannot disagree about where the lamps are. Palette root-caused not tuned: every light in the rig was warm, and every multiply/occlusion card was brown - multiply COMPOUNDS chroma, so a 12%-saturated pegboard under a 26%-saturated brown shadow lands at 35%.",
+   "updated": 1787433816.4172668,
+   "note": "r6: FIXED the cart alpha bug at the source (the 8-wire-per-62mm card mipped to a uniform ~0.6 alpha so alphaTest never fired and transparent:true blended a milky sheet over frame + load) - baskets are now real 6.5mm wire in the existing fixture batch, zero alpha, zero sort. Floor rewritten as a real mirror: the along-aisle blur started at 0.80m/grew 0.235/m, pinning chopLight's merge at 1.0 from 3m out, so the streak had no internal structure to converge WITH; retuned to 0.34/0.084 -> fixtures resolve near, merge far, and the whole thing foreshortens. Per-tile wax variation + ray displacement + matte grout seams break and displace every streak at the tile grid. chopRunZ is continuous now, so nothing terminates at a hard straight edge at the cross-aisle. Reflection carries the ceiling tile field, the endcaps (wood + red promo header) and the lit cold wall, not just strip lights. Ceiling: ceilTex was drawing 175% coverage of dark grain (asphalt) over 610mm SQUARE tiles; now sparse pinholes+fissures on a 600x1200 plank grid with per-plank tone, stains and sag, tint 0xbbb6a9 -> 0xe4dccb. Measured ceiling band V 0.767 vs floor 0.57-0.60 (was inverted). Contact shadows: multiply-blended 1-D ramps hugging every base. Dairy glass 'reflecting nothing' was two transcription faults on that run only: LED tube outside the pane, and its bloom card emitted with d/h swapped -> a 2.1m horizontal additive bar overlapping 2.5-deep on renderOrder 5, i.e. painted OVER the glass. Perimeter facings: not a coverage gap - PROFILES[0] on run 91 gave 0.13m clear height, which starves products.js fits() to 2 of 8 kinds, and vacancy 0.06 kills bare bays.",
    "gap": "The two surfaces filling the largest solid angle of the frame \u2014 ceiling and floor \u2014 are still flat-shaded planes with a texture on them. (1) The floor returns ZERO specular under a lit ceiling; every real photo shows the ceiling light rows mirrored as long vertical smears. 'Until light physically bounces off the floor, nothing further up the list will matter.' (2) Ceiling troffers are emissive quads coplanar with the tile, not recessed housings with tube shapes and a shadow line. (3) BINARY TELLS: an unlit pink placeholder cube on a grey stick, untextured grey cart proxies, a blank grey plane where a sign texture failed. Any one ends the test alone.",
    "verdict": "Edge density mean 41.0 -> 44.2, spread 5.6 -> 7.0. Warm-band pixels 37.7-40.7% -> 7.7-11.3% (references 5.6-11.4%). Mean saturation 0.33-0.35 -> 0.23-0.25 (references 0.27-0.32)."
   },
@@ -237,6 +242,14 @@
   }
  },
  "log": [
+  {
+   "t": 1787433816.4172711,
+   "piece": "store",
+   "role": "builder",
+   "round": 6,
+   "state": "building",
+   "text": "r6: FIXED the cart alpha bug at the source (the 8-wire-per-62mm card mipped to a uniform ~0.6 alpha so alphaTest never fired and transparent:true blended a milky sheet over frame + load) - baskets are now real 6.5mm wire in the existing fixture batch, zero alpha, zero sort. Floor rewritten as a real mirror: the along-aisle blur started at 0.80m/grew 0.235/m, pinning chopLight's merge at 1.0 from 3m out, so the streak had no internal structure to converge WITH; retuned to 0.34/0.084 -> fixtures resolve near, merge far, and the whole thing foreshortens. Per-tile wax variation + ray displacement + matte grout seams break and displace every streak at the tile grid. chopRunZ is continuous now, so nothing terminates at a hard straight edge at the cross-aisle. Reflection carries the ceiling tile field, the endcaps (wood + red promo header) and the lit cold wall, not just strip lights. Ceiling: ceilTex was drawing 175% coverage of dark grain (asphalt) over 610mm SQUARE tiles; now sparse pinholes+fissures on a 600x1200 plank grid with per-plank tone, stains and sag, tint 0xbbb6a9 -> 0xe4dccb. Measured ceiling band V 0.767 vs floor 0.57-0.60 (was inverted). Contact shadows: multiply-blended 1-D ramps hugging every base. Dairy glass 'reflecting nothing' was two transcription faults on that run only: LED tube outside the pane, and its bloom card emitted with d/h swapped -> a 2.1m horizontal additive bar overlapping 2.5-deep on renderOrder 5, i.e. painted OVER the glass. Perimeter facings: not a coverage gap - PROFILES[0] on run 91 gave 0.13m clear height, which starves products.js fits() to 2 of 8 kinds, and vacancy 0.06 kills bare bays."
+  },
   {
    "t": 1787433420.23652,
    "piece": "agents",
@@ -646,5 +659,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787433420.236521
+ "updated": 1787433816.417272
 }
