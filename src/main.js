@@ -4,6 +4,7 @@ import { buildStore } from './store.js';
 import { createCCTV } from './cctv.js';
 import { createAgents } from './agents.js';
 import { createGame } from './game.js';
+import { createAudio } from './audio.js';
 
 const app = document.getElementById('app');
 const hud = document.getElementById('hud');
@@ -27,7 +28,10 @@ const cctv = createCCTV(THREE, renderer, scene);
 const agents = createAgents(THREE, scene, world);
 const game = createGame(hud, { cctv, agents, world, THREE });
 
+
 const floorCam = new THREE.PerspectiveCamera(58, RENDER_W / RENDER_H, 0.1, 160);
+// Audio is created after floorCam so it can position its listener from the real camera.
+const audio = createAudio(THREE, floorCam);
 
 const input = { x: 0, z: 0, sprint: false };
 const keys = new Set();
@@ -40,7 +44,10 @@ addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => cctv.resize(RENDER_W, RENDER_H));
 
 function readInput() {
-  input.x = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  // The floor camera sits BEHIND the cop looking down +Z, so its screen-right is
+  // world -X. Pressing D therefore has to drive x negative or the controls read
+  // mirrored — which is exactly how they shipped until a playtest caught it.
+  input.x = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
   input.z = (keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0);
   input.sprint = keys.has('ShiftLeft') || keys.has('ShiftRight');
   const l = Math.hypot(input.x, input.z) || 1;
@@ -52,6 +59,10 @@ function readInput() {
 function step(dt) {
   agents.update(dt, input, game.api || {});
   game.update(dt);
+  audio.update(dt, {
+    mode: game.mode, cop: agents.cop, shoppers: agents.shoppers,
+    chasing: !!(game.st && game.st.chasing), report: agents.report && agents.report(),
+  });
   if (game.mode === 'desk') {
     cctv.renderWall(dt);
   } else {
@@ -127,7 +138,34 @@ async function snapClean(name, pose) {
   const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
   return res.text();
 }
+addEventListener('pointerdown', () => audio.resume(), { once: true });
+addEventListener('keydown', () => audio.resume(), { once: true });
+
+// Record the LIVE audio graph — same idea as snap(), for ears instead of eyes.
+// Taps audio.master so it captures exactly what a player hears, not a special path.
+async function recordAudio(seconds = 12, name = 'clip') {
+  audio.resume();
+  const dest = audio.ctx.createMediaStreamDestination();
+  audio.master.connect(dest);
+  const mr = new MediaRecorder(dest.stream, { mimeType: 'audio/webm' });
+  const chunks = [];
+  mr.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  mr.start();
+  const wasPaused = !rafOn;
+  if (wasPaused) resumeLoop();
+  await new Promise((r) => setTimeout(r, seconds * 1000));
+  mr.stop();
+  await new Promise((r) => (mr.onstop = r));
+  if (wasPaused) rafOn = false;
+  audio.master.disconnect(dest);
+  const blob = new Blob(chunks, { type: 'audio/webm' });
+  const res = await fetch('/audio?name=' + encodeURIComponent(name), { method: 'POST', body: blob });
+  return res.text();
+}
+function resumeLoop() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } }
+
 window.__CHOP = {
+  audio, recordAudio,
   THREE, scene, renderer, agents, game, cctv, world, input, keys, snap, run, step,
   snapClean, probeCam,
   pause() { rafOn = false; }, resume() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } },

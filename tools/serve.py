@@ -21,8 +21,31 @@ class H(SimpleHTTPRequestHandler):
         super().end_headers()
 
     def do_POST(self):
+        if self.path.startswith("/audio"):
+            return self.do_audio()
         if not self.path.startswith("/shot"):
             self.send_error(404); return
+
+    def do_audio(self):
+        """Binary audio sink. POST /audio?name=x with a raw wav/webm body."""
+        m = re.search(r"name=([A-Za-z0-9_.-]+)", self.path)
+        name = (m.group(1) if m else "clip")[:60]
+        ext = "wav" if "fmt=wav" in self.path else "webm"
+        n = int(self.headers.get("Content-Length", 0))
+        if n <= 0 or n > 200_000_000:
+            self.send_error(400, "bad length"); return
+        raw = self.rfile.read(n)
+        d = os.path.join(ROOT, "audio")
+        os.makedirs(d, exist_ok=True)
+        dest = os.path.join(d, f"{name}.{ext}")
+        with open(dest, "wb") as f:
+            f.write(raw)
+        msg = f"audio/{name}.{ext} {len(raw)//1024}KB".encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(msg)))
+        self.end_headers()
+        self.wfile.write(msg)
         m = re.search(r"name=([A-Za-z0-9_.-]+)", self.path)
         name = (m.group(1) if m else "shot")[:60]
         n = int(self.headers.get("Content-Length", 0))
