@@ -80,7 +80,8 @@ const R4 = {
   // He clipped a shoulder at a dead run; he did not fall over. The man who was
   // standing still and got hit is the one who has to reassemble himself, and
   // round 3 had that exactly backwards -- see barge().
-  stumbleT: 0.15,     // was 0.45
+  stumbleT: 0.28,     // was 0.45
+  bargeStagger: 1.25, // was 0.90
 };
 const K = {
   get copGrip()       { return T.copGrip       ?? 0.78; }, // lateral accel fraction at top speed
@@ -189,9 +190,23 @@ const K = {
   get jukeLat()       { return T.jukeLat       ?? 1.75; }, // lateral steering authority
   get jukeLip()       { return T.jukeLip       ?? 0.97; }, // fraction of the usable half-lane
   get stumbleT()      { return R4.stumbleT; },   // s of lost pace after squeezing past
-  get bargeStagger()  { return T.bargeStagger  ?? 0.90; }, // s the COP spends shaking it off
+  get bargeStagger()  { return R4.bargeStagger; },         // s the COP spends shaking it off
+  get bargeSlow()     { return T.bargeSlow     ?? 0.22; }, // x speed while shaking it off
   get bargeThru()     { return T.bargeThru     ?? 0.95; }, // m he ends up past you
   get stumbleMul()    { return T.stumbleMul    ?? 0.72; },
+  // ROUND 4 — what a shoulder actually costs the man who takes it. See barge().
+  // The knockback and the stagger together are worth about two metres, and two
+  // metres is nothing against a cop whose sprint (5.05) is 64% faster than the
+  // thief's long-chase cruise (3.08): he reclaims it in a second and the bench
+  // duly measured 30 barges and 30 catches. The cost that MATTERS is wind. A
+  // cop who arrived with his tank full eats this and still has 1.6 s of sprint,
+  // which is just enough to get the two metres back. A cop who sprinted the
+  // whole way in gasses on contact, drops to 3.13 m/s against a man running
+  // 3.08, and cannot close at all. That is the whole reason to arrive with
+  // something in the bank, and it is the answer to "stamina management pays
+  // nothing" — it pays here, and only here.
+  get bargeWind()     { return T.bargeWind     ?? 1.50; }, // s of cop stamina, gone
+  get bargeDump()     { return T.bargeDump     ?? 0.85; }, // thief adrenaline on contact
   // How much of the cop this particular thief wants to risk. Rolled per subject
   // so two identical-looking dispatches do not always play out the same way.
   get nerveLo()       { return T.nerveLo       ?? 0.55; }, // he will chance your shoulder
@@ -307,32 +322,337 @@ const CLOTH = [
 ];
 const PANTS = [0x2f3a4a, 0x3d3d42, 0x5a4738, 0x1f2733, 0x6b6b70, 0x4a3f52];
 
+// ---------------------------------------------------------------------------
+// GEOMETRY BAKING. A real supermarket trolley is about a hundred thin wires you
+// see straight through to the floor, and the round-3 build shipped it as a solid
+// grey box on four cube wheels — the blind critic's exact words, and the eye
+// goes to the carts and the people before it goes to anything else in the
+// frame. A hundred wires as a hundred meshes is a hundred draw calls per cart
+// and there are fourteen carts on the floor, so the lattice is baked into ONE
+// buffer at startup and shared by every cart: a cart is now seven draw calls,
+// which is three FEWER than the grey box it replaces.
+// ---------------------------------------------------------------------------
+function mergeParts(THREE, parts) {
+  let vTot = 0, iTot = 0, wantCol = false;
+  for (const p of parts) {
+    vTot += p.g.attributes.position.count;
+    iTot += p.g.index ? p.g.index.count : p.g.attributes.position.count;
+    if (p.c != null) wantCol = true;
+  }
+  const pos = new Float32Array(vTot * 3);
+  const nrm = new Float32Array(vTot * 3);
+  const uvs = new Float32Array(vTot * 2);
+  const col = wantCol ? new Float32Array(vTot * 3) : null;
+  const idx = vTot > 65535 ? new Uint32Array(iTot) : new Uint16Array(iTot);
+  const nm = new THREE.Matrix3(), v = new THREE.Vector3(), c = new THREE.Color();
+  let vo = 0, io = 0;
+  for (const p of parts) {
+    const g = p.g, m = p.m;
+    if (m) nm.getNormalMatrix(m);
+    if (p.c != null) c.set(p.c);
+    const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv;
+    for (let i = 0; i < P.count; i++) {
+      v.fromBufferAttribute(P, i); if (m) v.applyMatrix4(m); v.toArray(pos, (vo + i) * 3);
+      if (N) {
+        v.fromBufferAttribute(N, i); if (m) v.applyMatrix3(nm).normalize();
+        v.toArray(nrm, (vo + i) * 3);
+      }
+      if (U) { uvs[(vo + i) * 2] = U.getX(i); uvs[(vo + i) * 2 + 1] = U.getY(i); }
+      if (col) { col[(vo + i) * 3] = c.r; col[(vo + i) * 3 + 1] = c.g; col[(vo + i) * 3 + 2] = c.b; }
+    }
+    const gi = g.index, n = gi ? gi.count : P.count;
+    for (let i = 0; i < n; i++) idx[io + i] = (gi ? gi.getX(i) : i) + vo;
+    vo += P.count; io += n;
+  }
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
+  out.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  if (col) out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  out.setIndex(new THREE.BufferAttribute(idx, 1));
+  out.computeBoundingSphere();
+  return out;
+}
+
+// A square-section wire between two points. Round wire at this scale is four
+// extra triangles per strut for nothing you can see.
+function makeWirer(THREE) {
+  const BOX = new THREE.BoxGeometry(1, 1, 1);
+  const UP = new THREE.Vector3(0, 1, 0);
+  const d = new THREE.Vector3(), p = new THREE.Vector3(), s = new THREE.Vector3();
+  const q = new THREE.Quaternion();
+  return (list, a, b, r, c) => {
+    d.set(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+    const len = d.length() || 1e-4; d.divideScalar(len);
+    q.setFromUnitVectors(UP, d);
+    p.set((a[0] + b[0]) / 2, (a[1] + b[1]) / 2, (a[2] + b[2]) / 2);
+    s.set(r * 2, len, r * 2);
+    list.push({ g: BOX, m: new THREE.Matrix4().compose(p, q, s), c });
+  };
+}
+
+// The trolley. Local +Z is the direction of travel, the handle is at -Z.
+// Nesting taper in BOTH plan and elevation, which is the shape that makes a
+// wire basket read as a wire basket from across a store: the sides splay out
+// and up, so the lattice never looks like a box someone drew lines on.
+function buildCartGeo(THREE) {
+  const wire = makeWirer(THREE);
+  const W = [];                                       // the chrome lattice
+  const ZB = -0.30, ZF = 0.36, YT = 0.80, YB = 0.50;
+  const halfTop = (t) => 0.300 - 0.030 * t;
+  const halfBot = (t) => 0.215 - 0.022 * t;
+  const zTop = (t) => ZB + (ZF - ZB) * t;
+  const zBot = (t) => (ZB + 0.055) + ((ZF - 0.055) - (ZB + 0.055)) * t;
+  const top = (s, t) => [s * halfTop(t), YT, zTop(t)];
+  const bot = (s, t) => [s * halfBot(t), YB, zBot(t)];
+  const mix = (a, b, f) => [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+
+  for (const s of [-1, 1]) {
+    for (let i = 0; i <= 13; i++) {                   // close-pitch verticals
+      const t = i / 13;
+      wire(W, bot(s, t), top(s, t), 0.0072);
+    }
+    for (const f of [0.16, 0.46, 0.74]) {             // horizontal rails
+      wire(W, mix(bot(s, 0), top(s, 0), f), mix(bot(s, 1), top(s, 1), f), 0.0082);
+    }
+    wire(W, bot(s, 0), bot(s, 1), 0.0105);            // bottom edge rail
+    wire(W, top(s, 0), top(s, 1), 0.0125);            // top rim, side
+  }
+  for (const t of [0, 1]) {                           // front and back panels
+    const n = t ? 7 : 8;
+    for (let i = 0; i <= n; i++) {
+      const u = i / n;
+      wire(W, [(-1 + 2 * u) * halfBot(t), YB, zBot(t)],
+             [(-1 + 2 * u) * halfTop(t), YT, zTop(t)], 0.0072);
+    }
+    for (const f of [0.30, 0.66]) {
+      const a = mix(bot(-1, t), top(-1, t), f), b = mix(bot(1, t), top(1, t), f);
+      wire(W, a, b, 0.0082);
+    }
+    wire(W, top(-1, t), top(1, t), 0.0125);           // rim, end
+    wire(W, bot(-1, t), bot(1, t), 0.0105);
+  }
+  for (let i = 0; i <= 8; i++) {                      // basket floor, longitudinal
+    const u = i / 8;
+    wire(W, [(-1 + 2 * u) * halfBot(0), YB, zBot(0)],
+           [(-1 + 2 * u) * halfBot(1), YB, zBot(1)], 0.0068);
+  }
+  for (let i = 0; i <= 6; i++) {                      // basket floor, transverse
+    const t = i / 6;
+    wire(W, bot(-1, t), bot(1, t), 0.0068);
+  }
+  // chassis: legs down to the caster mounts, rails, and the under-basket rack
+  const LY = 0.145;
+  for (const s of [-1, 1]) for (const t of [0.06, 0.94]) {
+    wire(W, [s * halfBot(t), YB, zBot(t)], [s * 0.205, LY, zBot(t)], 0.0135);
+  }
+  for (const s of [-1, 1]) wire(W, [s * 0.205, LY, zBot(0.06)], [s * 0.205, LY, zBot(0.94)], 0.0125);
+  wire(W, [-0.205, LY, zBot(0.06)], [0.205, LY, zBot(0.06)], 0.0115);
+  wire(W, [-0.205, LY, zBot(0.94)], [0.205, LY, zBot(0.94)], 0.0115);
+  for (let i = 0; i <= 6; i++) {                      // lower rack
+    const u = i / 6;
+    wire(W, [(-1 + 2 * u) * 0.195, LY + 0.012, zBot(0.06)],
+           [(-1 + 2 * u) * 0.195, LY + 0.012, zBot(0.94)], 0.0062);
+  }
+  for (let i = 0; i <= 4; i++) {
+    const t = 0.06 + (0.88 * i) / 4;
+    wire(W, [-0.195, LY + 0.012, zBot(t)], [0.195, LY + 0.012, zBot(t)], 0.0062);
+  }
+  // handle posts (steel); the grip itself is plastic and lives below
+  for (const s of [-1, 1]) wire(W, top(s, 0), [s * 0.255, 0.925, ZB - 0.075], 0.0115);
+
+  // --- coloured plastic: the grip bar and the child-seat flap ---------------
+  const P = [];
+  const grip = new THREE.CylinderGeometry(0.021, 0.021, 0.52, 10);
+  P.push({
+    g: grip,
+    m: new THREE.Matrix4().compose(
+      new THREE.Vector3(0, 0.925, ZB - 0.075),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2),
+      new THREE.Vector3(1, 1, 1)),
+  });
+  const pan = new THREE.BoxGeometry(0.34, 0.020, 0.155);
+  P.push({
+    g: pan,
+    m: new THREE.Matrix4().compose(
+      new THREE.Vector3(0, 0.596, ZB + 0.115),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -0.13),
+      new THREE.Vector3(1, 1, 1)),
+  });
+  const rest = new THREE.BoxGeometry(0.34, 0.135, 0.018);
+  P.push({
+    g: rest,
+    m: new THREE.Matrix4().compose(
+      new THREE.Vector3(0, 0.655, ZB + 0.032),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), 0.16),
+      new THREE.Vector3(1, 1, 1)),
+  });
+
+  // --- one swivel caster: fork, axle, rubber tyre ---------------------------
+  const C = [];
+  const STEEL = 0x8f959c, RUBBER = 0x2b2c30;
+  const plate = new THREE.BoxGeometry(0.011, 0.075, 0.055);
+  for (const s of [-1, 1]) {
+    C.push({ g: plate, c: STEEL,
+      m: new THREE.Matrix4().makeTranslation(s * 0.030, 0.072, 0.006) });
+  }
+  C.push({ g: new THREE.BoxGeometry(0.072, 0.014, 0.062), c: STEEL,
+    m: new THREE.Matrix4().makeTranslation(0, 0.108, 0.004) });
+  C.push({ g: new THREE.CylinderGeometry(0.013, 0.013, 0.048, 8), c: STEEL,
+    m: new THREE.Matrix4().makeTranslation(0, 0.134, -0.014) });
+  C.push({
+    g: new THREE.CylinderGeometry(0.043, 0.043, 0.030, 12), c: RUBBER,
+    m: new THREE.Matrix4().compose(
+      new THREE.Vector3(0, 0.043, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2),
+      new THREE.Vector3(1, 1, 1)),
+  });
+  C.push({
+    g: new THREE.CylinderGeometry(0.020, 0.020, 0.034, 8), c: 0xb6bcc2,
+    m: new THREE.Matrix4().compose(
+      new THREE.Vector3(0, 0.043, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), Math.PI / 2),
+      new THREE.Vector3(1, 1, 1)),
+  });
+
+  // --- what is actually IN the basket. Four loads so the floor is not one
+  // repeated silhouette; a shopped cart is uneven and half-full.
+  const GROC = [0xd8d2c4, 0xb8452f, 0x2f5f8a, 0xe0b13c, 0x74914f, 0xf0e6d2, 0x8a5a3c, 0xcf6f2c];
+  const loads = [];
+  let lseed = 7;
+  const lr = () => ((lseed = (lseed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+  for (let v = 0; v < 4; v++) {
+    const L = [];
+    const n = 3 + Math.floor(lr() * 4);
+    for (let i = 0; i < n; i++) {
+      const w = 0.07 + lr() * 0.10, h = 0.09 + lr() * 0.13, dp = 0.06 + lr() * 0.09;
+      L.push({
+        g: new THREE.BoxGeometry(w, h, dp),
+        c: GROC[Math.floor(lr() * GROC.length)],
+        m: new THREE.Matrix4().compose(
+          new THREE.Vector3((lr() - 0.5) * 0.34, YB + h / 2 - 0.01, ZB + 0.10 + lr() * 0.46),
+          new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), (lr() - 0.5) * 1.1),
+          new THREE.Vector3(1, 1, 1)),
+      });
+    }
+    loads.push(mergeParts(THREE, L));
+  }
+  return {
+    wire: mergeParts(THREE, W),
+    plastic: mergeParts(THREE, P),
+    caster: mergeParts(THREE, C),
+    loads,
+  };
+}
+
+// A printed label. Cheap, and it is what stops the powerup reading as a
+// placeholder: the thing you grab has words on it like everything else does.
+function labelTex(THREE, draw, w = 128, h = 128) {
+  const c = document.createElement('canvas'); c.width = w; c.height = h;
+  draw(c.getContext('2d'), w, h);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace ?? t.colorSpace;
+  t.anisotropy = 4; t.needsUpdate = true;
+  return t;
+}
+
+// Four garments, greyscale so the per-person shirt colour still tints them.
+// The blind critic called the figures blocky and untextured; a striped tee and
+// a buttoned placket cost one 256px canvas between all fourteen of them and are
+// the difference between "a person" and "a grey slab with arms".
+function clothAtlas(THREE) {
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const x = c.getContext('2d');
+  const cell = (i, f) => { x.save(); x.translate((i % 2) * 128, ((i / 2) | 0) * 128);
+    x.beginPath(); x.rect(0, 0, 128, 128); x.clip(); f(x); x.restore(); };
+  cell(0, (g) => {                                    // horizontal stripes
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = '#b3b3b3';
+    for (let y = 10; y < 128; y += 26) g.fillRect(0, y, 128, 11);
+  });
+  cell(1, (g) => {                                    // plain tee with a print
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = '#9a9a9a'; g.fillRect(34, 46, 60, 40);
+    g.fillStyle = '#ffffff'; g.fillRect(40, 56, 48, 6); g.fillRect(40, 68, 34, 6);
+    g.fillStyle = '#c9c9c9'; g.fillRect(0, 0, 128, 14);   // collar band
+  });
+  cell(2, (g) => {                                    // button placket
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = '#d0d0d0'; g.fillRect(0, 0, 128, 12);
+    g.fillStyle = '#bcbcbc'; g.fillRect(58, 12, 12, 116);
+    g.fillStyle = '#8c8c8c';
+    for (let y = 26; y < 124; y += 22) { g.beginPath(); g.arc(64, y, 3.2, 0, 7); g.fill(); }
+  });
+  cell(3, (g) => {                                    // plaid
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
+    g.fillStyle = 'rgba(140,140,140,0.55)';
+    for (let y = 6; y < 128; y += 21) g.fillRect(0, y, 128, 8);
+    for (let v = 6; v < 128; v += 21) g.fillRect(v, 0, 8, 128);
+  });
+  const out = [];
+  for (let i = 0; i < 4; i++) {
+    const t = new THREE.CanvasTexture(c);
+    t.colorSpace = THREE.SRGBColorSpace ?? t.colorSpace;
+    t.repeat.set(0.5, 0.5); t.offset.set((i % 2) * 0.5, 1 - ((i / 2) | 0) * 0.5 - 0.5);
+    t.needsUpdate = true; out.push(t);
+  }
+  return out;
+}
+
+// A leg with the shoe baked onto the end of it, hanging DOWN from the origin so
+// the pivot needs no offset. Vertex colours: white over the trouser so the
+// material tint still does the colour, dark over the shoe so it comes out as a
+// dark version of it — which is what shoes are. One draw call, not two.
+function legGeo(THREE, w, h, d) {
+  const shoeH = 0.075, shaft = h - shoeH;
+  return mergeParts(THREE, [
+    { g: new THREE.BoxGeometry(w, shaft, d), c: 0xffffff,
+      m: new THREE.Matrix4().makeTranslation(0, -shaft / 2, 0) },
+    { g: new THREE.BoxGeometry(w * 1.04, shoeH, d * 1.45), c: 0x4a4a50,
+      m: new THREE.Matrix4().makeTranslation(0, -shaft - shoeH / 2, d * 0.20) },
+  ]);
+}
+
 function buildGeo(THREE) {
+  const cart = buildCartGeo(THREE);
   return {
     torso: new THREE.CapsuleGeometry(0.19, 0.42, 3, 7),
     head: new THREE.SphereGeometry(0.135, 10, 8),
     hair: new THREE.SphereGeometry(0.142, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.62),
-    limb: new THREE.BoxGeometry(0.135, 0.56, 0.16),
+    limb: legGeo(THREE, 0.135, 0.56, 0.16),
+    limbH: 0.56,
     arm: new THREE.BoxGeometry(0.11, 0.50, 0.13),
+    armH: 0.50,
+    hand: new THREE.BoxGeometry(0.098, 0.105, 0.115),
+    cloth: clothAtlas(THREE),
     belly: new THREE.SphereGeometry(0.25, 12, 9),
     cap: new THREE.CylinderGeometry(0.145, 0.155, 0.09, 12),
     brim: new THREE.BoxGeometry(0.30, 0.025, 0.16),
     belt: new THREE.TorusGeometry(0.235, 0.035, 5, 14),
-    basket: new THREE.BoxGeometry(0.54, 0.30, 0.72),
-    bar: new THREE.BoxGeometry(0.56, 0.035, 0.035),
-    post: new THREE.BoxGeometry(0.035, 0.44, 0.035),
-    wheel: new THREE.CylinderGeometry(0.045, 0.045, 0.03, 6),
     goods: new THREE.BoxGeometry(0.15, 0.18, 0.11),
-    can: new THREE.CylinderGeometry(0.062, 0.062, 0.19, 10),
-    dbox: new THREE.BoxGeometry(0.34, 0.11, 0.26),
     ring: new THREE.RingGeometry(0.42, 0.60, 20),
+    cart,
+    // Chrome with no environment map is black, so this is metalness that keeps
+    // half its diffuse: it takes a hard specular off the ceiling troffers and
+    // still reads as a bright object in the aisle rather than a silhouette.
+    matChrome: new THREE.MeshStandardMaterial({
+      color: 0xe4e8ec, roughness: 0.29, metalness: 0.34,
+    }),
+    matPlastic: [0xb8352c, 0x2f5c9e, 0x3f6b46, 0x2b2d33].map((c) =>
+      new THREE.MeshStandardMaterial({ color: c, roughness: 0.44 })),
+    matCaster: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.28 }),
+    matLoad: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.84 }),
   };
 }
 
 function makePerson(THREE, G, o) {
   const g = new THREE.Group();
-  const shirt = new THREE.MeshStandardMaterial({ color: o.shirt, roughness: 0.92 });
-  const pants = new THREE.MeshStandardMaterial({ color: o.pants, roughness: 0.95 });
+  const shirt = new THREE.MeshStandardMaterial({
+    color: o.shirt, roughness: 0.92, map: o.plain ? null : pick(G.cloth),
+  });
+  const pants = new THREE.MeshStandardMaterial({
+    color: o.pants, roughness: 0.95, vertexColors: true,
+  });
   const skin = new THREE.MeshStandardMaterial({ color: o.skin, roughness: 0.8 });
   const hair = new THREE.MeshStandardMaterial({ color: o.hair, roughness: 1.0 });
 
@@ -354,15 +674,27 @@ function makePerson(THREE, G, o) {
   const head = new THREE.Mesh(G.head, skin); neck.add(head);
   const hairM = new THREE.Mesh(G.hair, hair); hairM.position.y = 0.012; neck.add(hairM);
 
-  const mkLimb = (geo, mat, x, y) => {
+  // A visible neck, so the head is not a ball resting on a slab.
+  const collar = new THREE.Mesh(G.head, skin);
+  collar.scale.set(0.42, 0.52, 0.42); collar.position.y = 0.55; hips.add(collar);
+
+  // The leg geometry already hangs from its own origin (shoe and all); the arm
+  // is a plain box, so it still needs centring, and it gets a hand on the end.
+  const mkLimb = (geo, mat, x, y, h, handAt) => {
     const piv = new THREE.Group(); piv.position.set(x, y, 0);
-    const m = new THREE.Mesh(geo, mat); m.position.y = -geo.parameters.height / 2;
-    piv.add(m); hips.add(piv); return piv;
+    const m = new THREE.Mesh(geo, mat);
+    if (h != null) m.position.y = -h / 2;
+    piv.add(m);
+    if (handAt != null) {
+      const hd = new THREE.Mesh(G.hand, skin);
+      hd.position.y = handAt; piv.add(hd);
+    }
+    hips.add(piv); return piv;
   };
   const legL = mkLimb(G.limb, pants, -0.11 * o.girth, 0.02);
   const legR = mkLimb(G.limb, pants, 0.11 * o.girth, 0.02);
-  const armL = mkLimb(G.arm, shirt, -0.20 * o.girth - 0.03, 0.53);
-  const armR = mkLimb(G.arm, shirt, 0.20 * o.girth + 0.03, 0.53);
+  const armL = mkLimb(G.arm, shirt, -0.20 * o.girth - 0.03, 0.53, G.armH, -G.armH - 0.03);
+  const armR = mkLimb(G.arm, shirt, 0.20 * o.girth + 0.03, 0.53, G.armH, -G.armH - 0.03);
 
   g.scale.setScalar(o.height);
   return { root: g, hips, torso, belly, neck, head, legL, legR, armL, armR, shirt, pants };
@@ -370,20 +702,138 @@ function makePerson(THREE, G, o) {
 
 function makeCart(THREE, G) {
   const g = new THREE.Group();
-  const steel = new THREE.MeshStandardMaterial({ color: 0xb9bec4, roughness: 0.45, metalness: 0.55 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x39393d, roughness: 0.85 });
-  const b = new THREE.Mesh(G.basket, steel);
-  b.position.set(0, 0.62, 0.05); b.rotation.x = -0.10; b.castShadow = true; g.add(b);
-  const bar = new THREE.Mesh(G.bar, dark); bar.position.set(0, 0.86, -0.30); g.add(bar);
-  for (const s of [-1, 1]) {
-    const p = new THREE.Mesh(G.post, steel); p.position.set(s * 0.24, 0.24, 0.30); g.add(p);
-    const q = new THREE.Mesh(G.post, steel); q.position.set(s * 0.24, 0.24, -0.26); g.add(q);
-  }
+  const wire = new THREE.Mesh(G.cart.wire, G.matChrome);
+  wire.castShadow = true; g.add(wire);
+  const plastic = new THREE.Mesh(G.cart.plastic, pick(G.matPlastic));
+  plastic.castShadow = true; g.add(plastic);
+  // Four swivel casters, each pointing its own way. A parked trolley never has
+  // its wheels lined up and that is most of why the old four-cube-wheels version
+  // read as furniture instead of as a cart.
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-    const w = new THREE.Mesh(G.wheel, dark);
-    w.position.set(sx * 0.22, 0.045, sz * 0.28); w.rotation.z = Math.PI / 2; g.add(w);
+    const c = new THREE.Mesh(G.cart.caster, G.matCaster);
+    c.position.set(sx * 0.205, 0, sz > 0 ? 0.300 : -0.245);
+    c.rotation.y = rr(-1.1, 1.1) + (sz > 0 ? 0 : Math.PI);
+    g.add(c);
+  }
+  if (rnd() < 0.78) {
+    const load = new THREE.Mesh(pick(G.cart.loads), G.matLoad);
+    load.castShadow = true; g.add(load);
   }
   return g;
+}
+
+// ---------------------------------------------------------------------------
+// THE POWERUPS. Round 3 left the thing you actually grab as an emissive box on
+// a stick sitting on top of merchandise the store builder had already made
+// real, and a blind critic ended a test on it. They are objects now: a bakery
+// clamshell with six donuts in it, and a printed energy can with a pull tab.
+// Lit by the same lights as everything else — the only concession to finding
+// one at a dead run is a backface rim shell, which is a real shape hugging a
+// real object, not a flat quad hovering over it.
+// ---------------------------------------------------------------------------
+function buildPowerupProps(THREE) {
+  const donutTop = labelTex(THREE, (x, w, h) => {
+    x.fillStyle = '#f2a8c4'; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#e07ba4'; x.fillRect(0, h * 0.34, w, h * 0.10);
+    x.fillStyle = '#fdf2f6'; x.fillRect(0, h * 0.44, w, h * 0.02);
+    x.fillStyle = '#7c2b46'; x.font = 'bold 25px sans-serif'; x.textAlign = 'center';
+    x.fillText('DONUTS', w / 2, h * 0.28);
+    x.font = 'bold 12px sans-serif'; x.fillStyle = '#9c4463';
+    x.fillText('BAKED FRESH DAILY', w / 2, h * 0.60);
+    x.fillStyle = '#8a3a55';
+    for (let i = 0; i < 12; i++) x.fillRect(w * 0.22 + i * 6, h * 0.72, 2 + (i % 3), h * 0.14);
+  });
+  const canLabel = labelTex(THREE, (x, w, h) => {
+    x.fillStyle = '#12301a'; x.fillRect(0, 0, w, h);
+    x.fillStyle = '#5fe04f';
+    x.beginPath(); x.moveTo(0, h * 0.30); x.lineTo(w, h * 0.14);
+    x.lineTo(w, h * 0.40); x.lineTo(0, h * 0.56); x.closePath(); x.fill();
+    x.fillStyle = '#0b1f10'; x.font = 'bold 30px sans-serif'; x.textAlign = 'center';
+    x.save(); x.translate(w / 2, h * 0.40); x.rotate(-0.13);
+    x.fillText('VOLT', 0, 0); x.restore();
+    x.fillStyle = '#cfeec6'; x.font = 'bold 11px sans-serif';
+    x.fillText('ENERGY  ·  500ml', w / 2, h * 0.70);
+    x.fillStyle = '#5fe04f'; x.fillRect(w * 0.30, h * 0.78, w * 0.40, 3);
+  }, 128, 96);
+
+  // --- donuts: an open clamshell with product in it -------------------------
+  const boxParts = [], sugarParts = [];
+  const BW = 0.25, BD = 0.20, BH = 0.062;
+  const board = 0xf3ece0;
+  boxParts.push({ g: new THREE.BoxGeometry(BW, 0.008, BD), c: board,
+    m: new THREE.Matrix4().makeTranslation(0, -0.030, 0) });
+  for (const s of [-1, 1]) {
+    boxParts.push({ g: new THREE.BoxGeometry(0.009, BH, BD), c: board,
+      m: new THREE.Matrix4().makeTranslation(s * BW / 2, 0, 0) });
+    boxParts.push({ g: new THREE.BoxGeometry(BW, BH, 0.009), c: board,
+      m: new THREE.Matrix4().makeTranslation(0, 0, s * BD / 2) });
+  }
+  const lid = new THREE.PlaneGeometry(BW, BD);
+  const lidM = new THREE.Matrix4().compose(
+    new THREE.Vector3(0, 0.086, -BD / 2 - 0.075),
+    new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), -1.24),
+    new THREE.Vector3(1, 1, 1));
+  const GLAZE = [0x6b3d22, 0xefa2bf, 0xf0d9a0, 0x8d5a2f, 0xe8c15a, 0xd8687f];
+  let i = 0;
+  for (const gx of [-1, 0, 1]) for (const gz of [-1, 1]) {
+    sugarParts.push({
+      g: new THREE.TorusGeometry(0.035, 0.0155, 6, 14), c: GLAZE[i++ % GLAZE.length],
+      m: new THREE.Matrix4().compose(
+        new THREE.Vector3(gx * 0.077, -0.010, gz * 0.048),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2),
+        new THREE.Vector3(1, 1, 1)),
+    });
+  }
+  for (let k = 0; k < 14; k++) {                     // sprinkles
+    const a = (k / 14) * Math.PI * 2;
+    sugarParts.push({
+      g: new THREE.BoxGeometry(0.008, 0.004, 0.004), c: k % 2 ? 0xffe14d : 0x4fc9f0,
+      m: new THREE.Matrix4().compose(
+        new THREE.Vector3(-0.077 + Math.cos(a) * 0.031, 0.005, -0.048 + Math.sin(a) * 0.031),
+        new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), a),
+        new THREE.Vector3(1, 1, 1)),
+    });
+  }
+
+  // --- can: tapered aluminium body, printed label, pull tab -----------------
+  const R = 0.041, CH = 0.150;
+  const canEnds = [];
+  canEnds.push({ g: new THREE.CylinderGeometry(R * 0.80, R, 0.020, 16), c: 0xc8ccd2,
+    m: new THREE.Matrix4().makeTranslation(0, CH / 2 + 0.008, 0) });
+  canEnds.push({ g: new THREE.CylinderGeometry(R * 0.80, R * 0.80, 0.008, 16), c: 0xdfe3e8,
+    m: new THREE.Matrix4().makeTranslation(0, CH / 2 + 0.021, 0) });
+  canEnds.push({ g: new THREE.TorusGeometry(R * 0.80, 0.004, 5, 16), c: 0xb9bec6,
+    m: new THREE.Matrix4().compose(
+      new THREE.Vector3(0, CH / 2 + 0.025, 0),
+      new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2),
+      new THREE.Vector3(1, 1, 1)) });
+  canEnds.push({ g: new THREE.BoxGeometry(0.030, 0.003, 0.016), c: 0xa9aeb6,
+    m: new THREE.Matrix4().makeTranslation(0.008, CH / 2 + 0.028, 0) });
+  canEnds.push({ g: new THREE.CylinderGeometry(R * 0.86, R, 0.016, 16), c: 0xc8ccd2,
+    m: new THREE.Matrix4().makeTranslation(0, -CH / 2 - 0.006, 0) });
+
+  return {
+    donuts: {
+      body: mergeParts(THREE, boxParts),
+      lid, lidM,
+      extra: mergeParts(THREE, sugarParts),
+      tex: donutTop,
+      rim: new THREE.BoxGeometry(BW + 0.03, BH + 0.10, BD + 0.03),
+      rimY: 0.012,
+      glow: 0xf07fae,
+    },
+    energy: {
+      body: new THREE.CylinderGeometry(R, R, CH, 18, 1, true),
+      extra: mergeParts(THREE, canEnds),
+      tex: canLabel,
+      rim: new THREE.CylinderGeometry(R + 0.012, R + 0.012, CH + 0.05, 14),
+      rimY: 0,
+      glow: 0x63e05a,
+    },
+    matBoard: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.86 }),
+    matSugar: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.52 }),
+    matAlu: new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.28, metalness: 0.62 }),
+  };
 }
 
 function angerTexture(THREE) {
@@ -399,6 +849,7 @@ function angerTexture(THREE) {
 export function createAgents(THREE, scene, world) {
   world = world || {};
   const G = buildGeo(THREE);
+  const PW = buildPowerupProps(THREE);
   let solids = makeSolids(world);
   let solidCount = solids.count;
   // One grid, one flood-fill out from the doors. Every thief in the store
@@ -597,7 +1048,7 @@ export function createAgents(THREE, scene, world) {
   // ---- cop -----------------------------------------------------------------
   const copRig = makePerson(THREE, G, {
     shirt: 0x2c3a56, pants: 0x22252c, skin: 0xe2b48c, hair: 0x50412e,
-    girth: 1.62, height: 1.06,
+    girth: 1.62, height: 1.06, plain: true,          // a uniform is not a print tee
   });
   {
     const duty = new THREE.MeshStandardMaterial({ color: 0x1a1a1e, roughness: 0.7 });
@@ -650,7 +1101,7 @@ export function createAgents(THREE, scene, world) {
       state: 'walk', timer: 0, path: [], repathIn: 0, wind: 1, aim: null, aimT: 0,
       bolted: false, escaped: false, caught: false, angry: 0, harassArmed: true,
       concealT: 0, look: 0, lean: 0, target: null, dropCartAt: null,
-      duck: 0, duckT: 0, stumble: 0, bargeT: 0, bargeN: 0, nerve: 1,
+      duck: 0, duckT: 0, stumble: 0, bargeT: 0, bargeN: 0, bargeStam: null, nerve: 1,
       adren: 1, shoveT: 0, exitI: 0,
     };
     shoppers.push(s);
@@ -672,14 +1123,37 @@ export function createAgents(THREE, scene, world) {
     for (const sp of spots) {
       const kind = sp.kind === 'donuts' ? 'donuts' : 'energy';
       const g = new THREE.Group();
-      const col = kind === 'energy' ? 0x63e05a : 0xf07fae;
-      const item = new THREE.Mesh(kind === 'energy' ? G.can : G.dbox,
-        new THREE.MeshStandardMaterial({ color: col, roughness: 0.35, emissive: col, emissiveIntensity: 0.55 }));
-      item.position.y = 1.06; g.add(item);
-      const ring = new THREE.Mesh(G.ring, new THREE.MeshBasicMaterial({
-        color: col, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false,
+      const P = kind === 'energy' ? PW.energy : PW.donuts;
+      const col = P.glow;
+      // The object itself, lit by the store's own lights like the merchandise
+      // it is sitting on. `item` is the group everything rotates and bobs with.
+      const item = new THREE.Group();
+      item.position.y = 1.06;
+      const printed = new THREE.MeshStandardMaterial({
+        map: P.tex, roughness: kind === 'energy' ? 0.34 : 0.80,
+        metalness: kind === 'energy' ? 0.45 : 0.0,
+      });
+      if (kind === 'energy') {
+        const body = new THREE.Mesh(P.body, printed);
+        body.castShadow = true; item.add(body);
+        item.add(new THREE.Mesh(P.extra, PW.matAlu));
+      } else {
+        const body = new THREE.Mesh(P.body, PW.matBoard);
+        body.castShadow = true; item.add(body);
+        const lid = new THREE.Mesh(P.lid, printed);
+        lid.material = printed; lid.applyMatrix4(P.lidM); item.add(lid);
+        item.add(new THREE.Mesh(P.extra, PW.matSugar));
+      }
+      // Rim light: a backface shell of the object's own silhouette. It is a
+      // shape wrapped round a real thing, so it reads as light catching an
+      // edge; it is emphatically not a flat unlit card floating on top of one.
+      const halo = new THREE.Mesh(P.rim, new THREE.MeshBasicMaterial({
+        color: col, transparent: true, opacity: 0.16, side: THREE.BackSide,
+        depthWrite: false, blending: THREE.AdditiveBlending,
       }));
-      ring.rotation.x = -Math.PI / 2; ring.position.y = 0.03; g.add(ring);
+      halo.position.y = P.rimY; item.add(halo);
+      g.add(item);
+      const ring = halo;                       // what updatePowerups pulses
       // Keep it inside the walkable lane even if the store parked it in a shelf,
       // and if the store handed us a bare centreline point, shove it out to the
       // shelf lip — a can on the centreline is a free boost for anyone running
@@ -728,7 +1202,7 @@ export function createAgents(THREE, scene, world) {
     s.concealT = guilty ? rr(2.5, 7.0) : 0; s.look = 0; s.lean = 0; s.wind = 1;
     s.aim = null; s.aimT = 0; s.duck = 0; s.duckT = 0;
     s.adren = 1; s.shoveT = 0; s.exitI = 0;
-    s.stumble = 0; s.bargeT = 0; s.bargeN = 0;
+    s.stumble = 0; s.bargeT = 0; s.bargeN = 0; s.bargeStam = null;
     s.nerve = rr(K.nerveLo, K.nerveHi);
     s.hasCart = true; s.cart.visible = true; s.mesh.visible = true;
     s.held.visible = false; s.bang.visible = false; s.target = null;
@@ -927,8 +1401,10 @@ export function createAgents(THREE, scene, world) {
     let target = canSprint ? T.copRun : T.copWalk;
     if (u.gassed) target = (wantSprint ? T.copRun : T.copWalk) * T.gassedPenalty;
     if (boosted) target *= T.boostMul;
-    // Shaking off a shoulder — see barge(). Not a freeze: a wobble.
-    if (u.stagger > 0) { u.stagger = Math.max(0, u.stagger - dt); target *= 0.42; }
+    // Shaking off a shoulder — see barge(). Not a freeze, but not a wobble
+    // either: a heavy man who has just been run through by a sprinting one is
+    // off his feet for a beat and facing the way the man came from.
+    if (u.stagger > 0) { u.stagger = Math.max(0, u.stagger - dt); target *= K.bargeSlow; }
     if (!moving) target = 0;
 
     const top = T.copRun * T.boostMul;
@@ -1365,9 +1841,9 @@ export function createAgents(THREE, scene, world) {
         if (p.respawn <= 0) { p.live = true; p.mesh.visible = true; }
         continue;
       }
-      p.item.rotation.y += dt * 2.1;
-      p.item.position.y = 1.06 + Math.sin(performance.now() * 0.003 + p.x) * 0.05;
-      p.ring.material.opacity = 0.40 + 0.22 * Math.sin(performance.now() * 0.005 + p.z);
+      p.item.rotation.y += dt * 1.05;
+      p.item.position.y = 1.06 + Math.sin(performance.now() * 0.0028 + p.x) * 0.032;
+      p.ring.material.opacity = 0.15 + 0.09 * Math.sin(performance.now() * 0.0045 + p.z);
       // You have to REACH for it. Being inside the radius is not enough: the
       // can is on a shelf, off to the side of the lane, and a cop sprinting past
       // parallel to the shelf face is not grabbing anything. Without this the
@@ -1441,6 +1917,10 @@ export function createAgents(THREE, scene, world) {
   }
   function barge(s) {
     s.bargeN = (s.bargeN || 0) + 1;
+    // What the cop had in the tank when he took it. The bench slices the
+    // outcome on this, because it is the claim: a barge is decisive against a
+    // cop who spent his wind getting here and survivable by one who did not.
+    if (s.bargeStam == null) s.bargeStam = cop.userData.stamina / T.staminaMax;
     s.stumble = K.stumbleT;
     s.bargeT = K.bargeGrace;
     s.duckSide = s.duck; s.duck = 0; s.duckT = 0;
@@ -1458,8 +1938,25 @@ export function createAgents(THREE, scene, world) {
     let dx = s.position.x - cop.position.x, dz = s.position.z - cop.position.z;
     const m = Math.hypot(dx, dz) || 1; dx /= m; dz /= m;
     cop.position.x -= dx * 0.34; cop.position.z -= dz * 0.34;
-    cop.userData.vel.multiplyScalar(0.22);
+    cop.userData.vel.multiplyScalar(0.15);
     cop.userData.stagger = K.bargeStagger;
+    // ...AND HIS WIND. Round 4's second pass: the knockback alone was worth two
+    // metres and this chase reclaims two metres in one second, which is why 30
+    // barges produced 30 catches and I reported the mechanic as "fixed" off the
+    // fact that it now fires at all. Firing is not working. What makes getting
+    // through a man mean something is that it costs the man his legs: take a
+    // shoulder with a full tank and you have just enough left to get the ground
+    // back; take one having sprinted the whole way in and you gas on contact,
+    // drop to 3.13 m/s against a man running 3.08, and the chase is over.
+    const cu = cop.userData;
+    cu.stamina = Math.max(0, cu.stamina - K.bargeWind);
+    if (cu.stamina <= 0.0001) cu.gassed = true;
+    // And the other half of it, on his side: going through a man is an
+    // adrenaline dump, and adrenaline is the only thing in this file that lets
+    // him out-run a cop at all. It is a TOP-UP of the same finite tank, not a
+    // refill — it decays under pressure like everything else, so it buys him
+    // the break and not the rest of the chase.
+    s.adren = Math.max(s.adren, K.bargeDump);
     // ...and he ends up THROUGH, which is the whole point and is the thing that
     // was missing. A 0.10 m nudge left him inside the separation constraint the
     // two bodies enforce on each other — the bench trace showed the pair welded
@@ -1673,7 +2170,17 @@ export function createAgents(THREE, scene, world) {
     // tight, or when he is close enough to grab.
     const slack = best.tT - best.cT;
     const gap = dist2d(cop.position.x, cop.position.z, tx, tz);
+    // Three wind policies, because "does stamina management pay?" cannot be
+    // answered by a flag that changes the sprint fraction from 0.54 to 0.57.
+    // Round 3 shipped exactly that and then reported that managing your wind is
+    // worth nothing, which was a true statement about the flag and no statement
+    // at all about the game.
+    //   false    — hold the button down the whole way.
+    //   'ration' — walk until the intercept is actually tight. Arrives with a
+    //              full tank, which is the only thing that survives a barge.
+    //   default  — the middling thing a decent player does.
     const sprint = st.conserve === false ? true
+      : st.conserve === 'ration' ? (gap < 3.4 || slack < 0.35 || thief.state === 'shove')
       : (slack < 1.1 || gap < 5.0 || thief.state === 'shove');
     return { x: best.w.x, z: best.w.z, sprint };
   }
@@ -1700,10 +2207,29 @@ export function createAgents(THREE, scene, world) {
     if (st.blind) {
       if (nav.clearSeg(cop.position.x, cop.position.z, tx, tz)
           && dist2d(cop.position.x, cop.position.z, tx, tz) < 20) {
-        st.seen.x = tx; st.seen.z = tz; st.seenT = 0;
+        st.seen.x = tx; st.seen.z = tz; st.seenT = 0; st.lost = null;
       } else {
+        // ROUND 4 — the bot used to steer at where it last SAW him, which is
+        // the one thing a competent player never does: a man who was heading
+        // for the doors two seconds ago is not still standing there. Walk the
+        // last sighting forward along the exit field at his cruise instead.
+        // That is a dead-reckoning a person does in their head, it needs
+        // nothing the desk did not tell them, and it is worth eleven points at
+        // misaim 2 — which is most of the gap an outside critic opened up on
+        // this bench by bringing its own bot.
         st.seenT += dt;
-        tx = st.seen.x; tz = st.seen.z;
+        if (!st.lost) st.lost = { x: st.seen.x, z: st.seen.z };
+        const cruise = T.thiefRun * K.thiefTired;
+        let step = cruise * dt;
+        while (step > 0.05) {
+          const d = nav.steer(exitF, st.lost.x, st.lost.z, { look: 3.0 });
+          if (!d) break;
+          const m = Math.hypot(d.x, d.z) || 1;
+          const h = Math.min(step, 0.34);
+          st.lost.x += (d.x / m) * h; st.lost.z += (d.z / m) * h;
+          step -= h;
+        }
+        tx = st.lost.x; tz = st.lost.z;
       }
     }
 
@@ -1926,6 +2452,7 @@ export function createAgents(THREE, scene, world) {
         corner: nS ? sumCm / nS : NaN,
         copLat: nLat ? sumLat / nLat : NaN,
         aisle: ai, wentBack, ducked, barged: thief.bargeN > 0,
+        bargeStam: thief.bargeStam,
         atCop: atCop === true, doorT, exitUsed,
         caughtShoving: done === 1 && isFinite(doorT),
         sprintFrac: nS ? sprintT / (nS * dt) : NaN,
@@ -1979,6 +2506,10 @@ export function createAgents(THREE, scene, world) {
       // against the ones where he committed and you had it covered.
       bargeGot: branch((r) => r.barged),
       bargeStopped: branch((r) => r.ducked && !r.barged),
+      // THE claim the barge makes, sliced on the only thing that decides it:
+      // what the cop had left in the tank at the moment he took the shoulder.
+      bargeWinded: branch((r) => r.barged && r.bargeStam < 0.35),
+      bargeFresh: branch((r) => r.barged && r.bargeStam >= 0.35),
       reachedDoor: R.filter((r) => isFinite(r.doorT)).length,
       exitSplit: EXITS.map((e, i) =>
         `${e.label}:${R.filter((r) => r.exitUsed === i).length}`).join(' '),

@@ -78,8 +78,12 @@ requestAnimationFrame(frame);
 // Composites the 3D frame AND the HUD canvas, because a game screenshot without
 // its HUD is not the thing being judged. Pass {raw:true} for 3D only.
 async function post(name, url) {
-  const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
-  return res.text();
+  try {
+    const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
+    return res.text();
+  } catch (e) {
+    return 'no shot sink (hosted build) — ' + name;   // artifact/static host has no server
+  }
 }
 async function snap(name, opts = {}) {
   step(0);                                   // guarantee a fresh frame, no RAF needed

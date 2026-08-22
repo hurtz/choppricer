@@ -12,12 +12,53 @@
   #hud{position:fixed;inset:0;pointer-events:none;z-index:10}
   #boot{position:fixed;inset:0;display:grid;place-content:center;text-align:center;
     background:#000;z-index:100;letter-spacing:.25em;font-size:13px}
+  #start{position:fixed;inset:0;z-index:90;display:grid;place-content:center;
+    background:rgba(0,0,0,.88);cursor:pointer;text-align:left}
+  #start .card{max-width:560px;padding:26px 30px;border:1px solid #3c6244;
+    background:#0b0e0c;box-shadow:0 0 60px #000}
+  #start h1{margin:0 0 2px;font-size:19px;letter-spacing:.3em;color:#ffb43a}
+  #start .sub{color:#83a58c;font-size:11px;letter-spacing:.18em;margin-bottom:18px}
+  #start p{margin:0 0 14px;color:#c8d4cb;font-size:12.5px;line-height:1.65}
+  #start table{border-collapse:collapse;font-size:12px;margin-bottom:16px;width:100%}
+  #start td{padding:3px 0;color:#c8d4cb;vertical-align:top}
+  #start td:first-child{color:#7dfda0;white-space:nowrap;padding-right:16px;width:112px}
+  #start .go{color:#ffb43a;font-size:11px;letter-spacing:.22em;
+    border-top:1px solid #24382b;padding-top:13px}
+  #start em{color:#ff8a7a;font-style:normal}
 </style>
 </head>
 <body>
 <div id="app"></div>
 <div id="hud"></div>
 <div id="boot">CHOP PRICER<br><span style="opacity:.5;font-size:11px">LOSS PREVENTION TERMINAL — INITIALIZING</span></div>
+<div id="start"><div class="card">
+  <h1>CHOP PRICER</h1>
+  <div class="sub">STORE #4417 &middot; LOSS PREVENTION TERMINAL</div>
+  <p>You're the fat cop working security at a discount grocery store. Watch the
+     monitors, work out who's stealing, then waddle out and catch them before
+     they reach the doors. You gas out fast.</p>
+  <table>
+    <tr><td>1 &ndash; 8</td><td>select a camera</td></tr>
+    <tr><td>SPACE</td><td>dispatch to the selected subject</td></tr>
+    <tr><td>W A S D</td><td>move &mdash; hold SHIFT to run</td></tr>
+    <tr><td>F</td><td>PA price check (stalls them, 9s)</td></tr>
+    <tr><td>Q</td><td>return to post</td></tr>
+  </table>
+  <p>Read the analytics roster before you dispatch.
+     <em>HAND TO COAT &mdash; NO ITEM RETURNED</em> is a thief.
+     <em>MOVING AT NORMAL SPEED (SUSPICIOUS)</em> is a trap and flags identically.
+     Roll up on an innocent shopper and you get a harassment complaint.
+     Three of those and you're back on traffic duty.</p>
+  <div class="go">CLICK ANYWHERE TO START SHIFT</div>
+</div></div>
+<script>
+  addEventListener('DOMContentLoaded', () => {
+    const s = document.getElementById('start');
+    const go = () => { s && s.remove(); removeEventListener('keydown', go); };
+    s && s.addEventListener('click', go);
+    addEventListener('keydown', go);
+  });
+</script>
 <script type="importmap">
 { "imports": {
     "three": "./vendor/three.module.js",
