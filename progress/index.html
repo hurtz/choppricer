@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>CHOP PRICER — Gauntlet</title>
+<style>
+:root{--bg:#0c0d0f;--panel:#141619;--line:#23262b;--txt:#d6d8dc;--dim:#7c828c;
+      --ok:#4ade80;--warn:#fbbf24;--bad:#f87171;--acc:#60a5fa}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+  font:13px/1.5 ui-monospace,"SF Mono",Menlo,monospace}
+header{padding:18px 22px;border-bottom:1px solid var(--line);display:flex;
+  align-items:baseline;gap:16px;flex-wrap:wrap;position:sticky;top:0;background:var(--bg);z-index:5}
+h1{font-size:15px;margin:0;letter-spacing:.22em}
+.sub{color:var(--dim);font-size:11px}
+.live{margin-left:auto;color:var(--ok);font-size:11px}
+.live::before{content:"●";margin-right:6px;animation:p 1.6s infinite}
+@keyframes p{50%{opacity:.25}}
+main{padding:20px 22px;display:grid;gap:16px;
+  grid-template-columns:repeat(auto-fit,minmax(340px,1fr));max-width:1600px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.chd{padding:12px 14px;border-bottom:1px solid var(--line);display:flex;
+  align-items:center;gap:10px}
+.name{letter-spacing:.14em;font-size:12px}
+.rd{color:var(--dim);font-size:11px}
+.pill{margin-left:auto;font-size:10px;padding:3px 9px;border-radius:99px;
+  border:1px solid currentColor;letter-spacing:.1em}
+.queued{color:var(--dim)}.building{color:var(--acc)}.critiquing{color:var(--warn)}
+.gap{color:var(--bad)}.passed{color:var(--ok)}
+.shots{display:flex;gap:8px;overflow-x:auto;padding:12px 14px;scroll-snap-type:x mandatory}
+.shots figure{margin:0;flex:0 0 auto;scroll-snap-align:start}
+.shots img{height:130px;border:1px solid var(--line);border-radius:4px;display:block;
+  background:#000;cursor:zoom-in}
+.shots figcaption{color:var(--dim);font-size:10px;padding-top:4px;text-align:center}
+.body{padding:0 14px 14px}
+.lbl{color:var(--dim);font-size:10px;letter-spacing:.14em;margin:10px 0 3px}
+.txt{font-size:12px}
+.gaptxt{color:#fca5a5}
+.empty{color:var(--dim);padding:14px;font-size:11px;font-style:italic}
+#feed{max-width:1600px;margin:0 22px 40px;border-top:1px solid var(--line);padding-top:14px}
+#feed h2{font-size:11px;letter-spacing:.18em;color:var(--dim);margin:0 0 10px}
+.row{display:flex;gap:12px;padding:5px 0;border-bottom:1px solid #17191d;font-size:11.5px}
+.row time{color:var(--dim);flex:0 0 62px}
+.row b{flex:0 0 74px;font-weight:500;letter-spacing:.08em}
+.row .rl{flex:0 0 58px;color:var(--dim)}
+#lb{position:fixed;inset:0;background:#000e;display:none;place-content:center;z-index:50;cursor:zoom-out}
+#lb img{max-width:94vw;max-height:94vh}
+</style></head><body>
+<header>
+  <h1>CHOP PRICER</h1>
+  <span class="sub">gauntlet loop · bar = real supermarket CCTV + interior photography</span>
+  <span class="live" id="live">LIVE</span>
+</header>
+<main id="grid"></main>
+<section id="feed"><h2>ROUND FEED</h2><div id="rows"></div></section>
+<div id="lb"><img></div>
+<script>
+const ORDER=['store','cctv','agents','game'];
+const TITLE={store:'STORE',cctv:'CCTV',agents:'CHASE',game:'GAME'};
+const DESC={store:'aisles, product density, ceiling, signage',
+ cctv:'monitor wall, grain, distortion, timestamp',
+ agents:'thief AI, stamina, powerups, catch feel',
+ game:'modes, scoring, complaints, rank'};
+const ago=t=>{const s=(Date.now()/1e3)-t;if(s<60)return Math.floor(s)+'s';
+ if(s<3600)return Math.floor(s/60)+'m';return Math.floor(s/3600)+'h'};
+const esc=s=>(s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
+async function tick(){
+ let d;try{d=await(await fetch('status.json?'+Date.now())).json()}
+ catch(e){document.getElementById('live').textContent='OFFLINE';return}
+ document.getElementById('live').textContent='LIVE · '+ago(d.updated)+' ago';
+ document.getElementById('grid').innerHTML=ORDER.map(k=>{
+  const p=(d.pieces||{})[k];if(!p)return '';
+  const shots=(p.shots||[]).map(s=>
+   `<figure><img loading=lazy src="${s.path}?${Math.floor(s.t)}"><figcaption>r${s.round}</figcaption></figure>`).join('');
+  return `<div class=card>
+   <div class=chd><span class=name>${TITLE[k]||k}</span>
+    <span class=rd>round ${p.round}</span>
+    <span class="pill ${p.state}">${p.state.toUpperCase()}</span></div>
+   ${shots?`<div class=shots>${shots}</div>`:'<div class=empty>no screenshots yet</div>'}
+   <div class=body>
+    <div class=lbl>SCOPE</div><div class="txt" style="color:var(--dim)">${DESC[k]||''}</div>
+    ${p.note?`<div class=lbl>LATEST</div><div class=txt>${esc(p.note)}</div>`:''}
+    ${p.gap?`<div class=lbl>BIGGEST GAP</div><div class="txt gaptxt">${esc(p.gap)}</div>`:''}
+    ${p.verdict?`<div class=lbl>VERDICT</div><div class=txt>${esc(p.verdict)}</div>`:''}
+   </div></div>`}).join('');
+ document.getElementById('rows').innerHTML=(d.log||[]).map(l=>
+  `<div class=row><time>${ago(l.t)} ago</time><b>${(TITLE[l.piece]||l.piece)}</b>
+   <span class=rl>r${l.round}·${l.role}</span><span>${esc(l.text)}</span></div>`).join('');
+}
+const lb=document.getElementById('lb');
+document.addEventListener('click',e=>{
+ if(e.target.tagName==='IMG'&&e.target.closest('.shots')){
+  lb.querySelector('img').src=e.target.src;lb.style.display='grid'}
+ else if(e.target.closest('#lb'))lb.style.display='none'});
+tick();setInterval(tick,2000);
+</script></body></html>

@@ -1,0 +1,127 @@
+{
+ "pieces": {
+  "store": {
+   "round": 0,
+   "state": "queued",
+   "shots": [
+    {
+     "round": 0,
+     "path": "../shots/store_r0_baseline.png",
+     "t": 1787405276.020098
+    }
+   ],
+   "gaps": [],
+   "updated": 1787405276.0200949,
+   "note": "skeleton baseline captured"
+  },
+  "cctv": {
+   "round": 0,
+   "state": "queued",
+   "shots": [
+    {
+     "round": 0,
+     "path": "../shots/cctv_r0_baseline.png",
+     "t": 1787405276.052319
+    }
+   ],
+   "gaps": [],
+   "updated": 1787405276.0523179,
+   "note": "skeleton baseline captured"
+  },
+  "agents": {
+   "round": 0,
+   "state": "queued",
+   "shots": [
+    {
+     "round": 0,
+     "path": "../shots/agents_r0_baseline.png",
+     "t": 1787405276.081095
+    }
+   ],
+   "gaps": [],
+   "updated": 1787405276.0810938,
+   "note": "skeleton baseline captured"
+  },
+  "game": {
+   "round": 0,
+   "state": "queued",
+   "shots": [
+    {
+     "round": 0,
+     "path": "../shots/game_r0_baseline.png",
+     "t": 1787405276.109099
+    }
+   ],
+   "gaps": [],
+   "updated": 1787405276.109097,
+   "note": "skeleton baseline captured"
+  }
+ },
+ "log": [
+  {
+   "t": 1787405276.109099,
+   "piece": "game",
+   "role": "lead",
+   "round": 0,
+   "state": "queued",
+   "text": "skeleton baseline captured"
+  },
+  {
+   "t": 1787405276.081096,
+   "piece": "agents",
+   "role": "lead",
+   "round": 0,
+   "state": "queued",
+   "text": "skeleton baseline captured"
+  },
+  {
+   "t": 1787405276.05232,
+   "piece": "cctv",
+   "role": "lead",
+   "round": 0,
+   "state": "queued",
+   "text": "skeleton baseline captured"
+  },
+  {
+   "t": 1787405276.020098,
+   "piece": "store",
+   "role": "lead",
+   "round": 0,
+   "state": "queued",
+   "text": "skeleton baseline captured"
+  },
+  {
+   "t": 1787405016.593847,
+   "piece": "game",
+   "role": "lead",
+   "round": 0,
+   "state": "queued",
+   "text": "skeleton: text HUD only"
+  },
+  {
+   "t": 1787405016.5650828,
+   "piece": "agents",
+   "role": "lead",
+   "round": 0,
+   "state": "queued",
+   "text": "skeleton: capsule cop, no AI"
+  },
+  {
+   "t": 1787405016.536468,
+   "piece": "cctv",
+   "role": "lead",
+   "round": 0,
+   "state": "queued",
+   "text": "skeleton: raw render, no grade"
+  },
+  {
+   "t": 1787405016.507599,
+   "piece": "store",
+   "role": "lead",
+   "round": 0,
+   "state": "queued",
+   "text": "skeleton: grey boxes, flat light"
+  }
+ ],
+ "updated": 1787405276.1091
+}
