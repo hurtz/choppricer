@@ -1,7 +1,11 @@
 # Reference images
 
-Real supermarket photography from Wikimedia Commons, used as the visual bar for CHOP PRICER.
-Comparison/reference use only — not redistributed in the built game.
+Real supermarket photography from Wikimedia Commons, used as the visual bar for CHOP PRICER —
+these are the images the renders were blind-tested against.
+
+Each file is licensed CC BY or CC BY-SA and is redistributed here under those terms, with
+author, licence and source page listed below. They are reference material only: none of this
+imagery appears in the game, whose textures are entirely procedural.
 
 - store_00_Port_Gibson_MS_Piggly_Wiggly_frozen_food_aisle_with_taxidermy.jpg — CC BY-SA 3.0 — Infrogmation of New Orleans — https://commons.wikimedia.org/wiki/File:Port_Gibson_MS_Piggly_Wiggly_frozen_food_aisle_with_taxidermy.jpg
 - store_01_Canned_and_packaged_tuna_on_supermarket_shelves.jpg — CC BY-SA 3.0 — Daniel Case — https://commons.wikimedia.org/wiki/File:Canned_and_packaged_tuna_on_supermarket_shelves.jpg
