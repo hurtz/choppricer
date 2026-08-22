@@ -31,3 +31,20 @@ and `snap()`/`run()` work with the tab backgrounded (they never depend on rAF).
     C.pause();
     await C.snap('name');                        // -> shots/name.png
     C.run(4, { keys: ['KeyW','ShiftLeft'] });    // deterministic sim steps
+
+## Tuning hazard: shadow blocks
+
+`src/agents.js` has carried per-round override objects (`R4`, `R5`) so a builder can
+run its own numbers before the lead promotes them into `TUNING`. These are fine
+while a round is in flight and dangerous afterwards: a getter written
+`return R5.x` instead of `return T.x ?? R5.x` makes `config.js` decorative for
+that constant, and a later TUNING edit silently does nothing.
+
+Rule: an override block gets collapsed in the round after it is promoted, and
+every constant ends up read as `T.x ?? fallback`. When collapsing, keep the
+measurement prose — the rejected experiments and sweeps in those comments are
+the most useful documentation in the file.
+
+Two bugs of exactly this shape have already cost rounds here: gassed sprint speed
+outrunning the healthy walk for four rounds, and `bargeDump` being byte-identical
+at 0.40 and 0.85 because its `Math.max` never fired.

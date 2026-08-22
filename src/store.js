@@ -2099,8 +2099,11 @@ export function buildStore(THREE, scene) {
       B.push(px, y, pz, 0, yaw, 0, sx, sy, sz, col);
     };
     // basket: real wire. `axis` 0 = the panel spans local X, 1 = local Z.
-    const WR = 0.010, VP = 0.062, HP = 0.085;
-    const bright = 0xdfe4ea, dull = 0xa8aeb6;
+    // 38 mm vertical / 55 mm horizontal on 6.5 mm rod, which is what a real
+    // nesting basket measures. The first pass at this used 62/85 mm on 10 mm
+    // rod and read as scaffolding, not as a basket.
+    const WR = 0.0065, VP = 0.038, HP = 0.055;
+    const bright = 0xdfe4ea, dull = 0xbcc2c9;
     // a vertical panel: bars up the face at VP, bars across it at HP
     const panel = (dx, dz, y, half, halfH, axis) => {
       for (let a = -half + WR; a <= half - WR + 1e-4; a += VP) {
@@ -2125,6 +2128,14 @@ export function buildStore(THREE, scene) {
     for (let b = -0.44; b <= 0.441; b += HP) {
       put(0, 0.423, b, 0.55, WR * 0.9, WR, bright);
     }
+    // the lower rack is a wire deck too, not a steel plate — it was one of the
+    // last solid grey slabs left on the cart
+    for (let a = -0.235; a <= 0.236; a += VP * 1.3) {
+      put(a, 0.175, 0, WR, WR, 0.86, dull);
+    }
+    for (let b = -0.41; b <= 0.411; b += HP * 1.4) {
+      put(0, 0.182, b, 0.50, WR, WR, bright);
+    }
     // tube frame: top rail all round, corner posts, undercarriage, handle
     put(0, 0.815, -0.455, 0.58, 0.028, 0.028, 0xd6dae0);
     put(0, 0.815, 0.455, 0.58, 0.028, 0.028, 0xd6dae0);
@@ -2135,7 +2146,6 @@ export function buildStore(THREE, scene) {
       put(sx * 0.255, 0.30, -0.40, 0.026, 0.62, 0.026, 0xb9bec5);
     }
     put(0, 0.885, 0.545, 0.56, 0.042, 0.042, 0xc0392b);          // plastic handle
-    put(0, 0.175, 0, 0.50, 0.022, 0.86, 0x9aa0a8);               // lower rack
     put(0, 0.135, 0, 0.44, 0.020, 0.10, 0x2f3339);               // ad frame
     for (const [dx, dz] of [[-0.225, -0.365], [0.225, -0.365], [-0.225, 0.365], [0.225, 0.365]]) {
       put(dx, 0.075, dz, 0.055, 0.10, 0.11, 0x33363b);

@@ -57,14 +57,50 @@ function mulberry32(a) {
 
 // ---------------------------------------------------------------- floor driver
 // One competent pair of hands, shared by both policies, so the comparison
-// isolates the desk decision. Walks in (arriving gassed loses chases), sprints
-// once the subject is moving, gives up and goes back to post on an empty aisle.
+// isolates the desk decision.
+//
+// ROUND 5 REBUILD, AND THE REASON IS NOT A PREFERENCE. This driver used to end
+// with `input.sprint = running || gap > 16 || toDoor < 14`, i.e. it held the key
+// from the dispatch to the grab. For four rounds that was free. It is not free
+// now: agents.js fixed a bug where a gassed cop STILL HOLDING SPRINT outran a
+// full-tank cop who chose to walk (3.13 m/s vs 2.35), and with that inverted and
+// the tank cut to 1.40 s, holding the key measures 46.0% against 74.7% for
+// rationing it. A bot that holds the key does not measure this game any more; it
+// measures a player making the single worst available mistake, twice a minute,
+// and it would have reported the desk phase about 25 points low.
+//
+// So the driver rations. But rationing needs something to ration AGAINST, and
+// that is the part that is easy to get wrong: agents.js measured wind skill at
+// 28.7 points to a bot that plans an intercept and only 6.7 to one that runs
+// straight at the man, because "do I need to spend this?" is unanswerable
+// without an estimate of when you would otherwise arrive. A pure pursuit has no
+// such estimate — its slack is always infinite — so bolting a wind policy onto
+// the old straight-line follower would have bought back a quarter of what the
+// change cost. The driver therefore plans first and spends second:
+//
+//   ROUTE   one Dijkstra out of the cop a few times a second, and the thief's
+//           own line to the door he is nearest, sampled every ~2 m with the arc
+//           length along it. The goal is the EARLIEST point on his line the cop
+//           can reach before he does — not his current position, which is the
+//           one place he is guaranteed not to be when you get there.
+//   WIND    spend only when the intercept is actually tight (slack < 0.35 s),
+//           when he is inside grabbing range, or when he is on the push-bar.
+//           A live boost is a timer and not a top speed, so it is always spent.
+//
+// This is deliberately the same shape as agents.js's own `cut` + `ration`
+// reference pair, because the desk phase should be measured through a floor
+// phase that plays the way the chase builder has established a competent player
+// plays. Any other choice measures the desk read through somebody else's
+// mistakes. Nothing here reads a thief's hidden state: the route is computed
+// from his position, the same way the HUD's door read is.
 function makeDriver(ctx) {
   const { agents, input } = ctx;
-  const nav = agents.nav;
-  const st = { path: [], repath: 0, gx: 0, gz: 0, dry: 0, leash: 0, was: 'desk' };
+  const st = {
+    path: [], repath: 0, gx: 0, gz: 0, dry: 0, leash: 0, was: 'desk',
+    navRef: null, copF: null, copBuf: null, cfT: 0, planT: 0, route: [],
+  };
 
-  function follow(pos) {
+  function follow(nav, pos) {
     while (st.path.length) {
       const w = st.path[0];
       const nxt = st.path[1];
@@ -81,9 +117,37 @@ function makeDriver(ctx) {
     return { x: dx / m, z: dz / m, d: m };
   }
 
+  // His line to the door he is nearest, sampled every ~2 m carrying the arc
+  // length, so "can I be at THAT spot before he is" is one field lookup.
+  function routeOf(nav, t) {
+    const e = agents.exitOf && agents.exitOf(t.position.x, t.position.z);
+    const door = e && e.exit;
+    if (!door) return [];
+    const raw = nav.path(t.position.x, t.position.z, door.x, door.z) || [];
+    const out = [];
+    let cx = t.position.x, cz = t.position.z, run = 0;
+    for (const w of raw) {
+      const d = d2(cx, cz, w.x, w.z);
+      const steps = Math.max(1, Math.round(d / 2.0));
+      for (let i = 1; i <= steps; i++) {
+        const f = i / steps;
+        run += d / steps;
+        out.push({ x: cx + (w.x - cx) * f, z: cz + (w.z - cz) * f, s: run });
+      }
+      cx = w.x; cz = w.z;
+    }
+    return out;
+  }
+
   return function drive(dt, game) {
+    const nav = agents.nav;
     const cop = agents.cop.position;
+    const u = agents.cop.userData;
+    const T = agents.tuning;
     const t = game.bot.target();
+    if (st.navRef !== nav) {          // store.js rebuilt the world under us
+      st.navRef = nav; st.copF = null; st.copBuf = null; st.path = []; st.route = [];
+    }
     if (st.was !== 'floor') { st.leash = 0; st.dry = 0; st.path = []; }
     st.was = 'floor';
     st.leash += dt;
@@ -102,27 +166,73 @@ function makeDriver(ctx) {
       input.x = 0; input.z = 0; input.sprint = false;
       game.enterDesk(); st.was = 'desk'; return;
     }
-    // Lead him, but only when the segment is clear — leading through a gondola
-    // aims the cop at a shelf.
+
     let gx = t.position.x, gz = t.position.z;
-    if (nav.clearSeg(cop.x, cop.z, gx, gz)) { gx += t.vel.x * 0.30; gz += t.vel.z * 0.30; }
+    let sprint;
+
+    if (!running) {
+      // Walking up on him. Lead him, but only when the segment is clear —
+      // leading through a gondola aims the cop at a shelf.
+      if (nav.clearSeg(cop.x, cop.z, gx, gz)) { gx += t.vel.x * 0.30; gz += t.vel.z * 0.30; }
+      // Bank the wind on the approach: arriving winded loses the chase before
+      // it starts, and the tank refills in 0.81 s of NOT holding the key, so
+      // there is no reason to still be on it when you get there.
+      sprint = gap > 12;
+    } else {
+      st.cfT -= dt;
+      if (!st.copF || st.cfT <= 0) {
+        st.cfT = 0.30;
+        if (!st.copBuf || st.copBuf.length !== nav.count) st.copBuf = new Float32Array(nav.count);
+        st.copF = nav.field(cop.x, cop.z, { out: st.copBuf });
+      }
+      st.planT -= dt;
+      if (st.planT <= 0) { st.planT = 0.20; st.route = routeOf(nav, t); }
+
+      const tSpd = agents.thiefCruise ? agents.thiefCruise() : T.thiefRun;
+      const cSpd = T.copRun * 0.86;
+      // A boost is a timer, not a top speed: plan the metres it actually buys,
+      // then the rest at a normal pace.
+      const bSpd = T.copRun * T.boostMul;
+      const dBoost = u.boost > 0 ? u.boost * bSpd : 0;
+      const arrive = (d) => (d <= dBoost ? d / bSpd : u.boost + (d - dBoost) / cSpd);
+
+      let best = null;
+      for (const w of st.route) {                 // ordered, so the first hit is the earliest
+        const cD = nav.at(st.copF, w.x, w.z);
+        if (!isFinite(cD)) continue;
+        const tT = w.s / tSpd, cT = arrive(cD);
+        if (cT <= tT - 0.18) { best = { w, slack: tT - cT }; break; }
+      }
+      let slack;
+      if (best) { gx = best.w.x; gz = best.w.z; slack = best.slack; }
+      else {
+        // Cannot head him off anywhere on his line. The door is the last place
+        // he has to be, so go and stand on it if that is even close to
+        // reachable; otherwise there is nothing left but to run at him.
+        const e = agents.exitOf && agents.exitOf(t.position.x, t.position.z);
+        const door = e && e.exit;
+        const rTot = st.route.length ? st.route[st.route.length - 1].s : 0;
+        const cD = door ? nav.at(st.copF, door.x, door.z) : Infinity;
+        if (door && isFinite(cD) && arrive(cD) < rTot / tSpd + 1.2) { gx = door.x; gz = door.z; }
+        slack = 0;                                // nothing is comfortable from here
+      }
+      // Spend it when the intercept needs it, when he is inside grabbing range,
+      // or when he is stalled on a push-bar. Never to arrive four seconds early.
+      sprint = u.boost > 0 || gap < 3.4 || t.state === 'shove' || slack < 0.35;
+    }
+
     st.repath -= dt;
     if (st.repath <= 0 || !st.path.length || d2(st.gx, st.gz, gx, gz) > 1.2) {
       st.repath = 0.12; st.gx = gx; st.gz = gz;
       st.path = nav.path(cop.x, cop.z, gx, gz);
     }
-    const dir = follow(cop);
+    const dir = follow(nav, cop);
     if (!dir) { input.x = 0; input.z = 0; input.sprint = false; return; }
     input.x = dir.x; input.z = -dir.z;              // main.js hands W as -1
-    // Bank the wind on the approach. Sprint once he is moving, or when he is
-    // close enough to the doors that arriving late is the same as not arriving.
-    // ROUND 3: metres of ROUTE to the door HE is nearest, not a straight line to
-    // Door 1 — with two doors 35 m apart that test was measuring the wrong wall
-    // for half the store and the bot was walking while a man left by Door 2.
-    const toDoor = doorDist(agents, t);
-    input.sprint = running || gap > 16 || toDoor < 14;
+    input.sprint = sprint;
   };
 }
+
 
 // ------------------------------------------------------------------- policies
 // Perfect at INTERPRETING, limited to what the terminal actually shows. That
