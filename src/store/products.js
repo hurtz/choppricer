@@ -130,8 +130,14 @@ export function fillShelf(B, rng, dept, opts) {
     if (rng() < 0.035) { a += rr(rng, 0.05, 0.22); continue; }
 
     const shade = lit * rr(rng, 0.9, 1.06);
-    col.setHSL(hsl[0] / 360, hsl[1] / 100 * rr(rng, 0.85, 1.05), hsl[2] / 100 * rr(rng, 0.9, 1.08));
+    col.setHSL(
+      hsl[0] / 360,
+      Math.min(1, hsl[1] / 100 * rr(rng, 1.0, 1.22)),
+      Math.min(0.94, hsl[2] / 100 * rr(rng, 0.94, 1.14)));
     col.multiplyScalar(shade);
+    // how far this SKU is pushed back off the shelf lip — a perfectly flush
+    // front edge across 26 m of shelf is the fastest way to look computed
+    const setback = rr(rng, 0.0, 0.055);
 
     // stacking: cans and small boxes often sit two high on a deep shelf
     const stack = (kind.t === 'can' && headroom > h * 2 + 0.05 && rng() < 0.35) ? 2 : 1;
@@ -139,8 +145,9 @@ export function fillShelf(B, rng, dept, opts) {
     for (let k = 0; k < n && a < a1 - w * 0.5; k++) {
       const jitter = rr(rng, -0.006, 0.006);
       for (let s = 0; s < stack; s++) {
-        const cx = isZ ? lip - face * (pd / 2 + 0.015) : a + w / 2 + jitter;
-        const cz = isZ ? a + w / 2 + jitter : lip - face * (pd / 2 + 0.015);
+        const back = pd / 2 + 0.015 + setback + rr(rng, 0, 0.012);
+        const cx = isZ ? lip - face * back : a + w / 2 + jitter;
+        const cz = isZ ? a + w / 2 + jitter : lip - face * back;
         const cy = deckY + h / 2 + s * h;
         const ry = isZ ? (face > 0 ? Math.PI / 2 : -Math.PI / 2) : (face > 0 ? 0 : Math.PI);
         const yaw = ry + rr(rng, -0.045, 0.045);

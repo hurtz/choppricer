@@ -29,7 +29,7 @@ const K = {
   get thiefAccel()    { return T.thiefAccel    ?? 15.0; },
   get thiefCorner()   { return T.thiefCorner   ?? 0.60; }, // speed mult on a 90 degree cut
   get thiefReact()    { return T.thiefReact    ?? 0.22; }, // seconds of "oh shit" before the bolt
-  get pickupRadius()  { return T.pickupRadius  ?? 0.45; },
+  get pickupRadius()  { return T.pickupRadius  ?? 0.62; },
   get pickupReach()   { return T.pickupReach   ?? 1.25; }, // m/s toward the shelf face
   get shopperCount()  { return T.shopperCount  ?? 14; },
   get thiefCount()    { return T.thiefCount    ?? 2; },
@@ -914,9 +914,28 @@ export function createAgents(THREE, scene, world) {
     const u = cop.userData;
     let gx, gz;
     if (mode === 'pickup' && !st.gotBoost) {
+      // A competent player, not an oracle: every fifth of a second, look for the
+      // powerup that costs the least ground to detour to, and only take it if
+      // that detour is worth it. Committing to one can across the store at the
+      // start of the chase is not how anybody plays, and it was costing the
+      // bench 20 points of catch rate.
+      st.puT -= dt;
+      if (st.puT <= 0) {
+        st.puT = 0.2;
+        const direct = dist2d(cop.position.x, cop.position.z, thief.position.x, thief.position.z);
+        let best = null, bestX = Infinity;
+        for (const p of powerups) {
+          if (!p.live) continue;
+          const extra = dist2d(cop.position.x, cop.position.z, p.x, p.z)
+                      + dist2d(p.x, p.z, thief.position.x, thief.position.z) - direct;
+          if (extra < bestX) { bestX = extra; best = p; }
+        }
+        st.puTarget = best && bestX <= st.detour ? best : null;
+      }
       const p = st.puTarget;
-      if (p && p.live) { gx = p.x; gz = p.z; }
-      else { st.gotBoost = true; }
+      // Aim past the can into the shelf face — you cannot take it off the shelf
+      // by running parallel to it.
+      if (p && p.live) { gx = p.x + p.nx * 0.55; gz = p.z + p.nz * 0.55; }
     }
     if (gx === undefined) { gx = thief.position.x; gz = thief.position.z; }
     if (u.boost > 0) st.gotBoost = true;
@@ -997,17 +1016,10 @@ export function createAgents(THREE, scene, world) {
       cu.boost = mode === 'boost' ? T.boostTime : 0;
 
       if (opts.nopu) for (const p of powerups) { p.live = false; p.respawn = 1e6; p.mesh.visible = false; }
-      const st = { gotBoost: mode !== 'pickup', puTarget: null, path: [], repath: 0, goal: { x: 0, z: 0 } };
-      if (mode === 'pickup') {
-        let best = null, bestC = Infinity;
-        for (const p of powerups) {
-          if (!p.live) continue;
-          const c = dist2d(cop.position.x, cop.position.z, p.x, p.z)
-                  + dist2d(p.x, p.z, thief.position.x, thief.position.z) * 0.55;
-          if (c < bestC) { bestC = c; best = p; }
-        }
-        st.puTarget = best;
-      }
+      const st = {
+        gotBoost: mode !== 'pickup', puTarget: null, puT: 0, detour: opts.detour ?? 7,
+        path: [], repath: 0, goal: { x: 0, z: 0 },
+      };
 
       let time = 0, done = 0, finalGap = 0;
       let tBolt = NaN, gapAtBolt = NaN, routeAtBolt = NaN;

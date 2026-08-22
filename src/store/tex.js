@@ -290,10 +290,12 @@ export function boxAtlas(THREE) {
     g.fillStyle = ink(255, 150); g.fillRect(0, 0, M, 18);
     g.fillStyle = ink(255, 124); g.fillRect(0, H - 24, M, 24);
     g.fillStyle = 'rgba(0,0,0,0.16)'; g.fillRect(M - 3, 0, 3, H);
-    // barcode patch, bottom-right of the printed face
-    g.fillStyle = ink(16, 250); g.fillRect(W - 40, H - 21, 34, 16);
-    g.fillStyle = ink(16, 24);
-    for (let x = W - 37; x < W - 9; x += 2.6) g.fillRect(x, H - 19, 1.2, 11);
+    // a small net-weight flash — a barcode belongs on the back of the carton and
+    // repeating one in the same corner of every facing is an instant tell
+    if (d === 1 || d === 2) {
+      g.fillStyle = ink(40, 245); g.fillRect(W - 30, H - 16, 23, 9);
+      g.fillStyle = ink(40, 40); g.fillRect(W - 27, H - 14, 16, 4);
+    }
     // vertical edge shading — reads as a carton corner
     const e = g.createLinearGradient(M, 0, W, 0);
     e.addColorStop(0, 'rgba(0,0,0,0.34)'); e.addColorStop(0.10, 'rgba(0,0,0,0)');

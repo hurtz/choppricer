@@ -212,9 +212,13 @@ export function buildStore(THREE, scene) {
 
   // products.js only knows B.box / B.can / B.bottle / B.bag; fan the box and bag
   // pushes out over the atlas variants so no two neighbours are the same print.
+  // Pick the print from the brand colour, not at random: every facing of one SKU
+  // shares a colour, so a run of 8 comes out as 8 identical packages the way a
+  // real planogram does — while the next SKU along gets a different carton.
   const multi = (arr) => ({
     push(px, py, pz, ex, ey, ez, sx, sy, sz, c) {
-      arr[(rng() * arr.length) | 0].push(px, py, pz, ex, ey, ez, sx, sy, sz, c);
+      const h = (c.r * 733 + c.g * 1471 + c.b * 2879) | 0;
+      arr[((h % arr.length) + arr.length) % arr.length].push(px, py, pz, ex, ey, ez, sx, sy, sz, c);
     },
     box(px, py, pz, sx, sy, sz, c) { this.push(px, py, pz, 0, 0, 0, sx, sy, sz, c); },
   });
@@ -262,8 +266,10 @@ export function buildStore(THREE, scene) {
 
   // long specular smear of the light rows down each aisle
   for (let i = 0; i < AISLE_COUNT; i++) {
-    qUp(Qglow, aisleX(i), 0.012, 0, AISLE_GAP * 0.92, AISLE_LEN * 1.02, FULL);
-    qUp(Qglow, aisleX(i), 0.018, 0, AISLE_GAP * 0.30, AISLE_LEN * 0.94, FULL);
+    for (const s of [-1, 1]) {
+      qUp(Qglow, aisleX(i) + s * 0.95, 0.012, 0, 1.5, AISLE_LEN * 1.04, FULL);
+      qUp(Qglow, aisleX(i) + s * 0.95, 0.018, 0, 0.42, AISLE_LEN * 0.96, FULL);
+    }
   }
   qUp(Qglow, CX, 0.012, FRONT_WALK_Z + 0.6, SW * 0.9, 7.0, FULL);
   qUp(Qglow, CX, 0.012, BACK_WALK_Z, SW * 0.9, 6.0, FULL);
@@ -313,7 +319,10 @@ export function buildStore(THREE, scene) {
   // =========================================================================
   const ceilPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(SW, SD),
-    new THREE.MeshLambertMaterial({ map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 2.44, SD / 2.44); return t; })(), color: 0xf6efdd }));
+    new THREE.MeshLambertMaterial({
+      map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 2.44, SD / 2.44); return t; })(),
+      color: 0xf6efdd, emissive: 0x8b8676, emissiveIntensity: 1.0,
+    }));
   ceilPlane.rotation.x = Math.PI / 2;    // normal points down
   ceilPlane.position.set(CX, CEIL_H, CZ);
   ceilGroup.add(ceilPlane);
@@ -412,10 +421,19 @@ export function buildStore(THREE, scene) {
           axis: 'z', a0: z0 + 0.05, a1: z1 - 0.05, lip, face: f.dir,
           deckY: DECK[d], headroom: head, depth: dep, lit: LIT[d], col,
         });
+        // top deck gets a second row behind the facings — otherwise the chase
+        // camera looks straight down onto a bare cream board the length of the run
+        if (d === DECK.length - 1) {
+          fillShelf(B, rng, f.dept, {
+            axis: 'z', a0: z0 + 0.05, a1: z1 - 0.05, lip: lip - f.dir * (dep * 0.55),
+            face: f.dir, deckY: DECK[d], headroom: head, depth: dep * 0.48,
+            lit: LIT[d] * 0.88, col,
+          });
+        }
       }
-      // uprights every 4ft section
+      // uprights every 4ft section, flush with the lip so they read as breaks
       for (let z = z0; z <= z1 + 0.01; z += 1.22) {
-        fix(lip - f.dir * 0.05, 1.10, z, 0.10, 1.95, 0.055, P.upright);
+        fix(lip - f.dir * 0.010, 1.10, z, 0.042, 1.95, 0.040, P.upright);
       }
       // top rail / valance
       fix(lip - f.dir * 0.05, SHELF_H + 0.02, 0, 0.11, 0.07, len, P.deckDark);
@@ -547,6 +565,8 @@ export function buildStore(THREE, scene) {
     qUp(Qshadow, x + 0.05, 0.006, laneCZ, 2.4, laneLen + 1.4, FULL);
     solid(x - 0.62, 0, laneZ0 - 0.1, x + 0.82, 1.1, laneZ1 + 0.1);
   }
+
+  flushPkg(Bfront, 'frontend');
 
   // storefront: bright glazing + entry doors near EXIT
   const gx0 = EXIT.x - 3.4, gx1 = EXIT.x + 3.4;
@@ -775,7 +795,7 @@ export function buildStore(THREE, scene) {
   });
   const sm = soup(Qshadow, shadowMat, 'contactShadows'); if (sm) sm.renderOrder = 1;
   const glowMat = new THREE.MeshBasicMaterial({
-    map: T.glow, transparent: true, opacity: 0.17, depthWrite: false,
+    map: T.glow, transparent: true, opacity: 0.30, depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
   const gm = soup(Qglow, glowMat, 'floorGlow'); if (gm) gm.renderOrder = 2;
