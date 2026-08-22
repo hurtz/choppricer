@@ -10,7 +10,7 @@ is the bar.
 import sys, wave, math, numpy as np
 
 TARGETS = {
-    "mains_hum_db":   (-46, -22, "120Hz ballast hum above broadband floor"),
+    "mains_hum_db":   (6, 40, "120Hz ballast hum, dB ABOVE the local noise floor"),
     "lf_rumble_frac": (0.18, 0.55, "energy below 200Hz (HVAC + compressors)"),
     "hf_air_frac":    (0.02, 0.20, "energy above 5kHz (cart rattle, till beeps)"),
     "flatness":       (0.10, 0.62, "spectral flatness — noisy, not tonal"),
