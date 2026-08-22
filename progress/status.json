@@ -94,8 +94,8 @@
    "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
   },
   "agents": {
-   "round": 3,
-   "state": "gap",
+   "round": 4,
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -131,6 +131,11 @@
      "round": 3,
      "path": "../shots/critic3_x.png",
      "t": 1787419577.229595
+    },
+    {
+     "round": 4,
+     "path": "../shots/agents_r4.png",
+     "t": 1787428448.391545
     }
    ],
    "gaps": [
@@ -155,10 +160,10 @@
      "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
     }
    ],
-   "updated": 1787419691.500607,
-   "note": "Root cause was NOT the avoid radius: nav.steer did greedy descent FIRST then filtered, so a corked aisle fouled every point, got=false, and it fell back to 'furthest visible point' \u2014 the far side of the cop. The thief sprinted INTO him. Fix prices the cop as a cost inside the Dijkstra flood, but ONLY downstream of the runner: without that filter a cop merely behind prices the ground the thief stands on and the stern chase leaks 1.3% -> 79%.",
+   "updated": 1787428559.548615,
+   "note": "Design fix: two doors 35m apart PLUS a per-subject door preference (people leave by the door they came in by). With two doors alone the misaim table went flat again because position still implied destination. A third door was built, measured and discarded - 13 points of difficulty for no design gain, numbers left in the file so nobody rebuilds it. Barge fixed not cut: needed BOTH ending up through the cop (97->81% still caught) and costing 1.5s of wind (->59%). Carts are real ~100-strut wire trolleys at 7 draw calls each, down from 10. Powerups are real lit objects.",
    "gap": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it.",
-   "verdict": "FAIL \u2014 real progress, but the collection is still the majority case. Independently: no-powerup 72.7% (builder 68.0), free boosts 0.001, legacy behind-spawn 0.8% \u2014 those hold. Misaim does NOT: wrong-by-1 60.0% (claimed 44.7), wrong-by-2 47.3% (claimed 34.7), because the builder's pursuit bot is weaker than a competent player."
+   "verdict": "PASS on distribution. Median bolt-to-grab 1.13s -> 3.03s; catchUnder1s 61.3% -> 15.7%. Branch split fixed: comes-at-cop 97.1% -> 89%, out-the-back 0% -> 61%. Door-camping INVERTED: camper was 80.7/67.3 at wrong-aisle 1/2, now 22.5/4.0; pursuing cut bot 79.5/60.0/58.0."
   },
   "game": {
    "round": 3,
@@ -201,6 +206,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787428559.548616,
+   "piece": "agents",
+   "role": "builder",
+   "round": 4,
+   "state": "passed",
+   "text": "Design fix: two doors 35m apart PLUS a per-subject door preference (people leave by the door they came in by). With two doors alone the misaim table went flat again because position still implied destination. A third door was built, measured and discarded - 13 points of difficulty for no design gain, numbers left in the file so nobody rebuilds it. Barge fixed not cut: needed BOTH ending up through the cop (97->81% still caught) and costing 1.5s of wind (->59%). Carts are real ~100-strut wire trolleys at 7 draw calls each, down from 10. Powerups are real lit objects."
+  },
+  {
+   "t": 1787428448.391546,
+   "piece": "agents",
+   "role": "builder",
+   "round": 4,
+   "state": "building",
+   "text": "n=200, postSpawn('aisle'), blind bots. Median chase 1.13s -> 3.03s; catchUnder1s 61.3% -> 15.7%. Branch split: comes-at-cop 97/200 89% (was 97.1%), out-the-back 70/200 61% (was 0/270). Door-camping bot 80.7%/67.3% -> 22.5%/5.0% vs pursuing 79.5%/58.0% \u2014 fixed with a SECOND DOOR plus a per-thief door preference, both ablated (1 door: camp 91.3 vs cut 52.7; 3 doors measured and rejected). Barge FIXED not cut: 124 commits, 37 through, 41% of those escape (round 3: 7 through, 0 escaped). Ablation: no push-through+no wind cost 97% still caught (= round 3), +push-through 81%, +1.5s of cop stamina 59%. Pursuit bot strengthened (dead-reckons a lost subject along the exit field): beats the critic's 46.7% at misaim 2. Skill ladder now published: cut 79.5/60/58/60, chase 68.5/30.5/25.5/14, camp 22.5/4/5/2. FAILED: stamina management still pays nothing (always-sprint 81.3 vs ration 74.0); gating recovery on releasing sprint flips the sign but costs 22 points for 2.7 \u2014 not shipped, working documented. Carts rebuilt as real wire trolleys (baked lattice, child seat, 4 swivel casters, product); powerups are a printed VOLT can and an open donut clamshell, lit, no unlit quads. 0.64ms/step, 129 draw calls."
+  },
   {
    "t": 1787426575.076763,
    "piece": "store",
@@ -514,5 +535,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787426575.0767648
+ "updated": 1787428559.548617
 }

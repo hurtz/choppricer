@@ -44,7 +44,7 @@ export const TUNING = {
   // gap parks ~2.8m out instead of growing without bound. Adrenaline is a
   // gap-proportional floor that just exceeds the cop's sprint.
   thiefWind: 2.60,
-  thiefTired: 0.620,
+  thiefTired: 0.575,
   thiefPanic: 0.965,
   thiefPanicGap: 3.00,
   thiefPanicBand: 0.90,
@@ -64,13 +64,28 @@ export const TUNING = {
   // from 1.3% caught to 79%.
   copThreatR: 3.00, copThreatW: 110.0, copLead: 0.30, threatAhead: 3.00,
   fleeEvery: 0.17, fleeMove: 0.70, fleeNear: 12.0,
-  thiefLook: 8.60, thiefBlockCos: 0.60,
+  thiefLook: 17.0, thiefBlockCos: 0.60,
   // Shoulder barge: decided by where the cop stands at the moment of commitment.
   // Hold the lane centre and you have him; drift off one side and he goes past the
   // other for a 0.45s stumble.
   jukeRange: 5.20, jukeAhead: 0.34, jukeHold: 0.85, jukeLat: 1.75, jukeLip: 0.97,
-  grabSlack: 0.45, bargeGrace: 0.50, stumbleT: 0.45, stumbleMul: 0.72,
+  grabSlack: 0.45, bargeGrace: 0.50, stumbleT: 0.28, stumbleMul: 0.72,
   nerveLo: 0.55, nerveHi: 1.55,
+
+  // --- Round 4: two doors, and going through a man ---
+  // One door made the thief's destination public knowledge, and public knowledge
+  // beats a scouting report — a camper scored 80.7% at wrong-aisle-by-1. Two doors
+  // 35m apart plus a per-subject door preference (people leave by the door they
+  // came in by) inverts it: camper 4.0%, pursuer 60.0%. A third door was built,
+  // measured, and thrown away: 13 points of difficulty for no design gain.
+  thiefAccel: 10.5,
+  thiefAdren: 4.20, thiefAdrenBack: 0.17,
+  doorShove: 0.85, doorBias: 7.50,
+  // The barge needed BOTH halves: ending up through the cop (97% -> 81% still
+  // caught) AND costing him 1.5s of wind (-> 59%). The cop's sprint is 64% faster
+  // than the thief's cruise and reclaims two metres a second, so push-through
+  // alone was not a tactic. Half the tank is what makes it one.
+  bargeStagger: 1.25, bargeSlow: 0.22, bargeWind: 1.50, bargeDump: 0.85,
 };
 
 export const CAMERAS = [
