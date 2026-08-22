@@ -1,0 +1,303 @@
+// OWNER: builder-agents. Grid navigation for the chase.
+//
+// Why this exists. agents.js used to route off a "ladder" graph derived from
+// config.js: eight aisle lanes joined by a front and a back cross-aisle. That
+// graph describes the FLOOR PLAN, not the STORE. The store builder fills the
+// walkable lanes with produce tables, dump bins, checkout lanes and a cart
+// corral, and the ladder cheerfully routed thieves straight through them. They
+// ground along the geometry at a fraction of running speed while the cop — who
+// only ever steers at the thief and so never gets stuck on anything — strolled
+// up and collected them. The bench caught it cleanly: 74% catch with no
+// powerup, and escapes ONLY ever from aisles 0 and 1, the two the store had
+// left clean. No movement constant fixes that; the route was the bug.
+//
+// So: navigate off the actual collider set. A uniform occupancy grid, inflated
+// by the body radius, and a Dijkstra distance field flooded out from the exit.
+// The thief's escape direction is then a downhill walk on that field, string-
+// pulled against real line-of-sight — it cannot route into a dead end, it costs
+// nothing per frame, and it re-derives itself whenever the store changes shape.
+//
+//   makeNav(boxes, bounds, opt) -> {
+//     free(x,z), clearSeg(ax,az,bx,bz), snap(x,z),
+//     field(gx,gz) -> Float32Array,
+//     steer(F, x, z, opt) -> {x,z,tx,tz,dist} | null,
+//     path(ax,az,bx,bz) -> [{x,z}],
+//     nx, nz, cell, blocked, openFrac,
+//   }
+// `boxes` are {x0,z0,x1,z1} footprints; `bounds` is {minX,minZ,maxX,maxZ} plus
+// optional walk* clamps matching whatever the collision resolver enforces.
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const R2 = Math.SQRT2;
+
+export function makeNav(boxes, bounds, opt = {}) {
+  const cell = opt.cell ?? 0.42;
+  const pad = opt.pad ?? 0.52;              // body radius + a little shoulder room
+  const minX = bounds.minX, minZ = bounds.minZ;
+  const nx = Math.max(2, Math.ceil((bounds.maxX - minX) / cell));
+  const nz = Math.max(2, Math.ceil((bounds.maxZ - minZ) / cell));
+  const N = nx * nz;
+  const blocked = new Uint8Array(N);
+
+  const cxOf = (x) => clamp(Math.floor((x - minX) / cell), 0, nx - 1);
+  const czOf = (z) => clamp(Math.floor((z - minZ) / cell), 0, nz - 1);
+  const wx = (i) => minX + (i + 0.5) * cell;
+  const wz = (j) => minZ + (j + 0.5) * cell;
+  const idx = (i, j) => j * nx + i;
+
+  // ---- mark solids ---------------------------------------------------------
+  for (const b of boxes) {
+    const ax = b.x0 - pad, bx = b.x1 + pad, az = b.z0 - pad, bz = b.z1 + pad;
+    if (bx < minX || ax > bounds.maxX || bz < minZ || az > bounds.maxZ) continue;
+    for (let i = cxOf(ax); i <= cxOf(bx); i++) {
+      const px = wx(i);
+      if (px <= ax || px >= bx) continue;
+      for (let j = czOf(az); j <= czOf(bz); j++) {
+        const pz = wz(j);
+        if (pz > az && pz < bz) blocked[idx(i, j)] = 1;
+      }
+    }
+  }
+  // ...and the same box the collision resolver clamps everyone into.
+  const wMinX = opt.walkMinX ?? minX, wMaxX = opt.walkMaxX ?? bounds.maxX;
+  const wMinZ = opt.walkMinZ ?? minZ, wMaxZ = opt.walkMaxZ ?? bounds.maxZ;
+  for (let i = 0; i < nx; i++) for (let j = 0; j < nz; j++) {
+    const px = wx(i), pz = wz(j);
+    if (px < wMinX || px > wMaxX || pz < wMinZ || pz > wMaxZ) blocked[idx(i, j)] = 1;
+  }
+
+  let open = 0;
+  for (let k = 0; k < N; k++) if (!blocked[k]) open++;
+
+  // ---- line of sight -------------------------------------------------------
+  // Supercover walk: any cell the segment touches must be free. Conservative on
+  // purpose — a "clear" segment is one a body can actually be dragged along.
+  function clearSeg(ax, az, bx, bz) {
+    let i = cxOf(ax), j = czOf(az);
+    const i1 = cxOf(bx), j1 = czOf(bz);
+    if (blocked[idx(i, j)] || blocked[idx(i1, j1)]) return false;
+    const dx = bx - ax, dz = bz - az;
+    const si = dx > 0 ? 1 : -1, sj = dz > 0 ? 1 : -1;
+    const invX = dx !== 0 ? 1 / Math.abs(dx) : Infinity;
+    const invZ = dz !== 0 ? 1 / Math.abs(dz) : Infinity;
+    // parametric distance to the next cell boundary on each axis
+    let tX = dx !== 0 ? (minX + (i + (dx > 0 ? 1 : 0)) * cell - ax) / dx : Infinity;
+    let tZ = dz !== 0 ? (minZ + (j + (dz > 0 ? 1 : 0)) * cell - az) / dz : Infinity;
+    const dX = cell * invX, dZ = cell * invZ;
+    for (let guard = 0; guard < 4096; guard++) {
+      if (i === i1 && j === j1) return true;
+      if (tX < tZ) { i += si; tX += dX; } else { j += sj; tZ += dZ; }
+      if (i < 0 || j < 0 || i >= nx || j >= nz) return false;
+      if (blocked[idx(i, j)]) return false;
+      if (tX > 1 && tZ > 1) return true;
+    }
+    return false;
+  }
+
+  // Nearest free cell to a world point (agents get shoved inside geometry).
+  function snapCell(x, z) {
+    const i0 = cxOf(x), j0 = czOf(z);
+    if (!blocked[idx(i0, j0)]) return idx(i0, j0);
+    for (let r = 1; r <= 12; r++) {
+      let best = -1, bd = Infinity;
+      for (let i = i0 - r; i <= i0 + r; i++) for (let j = j0 - r; j <= j0 + r; j++) {
+        if (i < 0 || j < 0 || i >= nx || j >= nz) continue;
+        if (Math.max(Math.abs(i - i0), Math.abs(j - j0)) !== r) continue;
+        const k = idx(i, j);
+        if (blocked[k]) continue;
+        const d = (wx(i) - x) ** 2 + (wz(j) - z) ** 2;
+        if (d < bd) { bd = d; best = k; }
+      }
+      if (best >= 0) return best;
+    }
+    return -1;
+  }
+
+  // ---- binary heap ---------------------------------------------------------
+  const hI = [], hC = [];
+  function hClear() { hI.length = 0; hC.length = 0; }
+  function hPush(k, c) {
+    let n = hI.length; hI.push(k); hC.push(c);
+    while (n > 0) {
+      const p = (n - 1) >> 1;
+      if (hC[p] <= hC[n]) break;
+      const ti = hI[p]; hI[p] = hI[n]; hI[n] = ti;
+      const tc = hC[p]; hC[p] = hC[n]; hC[n] = tc;
+      n = p;
+    }
+  }
+  function hPop() {
+    const top = hI[0], n = hI.length - 1;
+    hI[0] = hI[n]; hC[0] = hC[n]; hI.pop(); hC.pop();
+    let p = 0;
+    for (;;) {
+      const l = p * 2 + 1, r = l + 1;
+      let s = p;
+      if (l < n && hC[l] < hC[s]) s = l;
+      if (r < n && hC[r] < hC[s]) s = r;
+      if (s === p) break;
+      const ti = hI[p]; hI[p] = hI[s]; hI[s] = ti;
+      const tc = hC[p]; hC[p] = hC[s]; hC[s] = tc;
+      p = s;
+    }
+    return top;
+  }
+
+  // Neighbour offsets: 4 orthogonal then 4 diagonal (diagonals need both
+  // orthogonals free, so a body never clips a corner it could not fit past).
+  const NI = [1, -1, 0, 0, 1, 1, -1, -1];
+  const NJ = [0, 0, 1, -1, 1, -1, 1, -1];
+  const NC = [1, 1, 1, 1, R2, R2, R2, R2];
+
+  // ---- distance field ------------------------------------------------------
+  // Flood costs out from a goal. Every agent heading for the same place shares
+  // one of these; it only has to be rebuilt when the store changes shape.
+  function field(gx, gz) {
+    const D = new Float32Array(N).fill(Infinity);
+    const g = snapCell(gx, gz);
+    if (g < 0) return D;
+    hClear(); D[g] = 0; hPush(g, 0);
+    while (hI.length) {
+      const u = hPop();
+      const du = D[u];
+      const ui = u % nx, uj = (u / nx) | 0;
+      for (let n = 0; n < 8; n++) {
+        const vi = ui + NI[n], vj = uj + NJ[n];
+        if (vi < 0 || vj < 0 || vi >= nx || vj >= nz) continue;
+        const v = idx(vi, vj);
+        if (blocked[v]) continue;
+        if (n >= 4 && (blocked[idx(ui, vj)] || blocked[idx(vi, uj)])) continue;
+        const nd = du + NC[n] * cell;
+        if (nd < D[v]) { D[v] = nd; hPush(v, nd); }
+      }
+    }
+    return D;
+  }
+
+  // ---- steering ------------------------------------------------------------
+  // Walk downhill on F, then string-pull: aim at the FURTHEST point on that
+  // descent we can actually see. That turns a grid staircase back into the
+  // clean diagonal a running body would take.
+  //
+  // opt.avoid = {x,z,r} keeps the aim point off someone (the cop). If every
+  // visible point is fouled we still return the nearest one — running at him is
+  // better than standing still, and getting cut off should cost you.
+  const _pts = new Int32Array(48);
+  function steer(F, x, z, o = {}) {
+    let cur = snapCell(x, z);
+    if (cur < 0 || !isFinite(F[cur])) return null;
+    const look = o.look ?? 7.0;
+    const start = F[cur];
+    let n = 0;
+    while (n < _pts.length) {
+      const ui = cur % nx, uj = (cur / nx) | 0;
+      let best = -1, bd = F[cur];
+      for (let k = 0; k < 8; k++) {
+        const vi = ui + NI[k], vj = uj + NJ[k];
+        if (vi < 0 || vj < 0 || vi >= nx || vj >= nz) continue;
+        const v = idx(vi, vj);
+        if (blocked[v] || !isFinite(F[v])) continue;
+        if (k >= 4 && (blocked[idx(ui, vj)] || blocked[idx(vi, uj)])) continue;
+        if (F[v] < bd) { bd = F[v]; best = v; }
+      }
+      if (best < 0) break;
+      _pts[n++] = best; cur = best;
+      if (start - bd > look) break;
+    }
+    if (!n) return null;
+
+    const av = o.avoid;
+    let tx = 0, tz = 0, got = false, fallbackX = 0, fallbackZ = 0, gotAny = false;
+    for (let k = n - 1; k >= 0; k--) {
+      const px = wx(_pts[k] % nx), pz = wz((_pts[k] / nx) | 0);
+      if (!clearSeg(x, z, px, pz)) continue;
+      if (!gotAny) { fallbackX = px; fallbackZ = pz; gotAny = true; }
+      if (av && segNear(x, z, px, pz, av.x, av.z) < av.r) continue;
+      tx = px; tz = pz; got = true; break;
+    }
+    if (!got) {
+      if (!gotAny) {
+        tx = wx(_pts[0] % nx); tz = wz((_pts[0] / nx) | 0);
+      } else { tx = fallbackX; tz = fallbackZ; }
+    }
+    const dx = tx - x, dz = tz - z;
+    const m = Math.hypot(dx, dz);
+    if (m < 1e-6) return null;
+    return { x: dx / m, z: dz / m, tx, tz, dist: F[snapCell(x, z)] };
+  }
+
+  function segNear(ax, az, bx, bz, px, pz) {
+    const dx = bx - ax, dz = bz - az;
+    const l = dx * dx + dz * dz;
+    if (l < 1e-9) return Math.hypot(px - ax, pz - az);
+    let t = ((px - ax) * dx + (pz - az) * dz) / l;
+    t = clamp(t, 0, 1);
+    return Math.hypot(px - (ax + dx * t), pz - (az + dz * t));
+  }
+
+  // ---- A* ------------------------------------------------------------------
+  // For one-off goals (a shopper picking a new spot to browse, the bench's
+  // pursuit bot when it loses sight of the thief).
+  const _g = new Float32Array(N);
+  const _from = new Int32Array(N);
+  const _mark = new Int32Array(N);
+  let _epoch = 0;
+  function path(ax, az, bx, bz) {
+    if (clearSeg(ax, az, bx, bz)) return [{ x: bx, z: bz }];
+    const s = snapCell(ax, az), t = snapCell(bx, bz);
+    if (s < 0 || t < 0) return [{ x: bx, z: bz }];
+    const ti = t % nx, tj = (t / nx) | 0;
+    const h = (k) => {
+      const dx = Math.abs((k % nx) - ti), dz = Math.abs(((k / nx) | 0) - tj);
+      return (Math.max(dx, dz) + (R2 - 1) * Math.min(dx, dz)) * cell;
+    };
+    const ep = ++_epoch;
+    hClear(); _mark[s] = ep; _g[s] = 0; _from[s] = -1; hPush(s, h(s));
+    let found = false;
+    let guard = N * 2;
+    while (hI.length && guard-- > 0) {
+      const u = hPop();
+      if (u === t) { found = true; break; }
+      const gu = _g[u];
+      const ui = u % nx, uj = (u / nx) | 0;
+      for (let n = 0; n < 8; n++) {
+        const vi = ui + NI[n], vj = uj + NJ[n];
+        if (vi < 0 || vj < 0 || vi >= nx || vj >= nz) continue;
+        const v = idx(vi, vj);
+        if (blocked[v]) continue;
+        if (n >= 4 && (blocked[idx(ui, vj)] || blocked[idx(vi, uj)])) continue;
+        const nd = gu + NC[n] * cell;
+        if (_mark[v] === ep && _g[v] <= nd) continue;
+        _mark[v] = ep; _g[v] = nd; _from[v] = u;
+        hPush(v, nd + h(v));
+      }
+    }
+    if (!found) return [{ x: bx, z: bz }];
+    const chain = [];
+    for (let k = t; k >= 0; k = _from[k]) {
+      chain.push({ x: wx(k % nx), z: wz((k / nx) | 0) });
+      if (k === s) break;
+    }
+    chain.reverse();
+    chain.push({ x: bx, z: bz });
+    // string-pull
+    const out = [];
+    let cx = ax, cz = az;
+    for (let i = 0; i < chain.length; i++) {
+      const nxt = chain[i + 1];
+      if (nxt && clearSeg(cx, cz, nxt.x, nxt.z)) continue;
+      out.push(chain[i]); cx = chain[i].x; cz = chain[i].z;
+    }
+    return out.length ? out : [{ x: bx, z: bz }];
+  }
+
+  return {
+    nx, nz, cell, pad, blocked, count: N,
+    openFrac: open / N,
+    free: (x, z) => !blocked[idx(cxOf(x), czOf(z))],
+    reachable: (F, x, z) => { const k = snapCell(x, z); return k >= 0 && isFinite(F[k]); },
+    at: (F, x, z) => { const k = snapCell(x, z); return k < 0 ? Infinity : F[k]; },
+    clearSeg, field, steer, path, snap: snapCell,
+    world: (k) => ({ x: wx(k % nx), z: wz((k / nx) | 0) }),
+  };
+}

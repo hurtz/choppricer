@@ -93,7 +93,26 @@ function run(seconds, opts = {}) {
   }
   return { cop: agents.cop.position.toArray().map((v) => +v.toFixed(2)), state: game.st };
 }
+// Clean capture: raw scene through a posable camera, NO cctv grade and NO HUD.
+// Used to judge the store on its own merits against real photography.
+const probeCam = new THREE.PerspectiveCamera(52, RENDER_W / RENDER_H, 0.1, 200);
+async function snapClean(name, pose) {
+  if (pose) {
+    probeCam.fov = pose.fov ?? 52;
+    probeCam.position.set(...pose.pos);
+    probeCam.lookAt(...pose.look);
+    probeCam.updateProjectionMatrix();
+  }
+  const hidden = hud.style.display;
+  hud.style.display = 'none';
+  renderer.render(scene, probeCam);
+  const url = renderer.domElement.toDataURL('image/png');
+  hud.style.display = hidden;
+  const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
+  return res.text();
+}
 window.__CHOP = {
   THREE, scene, renderer, agents, game, cctv, world, input, keys, snap, run, step,
+  snapClean, probeCam,
   pause() { rafOn = false; }, resume() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } },
 };

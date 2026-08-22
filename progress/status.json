@@ -1,63 +1,176 @@
 {
  "pieces": {
   "store": {
-   "round": 0,
-   "state": "queued",
+   "round": 1,
+   "state": "critiquing",
    "shots": [
     {
      "round": 0,
      "path": "../shots/store_r0_baseline.png",
      "t": 1787405276.020098
+    },
+    {
+     "round": 1,
+     "path": "../shots/clean_aisle_a.png",
+     "t": 1787413681.460921
     }
    ],
-   "gaps": [],
-   "updated": 1787405276.0200949,
-   "note": "skeleton baseline captured"
+   "gaps": [
+    {
+     "round": 0,
+     "text": "Still the 36-line stub: 8 grey boxes, tan plane, NO ceiling at all. Biggest gap in the project."
+    }
+   ],
+   "updated": 1787413681.4609191,
+   "note": "Wired to helpers: dense product on 5 shelf levels, price rails, hanging numbered aisle signs, dept banners, drop-tile ceiling with troffers + sprinklers, VCT floor with specular.",
+   "gap": "Still the 36-line stub: 8 grey boxes, tan plane, NO ceiling at all. Biggest gap in the project."
   },
   "cctv": {
-   "round": 0,
-   "state": "queued",
+   "round": 2,
+   "state": "critiquing",
    "shots": [
     {
      "round": 0,
      "path": "../shots/cctv_r0_baseline.png",
      "t": 1787405276.052319
+    },
+    {
+     "round": 1,
+     "path": "../shots/probe_wall.png",
+     "t": 1787412163.0805361
+    },
+    {
+     "round": 2,
+     "path": "../shots/cctv_r2_wall.png",
+     "t": 1787413408.61835
     }
    ],
-   "gaps": [],
-   "updated": 1787405276.0523179,
-   "note": "skeleton baseline captured"
+   "gaps": [
+    {
+     "round": 1,
+     "text": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
+    }
+   ],
+   "updated": 1787413681.5197399,
+   "note": "CA cut from ~40px to ~1px corner-only; timestamp on one line; new tone curve with highlight shoulder; office clutter (sticky notes, label strips, taped LED); fixed a resize() bug that shattered the wall.",
+   "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
   },
   "agents": {
-   "round": 0,
-   "state": "queued",
+   "round": 1,
+   "state": "gap",
    "shots": [
     {
      "round": 0,
      "path": "../shots/agents_r0_baseline.png",
      "t": 1787405276.081095
+    },
+    {
+     "round": 1,
+     "path": "../shots/probe_floor.png",
+     "t": 1787412163.112764
     }
    ],
-   "gaps": [],
-   "updated": 1787405276.0810938,
-   "note": "skeleton baseline captured"
+   "gaps": [
+    {
+     "round": 1,
+     "text": "Measured 58% catch rate with NO powerup. Bar is near 0% \u2014 powerups are currently pointless and the chase has no tension."
+    }
+   ],
+   "updated": 1787412163.1127622,
+   "note": "r1 landed: 14 shoppers, thief state machine, stamina, powerups, good fat-cop silhouette.",
+   "gap": "Measured 58% catch rate with NO powerup. Bar is near 0% \u2014 powerups are currently pointless and the chase has no tension."
   },
   "game": {
-   "round": 0,
-   "state": "queued",
+   "round": 1,
+   "state": "critiquing",
    "shots": [
     {
      "round": 0,
      "path": "../shots/game_r0_baseline.png",
      "t": 1787405276.109099
+    },
+    {
+     "round": 1,
+     "path": "../shots/game_r1_floor.png",
+     "t": 1787413681.492088
     }
    ],
-   "gaps": [],
-   "updated": 1787405276.109097,
-   "note": "skeleton baseline captured"
+   "gaps": [
+    {
+     "round": 0,
+     "text": "Still the 25-line stub: no modes, no scoring, no confrontation, text-only HUD."
+    }
+   ],
+   "updated": 1787413681.492086,
+   "note": "Wired to helpers: desk/floor/writeup/demoted modes, DVR-style HUD, WIND + PULSE meters, subject tracking bracket, complaint stamps, dispatch callout.",
+   "gap": "Still the 25-line stub: no modes, no scoring, no confrontation, text-only HUD."
   }
  },
  "log": [
+  {
+   "t": 1787413681.519743,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 2,
+   "state": "critiquing",
+   "text": "CA cut from ~40px to ~1px corner-only; timestamp on one line; new tone curve with highlight shoulder; office clutter (sticky notes, label strips, taped LED); fixed a resize() bug that shattered the wall."
+  },
+  {
+   "t": 1787413681.492089,
+   "piece": "game",
+   "role": "builder",
+   "round": 1,
+   "state": "critiquing",
+   "text": "Wired to helpers: desk/floor/writeup/demoted modes, DVR-style HUD, WIND + PULSE meters, subject tracking bracket, complaint stamps, dispatch callout."
+  },
+  {
+   "t": 1787413681.460922,
+   "piece": "store",
+   "role": "builder",
+   "round": 1,
+   "state": "critiquing",
+   "text": "Wired to helpers: dense product on 5 shelf levels, price rails, hanging numbered aisle signs, dept banners, drop-tile ceiling with troffers + sprinklers, VCT floor with specular."
+  },
+  {
+   "t": 1787413408.61835,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 2,
+   "state": "building",
+   "text": "Fixed the three defects: rewrote chromatic aberration in pixel units with a corner-only ramp (floor went from ~40px rainbow fringing to ~1px at the extreme corner), put the DVR stamp on one clean line inside the panel, and rebuilt the tone curve with a real highlight shoulder so the now-dense store no longer clips floor, ceiling and troffers all onto white. Also moved the wall scanlines into the panel shader so the burn-in carries them, added a keyline to the OSD font, per-monitor white points, office clutter, and fixed resize() which tore the wall apart on any canvas that was not exactly 1280x720."
+  },
+  {
+   "t": 1787412163.17392,
+   "piece": "game",
+   "role": "lead",
+   "round": 0,
+   "state": "gap",
+   "text": "Still the 25-line stub: no modes, no scoring, no confrontation, text-only HUD."
+  },
+  {
+   "t": 1787412163.1444402,
+   "piece": "store",
+   "role": "lead",
+   "round": 0,
+   "state": "gap",
+   "text": "Still the 36-line stub: 8 grey boxes, tan plane, NO ceiling at all. Biggest gap in the project."
+  },
+  {
+   "t": 1787412163.1127648,
+   "piece": "agents",
+   "role": "lead",
+   "round": 1,
+   "state": "gap",
+   "text": "Measured 58% catch rate with NO powerup. Bar is near 0% \u2014 powerups are currently pointless and the chase has no tension."
+  },
+  {
+   "t": 1787412163.0805361,
+   "piece": "cctv",
+   "role": "lead",
+   "round": 1,
+   "state": "building",
+   "text": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
+  },
   {
    "t": 1787405276.109099,
    "piece": "game",
@@ -123,5 +236,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787405276.1091
+ "updated": 1787413681.519743
 }
