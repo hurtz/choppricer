@@ -29,7 +29,8 @@ const K = {
   get thiefAccel()    { return T.thiefAccel    ?? 15.0; },
   get thiefCorner()   { return T.thiefCorner   ?? 0.60; }, // speed mult on a 90 degree cut
   get thiefReact()    { return T.thiefReact    ?? 0.22; }, // seconds of "oh shit" before the bolt
-  get pickupRadius()  { return T.pickupRadius  ?? 0.30; },
+  get pickupRadius()  { return T.pickupRadius  ?? 0.45; },
+  get pickupReach()   { return T.pickupReach   ?? 1.25; }, // m/s toward the shelf face
   get shopperCount()  { return T.shopperCount  ?? 14; },
   get thiefCount()    { return T.thiefCount    ?? 2; },
   // A powerup is an item ON A SHELF, not a floor pickup. Sitting it on the aisle
@@ -46,6 +47,7 @@ const K = {
   get thiefPanicGap() { return T.thiefPanicGap ?? 3.00; }, // metres at which fear starts
   get thiefPanicBand(){ return T.thiefPanicBand?? 0.90; }, // metres from fear to flat-out
   get thiefSecond()   { return T.thiefSecond   ?? 0.42; }, // wind regained per sec when clear
+  get navHug()        { return T.navHug        ?? 0.55; }, // route cost for scraping geometry
 };
 
 // main.js maps KeyW -> input.z = -1, but its floor camera sits at cop.z - 7.6
@@ -247,7 +249,7 @@ export function createAgents(THREE, scene, world) {
   // One grid, one flood-fill out from the doors. Every thief in the store
   // shares it, and it only gets rebuilt when the store itself changes.
   const buildNav = () => makeNav(solids.boxes, STORE, {
-    cell: 0.42, pad: BODY_R + 0.10,
+    cell: 0.42, pad: BODY_R + 0.10, hug: K.navHug,
     walkMinX: STORE.minX + 0.6, walkMaxX: STORE.maxX - 0.6,
     walkMinZ: STORE.minZ + 0.35, walkMaxZ: STORE.maxZ - 0.6,
   });
@@ -357,8 +359,12 @@ export function createAgents(THREE, scene, world) {
                         : clamp(sp.x, STORE.minX + 1, STORE.maxX - 1);
       const z = inAisle ? clamp(sp.z, -HALF_LEN + 1, HALF_LEN - 1)
                         : clamp(sp.z, STORE.minZ + 1, STORE.maxZ - 1);
+      // Unit vector from the lane centre out to the shelf face: the direction
+      // the cop has to actually move in to take it off the shelf.
+      const nx = inAisle ? side : 0;
+      const nz = inAisle ? 0 : (z > 0 ? 1 : -1);
       g.position.set(x, 0, z); scene.add(g);
-      powerups.push({ mesh: g, item, ring, x, z, kind, live: true, respawn: 0 });
+      powerups.push({ mesh: g, item, ring, x, z, nx, nz, kind, live: true, respawn: 0 });
     }
   }
   buildPowerups();
@@ -818,10 +824,23 @@ export function createAgents(THREE, scene, world) {
       p.item.rotation.y += dt * 2.1;
       p.item.position.y = 1.06 + Math.sin(performance.now() * 0.003 + p.x) * 0.05;
       p.ring.material.opacity = 0.40 + 0.22 * Math.sin(performance.now() * 0.005 + p.z);
-      if (dist2d(cop.position.x, cop.position.z, p.x, p.z) < K.pickupRadius + BODY_R) {
-        p.live = false; p.mesh.visible = false; p.respawn = 16;
-        u.boost = T.boostTime; u.stamina = T.staminaMax; u.gassed = false;
-      }
+      // You have to REACH for it. Being inside the radius is not enough: the
+      // can is on a shelf, off to the side of the lane, and a cop sprinting past
+      // parallel to the shelf face is not grabbing anything. Without this the
+      // chase kept handing him free boosts — the aim point of a pursuit drifts
+      // toward whichever side the thief is running, and the bench measured the
+      // supposedly-unpowered cop boosted 11% of the chase off pure geometry.
+      // Steer into the shelf and it is yours; run past it and it is not.
+      const dx = p.x - cop.position.x, dz = p.z - cop.position.z;
+      const d = Math.hypot(dx, dz);
+      if (d >= K.pickupRadius + BODY_R) continue;
+      // The test is LATERAL, not radial. Closing on the can while running down
+      // the aisle at it is just... running down the aisle; the whole chase does
+      // that. What costs you something is leaving your line and going at the
+      // shelf face, so that is what the grab asks for.
+      if (u.speed > 0.6 && (u.vel.x * p.nx + u.vel.z * p.nz) < K.pickupReach) continue;
+      p.live = false; p.mesh.visible = false; p.respawn = 16;
+      u.boost = T.boostTime; u.stamina = T.staminaMax; u.gassed = false;
     }
   }
 
@@ -993,7 +1012,7 @@ export function createAgents(THREE, scene, world) {
       let time = 0, done = 0, finalGap = 0;
       let tBolt = NaN, gapAtBolt = NaN, routeAtBolt = NaN;
       let minGap = Infinity, sumTs = 0, sumCs = 0, nS = 0;
-      let gassedT = 0, slowT = 0, boostT = 0, sumCm = 0;
+      let gassedT = 0, slowT = 0, boostT = 0, sumCm = 0, sumLat = 0, nLat = 0;
       const api = {
         onBolt() {}, onHarass() {},
         onCatch() { done = 1; },
@@ -1018,6 +1037,9 @@ export function createAgents(THREE, scene, world) {
           if (cu.boost > 0) boostT += dt;
           if (thief.dbgTarget < T.thiefRun * 0.92) slowT += dt;
           sumCm += thief.dbgCorner ?? 1;
+          if (Math.abs(cop.position.z) < HALF_LEN) {
+            sumLat += Math.abs(cop.position.x - aisleX(aisleOf(cop.position.x))); nLat++;
+          }
         }
         if (k === traceK) {
           trace.push([+time.toFixed(3), +g.toFixed(2), +cu.speed.toFixed(2), +thief.speed.toFixed(2),
@@ -1036,6 +1058,7 @@ export function createAgents(THREE, scene, world) {
         boostFrac: nS ? boostT / (nS * dt) : NaN,
         slowFrac: nS ? slowT / (nS * dt) : NaN,
         corner: nS ? sumCm / nS : NaN,
+        copLat: nLat ? sumLat / nLat : NaN,
         aisle: ai,
       });
     }
@@ -1073,6 +1096,7 @@ export function createAgents(THREE, scene, world) {
       boostFrac: _f2(_mean(R.map((r) => r.boostFrac).filter(isFinite))),
       thiefSlowFrac: _f2(_mean(R.map((r) => r.slowFrac).filter(isFinite))),
       cornerMul: _f2(_mean(R.map((r) => r.corner).filter(isFinite))),
+      copLat_mean: _f2(_mean(R.map((r) => r.copLat).filter(isFinite))),
     };
     if (opts.raw) res.raw = R;
     if (traceK >= 0) res.trace = trace;
@@ -1097,7 +1121,8 @@ export function createAgents(THREE, scene, world) {
     update: tick,
     bench, benchAll, benchLine,
     // debug handles
-    nav, get exitField() { return exitF; }, toExit,
+    get nav() { return nav; }, get exitField() { return exitF; }, toExit,
+    rebuildNav() { nav = buildNav(); exitF = nav.field(EXIT.x, EXIT.z); },
     tuning: T, K,
     get thieves() { return shoppers.filter((s) => s.guilty); },
   };

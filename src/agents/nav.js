@@ -39,6 +39,8 @@ export function makeNav(boxes, bounds, opt = {}) {
   const N = nx * nz;
   const blocked = new Uint8Array(N);
 
+  const NI0 = [1, -1, 0, 0, 1, 1, -1, -1];
+  const NJ0 = [0, 0, 1, -1, 1, -1, 1, -1];
   const cxOf = (x) => clamp(Math.floor((x - minX) / cell), 0, nx - 1);
   const czOf = (z) => clamp(Math.floor((z - minZ) / cell), 0, nz - 1);
   const wx = (i) => minX + (i + 0.5) * cell;
@@ -68,6 +70,38 @@ export function makeNav(boxes, bounds, opt = {}) {
 
   let open = 0;
   for (let k = 0; k < N; k++) if (!blocked[k]) open++;
+
+  // ---- clearance -----------------------------------------------------------
+  // Cells from the nearest solid, capped. Routes get a mild extra cost for
+  // scraping along geometry, which keeps runners down the middle of the aisle
+  // instead of hugging a shelf lip. That is how people actually run, and it
+  // stops the cop from hoovering up shelf powerups he never steered at: with
+  // the lane free width at ~3m and the cans on the lip, anything off-centre was
+  // an accidental boost, and the bench saw the "unpowered" cop boosted 16% of
+  // the chase because of it.
+  const CLEARCAP = 4;
+  const clr = new Uint8Array(N);
+  {
+    const q = new Int32Array(N);
+    let head = 0, tail = 0;
+    for (let k = 0; k < N; k++) if (blocked[k]) { clr[k] = 0; q[tail++] = k; } else clr[k] = 255;
+    while (head < tail) {
+      const u = q[head++];
+      const d = clr[u];
+      if (d >= CLEARCAP) continue;
+      const ui = u % nx, uj = (u / nx) | 0;
+      for (let n = 0; n < 8; n++) {
+        const vi = ui + NI0[n], vj = uj + NJ0[n];
+        if (vi < 0 || vj < 0 || vi >= nx || vj >= nz) continue;
+        const v = idx(vi, vj);
+        if (clr[v] !== 255) continue;
+        clr[v] = d + 1; q[tail++] = v;
+      }
+    }
+    for (let k = 0; k < N; k++) if (clr[k] === 255) clr[k] = CLEARCAP;
+  }
+  const hug = opt.hug ?? 0.55;
+  const stepMul = (v) => 1 + hug * (1 - clr[v] / CLEARCAP);
 
   // ---- line of sight -------------------------------------------------------
   // Supercover walk: any cell the segment touches must be free. Conservative on
@@ -145,8 +179,7 @@ export function makeNav(boxes, bounds, opt = {}) {
 
   // Neighbour offsets: 4 orthogonal then 4 diagonal (diagonals need both
   // orthogonals free, so a body never clips a corner it could not fit past).
-  const NI = [1, -1, 0, 0, 1, 1, -1, -1];
-  const NJ = [0, 0, 1, -1, 1, -1, 1, -1];
+  const NI = NI0, NJ = NJ0;
   const NC = [1, 1, 1, 1, R2, R2, R2, R2];
 
   // ---- distance field ------------------------------------------------------
@@ -167,7 +200,7 @@ export function makeNav(boxes, bounds, opt = {}) {
         const v = idx(vi, vj);
         if (blocked[v]) continue;
         if (n >= 4 && (blocked[idx(ui, vj)] || blocked[idx(vi, uj)])) continue;
-        const nd = du + NC[n] * cell;
+        const nd = du + NC[n] * cell * stepMul(v);
         if (nd < D[v]) { D[v] = nd; hPush(v, nd); }
       }
     }
@@ -266,7 +299,7 @@ export function makeNav(boxes, bounds, opt = {}) {
         const v = idx(vi, vj);
         if (blocked[v]) continue;
         if (n >= 4 && (blocked[idx(ui, vj)] || blocked[idx(vi, uj)])) continue;
-        const nd = gu + NC[n] * cell;
+        const nd = gu + NC[n] * cell * stepMul(v);
         if (_mark[v] === ep && _g[v] <= nd) continue;
         _mark[v] = ep; _g[v] = nd; _from[v] = u;
         hPush(v, nd + h(v));
@@ -292,7 +325,7 @@ export function makeNav(boxes, bounds, opt = {}) {
   }
 
   return {
-    nx, nz, cell, pad, blocked, count: N,
+    nx, nz, cell, pad, blocked, clr, count: N,
     openFrac: open / N,
     free: (x, z) => !blocked[idx(cxOf(x), czOf(z))],
     reachable: (F, x, z) => { const k = snapCell(x, z); return k >= 0 && isFinite(F[k]); },

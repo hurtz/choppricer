@@ -97,9 +97,10 @@ export function createGame(hudEl) {
       return { frac: 1, label: st.complaints ? `${st.complaints} COMPLAINT(S) HELD AGAINST TITLE` : 'NO FURTHER TITLES EXIST' };
     }
     const lo = RANK_AT[b], hi = RANK_AT[b + 1];
+    const held = st.complaints ? ` · −${st.complaints} FOR COMPLAINTS` : '';
     return {
       frac: clamp((st.points - lo) / Math.max(1, hi - lo), 0, 1),
-      label: `NEXT: ${RANKS[b + 1].toUpperCase()} @ ${RANK_AT[b + 1]} PTS`,
+      label: `NEXT: ${RANKS[b + 1].toUpperCase()} @ ${RANK_AT[b + 1]} PTS${held}`,
     };
   }
 

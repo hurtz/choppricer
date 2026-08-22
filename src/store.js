@@ -40,11 +40,10 @@ function textures(THREE) {
     rail: TX.railTex(THREE),
     wood: TX.woodTex(THREE, [30, 40, 60], 77),
     wall: TX.wallTex(THREE),
-    box: TX.boxMask(THREE),
+    boxA: TX.boxAtlas(THREE),
+    bagA: TX.bagAtlas(THREE),
     can: TX.canMask(THREE),
     bottle: TX.bottleMask(THREE),
-    bag: TX.bagMask(THREE),
-    carton: TX.cartonMask(THREE),
     sign: TX.signAtlas(THREE, DEPTS),
     blade: TX.bladeAtlas(THREE, DEPTS),
     lane: TX.laneAtlas(THREE),
@@ -109,6 +108,45 @@ function pillowGeo(THREE) {
   return g;
 }
 
+// Remap a box-ish geometry onto one cell of a package atlas. Only the +Z face
+// gets the printed design; every other face gets the cell's plain wrap column,
+// so a shelf viewed down-aisle shows colour and size variety instead of four
+// hundred copies of the same barcode.
+function atlasVariant(THREE, base, cell, cols, rows, margin) {
+  const g = base.clone();
+  const uv = g.attributes.uv;
+  const cx = cell % cols, cy = Math.floor(cell / cols);
+  const u0 = cx / cols, u1 = (cx + 1) / cols;
+  const v0 = 1 - (cy + 1) / rows, v1 = 1 - cy / rows;
+  const du = u1 - u0, dv = v1 - v0;
+  const fu0 = u0 + du * margin, fu1 = u1 - du * 0.004;
+  const su0 = u0 + du * 0.02, su1 = u0 + du * margin * 0.82;
+  const remap = (start, end, a, b, c, d) => {
+    for (let i = start; i <= end; i++) {
+      uv.setXY(i, a + uv.getX(i) * (b - a), c + uv.getY(i) * (d - c));
+    }
+  };
+  // BoxGeometry group order: px, nx, py, ny, pz, nz. Faces can have unequal
+  // vertex counts when the box is segmented, so derive each span from the index.
+  const idx = g.index;
+  for (let k = 0; k < 6; k++) {
+    const gr = g.groups[k];
+    let lo = Infinity, hi = -Infinity;
+    for (let i = gr.start; i < gr.start + gr.count; i++) {
+      const v = idx.getX(i);
+      if (v < lo) lo = v;
+      if (v > hi) hi = v;
+    }
+    if (k === 4) remap(lo, hi, fu0, fu1, v0, v1);                     // printed front
+    else if (k === 2) remap(lo, hi, su0, su1, v1 - dv * 0.13, v1);    // top
+    else if (k === 3) remap(lo, hi, su0, su1, v0, v0 + dv * 0.13);    // bottom
+    else remap(lo, hi, su0, su1, v0, v1);                             // sides + back
+  }
+  uv.needsUpdate = true;
+  g.clearGroups();
+  return g;
+}
+
 function bottleGeo(THREE) {
   const pts = [
     [0.02, -0.50], [0.40, -0.50], [0.47, -0.455], [0.47, -0.30], [0.47, -0.10],
@@ -161,26 +199,34 @@ export function buildStore(THREE, scene) {
 
   // ---- shared materials ---------------------------------------------------
   const M = {
-    pkgBox: chopPackageMat(THREE, T.box),
+    pkgBox: chopPackageMat(THREE, T.boxA),
     pkgCan: chopPackageMat(THREE, T.can),
     pkgBottle: chopPackageMat(THREE, T.bottle),
-    pkgBag: chopPackageMat(THREE, T.bag),
+    pkgBag: chopPackageMat(THREE, T.bagA),
     fix: new THREE.MeshLambertMaterial({ color: 0xffffff }),
     wood: new THREE.MeshLambertMaterial({ map: T.wood, color: 0xffffff }),
-    dark: new THREE.MeshLambertMaterial({ color: 0xffffff }),
   };
 
-  const newPkg = () => ({
-    box: new Batch(THREE, G.box, M.pkgBox),
-    can: new Batch(THREE, G.can, M.pkgCan),
-    bottle: new Batch(THREE, G.bottle, M.pkgBottle),
-    bag: new Batch(THREE, G.bag, M.pkgBag),
+  const BOX_V = [0, 1, 2, 3].map((k) => atlasVariant(THREE, G.box, k, 2, 2, 0.133));
+  const BAG_V = [0, 1].map((k) => atlasVariant(THREE, G.bag, k, 2, 1, 0.117));
+
+  // products.js only knows B.box / B.can / B.bottle / B.bag; fan the box and bag
+  // pushes out over the atlas variants so no two neighbours are the same print.
+  const multi = (arr) => ({
+    push(px, py, pz, ex, ey, ez, sx, sy, sz, c) {
+      arr[(rng() * arr.length) | 0].push(px, py, pz, ex, ey, ez, sx, sy, sz, c);
+    },
+    box(px, py, pz, sx, sy, sz, c) { this.push(px, py, pz, 0, 0, 0, sx, sy, sz, c); },
   });
+  const newPkg = () => {
+    const boxes = BOX_V.map((g) => new Batch(THREE, g, M.pkgBox));
+    const bags = BAG_V.map((g) => new Batch(THREE, g, M.pkgBag));
+    const can = new Batch(THREE, G.can, M.pkgCan);
+    const bottle = new Batch(THREE, G.bottle, M.pkgBottle);
+    return { box: multi(boxes), bag: multi(bags), can, bottle, _all: [...boxes, ...bags, can, bottle] };
+  };
   const flushPkg = (B, name, parent = root) => {
-    for (const k of ['box', 'can', 'bottle', 'bag']) {
-      const m = B[k].build(name + '.' + k);
-      if (m) parent.add(m);
-    }
+    B._all.forEach((b, i) => { const m = b.build(name + '.' + i); if (m) parent.add(m); });
   };
 
   // global fixture batches (uprights, boards, counters, carts…)
@@ -466,6 +512,7 @@ export function buildStore(THREE, scene) {
   // =========================================================================
   // CHECKOUT LANES
   // =========================================================================
+  const Bfront = newPkg();
   const LANE_N = Math.min(8, 10);
   const laneZ0 = STORE.minZ + 0.6, laneZ1 = FRONT_WALK_Z - 0.9;
   const laneLen = laneZ1 - laneZ0, laneCZ = (laneZ0 + laneZ1) / 2;
@@ -487,7 +534,7 @@ export function buildStore(THREE, scene) {
     qZ(Qlane, x, 2.62, laneZ1 - 0.24, 0.62, 0.62, 1, uv);
     qZ(Qlane, x, 2.62, laneZ1 - 0.16, 0.62, 0.62, -1, uv);
     // candy rack facing the lane
-    const B = newPkg();
+    const B = Bfront;
     for (let d = 0; d < 4; d++) {
       const y = 0.42 + d * 0.34;
       fix(x - 0.42, y - 0.015, laneCZ + 0.4, 0.28, 0.03, 2.0, P.deck);
@@ -497,7 +544,6 @@ export function buildStore(THREE, scene) {
         deckY: y, headroom: 0.30, depth: 0.26, lit: 1.02, col,
       });
     }
-    flushPkg(B, 'lane' + k);
     qUp(Qshadow, x + 0.05, 0.006, laneCZ, 2.4, laneLen + 1.4, FULL);
     solid(x - 0.62, 0, laneZ0 - 0.1, x + 0.82, 1.1, laneZ1 + 0.1);
   }

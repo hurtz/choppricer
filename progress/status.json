@@ -2,7 +2,7 @@
  "pieces": {
   "store": {
    "round": 1,
-   "state": "critiquing",
+   "state": "gap",
    "shots": [
     {
      "round": 0,
@@ -19,11 +19,16 @@
     {
      "round": 0,
      "text": "Still the 36-line stub: 8 grey boxes, tan plane, NO ceiling at all. Biggest gap in the project."
+    },
+    {
+     "round": 1,
+     "text": "Content gap, not a rendering gap. (1) Product facings are flat colour fields with grey bars instead of real printed type \u2014 ~60% of the tell. (2) ~8 box meshes recoloured, 5-8 identical copies per shelf; real shelves carry 6-15 SKUs of mixed height/width and something on nearly every shelf is a bottle/jar/pouch/bag. (3) Zero 'shopped' disorder \u2014 every face perfectly flush, unrotated, evenly spaced, no sold-out voids."
     }
    ],
-   "updated": 1787413681.4609191,
+   "updated": 1787413943.0888581,
    "note": "Wired to helpers: dense product on 5 shelf levels, price rails, hanging numbered aisle signs, dept banners, drop-tile ceiling with troffers + sprinklers, VCT floor with specular.",
-   "gap": "Still the 36-line stub: 8 grey boxes, tan plane, NO ceiling at all. Biggest gap in the project."
+   "gap": "Content gap, not a rendering gap. (1) Product facings are flat colour fields with grey bars instead of real printed type \u2014 ~60% of the tell. (2) ~8 box meshes recoloured, 5-8 identical copies per shelf; real shelves carry 6-15 SKUs of mixed height/width and something on nearly every shelf is a bottle/jar/pouch/bag. (3) Zero 'shopped' disorder \u2014 every face perfectly flush, unrotated, evenly spaced, no sold-out voids.",
+   "verdict": "FAIL \u2014 blind A/B: critic classified 10/10 correctly (4 renders, 6 photos), confidence 97-100, zero ambiguous. Every render called from the PACKAGING alone, within a second."
   },
   "cctv": {
    "round": 2,
@@ -99,14 +104,42 @@
     {
      "round": 0,
      "text": "Still the 25-line stub: no modes, no scoring, no confrontation, text-only HUD."
+    },
+    {
+     "round": 1,
+     "text": "Desk phase is near-unwinnable: ~12s from concealment tell to exit, 14 roster rows, only 3 of 7 subjects visible per camera."
     }
    ],
-   "updated": 1787413681.492086,
-   "note": "Wired to helpers: desk/floor/writeup/demoted modes, DVR-style HUD, WIND + PULSE meters, subject tracking bracket, complaint stamps, dispatch callout.",
-   "gap": "Still the 25-line stub: no modes, no scoring, no confrontation, text-only HUD."
+   "updated": 1787413943.118903,
+   "note": "Desk roster with per-shopper DVR records, ambiguous alarms, write-up flow, Dale M. monologue, rank + Form 11-B demotion screen. Fixed name() bug that named every guest HOLCOMB, GREG.",
+   "gap": "Desk phase is near-unwinnable: ~12s from concealment tell to exit, 14 roster rows, only 3 of 7 subjects visible per camera."
   }
  },
  "log": [
+  {
+   "t": 1787413943.118904,
+   "piece": "game",
+   "role": "builder",
+   "round": 1,
+   "state": "critiquing",
+   "text": "Desk phase is near-unwinnable: ~12s from concealment tell to exit, 14 roster rows, only 3 of 7 subjects visible per camera."
+  },
+  {
+   "t": 1787413943.0888588,
+   "piece": "store",
+   "role": "critic",
+   "round": 1,
+   "state": "gap",
+   "text": "Content gap, not a rendering gap. (1) Product facings are flat colour fields with grey bars instead of real printed type \u2014 ~60% of the tell. (2) ~8 box meshes recoloured, 5-8 identical copies per shelf; real shelves carry 6-15 SKUs of mixed height/width and something on nearly every shelf is a bottle/jar/pouch/bag. (3) Zero 'shopped' disorder \u2014 every face perfectly flush, unrotated, evenly spaced, no sold-out voids."
+  },
+  {
+   "t": 1787413854.783894,
+   "piece": "game",
+   "role": "builder",
+   "round": 1,
+   "state": "building",
+   "text": "Wired the inherited lines.js + hud.js into a full loop: desk wall with clickable feeds, per-subject motion-analytics roster (real concealment tells vs false-positive traps), dispatch, floor pursuit with stamina/objective marker, proximity confrontation, harassment complaints, and the incident report -> trespass warning -> escort -> Dale M. monologue -> points/promotion chain, plus the 3-complaint HR demotion end state. Added watchdogs so escaped/wedged thieves recycle and the store population stays at 14."
+  },
   {
    "t": 1787413681.519743,
    "piece": "cctv",
@@ -236,5 +269,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787413681.519743
+ "updated": 1787413943.118905
 }

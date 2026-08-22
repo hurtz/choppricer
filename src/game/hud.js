@@ -303,7 +303,7 @@ export function createHUD(hudEl) {
       tx(lbl + (off && p.x >= W / 2 ? ' ▶' : ''), cl.x, cl.y - bh2 / 2 - 10,
         { s: 12, w: 'bold', c, a: 'center' });
       const dl = `${d.toFixed(1)}m`, dw = dl.length * 9 + 14;
-      const dy2 = Math.min(cl.y + bh2 / 2 + 4, 566);
+      const dy2 = Math.min(cl.y + bh2 / 2 + 4, 516);   // stay clear of the prompt band
       ctx.fillStyle = 'rgba(3,7,4,0.85)'; ctx.fillRect(cl.x - dw / 2, dy2, dw, 18);
       box(cl.x - dw / 2, dy2, dw, 18, c);
       tx(dl, cl.x, dy2 + 14, { s: 13, w: 'bold', c, a: 'center' });
@@ -459,20 +459,22 @@ export function createHUD(hudEl) {
     if (w.stage === 4) {
       const k = Math.min(1, w.t * 3);
       ctx.globalAlpha = k;
-      stamp(`+${w.award} PTS`, W / 2, dy + 46, { s: 46, c: GRN, rot: -4 });
+      stamp(`+${w.award} PTS`, W / 2, dy + 32, { s: 46, c: GRN, rot: -4 });
       ctx.globalAlpha = 1;
-      const barY = dy + 110, bw2 = pw - 200;
+      const barY = dy + 94, bw2 = pw - 200;
       tx(`${G.rankName}`, px + 100, barY - 12, { s: 13, w: 'bold', c: AMB, ls: 1.2 });
       tx(w.nextLabel, px + 100 + bw2, barY - 12, { s: 12, c: DIM, a: 'right' });
       ctx.fillStyle = 'rgba(255,255,255,0.08)'; ctx.fillRect(px + 100, barY, bw2, 16);
       ctx.fillStyle = AMB; ctx.fillRect(px + 100, barY, bw2 * w.rankFrac, 16);
       box(px + 100, barY, bw2, 16, LINE);
-      tx(`SHIFT TOTAL — ${G.st.points} PTS · ${G.st.caught} RECOVERIES · ${G.st.escaped} LOSSES `
-        + `· ${G.st.complaints} COMPLAINTS`, W / 2, barY + 38, { s: 12, c: DIM, a: 'center', ls: 0.8 });
+      const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+      tx(`SHIFT TOTAL — ${G.st.points} PTS · ${pl(G.st.caught, 'RECOVERY', 'RECOVERIES')}`
+        + ` · ${pl(G.st.escaped, 'LOSS', 'LOSSES')} · ${pl(G.st.complaints, 'COMPLAINT', 'COMPLAINTS')}`,
+      W / 2, barY + 32, { s: 12, c: DIM, a: 'center', ls: 0.8 });
       if (w.promo) {
         ctx.globalAlpha = Math.min(1, Math.max(0, w.t - 0.7) * 2.5);
-        stamp(`PROMOTED — ${G.rankName.toUpperCase()}`, W / 2, dy + 186, { s: 28, c: AMB, rot: -5 });
-        tx(w.promoSub, W / 2, dy + 218, { s: 13, w: 'bold', c: AMB, a: 'center', ls: 1 });
+        stamp(`PROMOTED — ${G.rankName.toUpperCase()}`, W / 2, dy + 180, { s: 24, c: AMB, rot: -5 });
+        tx(w.promoSub, W / 2, dy + 222, { s: 13, w: 'bold', c: AMB, a: 'center', ls: 1 });
         ctx.globalAlpha = 1;
       }
     }

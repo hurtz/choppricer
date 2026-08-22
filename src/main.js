@@ -25,7 +25,7 @@ scene.background = new THREE.Color(0x0b0b0c);
 const world = buildStore(THREE, scene);
 const cctv = createCCTV(THREE, renderer, scene);
 const agents = createAgents(THREE, scene, world);
-const game = createGame(hud);
+const game = createGame(hud, { cctv, agents, world, THREE });
 
 const floorCam = new THREE.PerspectiveCamera(58, RENDER_W / RENDER_H, 0.1, 160);
 
@@ -75,11 +75,23 @@ document.getElementById('boot')?.remove();
 requestAnimationFrame(frame);
 
 // --- Agent-facing test surface -------------------------------------------
-async function snap(name) {
-  step(0);                                   // guarantee a fresh frame, no RAF needed
-  const url = renderer.domElement.toDataURL('image/png');
+// Composites the 3D frame AND the HUD canvas, because a game screenshot without
+// its HUD is not the thing being judged. Pass {raw:true} for 3D only.
+async function post(name, url) {
   const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
   return res.text();
+}
+async function snap(name, opts = {}) {
+  step(0);                                   // guarantee a fresh frame, no RAF needed
+  if (opts.raw) return post(name, renderer.domElement.toDataURL('image/png'));
+  const hudCv = hud.querySelector('canvas');
+  if (!hudCv) return post(name, renderer.domElement.toDataURL('image/png'));
+  const off = document.createElement('canvas');
+  off.width = RENDER_W; off.height = RENDER_H;
+  const o = off.getContext('2d');
+  o.drawImage(renderer.domElement, 0, 0, RENDER_W, RENDER_H);
+  o.drawImage(hudCv, 0, 0, RENDER_W, RENDER_H);
+  return post(name, off.toDataURL('image/png'));
 }
 // Advance the sim deterministically: run(3, {sprint:true}) = 3 simulated seconds.
 function run(seconds, opts = {}) {

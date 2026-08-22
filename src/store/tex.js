@@ -229,6 +229,127 @@ export function boxMask(THREE) {
   return maskTex(THREE, c);
 }
 
+// BOX ATLAS — 2x2 of four different carton designs. The left 13% of every cell
+// is a plain wrap column: ../store.js points the box's side/top/back faces at it
+// so a shelf seen down-aisle isn't 400 copies of the same decal.
+export function boxAtlas(THREE) {
+  const CW = 128, CH = 168, COLS = 2, ROWS = 2;
+  const [c, g] = cv(CW * COLS, CH * ROWS);
+  const rng = makeRng(4242);
+  const M = 17;                                  // plain wrap column width
+
+  const design = (d) => {
+    const W = CW, H = CH, x0 = M;
+    const fw = W - M;
+    if (d === 0) {                               // saturated cereal carton
+      g.fillStyle = ink(255, 236); g.fillRect(0, 0, W, H);
+      g.fillStyle = ink(255, 150); g.fillRect(0, 0, W, 18);
+      g.fillStyle = ink(255, 122); g.fillRect(0, H - 24, W, 24);
+      g.fillStyle = ink(28, 252); g.fillRect(x0 + 6, 24, fw - 12, 32);
+      g.fillStyle = ink(255, 42); g.fillRect(x0 + 13, 32, fw - 34, 15);
+      g.fillStyle = ink(70, 250);
+      g.beginPath(); g.ellipse(x0 + fw * 0.6, H * 0.60, 34, 27, 0, 0, 6.29); g.fill();
+      g.fillStyle = ink(230, 168);
+      g.beginPath(); g.ellipse(x0 + fw * 0.6, H * 0.60, 21, 17, 0, 0, 6.29); g.fill();
+      for (let i = 0; i < 3; i++) {
+        g.fillStyle = ink(25, 246);
+        g.fillRect(x0 + 4, 66 + i * 14, (fw - 52) * rr(rng, 0.5, 1), 8);
+      }
+    } else if (d === 1) {                        // banded cracker box
+      g.fillStyle = ink(255, 214); g.fillRect(0, 0, W, H);
+      g.fillStyle = ink(20, 252); g.fillRect(0, 52, W, 56);
+      g.fillStyle = ink(255, 44); g.fillRect(x0 + 4, 60, fw - 12, 17);
+      g.fillStyle = ink(200, 210); g.fillRect(x0 + 4, 84, fw - 30, 12);
+      g.fillStyle = ink(255, 250); g.fillRect(0, 46, W, 5);
+      g.fillStyle = ink(255, 250); g.fillRect(0, 109, W, 5);
+      g.fillStyle = ink(255, 118); g.fillRect(0, H - 30, W, 30);
+      g.fillStyle = ink(90, 250); g.fillRect(x0 + 8, 12, fw - 24, 22);
+    } else if (d === 2) {                        // pale stock, colour footer
+      g.fillStyle = ink(34, 250); g.fillRect(0, 0, W, H);
+      g.fillStyle = ink(255, 235); g.fillRect(0, 0, W, 30);
+      g.fillStyle = ink(255, 200); g.fillRect(0, H - 54, W, 54);
+      g.fillStyle = ink(255, 60); g.fillRect(x0 + 5, 44, fw - 16, 16);
+      for (let i = 0; i < 4; i++) {
+        g.fillStyle = ink(120, 120 + i * 12);
+        g.fillRect(x0 + 5, 68 + i * 11, (fw - 40) * rr(rng, 0.45, 1), 6);
+      }
+      g.fillStyle = ink(255, 250);
+      g.beginPath(); g.ellipse(x0 + fw * 0.68, H - 30, 24, 17, 0, 0, 6.29); g.fill();
+    } else {                                     // dark rich package, big photo
+      g.fillStyle = ink(255, 168); g.fillRect(0, 0, W, H);
+      g.fillStyle = ink(255, 108); g.fillRect(0, 0, W, 26);
+      g.fillStyle = ink(210, 250); g.fillRect(x0 + 5, 62, fw - 12, 68);
+      g.fillStyle = ink(120, 205);
+      g.beginPath(); g.ellipse(x0 + fw * 0.5, 96, 32, 26, 0, 0, 6.29); g.fill();
+      g.fillStyle = ink(24, 250); g.fillRect(x0 + 5, 34, fw - 12, 22);
+      g.fillStyle = ink(255, 40); g.fillRect(x0 + 12, 39, fw - 32, 12);
+      g.fillStyle = ink(255, 230); g.fillRect(0, H - 26, W, 26);
+    }
+    // plain wrap column — brand field only, matching top/bottom bands
+    g.fillStyle = ink(255, d === 2 ? 232 : 210); g.fillRect(0, 0, M, H);
+    g.fillStyle = ink(255, 150); g.fillRect(0, 0, M, 18);
+    g.fillStyle = ink(255, 124); g.fillRect(0, H - 24, M, 24);
+    g.fillStyle = 'rgba(0,0,0,0.16)'; g.fillRect(M - 3, 0, 3, H);
+    // barcode patch, bottom-right of the printed face
+    g.fillStyle = ink(16, 250); g.fillRect(W - 40, H - 21, 34, 16);
+    g.fillStyle = ink(16, 24);
+    for (let x = W - 37; x < W - 9; x += 2.6) g.fillRect(x, H - 19, 1.2, 11);
+    // vertical edge shading — reads as a carton corner
+    const e = g.createLinearGradient(M, 0, W, 0);
+    e.addColorStop(0, 'rgba(0,0,0,0.34)'); e.addColorStop(0.10, 'rgba(0,0,0,0)');
+    e.addColorStop(0.88, 'rgba(0,0,0,0)'); e.addColorStop(1, 'rgba(0,0,0,0.40)');
+    g.globalCompositeOperation = 'multiply'; g.fillStyle = e; g.fillRect(M, 0, W - M, H);
+    g.globalCompositeOperation = 'source-over';
+  };
+
+  for (let i = 0; i < 4; i++) {
+    g.save();
+    g.translate((i % COLS) * CW, Math.floor(i / COLS) * CH);
+    g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
+    design(i);
+    g.restore();
+  }
+  return maskTex(THREE, c);
+}
+
+// BAG ATLAS — 2 designs side by side, same plain-wrap convention.
+export function bagAtlas(THREE) {
+  const CW = 128, CH = 128, COLS = 2;
+  const [c, g] = cv(CW * COLS, CH);
+  const rng = makeRng(8081);
+  const M = 15;
+  for (let d = 0; d < 2; d++) {
+    g.save(); g.translate(d * CW, 0);
+    g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
+    g.fillStyle = ink(255, d ? 226 : 200); g.fillRect(0, 0, CW, CH);
+    for (let i = 0; i < 130; i++) {              // crinkle highlights
+      g.strokeStyle = `rgba(255,255,255,${rr(rng, 0.05, 0.26)})`;
+      g.lineWidth = rr(rng, 0.6, 2.4);
+      g.beginPath();
+      let x = rng() * CW, y = rng() * CH;
+      g.moveTo(x, y);
+      for (let k = 0; k < 3; k++) g.lineTo(x += rr(rng, -18, 18), y += rr(rng, -18, 18));
+      g.stroke();
+    }
+    if (d === 0) {
+      g.fillStyle = ink(215, 252);
+      g.beginPath(); g.ellipse(CW * 0.56, CH * 0.56, 40, 26, 0, 0, 6.29); g.fill();
+      g.fillStyle = ink(24, 250); g.fillRect(M + 4, CH * 0.20, CW - M - 14, 27);
+      g.fillStyle = ink(255, 44); g.fillRect(M + 12, CH * 0.245, CW - M - 34, 15);
+    } else {
+      g.fillStyle = ink(30, 250); g.fillRect(M + 2, CH * 0.30, CW - M - 8, 36);
+      g.fillStyle = ink(255, 48); g.fillRect(M + 10, CH * 0.345, CW - M - 30, 17);
+      g.fillStyle = ink(255, 130); g.fillRect(0, CH * 0.70, CW, 16);
+    }
+    g.fillStyle = ink(255, d ? 226 : 200); g.fillRect(0, 0, M, CH);
+    g.fillStyle = ink(255, 118); g.fillRect(0, 0, CW, 11);
+    g.fillStyle = ink(255, 118); g.fillRect(0, CH - 13, CW, 13);
+    g.fillStyle = 'rgba(0,0,0,0.14)'; g.fillRect(M - 3, 0, 3, CH);
+    g.restore();
+  }
+  return maskTex(THREE, c);
+}
+
 export function canMask(THREE) {
   const W = 96, H = 96;
   const [c, g] = cv(W, H);
