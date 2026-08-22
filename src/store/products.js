@@ -193,6 +193,7 @@ function fits(kinds, headroom) {
 // geometry that removes the flat area and shows through the gaps.
 export function fillBackRow(B, rng, dept, opts) {
   const { axis, a0, a1, lip, face, deckY, headroom, depth, lit, col } = opts;
+  const litAt = opts.litAt || null;
   const isZ = axis === 'z';
   const baseRy = isZ ? (face > 0 ? Math.PI / 2 : -Math.PI / 2) : (face > 0 ? 0 : Math.PI);
   let a = a0;
@@ -208,7 +209,7 @@ export function fillBackRow(B, rng, dept, opts) {
     for (let k = 0; k < n && a < a1 - w * 0.5; k++) {
       col.setHSL(hsl[0] / 360, Math.min(1, hsl[1] / 100 * rr(rng, 1.1, 1.45)),
         Math.min(0.92, hsl[2] / 100 * rr(rng, 0.80, 1.22)));
-      col.multiplyScalar(lit * 0.70 * rr(rng, 0.90, 1.08));
+      col.multiplyScalar(lit * (litAt ? litAt(a + w / 2) : 1) * 0.70 * rr(rng, 0.90, 1.08));
       const back = pd / 2 + 0.008;
       const cx = isZ ? lip - face * back : a + w / 2;
       const cz = isZ ? a + w / 2 : lip - face * back;
@@ -223,7 +224,7 @@ export function fillBackRow(B, rng, dept, opts) {
 export function fillShelf(B, rng, dept, opts) {
   const {
     axis, a0, a1, lip, face, deckY, headroom, depth, lit, col,
-    pull = 0.5, tag = null, vacancy = 1,
+    pull = 0.5, tag = null, vacancy = 1, litAt = null,
   } = opts;
   const isZ = axis === 'z';
   const baseRy = isZ ? (face > 0 ? Math.PI / 2 : -Math.PI / 2) : (face > 0 ? 0 : Math.PI);
@@ -269,7 +270,12 @@ export function fillShelf(B, rng, dept, opts) {
     const dth = yaw - baseRy;
     const half = round ? sz / 2
       : (Math.abs(Math.cos(dth)) * sz + Math.abs(Math.sin(dth)) * sx) / 2;
-    const back = half + 0.012 + setback;
+    // ROUND 4. `roll` tips the item about its long axis, which swings the top
+    // corner forward by up to half its height — unaccounted for, that is what
+    // put facings THROUGH the price rail and through each other in the round-3
+    // renders. Pay for the lean in clearance.
+    const lean = Math.abs(Math.sin(roll)) * sy * 0.5;
+    const back = half + 0.014 + lean + setback;
     const cx = isZ ? lip - face * back : a;
     const cz = isZ ? a : lip - face * back;
     if (kind.t === 'box' || kind.t === 'bag') {
@@ -348,7 +354,11 @@ export function fillShelf(B, rng, dept, opts) {
       // flavour shift — hue walks, saturation and lightness stay in family
       const hueShift = v === 0 ? 0 : rr(rng, 14, 62) * (rng() < 0.5 ? -1 : 1) * v;
       const hh = (baseHsl[0] + hueShift + 360) % 360;
-      const shade = lit * 0.70 * rr(rng, 0.90, 1.10);
+      // LIGHT DIRECTION. A shelf under a live lamp is visibly hotter than the
+      // same shelf under the dead one two units down the strip; round 3 lit
+      // every facing on a run identically, which is a large part of why the
+      // whole frame sat in one narrow value band.
+      const shade = lit * (litAt ? litAt(a) : 1) * 0.70 * rr(rng, 0.90, 1.10);
       const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.30, 1.60));
       const vLit = Math.min(0.95, baseHsl[2] / 100 * rr(rng, 0.80, 1.30));
       // Set per INSTANCE below, not once per variety: eight identical facings

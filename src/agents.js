@@ -64,11 +64,35 @@ import { makeNav } from './agents/nav.js';
 // if they appear there, they are picked up automatically with no code change.
 // ---------------------------------------------------------------------------
 const T = TUNING;
+
+// ROUND 4 RE-TUNES — three names that ALREADY EXIST in TUNING at their round-3
+// values. The `T.x ?? fallback` pattern below means TUNING wins, so writing a
+// new number into the fallback would have changed nothing and I would have
+// reported a value the game was not running. (I nearly did: the first pass of
+// round 4 "raised" thiefLook to 17 and measured no change from it, because
+// TUNING still said 8.6.) These three are deliberate changes to shipped values;
+// they belong in TUNING and this block should be deleted the moment they are
+// there. Everything else round 4 touches is either new or absent from TUNING.
+const R4 = {
+  thiefLook: 17.0,    // was 8.60  — he clocks a uniform down the whole aisle
+  thiefTired: 0.575,  // was 0.620 — his long-chase cruise, under the cop's
+  thiefAccel: 10.5,   // was 15.0  — he no longer out-accelerates the cop by 67%
+  // He clipped a shoulder at a dead run; he did not fall over. The man who was
+  // standing still and got hit is the one who has to reassemble himself, and
+  // round 3 had that exactly backwards -- see barge().
+  stumbleT: 0.15,     // was 0.45
+};
 const K = {
   get copGrip()       { return T.copGrip       ?? 0.78; }, // lateral accel fraction at top speed
   get gassedRecover() { return T.gassedRecover ?? 0.26; }, // stamina frac needed to un-gas
-  get thiefAccel()    { return T.thiefAccel    ?? 15.0; },
-  get thiefCorner()   { return T.thiefCorner   ?? 0.60; }, // speed mult on a 90 degree cut
+  // ROUND 4 — he was accelerating at 15.0 against the cop's copAccel of 9.0, so
+  // every corner, every shopper, every stumble, the thief got back to speed 67%
+  // harder than the man chasing him. The stated speed gap is 6% (5.35 vs 5.05);
+  // the gap the bench actually measured over a long chase was 26%, and almost
+  // all of the difference was this. A shoplifter with a jacket full of steaks
+  // does not out-accelerate anybody.
+  get thiefAccel()    { return R4.thiefAccel; },
+  get thiefCorner()   { return T.thiefCorner   ?? 0.55; }, // speed mult on a 90 degree cut
   get thiefReact()    { return T.thiefReact    ?? 0.22; }, // seconds of "oh shit" before the bolt
   get pickupRadius()  { return T.pickupRadius  ?? 0.62; },
   get pickupReach()   { return T.pickupReach   ?? 1.25; }, // m/s toward the shelf face
@@ -79,11 +103,11 @@ const K = {
   // "no powerup" cop boosted 45% of the chase because he ran over free cans.
   // Push it to the shelf lip so grabbing one costs you a deliberate swerve.
   get pickupLip()     { return T.pickupLip     ?? 1.58; }, // metres off centreline
-  get thiefCornerFree(){return T.thiefCornerFree?? 0.86; },// cos above which a turn is free
+  get thiefCornerFree(){return T.thiefCornerFree?? 0.985; },//cos above which a turn is free
   // The thief's own wind. He is a shoplifter with a jacket full of steaks, not a
   // sprinter — thiefRun is his first-few-seconds ceiling, not his cruise.
   get thiefWind()     { return T.thiefWind     ?? 2.60; }, // sec of flat-out running
-  get thiefTired()    { return T.thiefTired    ?? 0.620; },// x thiefRun once blown
+  get thiefTired()    { return R4.thiefTired; },           // x thiefRun once blown
   get thiefPanic()    { return T.thiefPanic    ?? 0.965; },// x thiefRun with footsteps on him
   get thiefPanicGap() { return T.thiefPanicGap ?? 3.00; }, // metres at which fear starts
   get thiefPanicBand(){ return T.thiefPanicBand?? 0.90; }, // metres from fear to flat-out
@@ -148,7 +172,7 @@ const K = {
   // dispatch and the chase is whatever distance the dispatch actually bought
   // you. It still needs line of sight and it still needs him to be ON the
   // route, so a cop at his post across the store never trips it.
-  get thiefLook()     { return T.thiefLook     ?? 17.0; }, // m
+  get thiefLook()     { return R4.thiefLook; },  // m
   get thiefBlockCos() { return T.thiefBlockCos ?? 0.60; }, // cop must be this near his route line
   // The squeeze. 1.58 m of usable half-lane against a 1.15 m catch radius means
   // a shelf-hugging thief clears a centred cop by 0.43 m — thin, readable, and
@@ -164,7 +188,9 @@ const K = {
   get jukeHold()      { return T.jukeHold      ?? 0.85; }, // s the chosen shoulder is locked in
   get jukeLat()       { return T.jukeLat       ?? 1.75; }, // lateral steering authority
   get jukeLip()       { return T.jukeLip       ?? 0.97; }, // fraction of the usable half-lane
-  get stumbleT()      { return T.stumbleT      ?? 0.45; }, // s of lost pace after squeezing past
+  get stumbleT()      { return R4.stumbleT; },   // s of lost pace after squeezing past
+  get bargeStagger()  { return T.bargeStagger  ?? 0.90; }, // s the COP spends shaking it off
+  get bargeThru()     { return T.bargeThru     ?? 0.95; }, // m he ends up past you
   get stumbleMul()    { return T.stumbleMul    ?? 0.72; },
   // How much of the cop this particular thief wants to risk. Rolled per subject
   // so two identical-looking dispatches do not always play out the same way.
@@ -426,10 +452,14 @@ export function createAgents(THREE, scene, world) {
   let EXITS = [];
   let exitFs = [];      // one static flood per door
   let exitF = null;     // static flood from ALL doors: metres of route to the nearest way out
+  // Attribution switch: run the store with only the first `doorLimit` doors, so
+  // round 4's changes can be measured one at a time instead of asserted as a
+  // bundle. 1 = the old single-exit store.
+  let doorLimit = 99;
   function buildExits() {
     const probe = nav.field(EXIT.x, EXIT.z);
     EXITS = [];
-    for (const sp of EXIT_SPEC) {
+    for (const sp of EXIT_SPEC.slice(0, doorLimit)) {
       let bx = sp.x, bz = sp.z, ok = false;
       for (let r = 0; r <= 8 && !ok; r++) {
         for (let a = 0; a < (r ? 12 : 1) && !ok; a++) {
@@ -586,6 +616,7 @@ export function createAgents(THREE, scene, world) {
   cop.userData = {
     rig: copRig, vel: V(0, 0, 0), speed: 0, phase: 0, heading: 0, prevHeading: 0,
     stamina: T.staminaMax, gassed: false, boost: 0, breath: 0, lean: 0, skid: 0, turn: 0,
+    stagger: 0,
   };
   scene.add(cop);
   // steer() writes speed/skid and moves .position; the cop's live on userData.
@@ -712,7 +743,7 @@ export function createAgents(THREE, scene, world) {
     cop.position.set(0, 0, FRONT_WALK_Z + 1.5);
     const cu = cop.userData;
     cu.vel.set(0, 0, 0); cu.speed = 0; cu.stamina = T.staminaMax;
-    cu.gassed = false; cu.boost = 0; cu.heading = 0; cu.skid = 0;
+    cu.gassed = false; cu.boost = 0; cu.heading = 0; cu.skid = 0; cu.stagger = 0;
     for (const p of powerups) { p.live = true; p.respawn = 0; p.mesh.visible = true; }
   }
   setSeed(20240822);
@@ -896,6 +927,8 @@ export function createAgents(THREE, scene, world) {
     let target = canSprint ? T.copRun : T.copWalk;
     if (u.gassed) target = (wantSprint ? T.copRun : T.copWalk) * T.gassedPenalty;
     if (boosted) target *= T.boostMul;
+    // Shaking off a shoulder — see barge(). Not a freeze: a wobble.
+    if (u.stagger > 0) { u.stagger = Math.max(0, u.stagger - dt); target *= 0.42; }
     if (!moving) target = 0;
 
     const top = T.copRun * T.boostMul;
@@ -905,6 +938,10 @@ export function createAgents(THREE, scene, world) {
     // shove shoppers out of the way rather than clipping through them
     for (const s of shoppers) {
       if (s.escaped || !s.mesh.visible) continue;
+      // Mid-barge the two of them are momentarily occupying the same ground.
+      // Holding them 0.78 m apart through it is what pinned a thief who had
+      // just gone through a man to the front of the man he went through.
+      if (s.bargeT > 0) continue;
       const dx = s.position.x - cop.position.x, dz = s.position.z - cop.position.z;
       const d = Math.hypot(dx, dz), min = BODY_R + 0.36;
       if (d < min && d > 1e-4) {
@@ -981,12 +1018,20 @@ export function createAgents(THREE, scene, world) {
   function thiefPace(s, copD, dt) {
     const near = clamp((K.thiefPanicGap - copD) / K.thiefPanicBand, 0, 1);
     s.wind = clamp(s.wind - dt * (1 + near * 1.4) / K.thiefWind, 0, 1);
-    // Adrenaline is a SECOND tank and it is finite. It only empties while he is
-    // actually being pressed, so a cop who hangs back is not spending it for
-    // him — closing to inside three metres is what costs him, and that is now a
-    // real decision on both sides of the chase. See K.thiefAdren.
-    s.adren = clamp(s.adren - dt * near / K.thiefAdren
-                            + dt * (1 - near) * K.thiefAdrenBack, 0, 1);
+    // Adrenaline is a SECOND tank and it is finite.
+    //
+    // It has to drain on PRESSURE, not on `near`. Draining it on `near` was a
+    // bug with a very specific signature and the bench printed it: a chase
+    // settles at the gap where the surge exactly matches the cop, which is just
+    // inside thiefPanicGap, so `near` sits around 0.1, the tank drained at 0.02
+    // a second and refilled at 0.15, and the man had infinite adrenaline again
+    // at exactly the distance where it mattered. Every escape in the sample had
+    // a closest approach of 2.8-3.3 m. Pressure starts at six metres — the point
+    // where he can hear you — and it does not care whether you have closed the
+    // last three.
+    const press = clamp((K.thiefPanicGap + 3.0 - copD) / 3.0, 0, 1);
+    s.adren = clamp(s.adren - dt * press / K.thiefAdren
+                            + dt * (1 - press) * K.thiefAdrenBack, 0, 1);
     const cruise = lerp(K.thiefTired, 1, s.wind);              // opening sprint, fading
     const surge = lerp(K.thiefTired, K.thiefPanic, near * s.adren);  // fear, and it runs out
     s.dbgNear = near;
@@ -1200,7 +1245,24 @@ export function createAgents(THREE, scene, world) {
       if (s.speed > 0.6) {
         const fx = s.vel.x / s.speed, fz = s.vel.z / s.speed;
         const cosA = clamp(dir.x * fx + dir.z * fz, -1, 1);
-        const bite = clamp((K.thiefCornerFree - cosA) / K.thiefCornerFree, 0, 1);
+        let bite = clamp((K.thiefCornerFree - cosA) / K.thiefCornerFree, 0, 1);
+        // ROUND 4 — as written in round 3 this measured a corner multiplier of
+        // 0.99 across every chase in the bench: it never fired. `dir` comes out
+        // of nav.steer(), which string-pulls to the furthest VISIBLE point on
+        // the descent, so the aim point swings round the end of a gondola a beat
+        // before the body does and the two vectors never disagree by much. The
+        // cost was written, documented, tuned — and dead. thiefCornerFree is now
+        // set where the angle a running body actually produces can reach it.
+        //
+        // I also tried billing it against steer()'s `skid`, which is the lateral
+        // acceleration he is really spending, and that is the right quantity but
+        // it is NOT SAFE as written: skid is downstream of the speed target, so
+        // charging the target against it closes a feedback loop. The bench trace
+        // showed the result plainly — a bolting thief oscillating between 3.7
+        // and 1.1 m/s on a straight, with his target collapsing to 1.8. Left in,
+        // it would have flattered every number in this file by crippling the man
+        // being chased. The correct version bills the BEND OF THE ROUTE AHEAD,
+        // which is exogenous; it is worth doing and it is not done here.
         cm = 1 - (1 - K.thiefCorner) * bite;
         target *= cm;
       }
@@ -1246,6 +1308,17 @@ export function createAgents(THREE, scene, world) {
     r.neck.rotation.y = lerp(r.neck.rotation.y, s.look, 1 - Math.exp(-8 * dt));
     r.hips.position.y = 0.62 + Math.abs(sw) * 0.022;
 
+    // Shouldering the door. Both arms out flat on the leaf, body pitched into
+    // it — the beat has to be VISIBLE or the grab window is invisible too.
+    if (s.state === 'shove') {
+      const e = EXITS[s.exitI] || EXITS[0];
+      if (e) s.mesh.rotation.y = s.heading = Math.atan2(e.x - s.position.x, e.z - s.position.z);
+      const heave = Math.sin((1 - clamp(s.shoveT / Math.max(0.05, e ? e.shove : 1), 0, 1)) * Math.PI);
+      r.armL.rotation.x = -1.75 - heave * 0.28; r.armR.rotation.x = -1.75 - heave * 0.28;
+      r.hips.rotation.x = 0.22 + heave * 0.18;
+      r.hips.position.y = 0.62;
+      return;
+    }
     const bolting = s.state === 'bolt' || s.state === 'react';
     if (s.hasCart) {
       // both hands on the bar, cart pushed out front
@@ -1355,19 +1428,49 @@ export function createAgents(THREE, scene, world) {
     const fx = s.vel.x / m, fz = s.vel.z / m;
     const dx = cop.position.x - s.position.x, dz = cop.position.z - s.position.z;
     if (dx * fx + dz * fz < -0.10) return true;     // cop is astern: a chase-down grab
-    return Math.abs(dz * fx - dx * fz) < K.grabSlack;
+    // Measured ACROSS THE LANE, at contact. Inside an aisle the lane axis is X;
+    // out on a cross-aisle it is Z. He locked his shoulder in jukeHold seconds
+    // ago and he cannot change it — 0.85 s, and 1.5 m of lane to cover, which is
+    // 2.1 m/s^2 against the 7 m/s^2 of lateral authority a sprinting cop has. So
+    // it is entirely coverable BY A COP WHO READ THE COMMIT, and not remotely
+    // coverable by one still steering at where the man was a moment ago. That
+    // asymmetry is the duel; the bench bot's 0.16 s of reaction lag is exactly
+    // what decides it, which is the correct thing for it to turn on.
+    const off = Math.abs(s.position.z) < HALF_LEN ? Math.abs(dx) : Math.abs(dz);
+    return off < K.grabSlack;
   }
   function barge(s) {
     s.bargeN = (s.bargeN || 0) + 1;
     s.stumble = K.stumbleT;
     s.bargeT = K.bargeGrace;
-    s.duck = 0; s.duckT = 0;
-    // He does not pass politely. Shoulder to the ribs, both bodies displaced.
+    s.duckSide = s.duck; s.duck = 0; s.duckT = 0;
+    // ROUND 4 — who actually pays. Round 3 charged the THIEF for getting past
+    // (0.45 s at three quarters pace) and charged the cop a 22% velocity trim,
+    // which is nothing: he was still inside grab range half a second later and
+    // the bench duly measured 80 barges and 79 catches. Getting through a man
+    // that has to MEAN something or it is not a mechanic, it is an animation.
+    //
+    // So it lands the other way round now, which is also the way it works: he is
+    // running and you are not. He clips a body and loses a step; you take a
+    // shoulder, most of your speed goes, and you are left facing the way he came
+    // from with a stagger to shake off before you can go again. Roughly three
+    // metres, which against a 26 m aisle is a chase instead of a formality.
     let dx = s.position.x - cop.position.x, dz = s.position.z - cop.position.z;
     const m = Math.hypot(dx, dz) || 1; dx /= m; dz /= m;
-    cop.position.x -= dx * 0.20; cop.position.z -= dz * 0.20;
-    cop.userData.vel.multiplyScalar(0.78);
-    s.position.x += dx * 0.12; s.position.z += dz * 0.12;
+    cop.position.x -= dx * 0.34; cop.position.z -= dz * 0.34;
+    cop.userData.vel.multiplyScalar(0.22);
+    cop.userData.stagger = K.bargeStagger;
+    // ...and he ends up THROUGH, which is the whole point and is the thing that
+    // was missing. A 0.10 m nudge left him inside the separation constraint the
+    // two bodies enforce on each other — the bench trace showed the pair welded
+    // at 0.78 m for the entire half-second of grace and then a grab the instant
+    // it expired, which is exactly the "33 barges, 32 still caught" the critic
+    // measured and I could not explain. He is not squeezing past, he is running
+    // through: put him a body's length down the lane on the shoulder he picked.
+    const sp = Math.hypot(s.vel.x, s.vel.z) || 1;
+    s.position.x += (s.vel.x / sp) * K.bargeThru + (s.duckSide || 0) * 0.22;
+    s.position.z += (s.vel.z / sp) * K.bargeThru;
+    solids.resolve(s.position, BODY_R);
   }
   function interactions(dt, api) {
     for (const s of shoppers) {
@@ -1401,8 +1504,7 @@ export function createAgents(THREE, scene, world) {
         const ex = exitOf(s.position.x, s.position.z);
         chase = {
           id: s.id, dist: d, exit: ex.i, exitLabel: ex.exit ? ex.exit.label : 'DOOR 1',
-          thiefToExit: Math.min(ex.dist, dist2d(s.position.x, s.position.z,
-            ex.exit ? ex.exit.x : EXIT.x, ex.exit ? ex.exit.z : EXIT.z)),
+          thiefToExit: ex.dist,
           shoving: s.state === 'shove',
         };
       }
@@ -1458,9 +1560,156 @@ export function createAgents(THREE, scene, world) {
   // =========================================================================
   const routeLen = (fx, fz) => toExit(fx, fz);
 
+  // ---- the bot ------------------------------------------------------------
+  // ROUND 4. There is no such thing as "the" catch rate; there is a catch rate
+  // FOR A GIVEN PLAYER. Round 3 shipped exactly one bot, a pure pursuit that
+  // paths at wherever the man is standing this frame, and then published its
+  // misaim table as if it described the game. An independent critic put its own
+  // bot in the same geometry and beat mine by fifteen points at misaim 2. A
+  // bench with one weak bot in it does not measure a game, it measures that bot.
+  //
+  // So: three, and every headline reports all three.
+  //   chase  — round 3's. Steers at the thief. This is what the game's fiction
+  //            invites you to do and it is the weakest of the three.
+  //   cut    — a competent player. Works out where the man has to GO, floods
+  //            its own route costs, and moves to the earliest point on his line
+  //            it can reach before he does. Also manages its wind: it only
+  //            spends sprint when the intercept is actually tight.
+  //   camp   — the degenerate strategy the critic found. Ignores the dispatch,
+  //            walks to a door and stands on it. THIS is the number that says
+  //            whether the desk phase is worth playing: if camp beats cut, the
+  //            aisle number is decoration.
+  // `lag` gives the bot a reaction delay. At 0 it is an oracle that mirrors a
+  // sidestep perfectly, which is a true statement about a tracking algorithm and
+  // a false one about a man on a keyboard; the default is a human's.
+  const _pathLen = (px, pz, pts) => {
+    let L = 0, cx = px, cz = pz;
+    for (const w of pts) { L += dist2d(cx, cz, w.x, w.z); cx = w.x; cz = w.z; }
+    return L;
+  };
+  // The thief's route to the door he is actually going for, sampled every ~2 m
+  // so the bot can ask "can I be at THAT spot before he is".
+  function routePoints(fx, fz) {
+    const e = exitOf(fx, fz);
+    const raw = nav.path(fx, fz, e.exit.x, e.exit.z);
+    const out = [];
+    let cx = fx, cz = fz, run = 0;
+    for (const w of raw) {
+      const d = dist2d(cx, cz, w.x, w.z);
+      const steps = Math.max(1, Math.round(d / 2.0));
+      for (let i = 1; i <= steps; i++) {
+        const t = i / steps;
+        run += d / steps;
+        out.push({ x: cx + (w.x - cx) * t, z: cz + (w.z - cz) * t, s: run });
+      }
+      cx = w.x; cz = w.z;
+    }
+    return out;
+  }
+
+  function botGoal(thief, st, dt, tx, tz) {
+    const u = cop.userData;
+    if (st.bot === 'chase') return { x: tx, z: tz, sprint: true };
+
+    // One Dijkstra out of the cop, a few times a second: exact route cost from
+    // where he is standing to every cell in the building. Cheaper than one A*
+    // per candidate and it is what lets the bot compare arrivals honestly.
+    st.cfT -= dt;
+    if (!st.copF || st.cfT <= 0) {
+      st.cfT = 0.30;
+      if (!st.copBuf || st.copBuf.length !== nav.count) st.copBuf = new Float32Array(nav.count);
+      st.copF = nav.field(cop.position.x, cop.position.z, { out: st.copBuf });
+    }
+    st.planT -= dt;
+    if (st.planT <= 0) {
+      st.planT = 0.20;
+      st.route = routePoints(tx, tz);
+    }
+    const route = st.route || [];
+    const tSpd = T.thiefRun * K.thiefTired;                 // his cruise, not his ceiling
+    const cSpd = T.copRun * (u.boost > 0 ? T.boostMul : 0.86);
+    const doorI = exitOf(tx, tz).i;
+    const door = EXITS[doorI] || EXITS[0];
+
+    if (st.bot === 'camp') {
+      // Stands on a door. Switches only once the man has clearly committed to
+      // the other one — that is what a camper actually does, and pretending he
+      // never switches would flatter the pursuing bot.
+      if (st.campI == null) st.campI = clamp(st.campFix != null ? st.campFix : doorI, 0, EXITS.length - 1);
+      if (st.campFix == null && doorI !== st.campI && exitFs[st.campI] && exitFs[doorI]) {
+        const mine = nav.at(exitFs[st.campI], tx, tz);
+        const his = nav.at(exitFs[doorI], tx, tz);
+        if (mine - his > 5.0) st.campI = doorI;
+      }
+      const e = EXITS[st.campI] || EXITS[0];
+      const near = dist2d(cop.position.x, cop.position.z, e.x, e.z) < 1.4;
+      // Once he is inside grabbing range, stop being furniture.
+      const gap = dist2d(cop.position.x, cop.position.z, tx, tz);
+      if (gap < 3.2) return { x: tx, z: tz, sprint: true };
+      return { x: e.x, z: e.z, sprint: !near };
+    }
+
+    // ---- cut: the earliest point on his line I can reach before he does -----
+    let best = null;
+    const rTot = route.length ? route[route.length - 1].s : 0;
+    for (const w of route) {
+      const tT = w.s / tSpd;
+      const cD = nav.at(st.copF, w.x, w.z);
+      if (!isFinite(cD)) continue;
+      const cT = cD / cSpd;
+      if (cT <= tT - 0.18) { best = { w, cT, tT }; break; }   // route is ordered: first = earliest
+    }
+    if (!best) {
+      // Cannot head him off anywhere. Then the door is the last place he has to
+      // be, so go and stand on it — this is exactly why camping works at all,
+      // and a bot that would not do it is not a competent player.
+      const cD = nav.at(st.copF, door.x, door.z);
+      const tT = rTot / tSpd, cT = cD / cSpd;
+      if (isFinite(cD) && cT < tT + 1.2) return { x: door.x, z: door.z, sprint: true };
+      return { x: tx, z: tz, sprint: true };
+    }
+    // Wind management. Sprinting to arrive four seconds early buys nothing and
+    // costs you the legs you need at the door; spend it when the intercept is
+    // tight, or when he is close enough to grab.
+    const slack = best.tT - best.cT;
+    const gap = dist2d(cop.position.x, cop.position.z, tx, tz);
+    const sprint = st.conserve === false ? true
+      : (slack < 1.1 || gap < 5.0 || thief.state === 'shove');
+    return { x: best.w.x, z: best.w.z, sprint };
+  }
+
   function botInput(thief, mode, st, dt) {
     const u = cop.userData;
-    let gx, gz;
+    if (u.boost > 0) st.gotBoost = true;
+    const lag = st.lag || 0;
+    if (lag > 0) {
+      st.hist.push(thief.position.x, thief.position.z);
+      const keep = Math.max(2, Math.round(lag / dt) * 2 + 2);
+      while (st.hist.length > keep) st.hist.splice(0, 2);
+    }
+    let tx = lag > 0 ? st.hist[0] : thief.position.x;
+    let tz = lag > 0 ? st.hist[1] : thief.position.z;
+    // `blind` is what finally makes the misaim table mean anything. An oracle
+    // bot knows which door the man prefers before he does, so it cuts the right
+    // corner from the wrong aisle and being dispatched two aisles out costs it
+    // almost nothing — which is exactly how round 3 came to publish a misaim
+    // table that flattered itself. A blind bot only knows what the desk told it
+    // (an aisle number) plus whatever it can currently SEE down a lane. Being
+    // sent to the wrong aisle then costs what it should: you are cutting off a
+    // route he is not on.
+    if (st.blind) {
+      if (nav.clearSeg(cop.position.x, cop.position.z, tx, tz)
+          && dist2d(cop.position.x, cop.position.z, tx, tz) < 20) {
+        st.seen.x = tx; st.seen.z = tz; st.seenT = 0;
+      } else {
+        st.seenT += dt;
+        tx = st.seen.x; tz = st.seen.z;
+      }
+    }
+
+    let g = botGoal(thief, st, dt, tx, tz);
+    let gx = g.x, gz = g.z, sprint = g.sprint !== false;
+
     if (mode === 'pickup' && !st.gotBoost) {
       // A competent player, not an oracle: every fifth of a second, look for the
       // powerup that costs the least ground to detour to, and only take it if
@@ -1470,12 +1719,12 @@ export function createAgents(THREE, scene, world) {
       st.puT -= dt;
       if (st.puT <= 0) {
         st.puT = 0.2;
-        const direct = dist2d(cop.position.x, cop.position.z, thief.position.x, thief.position.z);
+        const direct = dist2d(cop.position.x, cop.position.z, gx, gz);
         let best = null, bestX = Infinity;
         for (const p of powerups) {
           if (!p.live) continue;
           const extra = dist2d(cop.position.x, cop.position.z, p.x, p.z)
-                      + dist2d(p.x, p.z, thief.position.x, thief.position.z) - direct;
+                      + dist2d(p.x, p.z, gx, gz) - direct;
           if (extra < bestX) { bestX = extra; best = p; }
         }
         st.puTarget = best && bestX <= st.detour ? best : null;
@@ -1483,25 +1732,11 @@ export function createAgents(THREE, scene, world) {
       const p = st.puTarget;
       // Aim past the can into the shelf face — you cannot take it off the shelf
       // by running parallel to it.
-      if (p && p.live) { gx = p.x + p.nx * 0.55; gz = p.z + p.nz * 0.55; }
+      if (p && p.live) { gx = p.x + p.nx * 0.55; gz = p.z + p.nz * 0.55; sprint = true; }
     }
-    // `lag` is the only knob that separates this bot from an oracle: it steers
-    // at where the subject was `lag` seconds ago. At 0 it mirrors a sidestep
-    // perfectly and no squeeze past it can ever work, which is a true statement
-    // about a perfect tracker and a false one about a man on a keyboard.
-    const lag = st.lag || 0;
-    if (lag > 0) {
-      st.hist.push(thief.position.x, thief.position.z);
-      const keep = Math.max(2, Math.round(lag / dt) * 2 + 2);
-      while (st.hist.length > keep) st.hist.splice(0, 2);
-    }
-    const tx = lag > 0 ? st.hist[0] : thief.position.x;
-    const tz = lag > 0 ? st.hist[1] : thief.position.z;
-    if (gx === undefined) { gx = tx; gz = tz; }
-    if (u.boost > 0) st.gotBoost = true;
 
-    // lead the target when we can see him
-    if (gx === tx && nav.clearSeg(cop.position.x, cop.position.z, gx, gz)) {
+    // lead the target when we can see him and we are actually chasing him
+    if (gx === tx && gz === tz && nav.clearSeg(cop.position.x, cop.position.z, gx, gz)) {
       gx += thief.vel.x * 0.28; gz += thief.vel.z * 0.28;
     }
     st.repath -= dt;
@@ -1512,10 +1747,11 @@ export function createAgents(THREE, scene, world) {
     }
     const holder = { position: cop.position, path: st.path };
     const dir = followPath(holder, 0);
-    if (!dir) return { x: 0, z: 0, sprint: true };
+    if (!dir) return { x: 0, z: 0, sprint };
     // main.js hands us input.z with the camera-inverted sign; undo it here.
-    return { x: dir.x, z: FWD_SIGN * dir.z, sprint: true };
+    return { x: dir.x, z: FWD_SIGN * dir.z, sprint };
   }
+
 
   // NaN used to survive into the sort here, which silently scrambles the order
   // and prints a percentile that is not one. Drop them.
@@ -1599,7 +1835,7 @@ export function createAgents(THREE, scene, world) {
       cop.position.set(cx0, 0, cz0);
       solids.resolve(cop.position, BODY_R);
       cu.vel.set(cvx, 0, cvz); cu.speed = Math.hypot(cvx, cvz);
-      cu.stamina = T.staminaMax; cu.gassed = false; cu.skid = 0;
+      cu.stamina = T.staminaMax; cu.gassed = false; cu.skid = 0; cu.stagger = 0;
       cu.heading = Math.atan2(cvx, cvz);
       cu.boost = mode === 'boost' ? T.boostTime : 0;
 
@@ -1615,13 +1851,18 @@ export function createAgents(THREE, scene, world) {
       const st = {
         gotBoost: mode !== 'pickup', puTarget: null, puT: 0, detour: opts.detour ?? 7,
         path: [], repath: 0, goal: { x: 0, z: 0 },
-        lag: opts.lag ?? 0, hist: [thief.position.x, thief.position.z],
+        lag: opts.lag ?? 0.16, hist: [thief.position.x, thief.position.z],
+        bot: opts.bot ?? 'cut', conserve: opts.conserve, campFix: opts.campFix,
+        copF: null, copBuf: null, cfT: 0, planT: 0, route: null, campI: null,
+        // All the desk actually told him: an aisle number. Not a position in it.
+        blind: opts.blind !== false, seen: { x: aisleX(dAisle), z: 0 }, seenT: 0,
       };
 
       let time = 0, done = 0, finalGap = 0, wentBack = false, ducked = false;
       let tBolt = NaN, gapAtBolt = NaN, routeAtBolt = NaN;
       let minGap = Infinity, sumTs = 0, sumCs = 0, nS = 0;
       let gassedT = 0, slowT = 0, boostT = 0, sumCm = 0, sumLat = 0, nLat = 0;
+      let sprintT = 0, atCop = null, doorT = NaN, exitUsed = -1;
       const api = {
         onBolt() {}, onHarass() {},
         onCatch() { done = 1; },
@@ -1643,6 +1884,20 @@ export function createAgents(THREE, scene, world) {
           if (g < minGap) minGap = g;
           if (thief.position.z > HALF_LEN - 2.2) wentBack = true;
           if (thief.duck) ducked = true;
+          if (cu.speed > T.copWalk + 0.35) sprintT += dt;
+          if (thief.state === 'shove' && !isFinite(doorT)) { doorT = time; exitUsed = thief.exitI; }
+          // THE BRANCH. Half a second after the bolt, is he running AT the man
+          // chasing him or away from him? Round 3's headline was the average of
+          // two near-deterministic outcomes -- 449 of 600 came at the cop and
+          // 97.1% of those were collected, 151 went out the back and 0 of those
+          // were ever caught -- and an average of two foregone conclusions is
+          // not a chase. Any headline that does not carry this split is hiding
+          // the game.
+          if (atCop === null && time - tBolt > 0.5) {
+            const m = thief.speed || 1;
+            atCop = ((cop.position.x - thief.position.x) * thief.vel.x
+                   + (cop.position.z - thief.position.z) * thief.vel.z) / (m * (g || 1)) > 0.15;
+          }
           sumTs += thief.speed; sumCs += cu.speed; nS++;
           if (cu.gassed) gassedT += dt;
           if (cu.boost > 0) boostT += dt;
@@ -1671,6 +1926,9 @@ export function createAgents(THREE, scene, world) {
         corner: nS ? sumCm / nS : NaN,
         copLat: nLat ? sumLat / nLat : NaN,
         aisle: ai, wentBack, ducked, barged: thief.bargeN > 0,
+        atCop: atCop === true, doorT, exitUsed,
+        caughtShoving: done === 1 && isFinite(doorT),
+        sprintFrac: nS ? sprintT / (nS * dt) : NaN,
         // Starting geometry, so a result can be sliced by how deep in the aisle
         // he was when you walked in on him instead of only pooled.
         z0: tzz, d0: dist2d(txx, tzz, cx0, cz0),
@@ -1685,15 +1943,49 @@ export function createAgents(THREE, scene, world) {
     const caught = R.filter((r) => r.done === 1);
     const esc = R.filter((r) => r.done === 2);
     const stall = R.filter((r) => r.done === 0);
+    // ---- THE DISTRIBUTION ---------------------------------------------------
+    // Round 3 published a headline catch rate that was the mean of two
+    // near-deterministic branches, and the number that mattered -- 61% of
+    // catches landing inside one second of the bolt -- was already printing on
+    // this object and went unread. Nothing below is optional.
+    const bolted = R.filter((r) => !r.noBolt);
+    const branch = (f) => {
+      const g = bolted.filter(f);
+      const c = g.filter((r) => r.done === 1);
+      return g.length
+        ? `n${g.length} ${Math.round(c.length / g.length * 100)}% med${_f2(_q(c.map((r) => r.chaseT), 0.5))}s`
+        : 'n0';
+    };
     const res = {
-      mode, spawn, misaim: opts.misaim ?? 0, n, crowd,
+      mode, spawn, bot: opts.bot ?? 'cut', lag: opts.lag ?? 0.16,
+      misaim: opts.misaim ?? 0, n, crowd,
       catchRate: +(caught.length / n * 100).toFixed(1),
       escaped: esc.length, stalled: stall.length,
       // Seconds from DISPATCH (not from the bolt) to the grab. If this is ~1s
       // the player never had a chase, whatever the catch rate says.
       catchFromDispatch_median: _f2(_q(caught.map((r) => r.time), 0.5)),
+      catchFromDispatch_p10: _f2(_q(caught.map((r) => r.time), 0.1)),
+      catchFromDispatch_p90: _f2(_q(caught.map((r) => r.time), 0.9)),
+      // THE two branches, each with its own catch rate and its own median. A
+      // headline that pools these is hiding whether either one is a chase.
+      cameAtCop: branch((r) => r.atCop),
+      turnedAway: branch((r) => !r.atCop),
+      // Caught with his shoulder on a push-bar: the chase decided AT the door,
+      // which before round 4 could not happen because there was no beat there.
+      caughtAtDoor: caught.filter((r) => r.caughtShoving).length,
+      // Is the shoulder barge inert? Not "how often does it fire" -- round 3
+      // asked that and got 7 -- but DOES GETTING THROUGH YOU CHANGE ANYTHING.
+      // Compare the chases where he committed to a shoulder and got through
+      // against the ones where he committed and you had it covered.
+      bargeGot: branch((r) => r.barged),
+      bargeStopped: branch((r) => r.ducked && !r.barged),
+      reachedDoor: R.filter((r) => isFinite(r.doorT)).length,
+      exitSplit: EXITS.map((e, i) =>
+        `${e.label}:${R.filter((r) => r.exitUsed === i).length}`).join(' '),
+      copSprintFrac: _f2(_mean(R.map((r) => r.sprintFrac).filter(isFinite))),
       // Did he ever use the back of the store? The counterplay, measured.
       outTheBack: R.filter((r) => r.wentBack).length,
+      outTheBackCaught: R.filter((r) => r.wentBack && r.done === 1).length,
       // ...and how often he committed to a shoulder and tried to go through you.
       squeezed: R.filter((r) => r.ducked).length,
       // He committed to a shoulder and you were not in front of it.
@@ -1719,6 +2011,9 @@ export function createAgents(THREE, scene, world) {
       catchT_median: _f2(_q(caught.map((r) => r.chaseT), 0.5)),
       catchT_p90: _f2(_q(caught.map((r) => r.chaseT), 0.9)),
       catchUnder1s: caught.filter((r) => r.chaseT < 1.0).length,
+      // ...as a percentage of catches, because that is the form the claim takes.
+      catchUnder1sPct: caught.length
+        ? +(caught.filter((r) => r.chaseT < 1.0).length / caught.length * 100).toFixed(1) : null,
       catchUnder2s: caught.filter((r) => r.chaseT < 2.0).length,
       escT_median: _f2(_q(esc.map((r) => r.chaseT), 0.5)),
       gapAtBolt_median: _f2(_q(R.map((r) => r.gapAtBolt), 0.5)),
@@ -1748,11 +2043,13 @@ export function createAgents(THREE, scene, world) {
   }
   // Compact one-line summary for sweeps.
   const fmt = (r) => `${r.mode}${r.misaim ? `/off${r.misaim}` : ''}:${r.catchRate}%`
-    + ` miss${r.missByM_median}m near${r.minGapM_median}m t${r.catchFromDispatch_median}s back${r.outTheBack}`;
+    + ` t${r.catchFromDispatch_median}s <1s ${r.catchUnder1sPct}%`
+    + ` | atCop ${r.cameAtCop} | away ${r.turnedAway}`
+    + ` | door ${r.caughtAtDoor}/${r.reachedDoor} miss${r.missByM_median}m`;
   function benchLine(n = 200, opts = {}) {
     return benchAll(n, opts).map(fmt).join('  |  ');
   }
-  // THE report: the four numbers round 3 is judged on, all from postSpawn('aisle').
+  // THE report, all from postSpawn('aisle'), all with the distribution attached.
   function benchReal(n = 200, opts = {}) {
     const o = { ...opts, n, spawn: 'aisle' };
     return {
@@ -1766,17 +2063,39 @@ export function createAgents(THREE, scene, world) {
       legacyBehind: fmt(bench({ ...o, mode: 'none', spawn: 'behind' })),
     };
   }
+  // IS THE DISPATCH WORTH READING? The one question the desk phase lives or
+  // dies on. A door-camping bot that throws the aisle number away, against a
+  // bot that goes and uses it, at every misaim the player can be off by. If the
+  // camper wins, the monitors are decoration.
+  function benchCamp(n = 200, opts = {}) {
+    const o = { ...opts, n, spawn: 'aisle', mode: 'none' };
+    const row = (bot) => [0, 1, 2, 4].map((m) => {
+      const r = bench({ ...o, bot, misaim: m });
+      return `off${m}:${r.catchRate}%`;
+    }).join(' ');
+    return { cut: row('cut'), chase: row('chase'), camp: row('camp') };
+  }
 
   return {
     cop, shoppers, powerups, reset,
     update: tick,
-    bench, benchAll, benchLine, benchReal,
+    bench, benchAll, benchLine, benchReal, benchCamp,
     // debug handles
     // game.js counts down the door alarm off a thief's speed. TUNING.thiefRun is
     // his opening ceiling, not his cruise — use these instead so the ETA is true.
     thiefCruise: () => T.thiefRun * K.thiefTired,
     thiefTop: () => T.thiefRun * K.thiefPanic,
     get nav() { return nav; }, get exitField() { return exitF; }, toExit,
+    // ROUND 4 CONTRACT ADDITION (additive; nothing that ignores it breaks).
+    // There are now TWO ways out of this store — see EXIT_SPEC. Anything that
+    // measures a thief against config's EXIT is measuring him against one of
+    // them. game.js's updateAlarm() already routes through toExit() and is
+    // correct as written; the floor HUD's f.exitDist and stallWatch()'s
+    // progress test are still straight lines to Door 1 and want exitDistOf().
+    get exits() { return EXITS; },
+    exitOf: (x, z) => exitOf(x, z),
+    useDoors(k) { doorLimit = k == null ? 99 : k; buildExits(); return EXITS.length; },
+    exitDistOf: (s) => exitOf(s.position.x, s.position.z).dist,
     get escapeField() { return escapeField(); }, get fleeBuilds() { return fleeBuilds; },
     rebuildNav() {
       nav = buildNav(); buildExits();

@@ -117,16 +117,16 @@ export function ceilTex(THREE) {
     for (let i = 0; i < 5200; i++) {
       const d = rng();
       g.fillStyle = d < 0.72
-        ? `rgba(96,88,72,${rr(rng, 0.16, 0.52)})`
-        : `rgba(255,252,242,${rr(rng, 0.14, 0.42)})`;
-      const w = rr(rng, 1.4, 3.8), hh = rr(rng, 1.4, 3.4);
+        ? `rgba(84,77,62,${rr(rng, 0.16, 0.44)})`
+        : `rgba(255,253,246,${rr(rng, 0.16, 0.46)})`;
+      const w = rr(rng, 1.5, 3.9), hh = rr(rng, 1.4, 3.4);
       g.fillRect(tx * S + rng() * S, ty * S + rng() * S, w, hh);
     }
     for (let i = 0; i < 150; i++) {
       g.strokeStyle = rng() < 0.7
-        ? `rgba(104,96,80,${rr(rng, 0.14, 0.40)})`
-        : `rgba(255,251,240,${rr(rng, 0.12, 0.34)})`;
-      g.lineWidth = rr(rng, 1.2, 4.2);
+        ? `rgba(88,80,66,${rr(rng, 0.13, 0.32)})`
+        : `rgba(255,252,244,${rr(rng, 0.13, 0.34)})`;
+      g.lineWidth = rr(rng, 1.2, 3.8);
       g.beginPath();
       let x = tx * S + rng() * S, y = ty * S + rng() * S;
       g.moveTo(x, y);
@@ -166,14 +166,14 @@ export function ceilTex(THREE) {
   // line on one side of it — that shadow is what survives to twenty metres.
   for (let i = 0; i <= T; i++) {
     const p = i * S;
-    g.fillStyle = 'rgba(48,44,34,0.78)';
-    g.fillRect(p - 4.5, 0, 9, N); g.fillRect(0, p - 4.5, N, 9);
-    g.fillStyle = '#bdb5a0';
-    g.fillRect(p - 3.2, 0, 6.4, N); g.fillRect(0, p - 3.2, N, 6.4);
-    g.fillStyle = 'rgba(255,252,242,0.92)';
-    g.fillRect(p - 1.4, 0, 2.0, N); g.fillRect(0, p - 1.4, N, 2.0);
-    g.fillStyle = 'rgba(40,36,28,0.58)';     // shadow gap under the flange
-    g.fillRect(p + 3.2, 0, 2.8, N); g.fillRect(0, p + 3.2, N, 2.8);
+    g.fillStyle = 'rgba(26,23,17,0.92)';
+    g.fillRect(p - 5.2, 0, 10.4, N); g.fillRect(0, p - 5.2, N, 10.4);
+    g.fillStyle = '#cec6b0';
+    g.fillRect(p - 3.4, 0, 6.8, N); g.fillRect(0, p - 3.4, N, 6.8);
+    g.fillStyle = 'rgba(255,253,246,0.96)';
+    g.fillRect(p - 1.6, 0, 2.4, N); g.fillRect(0, p - 1.6, N, 2.4);
+    g.fillStyle = 'rgba(20,17,12,0.80)';     // shadow gap under the flange
+    g.fillRect(p + 3.4, 0, 3.4, N); g.fillRect(0, p + 3.4, N, 3.4);
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
 }
@@ -187,69 +187,128 @@ export function ceilTex(THREE) {
 // so store.js picks a cell per fixture and jitters the spacing.
 //   0 bright   1 dim/cool   2 aged warm   3 one tube out
 export function stripTex(THREE) {
-  const CW = 64, CH = 256, COLS = 4;
+  // ROUND 4. Three changes here, all from the blind critique.
+  //  * The prismatic ladder was a 3 px pitch at 22% contrast. Sampled at 70
+  //    degrees off normal that undersamples catastrophically and breaks into
+  //    hard black shards — which is what the critic saw and read as a failed
+  //    map. It is now a 7 px pitch at half the contrast, and ../store.js no
+  //    longer forces a negative mip bias on it.
+  //  * Three T8 lamps, not two undifferentiated "lens halves": a real 2x4
+  //    troffer shows three parallel bright tubes with the reflector visible
+  //    between them.
+  //  * Cell 3 is now a completely DEAD fixture (both lamps out, grey acrylic),
+  //    because store.js needs a state to draw for a dead unit.
+  const CW = 96, CH = 256, COLS = 4;
   const [c, g] = cv(CW * COLS, CH);
   const rng = makeRng(0x11467);
-  const LENS = [
-    ['#ffffff', '#fffdf2', '#f2f4e2'],
-    ['#dfe4d8', '#e9eee1', '#ccd2c4'],
-    ['#fff0cf', '#ffe6b4', '#f0d69f'],
-    ['#ffffff', '#fffdf2', '#f2f4e2'],
+  const LAMPS = [
+    ['#ffffff', '#fdfbef', '#eef0dd'],     // 4100K, the default
+    ['#e6ece2', '#f2f6ec', '#cdd6c8'],     // aged, gone slightly green
+    ['#fff1d2', '#ffe8ba', '#f0d7a2'],     // 3000K warm
+    ['#9d9c90', '#aaa99d', '#8c8b80'],     // dead
   ];
   for (let i = 0; i < COLS; i++) {
+    const dead = i === 3;
     g.save();
     g.translate(i * CW, 0);
     g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
-    // housing rails down both long edges
-    g.fillStyle = '#a29c8c'; g.fillRect(0, 0, CW, CH);
-    g.fillStyle = '#c4bfae'; g.fillRect(3, 0, CW - 6, CH);
-    // the two lens halves
-    for (const half of [0, 1]) {
-      const x0 = 6 + half * (CW - 12) / 2, w = (CW - 12) / 2 - 1;
-      const dead = i === 3 && half === 0;
-      const L = LENS[i];
-      const grd = g.createLinearGradient(x0, 0, x0 + w, 0);
-      if (dead) {
-        grd.addColorStop(0, '#8e8d7f'); grd.addColorStop(0.5, '#a3a294');
-        grd.addColorStop(1, '#8a8a7d');
-      } else {
-        grd.addColorStop(0.00, L[2]); grd.addColorStop(0.22, L[1]);
-        grd.addColorStop(0.50, L[0]); grd.addColorStop(0.80, L[1]);
-        grd.addColorStop(1.00, L[2]);
-      }
-      g.fillStyle = grd; g.fillRect(x0, 7, w, CH - 14);
-      // prismatic striations across the tube — the fine ladder you actually
-      // see on a diffuser, and a genuine high-frequency detail at any distance
-      for (let y = 9; y < CH - 9; y += 3) {
-        g.fillStyle = dead ? 'rgba(90,90,82,0.28)' : 'rgba(146,148,132,0.22)';
-        g.fillRect(x0, y, w, 0.9);
-        g.fillStyle = dead ? 'rgba(190,190,180,0.16)' : 'rgba(255,255,255,0.30)';
-        g.fillRect(x0, y + 1.2, w, 0.8);
-      }
-      // a couple of dead flies and a dust line, because every diffuser has them
-      for (let k = 0; k < 5; k++) {
-        g.fillStyle = 'rgba(66,60,48,0.42)';
-        g.beginPath();
-        g.ellipse(x0 + rr(rng, 2, w - 2), rr(rng, 14, CH - 14), rr(rng, 0.8, 2.2),
-          rr(rng, 0.6, 1.6), 0, 0, 6.29);
-        g.fill();
+    // the painted-steel reflector behind the lamps
+    g.fillStyle = dead ? '#6d6b60' : '#cfcbb8';
+    g.fillRect(0, 0, CW, CH);
+    const grd0 = g.createLinearGradient(0, 0, CW, 0);
+    grd0.addColorStop(0, 'rgba(70,66,56,0.42)');
+    grd0.addColorStop(0.5, 'rgba(255,253,244,0.30)');
+    grd0.addColorStop(1, 'rgba(70,66,56,0.42)');
+    g.fillStyle = grd0; g.fillRect(0, 0, CW, CH);
+    // THREE lamps across the 2 ft dimension
+    const L = LAMPS[i];
+    for (let t = 0; t < 3; t++) {
+      const cx = 14 + t * ((CW - 28) / 2), w = 20;
+      const grd = g.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
+      grd.addColorStop(0.00, L[2]); grd.addColorStop(0.24, L[1]);
+      grd.addColorStop(0.50, L[0]); grd.addColorStop(0.78, L[1]);
+      grd.addColorStop(1.00, L[2]);
+      g.fillStyle = grd;
+      g.fillRect(cx - w / 2, 10, w, CH - 20);
+      if (!dead) {                        // the halo the tube throws on the lens
+        g.globalAlpha = 0.30;
+        g.fillStyle = L[1];
+        g.fillRect(cx - w, 10, w * 2, CH - 20);
+        g.globalAlpha = 1;
       }
     }
-    // dark seam between the two tubes, running the length of the fixture
-    g.fillStyle = 'rgba(104,102,90,0.55)'; g.fillRect(CW / 2 - 1.6, 7, 3.2, CH - 14);
-    // socket end caps at both ends — unlit metal
-    g.fillStyle = '#7f7b6d'; g.fillRect(3, 0, CW - 6, 9); g.fillRect(3, CH - 9, CW - 6, 9);
-    g.fillStyle = '#605d52'; g.fillRect(3, 0, CW - 6, 3); g.fillRect(3, CH - 3, CW - 6, 3);
+    // prismatic acrylic over the top: a coarse low-contrast ladder that still
+    // survives to twenty metres but no longer aliases into shards up close
+    for (let y = 12; y < CH - 12; y += 7) {
+      g.fillStyle = dead ? 'rgba(96,94,86,0.13)' : 'rgba(150,152,138,0.11)';
+      g.fillRect(0, y, CW, 2.4);
+      g.fillStyle = 'rgba(255,255,255,0.13)';
+      g.fillRect(0, y + 2.8, CW, 1.8);
+    }
+    // dead flies and a dust line, because every diffuser in the world has them
+    for (let k = 0; k < 9; k++) {
+      g.fillStyle = 'rgba(58,52,42,0.44)';
+      g.beginPath();
+      g.ellipse(rr(rng, 6, CW - 6), rr(rng, 16, CH - 16), rr(rng, 1.0, 2.6),
+        rr(rng, 0.8, 1.9), 0, 0, 6.29);
+      g.fill();
+    }
+    // socket end caps at both ends — unlit metal, and the thing that makes the
+    // joint between two units in a continuous strip legible
+    g.fillStyle = '#83806f'; g.fillRect(0, 0, CW, 11); g.fillRect(0, CH - 11, CW, 11);
+    g.fillStyle = '#5b584d'; g.fillRect(0, 0, CW, 3.5); g.fillRect(0, CH - 3.5, CW, 3.5);
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
 }
 
-// ---------------------------------------------------------------------------
-// SLOTTED UPRIGHT — the punched steel post at every 4ft gondola section joint.
-// One tile = 50 mm of post carrying two slots at 25 mm pitch, so store.js just
-// repeats it up the height. The slot column is the strongest small-scale
-// vertical rhythm in a real aisle and it was completely absent.
+// TROFFER HOUSING interior. v0 is the lamp end, v1 the door flange — see the
+// half-extent convention in store.js troffer(). The gradient IS the recess: a
+// housing you can see the inside of is the difference between a fixture and an
+// emissive rectangle.
+export const WELL_UV = [0, 0, 1, 1];
+export function wellTex(THREE) {
+  const W = 32, H = 128;
+  const [c, g] = cv(W, H);
+  // canvas top = v1 = door flange (dim), canvas bottom = v0 = lamp (bright)
+  const grd = g.createLinearGradient(0, H, 0, 0);
+  grd.addColorStop(0.00, '#fbf7e9');
+  grd.addColorStop(0.28, '#ddd6c2');
+  grd.addColorStop(0.62, '#a49d8b');
+  grd.addColorStop(1.00, '#6e695c');
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  // the stiffening rib and the earth screw you can see up inside a real one
+  g.fillStyle = 'rgba(60,56,46,0.35)'; g.fillRect(0, H * 0.44, W, 3);
+  g.fillStyle = 'rgba(255,252,240,0.30)'; g.fillRect(0, H * 0.44 + 3, W, 2);
+  g.fillStyle = 'rgba(48,44,36,0.55)'; g.fillRect(0, 0, W, 4);
+  return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
+}
+
+// The soft shadow a recessed housing throws onto the tiles either side of it.
+// Multiply-blended: white leaves the tile alone, so only the ring matters.
+export function trofferShadowTex(THREE) {
+  const N = 64;
+  const [c, g] = cv(N, N);
+  const im = g.createImageData(N, N);
+  for (let y = 0; y < N; y++) {
+    for (let x = 0; x < N; x++) {
+      const u = Math.abs(x / (N - 1) - 0.5) * 2, v = Math.abs(y / (N - 1) - 0.5) * 2;
+      const d = Math.max(u, v);
+      // dark right at the housing edge, clearing by the outside of the quad
+      const t = Math.min(1, Math.max(0, (d - 0.40) / 0.58));
+      const k = 0.55 + 0.45 * (t * t * (3 - 2 * t));
+      const o = (y * N + x) * 4;
+      im.data[o] = im.data[o + 1] = im.data[o + 2] = Math.round(k * 255);
+      im.data[o + 3] = 255;
+    }
+  }
+  g.putImageData(im, 0, 0);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
+}
+
 export function slotTex(THREE) {
   const W = 48, H = 64;
   const [c, g] = cv(W, H);
@@ -320,26 +379,40 @@ export function pegTex(THREE) {
 // behind the facings on every shelf below eye level.
 export const AO_UV = { mouth: [0.02, 0, 0.48, 1], deck: [0.52, 0, 0.98, 1] };
 export function shelfAOTex(THREE) {
+  // ROUND 4. The round-3 version was "omnidirectional and too weak — a uniform
+  // dark halo with no light direction in it". Light in a supermarket aisle
+  // comes from a strip four metres straight up, so a shelf cavity is not softly
+  // shaded: the deck above it is a hard horizontal occluder, and it throws a
+  // distinct shadow BAND across the top third of whatever is on the deck below.
+  // These stops are that band, and the deck gradient is the same argument seen
+  // from above: near black where the deck meets the back panel, blown out along
+  // the front two inches where the lip catches the light.
   const [c, g] = cv(16, 256);
   const mouth = g.createLinearGradient(0, 0, 0, 256);
-  mouth.addColorStop(0.00, '#3d382f');        // hard under the deck above
-  mouth.addColorStop(0.05, '#5f594d');
-  mouth.addColorStop(0.13, '#8d8676');
-  mouth.addColorStop(0.24, '#bab2a2');
-  mouth.addColorStop(0.38, '#e0d9cc');
-  mouth.addColorStop(0.70, '#fdfaf3');
-  mouth.addColorStop(0.87, '#d6cfc2');        // deck contact seam
-  mouth.addColorStop(0.950, '#7b7466');
-  mouth.addColorStop(1.00, '#494336');
+  // The band has to be HARD but not deep. Round-4a crushed the top fifth of
+  // every cavity under 40% brightness, which put the printed packaging in there
+  // below the threshold where any of it reads — a real cast shadow is a sharp
+  // edge with recoverable detail behind it, not a black hole.
+  mouth.addColorStop(0.00, '#14100a');        // dead black right under the deck
+  mouth.addColorStop(0.035, '#241f16');
+  mouth.addColorStop(0.085, '#453e33');       // the lip's cast shadow band
+  mouth.addColorStop(0.160, '#7d7565');
+  mouth.addColorStop(0.260, '#b3aa98');
+  mouth.addColorStop(0.400, '#d8d0c0');
+  mouth.addColorStop(0.600, '#f6f1e6');
+  mouth.addColorStop(0.780, '#fefcf6');
+  mouth.addColorStop(0.880, '#cbc3b4');       // deck contact seam
+  mouth.addColorStop(0.945, '#6a6254');
+  mouth.addColorStop(1.00, '#2b2720');
   g.fillStyle = mouth; g.fillRect(0, 0, 8, 256);
   const deck = g.createLinearGradient(0, 0, 0, 256);
-  deck.addColorStop(0.00, '#3a352c');         // hard against the back panel
-  deck.addColorStop(0.14, '#57503f');
-  deck.addColorStop(0.34, '#8d8674');
-  deck.addColorStop(0.58, '#c2baa8');
-  deck.addColorStop(0.80, '#e8e2d5');
-  deck.addColorStop(0.94, '#fbf7ee');
-  deck.addColorStop(1.00, '#fefcf6');         // the lit strip at the lip
+  deck.addColorStop(0.00, '#181409');         // hard against the back panel
+  deck.addColorStop(0.10, '#332d1d');
+  deck.addColorStop(0.26, '#6e6551');
+  deck.addColorStop(0.48, '#aca391');
+  deck.addColorStop(0.74, '#ddd6c8');
+  deck.addColorStop(0.90, '#f8f4ea');
+  deck.addColorStop(1.00, '#fffdf7');         // the lit strip at the lip
   g.fillStyle = deck; g.fillRect(8, 0, 8, 256);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
@@ -347,10 +420,6 @@ export function shelfAOTex(THREE) {
   return t;
 }
 
-// ---------------------------------------------------------------------------
-// FLOOR REFLECTION SMEAR — a vertical ramp used for the polished-VCT streak of
-// the gondola on the floor. Opaque at the shelf kick, gone 1.2 m out. Tinted
-// per-quad with the colour of whatever is on the shelf above it.
 export function smearTex(THREE) {
   const [c, g] = cv(8, 128);
   const grd = g.createLinearGradient(0, 128, 0, 0);
@@ -475,6 +544,37 @@ export function danglerAtlas(THREE) {
 
 // ---------------------------------------------------------------------------
 // PRICE RAIL — 1.0 m of shelf lip: cream channel packed with little tags.
+// SHOPPING-CART MESH. Alpha map of a real wire basket: a chrome grid on
+// nothing. Round 3 built the parked carts out of flat grey Lambert slabs, and
+// the blind critic listed "untextured grey cart proxies" as a binary tell.
+export function cartMeshTex(THREE) {
+  const N = 128;
+  const [c, g] = cv(N, N);
+  g.clearRect(0, 0, N, N);
+  const wire = (x0, y0, x1, y1, w, hi) => {
+    g.strokeStyle = hi ? 'rgba(246,247,250,0.98)' : 'rgba(150,157,166,0.95)';
+    g.lineWidth = w;
+    g.beginPath(); g.moveTo(x0, y0); g.lineTo(x1, y1); g.stroke();
+  };
+  const P = N / 8;                       // 8 wires across the cell
+  for (let i = 0; i < 8; i++) {
+    const o = i * P + P / 2;
+    // verticals sit proud of the horizontals and catch a chrome highlight
+    wire(o, 0, o, N, 4.6, false);
+    wire(o - 0.9, 0, o - 0.9, N, 1.9, true);
+  }
+  for (let i = 0; i < 8; i++) {
+    const o = i * P + P / 2;
+    wire(0, o, N, o, 3.4, false);
+    wire(0, o - 0.7, N, o - 0.7, 1.3, true);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
 export function railTex(THREE) {
   const N = 256, H = 56;
   const [c, g] = cv(N, H);
