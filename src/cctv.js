@@ -9,12 +9,24 @@
 //   cams            PerspectiveCamera[] , index-aligned to CAMERAS
 //   tiles           [{x,y,w,h}]  screen rect of each feed, TOP-LEFT origin, in a
 //                   FIXED 1280x720 design space. These never change, at any
-//                   canvas size — the whole desk is scaled to the canvas by its
-//                   ortho camera. Place HUD against them directly.
+//                   canvas size and at any selection — the whole desk is scaled
+//                   to the canvas by its ortho camera. Place HUD against them
+//                   directly. tiles.length === CAMERAS.length, ALWAYS.
 //   active          index of the selected channel
 //   params          { wall, floor } live grade strengths, see GRADE_PRESET
 //   setParams(view, patch)         dial any effect per view at runtime
 //   floorBurnIn     bool, timestamp overlay on the on-foot view
+//   panels          physical monitors, including the ones no camera is on
+//
+// ROUND 3 — THE WALL IS NOW N-CAMERA DRIVEN.
+// Nothing here counts to eight any more. `layoutWall(CAMERAS)` in cctv/layout.js
+// hands back one physical monitor per slot and one tile per camera, for any
+// camera count; per-channel personality tables extend themselves past the end of
+// what is hand-authored; render targets are sized per tile instead of from one
+// shared FEED_W/FEED_H. Add CAM 09 to config.js and it lights up the panel that
+// is currently showing a NO SIGNAL card. The old failure — CHAN[8] undefined,
+// `Cannot read properties of undefined (reading 'scan')` — cannot recur: every
+// per-channel lookup goes through chanFor(i).
 //
 // NOTE TO LEAD: vendor/EffectComposer.js cannot load — it imports
 // '../shaders/CopyShader.js' and './MaskPass.js', neither of which exists on the
@@ -24,47 +36,21 @@
 // if you want the real composer available to other pieces.
 import { CAMERAS } from './config.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { GradeShader, ScreenShader } from './cctv/shaders.js';
+import { GradeShader, ScreenShader, DeadShader } from './cctv/shaders.js';
+import { layoutWall, WALL } from './cctv/layout.js';
 import {
-  makeCanvas, paintFurniture, paintBurnIn, paintFloorBurnIn,
+  makeCanvas, paintFurniture, paintBurnIn, paintFloorBurnIn, paintDeadCards,
 } from './cctv/overlay.js';
 
-// --- wall layout, in 1280x720 space, TOP-LEFT origin ------------------------
-// 4 x 2 grid. The bands above and below are the office wall and the desk; they
-// are also where builder-game parks its HUD, so they stay dark and empty.
-const L = {
-  cols: 4, rows: 2,
-  gridX: 12, gridY: 74, gridW: 1256, gridH: 550,
-  pad: 6,           // gap between one monitor housing and the next
-  bezelX: 11, bezelTop: 12, chin: 41,
-  screenW: 280, screenH: 210,       // 4:3 — security cameras are 4:3 sensors
-  railY: 62, deskY: 624,
-};
-// The wall is AUTHORED in this space and only ever drawn in this space. Every
-// number in L, every tile rect, and both overlay canvases are design pixels; the
-// ortho camera maps the whole design frame to whatever the canvas happens to be.
-// Round 1 resized the ortho camera to the real canvas instead, which left the
-// hand-placed 1280x720 tile rects sitting in the corner of a larger frustum and
-// tore the wall apart on any canvas that was not exactly 1280x720.
-const DES_W = 1280, DES_H = 720;
-const FEED_W = L.screenW, FEED_H = L.screenH;
+// The wall is AUTHORED in 1280x720 design space and only ever drawn in it. Every
+// slot rect, every tile rect, and all three overlay canvases are design pixels;
+// the ortho camera maps the whole design frame to whatever the canvas happens to
+// be. Round 1 resized the ortho camera to the real canvas instead, which left
+// the hand-placed tile rects sitting in the corner of a larger frustum and tore
+// the wall apart on any canvas that was not exactly 1280x720.
+const DES_W = WALL.W, DES_H = WALL.H;
 const FEED_SS = 2;                  // supersample the feed render, then degrade
 const FLOOR_SS = 1.5;
-
-function layoutTiles() {
-  const cw = L.gridW / L.cols, ch = L.gridH / L.rows;
-  return CAMERAS.map((_, i) => {
-    const col = i % L.cols, row = (i / L.cols) | 0;
-    const hx = L.gridX + col * cw + L.pad;
-    const hy = L.gridY + row * ch + L.pad;
-    const hw = cw - L.pad * 2;
-    return {
-      x: Math.round(hx + (hw - L.screenW) / 2),
-      y: Math.round(hy + L.bezelTop),
-      w: L.screenW, h: L.screenH,
-    };
-  });
-}
 
 // --- per-channel personality ------------------------------------------------
 // Real DVR walls are never uniform: different camera generations, different
@@ -74,31 +60,46 @@ function layoutTiles() {
 // `sharp` is the in-camera edge enhancement — positive is the crunchy halo every
 // cheap IP camera puts around a shelf lip. CH04 is negative because somebody
 // knocked that dome months ago and nobody ever refocused it.
+// `hfov` is the LENS, in degrees horizontal, and the vertical is derived from
+// whatever monitor the channel lands on. That is the right way round: a camera
+// does not change what it sees because you plugged it into a widescreen.
 const CHAN = [
-  { fps: 10, gain: 1.00, tint: [1.035, 1.000, 0.955], noise: 0.038, barrel: 0.30, sat: 0.92, scan: 0.062, blocky: 0.16, sharp:  1.00, bloom: 1.00, glitch: 0 },
-  { fps: 8,  gain: 0.95, tint: [0.955, 1.030, 0.960], noise: 0.050, barrel: 0.34, sat: 0.84, scan: 0.072, blocky: 0.20, sharp:  1.27, bloom: 1.13, glitch: 0 },
-  { fps: 12, gain: 1.10, tint: [1.010, 1.005, 0.990], noise: 0.030, barrel: 0.27, sat: 0.96, scan: 0.052, blocky: 0.12, sharp:  0.73, bloom: 0.87, glitch: 0 },
-  { fps: 9,  gain: 0.80, tint: [0.950, 0.985, 1.070], noise: 0.070, barrel: 0.33, sat: 0.72, scan: 0.078, blocky: 0.26, sharp: -1.00, bloom: 1.45, glitch: 0 },
-  { fps: 11, gain: 1.02, tint: [1.000, 1.000, 1.000], noise: 0.042, barrel: 0.38, sat: 0.90, scan: 0.068, blocky: 0.18, sharp:  1.09, bloom: 1.00, glitch: 6.5 },
-  { fps: 8,  gain: 0.90, tint: [1.045, 0.995, 0.945], noise: 0.058, barrel: 0.30, sat: 0.88, scan: 0.070, blocky: 0.30, sharp:  1.55, bloom: 0.91, glitch: 0 },
-  { fps: 12, gain: 1.05, tint: [0.965, 1.020, 0.975], noise: 0.036, barrel: 0.36, sat: 0.92, scan: 0.058, blocky: 0.14, sharp:  0.91, bloom: 1.05, glitch: 11.0 },
-  { fps: 10, gain: 0.97, tint: [1.000, 1.010, 1.010], noise: 0.052, barrel: 0.33, sat: 0.86, scan: 0.082, blocky: 0.22, sharp:  1.18, bloom: 0.95, glitch: 0 },
+  { fps: 10, hfov: 98,  gain: 1.00, tint: [1.035, 1.000, 0.955], noise: 0.038, barrel: 0.30, sat: 0.92, scan: 0.062, blocky: 0.16, sharp:  1.00, bloom: 1.00, glitch: 0 },
+  { fps: 8,  hfov: 97,  gain: 0.95, tint: [0.955, 1.030, 0.960], noise: 0.050, barrel: 0.34, sat: 0.84, scan: 0.072, blocky: 0.20, sharp:  1.27, bloom: 1.13, glitch: 0 },
+  { fps: 12, hfov: 99,  gain: 1.10, tint: [1.010, 1.005, 0.990], noise: 0.030, barrel: 0.27, sat: 0.96, scan: 0.052, blocky: 0.12, sharp:  0.73, bloom: 0.87, glitch: 0 },
+  { fps: 9,  hfov: 96,  gain: 0.80, tint: [0.950, 0.985, 1.070], noise: 0.070, barrel: 0.33, sat: 0.72, scan: 0.078, blocky: 0.26, sharp: -1.00, bloom: 1.45, glitch: 0 },
+  // CAM 05 lands on the big panel, so it is the one channel anybody looks at for
+  // more than a second: newest sensor, fastest, cleanest, widest lens.
+  { fps: 14, hfov: 102, gain: 1.02, tint: [1.000, 1.000, 1.000], noise: 0.030, barrel: 0.34, sat: 0.93, scan: 0.050, blocky: 0.11, sharp:  1.05, bloom: 1.00, glitch: 5.5 },
+  { fps: 8,  hfov: 98,  gain: 0.90, tint: [1.045, 0.995, 0.945], noise: 0.058, barrel: 0.30, sat: 0.88, scan: 0.070, blocky: 0.30, sharp:  1.55, bloom: 0.91, glitch: 0 },
+  { fps: 12, hfov: 94,  gain: 1.05, tint: [0.965, 1.020, 0.975], noise: 0.036, barrel: 0.36, sat: 0.92, scan: 0.058, blocky: 0.14, sharp:  0.91, bloom: 1.05, glitch: 11.0 },
+  { fps: 10, hfov: 96,  gain: 0.97, tint: [1.000, 1.010, 1.010], noise: 0.052, barrel: 0.33, sat: 0.86, scan: 0.082, blocky: 0.22, sharp:  1.18, bloom: 0.95, glitch: 0 },
+  // CAM 09 DOOR 2, if config declares it: bought this year, so it is the sharpest
+  // and least noisy thing on the wall and its lens is tighter than the 2011 domes.
+  { fps: 13, hfov: 90,  gain: 1.04, tint: [0.992, 1.000, 1.008], noise: 0.026, barrel: 0.22, sat: 0.95, scan: 0.046, blocky: 0.09, sharp:  1.34, bloom: 0.94, glitch: 0 },
 ];
 
-// White point of each MONITOR, as opposed to CHAN[].tint which is the camera.
-// Eight panels bought over eight years: two of them have gone warm and yellow,
-// one is a newer cold-LED unit, the rest are somewhere in between. Hand-authored
-// so the wall never reads as eight copies of one screen.
-const PANEL = [
-  [1.000, 0.994, 0.968],   // slightly warm
-  [0.978, 0.990, 1.000],
-  [1.000, 1.000, 1.000],
-  [1.010, 0.980, 0.930],   // the old yellowed one
-  [0.968, 0.988, 1.000],   // newer cold LED
-  [1.000, 0.986, 0.952],
-  [0.988, 1.000, 0.990],
-  [1.006, 0.992, 0.958],
-];
+// Past the authored table, vary deterministically off the index instead of
+// falling off the end. A tenth camera gets a plausible personality, not a crash.
+const derived = [];
+function chanFor(i) {
+  if (CHAN[i]) return CHAN[i];
+  if (derived[i]) return derived[i];
+  const base = CHAN[i % CHAN.length];
+  const k = ((i * 2654435761) >>> 0) / 4294967296;
+  derived[i] = {
+    ...base,
+    fps: 8 + ((i * 5) % 5),
+    hfov: 92 + ((i * 7) % 11),
+    gain: 0.88 + k * 0.24,
+    tint: [1 + (k - 0.5) * 0.08, 1 + (0.5 - k) * 0.04, 1 + (k - 0.5) * -0.06],
+    noise: 0.030 + k * 0.036,
+    sat: 0.78 + k * 0.20,
+    scan: 0.050 + k * 0.032,
+    glitch: k > 0.78 ? 7 + k * 8 : 0,
+  };
+  return derived[i];
+}
 
 // Baseline strengths. Wall feeds get the full treatment; the floor view is the
 // same recorder but a lot lighter — you still have to be able to play on it.
@@ -110,32 +111,70 @@ const PANEL = [
 // `scan` on the wall is NOT consumed here: the wall's scanlines are applied by
 // ScreenShader instead, so they land on the burnt-in timestamp too. The per
 // channel value is forwarded to that material in the screens loop below.
+//
+// ROUND 3 RE-JUDGEMENT. These were dialled when the store was grey boxes, and
+// they have been too polite ever since the shelves filled up. Against dense
+// printed packaging, recessed troffers and a reflective floor, the round-2
+// numbers left a clean render with a timestamp on it:
+//   * chroma/blocky UP — colour packaging is what makes 4:2:0 subsampling and
+//     macroblocking visible at all. On grey boxes there was nothing to smear.
+//   * bloom UP and its threshold DOWN — the ceiling now HAS troffers, and a
+//     $60 camera cannot hold them. They have to bleed into the tile grid.
+//   * contrast/black/knee UP — a reflective floor was landing in the same milky
+//     band as the ceiling. Crushing the shadows is what separates them.
+//   * noise UP — grain has to survive being seen next to detailed content.
 const GRADE_PRESET = {
   wall: {
-    barrel: 0.32, ca: 1.15, chroma: 0.60, blocky: 0.18, sharp: 0.55,
-    bloom: 0.85, bloomThr: 0.72,
-    gain: 1.0, black: 0.055, pivot: 0.50, contrast: 1.26, knee: 0.80,
-    highlight: 0.30, sat: 0.88,
-    noise: 0.042, scan: 0.070, roll: 0.050, rollSpeed: 0.055, vign: 0.36,
+    barrel: 0.32, ca: 1.15, chroma: 0.74, blocky: 0.23, sharp: 0.55,
+    bloom: 1.06, bloomThr: 0.64,
+    gain: 1.0, black: 0.072, pivot: 0.50, contrast: 1.35, knee: 0.75,
+    highlight: 0.40, sat: 0.82,
+    noise: 0.056, scan: 0.070, roll: 0.050, rollSpeed: 0.055, vign: 0.40,
   },
+  // The floor view was the piece I flagged in round 2 as "a clean 3D render with
+  // a timestamp on it", and it still was. The constraint is that you have to be
+  // able to PLAY on it, so the terms that got pushed are the ones that read as
+  // "recorded" at a glance without eating a shelf edge or a price tag:
+  // scanlines, vignette, highlight bleed off the troffers, the roll band, and
+  // colour. Sharpening and macroblocking stayed low on purpose — those are the
+  // two that would actually cost you a read on a subject at twenty metres.
   floor: {
-    barrel: 0.11, ca: 0.85, chroma: 0.35, blocky: 0.07, sharp: 0.34,
-    bloom: 0.55, bloomThr: 0.78,
-    gain: 1.0, black: 0.026, pivot: 0.48, contrast: 1.14, knee: 0.86,
-    highlight: 0.19, sat: 0.94,
-    noise: 0.034, scan: 0.040, roll: 0.030, rollSpeed: 0.040, vign: 0.26,
+    barrel: 0.12, ca: 0.90, chroma: 0.62, blocky: 0.13, sharp: 0.34,
+    bloom: 1.00, bloomThr: 0.63,
+    gain: 1.0, black: 0.052, pivot: 0.48, contrast: 1.27, knee: 0.78,
+    highlight: 0.33, sat: 0.855,
+    noise: 0.056, scan: 0.078, roll: 0.038, rollSpeed: 0.040, vign: 0.37,
   },
 };
 
-export function createCCTV(THREE, renderer, scene) {
+const DEG = Math.PI / 180;
+// A camera has one lens. Give it the horizontal field it actually has and let
+// the monitor's aspect decide how much vertical you get.
+const vfovFor = (hfov, aspect) =>
+  2 * Math.atan(Math.tan(hfov * DEG / 2) / aspect) / DEG;
+
+// `opts.cameras` is purely additive and exists so the wall can be exercised at a
+// camera count config.js does not currently declare — main.js calls this with
+// three arguments and gets config.CAMERAS, exactly as before. Use it to satisfy
+// yourself that adding CAM 09 will not break anything BEFORE adding it:
+//   const t = createCCTV(THREE, renderer, scene,
+//     { cameras: [...CAMERAS, { id:'CAM 09', label:'DOOR 2',
+//       pos:[EXIT2.x + 1, 4.2, EXIT2.z + 6], look:[EXIT2.x, 1.0, EXIT2.z] }] });
+//   t.renderWall(0.016);
+export function createCCTV(THREE, renderer, scene, opts = {}) {
   let W = 1280, H = 720;
-  const tiles = layoutTiles();
+  const CAMS = opts.cameras || CAMERAS;
+
+  // ---- the physical wall ---------------------------------------------------
+  const plan = layoutWall(CAMS);
+  const tiles = plan.tiles;
 
   // ---- cameras ------------------------------------------------------------
-  // Wide (96 degrees horizontal at 4:3) because the barrel term magnifies the
-  // centre back out; shoot narrow and the distortion just looks like a zoom.
-  const cams = CAMERAS.map((c) => {
-    const cam = new THREE.PerspectiveCamera(82, FEED_W / FEED_H, 0.1, 140);
+  const cams = CAMS.map((c, i) => {
+    const t = tiles[i];
+    const aspect = t.w / t.h;
+    const cam = new THREE.PerspectiveCamera(
+      vfovFor(chanFor(i).hfov, aspect), aspect, 0.1, 140);
     cam.position.set(...c.pos);
     cam.lookAt(new THREE.Vector3(...c.look));
     cam.updateProjectionMatrix();
@@ -144,13 +183,31 @@ export function createCCTV(THREE, renderer, scene) {
   let active = 0;
 
   // ---- render targets -----------------------------------------------------
+  // One PERSISTENT target per channel, at that channel's exact panel size — this
+  // is where its last decoded frame lives between re-renders. Plus one TRANSIENT
+  // supersampled target per distinct panel size, shared by every channel of that
+  // size, which is where the raw 3D render lands before the grade. Sizing off the
+  // panel instead of one global FEED_W/FEED_H is what lets nine monitors be nine
+  // different shapes.
   const rtOpts = {
     minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter,
     depthBuffer: true, stencilBuffer: false, generateMipmaps: false,
   };
-  const feedRaw = new THREE.WebGLRenderTarget(FEED_W * FEED_SS, FEED_H * FEED_SS, rtOpts);
-  const feedRT = cams.map(() => {
-    const rt = new THREE.WebGLRenderTarget(FEED_W, FEED_H, { ...rtOpts, depthBuffer: false });
+  const rawBySize = new Map();
+  function rawFor(w, h) {
+    const key = `${w}x${h}`;
+    let rt = rawBySize.get(key);
+    if (!rt) {
+      rt = new THREE.WebGLRenderTarget(
+        Math.round(w * FEED_SS), Math.round(h * FEED_SS), rtOpts);
+      rawBySize.set(key, rt);
+    }
+    return rt;
+  }
+  const feedRT = CAMS.map((_, i) => {
+    const t = tiles[i];
+    rawFor(t.w, t.h);
+    const rt = new THREE.WebGLRenderTarget(t.w, t.h, { ...rtOpts, depthBuffer: false });
     rt.texture.colorSpace = THREE.NoColorSpace;   // we write display-ready sRGB
     return rt;
   });
@@ -166,10 +223,10 @@ export function createCCTV(THREE, renderer, scene) {
     depthTest: false, depthWrite: false,
   });
   gradeMat.uniforms.uTint.value = new THREE.Vector3(1, 1, 1);
-  gradeMat.uniforms.uRes.value = new THREE.Vector2(FEED_W, FEED_H);
+  gradeMat.uniforms.uRes.value = new THREE.Vector2(320, 240);
   const gradeQuad = new FullScreenQuad(gradeMat);
 
-  // ---- the wall scene: 8 screens + one furniture plate ---------------------
+  // ---- the wall scene: N screens + the dark ones + one furniture plate -----
   const wallScene = new THREE.Scene();
   wallScene.background = new THREE.Color(0x040507);
   const wallCam = new THREE.OrthographicCamera(0, DES_W, DES_H, 0, -10, 10);
@@ -180,15 +237,35 @@ export function createCCTV(THREE, renderer, scene) {
   burnTex.minFilter = burnTex.magFilter = THREE.NearestFilter;
   burnTex.generateMipmaps = false;
 
+  const deadCv = makeCanvas(DES_W, DES_H);
+  paintDeadCards(deadCv, DES_W, DES_H, plan.dead);
+  const deadTex = new THREE.CanvasTexture(deadCv);
+  deadTex.colorSpace = THREE.SRGBColorSpace;
+  deadTex.minFilter = deadTex.magFilter = THREE.NearestFilter;
+  deadTex.generateMipmaps = false;
+
   const furnCv = makeCanvas(DES_W, DES_H);
-  paintFurniture(furnCv, DES_W, DES_H, tiles, L);
+  paintFurniture(furnCv, DES_W, DES_H, plan.panels, WALL);
   const furnTex = new THREE.CanvasTexture(furnCv);
   furnTex.colorSpace = THREE.SRGBColorSpace;
   furnTex.minFilter = furnTex.magFilter = THREE.LinearFilter;
   furnTex.generateMipmaps = false;
 
   const quadGeo = new THREE.PlaneGeometry(1, 1);
-  const screens = tiles.map((t, i) => {
+
+  // Design space has y down; the ortho camera has y up. A panel screwed to the
+  // wall crooked therefore rotates the opposite way here than it does on the
+  // furniture canvas, and both rotate about the centre of the glass so the case
+  // and the picture inside it stay locked together.
+  function placeQuad(mesh, p) {
+    mesh.position.set(p.x + p.w / 2, DES_H - (p.y + p.h / 2), 0);
+    mesh.scale.set(p.w, p.h, 1);
+    mesh.rotation.z = -(p.rot || 0);
+  }
+
+  const screens = [];                 // index-aligned to CAMERAS
+  for (const p of plan.live) {
+    const i = p.cam;
     const m = new THREE.ShaderMaterial({
       name: ScreenShader.name,
       uniforms: THREE.UniformsUtils.clone(ScreenShader.uniforms),
@@ -198,19 +275,41 @@ export function createCCTV(THREE, renderer, scene) {
     });
     m.uniforms.tFeed.value = feedRT[i].texture;
     m.uniforms.tBurn.value = burnTex;
-    m.uniforms.uRect.value = new THREE.Vector4(t.x, t.y, t.w, t.h);
+    m.uniforms.uRect.value = new THREE.Vector4(p.x, p.y, p.w, p.h);
     m.uniforms.uRes.value = new THREE.Vector2(DES_W, DES_H);
-    m.uniforms.uPhase.value = i * 1.37;
-    m.uniforms.uSheen.value = 0.030 + (i % 3) * 0.016;
-    m.uniforms.uDim.value = 0.93 + (i % 4) * 0.030;
-    m.uniforms.uScan.value = CHAN[i].scan;
-    m.uniforms.uPanel.value = new THREE.Vector3(...PANEL[i]);
+    m.uniforms.uPhase.value = p.slot * 1.37;
+    m.uniforms.uSheen.value = p.sheen;
+    m.uniforms.uDim.value = 0.93 + (p.slot % 4) * 0.030;
+    m.uniforms.uScan.value = chanFor(i).scan;
+    m.uniforms.uPanel.value = new THREE.Vector3(...p.white);
     const mesh = new THREE.Mesh(quadGeo, m);
-    mesh.position.set(t.x + t.w / 2, DES_H - (t.y + t.h / 2), 0);
-    mesh.scale.set(t.w, t.h, 1);
+    placeQuad(mesh, p);
     mesh.renderOrder = 1;
     wallScene.add(mesh);
-    return { mesh, m };
+    screens[i] = { mesh, m, p };
+  }
+
+  const deads = plan.dead.map((p) => {
+    const m = new THREE.ShaderMaterial({
+      name: DeadShader.name,
+      uniforms: THREE.UniformsUtils.clone(DeadShader.uniforms),
+      vertexShader: DeadShader.vertexShader,
+      fragmentShader: DeadShader.fragmentShader,
+      depthTest: false, depthWrite: false,
+    });
+    m.uniforms.tCard.value = deadTex;
+    m.uniforms.uRect.value = new THREE.Vector4(p.x, p.y, p.w, p.h);
+    m.uniforms.uRes.value = new THREE.Vector2(DES_W, DES_H);
+    m.uniforms.uMode.value = p.deadMode;
+    m.uniforms.uSheen.value = p.sheen;
+    m.uniforms.uPhase.value = p.slot * 1.37;
+    m.uniforms.uScan.value = p.deadMode === 0 ? 0.10 : 0.05;
+    m.uniforms.uPanel.value = new THREE.Vector3(...p.white);
+    const mesh = new THREE.Mesh(quadGeo, m);
+    placeQuad(mesh, p);
+    mesh.renderOrder = 1;
+    wallScene.add(mesh);
+    return { mesh, m, p };
   });
 
   const furnMesh = new THREE.Mesh(quadGeo, new THREE.MeshBasicMaterial({
@@ -237,16 +336,19 @@ export function createCCTV(THREE, renderer, scene) {
   floorScene.add(floorOverlay);
 
   // ---- feed scheduling ----------------------------------------------------
-  // 8 feeds at 8-12 fps each, staggered, at most two re-rendered per frame.
-  // Round-robin re-render is the whole judder effect: nothing on this wall is
-  // ever in sync with anything else.
-  const feeds = CAMERAS.map((_, i) => ({
-    interval: 1 / CHAN[i].fps,
-    due: (i * 0.137) % 0.125,
-    frames: i * 3,
-    glitchAt: CHAN[i].glitch ? CHAN[i].glitch * (0.3 + 0.1 * i) : -1,
-    glitchY: -1,
-  }));
+  // Every channel at its own 8-14 fps, staggered, at most two re-rendered per
+  // frame. Round-robin re-render is the whole judder effect: nothing on this
+  // wall is ever in sync with anything else.
+  const feeds = CAMS.map((_, i) => {
+    const ch = chanFor(i);
+    return {
+      interval: 1 / ch.fps,
+      due: (i * 0.137) % 0.125,
+      frames: i * 3,
+      glitchAt: ch.glitch ? ch.glitch * (0.3 + 0.1 * i) : -1,
+      glitchY: -1,
+    };
+  });
   let cursor = 0, tWall = 0, tFloor = 0, floorFrames = 0, primed = false;
   let burnKey = '';
   const params = { wall: { ...GRADE_PRESET.wall }, floor: { ...GRADE_PRESET.floor } };
@@ -295,15 +397,17 @@ export function createCCTV(THREE, renderer, scene) {
 
   function renderFeed(i) {
     const f = feeds[i];
+    const t = tiles[i];
     f.frames++;
+    const raw = rawFor(t.w, t.h);
     const auto = renderer.autoClear;
     renderer.autoClear = true;
-    renderer.setRenderTarget(feedRaw);
+    renderer.setRenderTarget(raw);
     renderer.render(scene, cams[i]);
 
-    applyGrade(params.wall, CHAN[i], [FEED_W, FEED_H],
+    applyGrade(params.wall, chanFor(i), [t.w, t.h],
       f.frames * 0.6180339 + i * 7.13, tWall, f.glitchY);
-    gradeMat.uniforms.tDiffuse.value = feedRaw.texture;
+    gradeMat.uniforms.tDiffuse.value = raw.texture;
     renderer.setRenderTarget(feedRT[i]);
     gradeQuad.render(renderer);
     renderer.setRenderTarget(null);
@@ -317,7 +421,7 @@ export function createCCTV(THREE, renderer, scene) {
     const key = `${(ms / 1000) | 0}|${blink ? 1 : 0}|${active}`;
     if (key === burnKey) return;
     burnKey = key;
-    paintBurnIn(burnCv, DES_W, DES_H, tiles, CAMERAS, active, now, blink);
+    paintBurnIn(burnCv, DES_W, DES_H, tiles, CAMS, active, now, blink);
     burnTex.needsUpdate = true;
   }
 
@@ -337,15 +441,22 @@ export function createCCTV(THREE, renderer, scene) {
     cams,
     get tiles() { return tiles; },
     get active() { return active; },
+    panels: plan.panels,
     params,
     floorBurnIn: true,
-    floorLabel: 'CAM 09  FLOOR PATROL',
+    // Not a channel number any more: config now owns CAM 09, and two things
+    // called CAM 09 on the same shift is exactly the kind of thing a roster
+    // argument is made of.
+    floorLabel: 'BODYCAM  BADGE 1',
 
     setParams(view, patch) { Object.assign(params[view] || {}, patch || {}); },
 
     setActiveCam(i) {
-      active = ((i | 0) % cams.length + cams.length) % cams.length;
-      screens.forEach((s, k) => { s.m.uniforms.uActive.value = k === active ? 1 : 0; });
+      const n = cams.length || 1;
+      active = ((i | 0) % n + n) % n;
+      screens.forEach((s, k) => {
+        if (s) s.m.uniforms.uActive.value = k === active ? 1 : 0;
+      });
     },
 
     // Only the 3D floor buffer is resolution-dependent. The wall and both
@@ -378,7 +489,7 @@ export function createCCTV(THREE, renderer, scene) {
             f.glitchY = 0.12 + 0.76 * ((f.frames * 0.37) % 1);
             if (tWall >= f.glitchAt + 0.22) {
               f.glitchY = -1;
-              f.glitchAt = tWall + CHAN[i].glitch * (0.7 + 0.6 * ((f.frames * 0.11) % 1));
+              f.glitchAt = tWall + chanFor(i).glitch * (0.7 + 0.6 * ((f.frames * 0.11) % 1));
             }
           }
           renderFeed(i);
@@ -387,6 +498,15 @@ export function createCCTV(THREE, renderer, scene) {
           cursor = i + 1;
           budget--;
         }
+      }
+
+      // Snow is a field-rate thing, so the dark panels are the one part of this
+      // wall that is NOT juddering — quantised to 30 Hz so it flickers rather
+      // than crawls.
+      const snowSeed = Math.floor(tWall * 30);
+      for (const d of deads) {
+        d.m.uniforms.uSeed.value = snowSeed;
+        d.m.uniforms.uTime.value = tWall;
       }
 
       updateBurnIn();
@@ -421,10 +541,11 @@ export function createCCTV(THREE, renderer, scene) {
     },
 
     dispose() {
-      feedRaw.dispose(); floorRaw.dispose();
+      rawBySize.forEach((r) => r.dispose());
+      floorRaw.dispose();
       feedRT.forEach((r) => r.dispose());
       gradeQuad.dispose(); quadGeo.dispose();
-      burnTex.dispose(); furnTex.dispose(); fBurnTex.dispose();
+      burnTex.dispose(); furnTex.dispose(); fBurnTex.dispose(); deadTex.dispose();
     },
   };
 

@@ -110,14 +110,36 @@ function pillowGeo(THREE) {
   // A bag is not a box. The sealed crimps at top and bottom pinch to almost
   // nothing while the middle bulges past the nominal footprint — without that
   // silhouette a chip bag just reads as a carton with a crinkle texture on it.
-  const g = new THREE.BoxGeometry(1, 1, 1, 1, 2, 1);
+  //
+  // ROUND 5. The round-4 version was 1x2x1, which gave a crimp, a bulge and
+  // eight perfectly straight silhouette edges — and a straight-edged silhouette
+  // is what a critic reads as "a plane with a bag printed on it", because gas
+  // flushing means no two bags on a shelf have the same outline. Subdividing to
+  // 2x3x2 and pushing every ring out by a deterministic per-vertex amount buys
+  // an irregular, lumpy edge for about twenty extra triangles per bag, on a
+  // geometry that is instanced once and shared by every bag in the store.
+  // depthSegments stays at 1 deliberately: the silhouette a camera sees is set
+  // by the width and height rings, and the third ring cost 155k triangles
+  // across the store for two faces you are almost never looking at.
+  const g = new THREE.BoxGeometry(1, 1, 1, 2, 3, 1);
   const p = g.attributes.position;
+  const wob = (a, b, c) => {
+    const v = Math.sin(a * 12.9898 + b * 78.233 + c * 37.719) * 43758.5453;
+    return v - Math.floor(v);
+  };
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    const crimp = Math.abs(y) > 0.25;
-    p.setZ(i, z * (crimp ? 0.20 : 1.34));
-    p.setX(i, x * (crimp ? 0.86 : 1.0));
-    if (crimp) p.setY(i, y * 0.96);
+    const t = Math.abs(y) * 2;                      // 0 at the belly, 1 at a seal
+    const crimp = t > 0.5;
+    // the pillow profile: full bulge at the belly, pinched to nothing at the
+    // crimp, following a cosine rather than two hard steps
+    const bulge = 0.34 * Math.cos(Math.min(1, t) * Math.PI * 0.5);
+    // ...plus a lump. Gas fill is never even and the shelf squashes one side.
+    const n = wob(Math.round(x * 4), Math.round(y * 6), Math.round(z * 4));
+    const lump = 1 + (n - 0.5) * 0.22 * (1 - t * 0.7);
+    p.setZ(i, z * (crimp ? 0.20 + bulge * 0.9 : (1 + bulge * 3) * lump));
+    p.setX(i, x * (crimp ? 0.86 : 1.0) * (0.97 + (n - 0.5) * 0.10));
+    p.setY(i, y * (crimp ? 0.96 : 1.0) + (n - 0.5) * 0.035 * (1 - t));
   }
   g.computeVertexNormals();
   return g;
@@ -325,7 +347,9 @@ export function buildStore(THREE, scene) {
       colors: [...DEPTS[i % DEPTS.length].colors, ...DEPTS[(i + 1) % DEPTS.length].colors],
     });
   }
-  RUN_DEPTS.push({ x: -EDGE_X, halfW: WRW / 2, colors: DEPTS[0].colors });
+  // the left wall run is a reach-in cooler bank as of round 5: what the floor
+  // mirrors off it is pale blue lit glass, not department colour on cream steel
+  RUN_DEPTS.push({ x: -EDGE_X + 0.10, halfW: 0.60, colors: FROZEN.colors });
   RUN_DEPTS.push({ x: EDGE_X, halfW: WRW / 2, colors: DEPTS[(AISLE_COUNT - 1) % DEPTS.length].colors });
 
   const FIX_L = 2.34, STRIP_GAP = 0.06;    // one 4 ft troffer + the joint after it
@@ -344,7 +368,7 @@ export function buildStore(THREE, scene) {
   // instead. Same hue, same value, less saturation — the floor is still warm
   // beige VCT, it has just stopped being orange.
   const floorMat = FL.reflectiveFloor(THREE, {
-    map: T.floor, wall: T.wallLUT, burnish: T.burn, tint: 0xcfc8b9,
+    map: T.floor, wall: T.wallLUT, burnish: T.burn, tint: 0xd6d0c2,
     ceilH: CEIL_H, shelfH: SHELF_H, pitch: PITCH, runHalf: SHELF_W / 2 + 0.02,
     fixPitch: FIX_L + STRIP_GAP, fixLen: FIX_L, rowOff: PITCH / 2,
     minX: STORE.minX, spanX: SW,
@@ -510,7 +534,7 @@ export function buildStore(THREE, scene) {
     new THREE.PlaneGeometry(SW, SD),
     new THREE.MeshBasicMaterial({
       map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 4.88, SD / 4.88); return t; })(),
-      color: 0xaba699,
+      color: 0xbbb6a9,
     }));
   PK.sharpen(THREE, ceilPlane.material, -0.9);
   ceilPlane.rotation.x = Math.PI / 2;    // normal points down
@@ -930,12 +954,12 @@ export function buildStore(THREE, scene) {
   // physically cannot take a cereal box.
   const PROFILES = [
     // canned/dry: ten shallow decks of small tins, faced solid, nothing missing
-    { key: 'tight', steps: [0.172, 0.180, 0.188, 0.198, 0.214], vacancy: 0.10, base: 0.082 },
+    { key: 'tight', steps: [0.158, 0.166, 0.174, 0.184, 0.198], vacancy: 0.06, base: 0.076 },
     { key: 'mixed', steps: DECK_STEPS, vacancy: 1.00, base: 0.130 },
     // jugs, paper packs, 12-packs: four tall decks with air above everything
-    { key: 'bulky', steps: [0.435, 0.495, 0.560, 0.495], vacancy: 2.15, base: 0.190 },
+    { key: 'bulky', steps: [0.505, 0.575, 0.645, 0.545], vacancy: 2.60, base: 0.205 },
     // mid-reset: whole bays stripped, tag holders left on the rail
-    { key: 'reset', steps: [0.245, 0.275, 0.315, 0.365, 0.275], vacancy: 2.30, base: 0.140 },
+    { key: 'reset', steps: [0.255, 0.295, 0.335, 0.385, 0.285], vacancy: 2.55, base: 0.145 },
     { key: 'mixed', steps: [0.225, 0.265, 0.235, 0.305, 0.355], vacancy: 0.55, base: 0.108 },
   ];
   function deckPlan(r, prof) {
@@ -1359,6 +1383,84 @@ export function buildStore(THREE, scene) {
     }
   }
 
+  // -------------------------------------------------------------------------
+  // REACH-IN COOLER BANK running along Z, glass facing +/-X. Same recipe as the
+  // rear case line, turned ninety degrees. Kept as its own function rather than
+  // generalising the rear one, because the rear line is load-bearing for the
+  // back-wall composition and this is the round-5 change most likely to want
+  // reverting on its own.
+  function coolerRunZ(wallX, dir, z0, z1, prof = FROZEN) {
+    const B = newPkg();
+    const D = 1.16;                              // case depth, wall to glass
+    const bx = wallX + dir * 0.06;               // the case back
+    const gx = wallX + dir * D;                  // the glass plane
+    const cz = (z0 + z1) / 2, len = z1 - z0;
+    const mid = wallX + dir * (D / 2);
+    fix(bx, 1.20, cz, 0.10, 2.36, len, P.coolerIn);                        // back
+    fix(mid, 2.34, cz, D, 0.16, len, P.cooler);                            // top
+    fix(mid, 2.56, cz, D + 0.06, 0.34, len + 0.1, P.sage);                 // valance
+    fix(mid, 0.09, cz, D + 0.04, 0.18, len, P.kick);                       // kick
+    for (const e of [-1, 1]) fix(mid, 1.20, cz + e * (len / 2 + 0.05), D, 2.36, 0.10, P.cooler);
+    const CD = [0.30, 0.68, 1.06, 1.44, 1.82];
+    const lip = gx - dir * 0.20;
+    for (let d = 0; d < CD.length; d++) {
+      fix(mid, CD[d] - 0.016, cz, D - 0.16, 0.032, len - 0.1, 0xfbf6ea);
+      fix(mid, CD[d] - 0.040, cz, D - 0.20, 0.018, len - 0.12, 0x7d7466);
+      railRun(lip + dir * 0.014, CD[d] - 0.020, z0 + 0.1, z1 - 0.1, dir);
+      qX(Qao, lip - dir * 0.006, CD[d] + 0.17, cz, len - 0.1, 0.34, dir, AOU.mouth);
+      deckAOz(lip, CD[d] + 0.0015, dir, 0.80, z0 + 0.1, z1 - 0.1);
+      for (let bk = 1; bk <= 2; bk++) {
+        fillBackRow(B, rng, prof, {
+          axis: 'z', a0: z0 + 0.15, a1: z1 - 0.15,
+          lip: lip - dir * bk * 0.19, face: dir, deckY: CD[d], headroom: 0.34,
+          depth: 0.19, lit: 1.06 - 0.12 * bk, col,
+        });
+      }
+      fillShelf(B, rng, prof, {
+        axis: 'z', a0: z0 + 0.15, a1: z1 - 0.15, lip, face: dir,
+        deckY: CD[d], headroom: 0.34, depth: 0.66, lit: 1.26, col,
+        pull: d / Math.max(1, CD.length - 1), vacancy: 0.55,
+        tag: (aStart, aw, kindT) => {
+          qX(Qtag, lip + dir * 0.020, CD[d] - 0.021, aStart + aw / 2, aw, 0.048, dir, tagUV(kindT));
+        },
+      });
+    }
+    flushPkg(B, 'coolerWall');
+    // the doors themselves — 0.86 m leaves, exactly as on the rear line
+    for (let z = z0; z < z1 - 0.4; z += 0.86) {
+      const w = Math.min(0.86, z1 - z);
+      qX(Qglass, gx + dir * 0.02, 1.18, z + w / 2, w - 0.05, 2.02, dir, FULL);
+      fix(gx, 1.18, z, 0.075, 2.12, 0.062, 0xdad4c2);
+      fix(gx - dir * 0.030, 1.18, z, 0.030, 2.08, 0.030, 0x2c2e2c);
+      fix(gx - dir * 0.048, 1.06, z + w - 0.095, 0.030, 1.32, 0.030, 0xd8dde2);
+      for (const hy of [0.44, 1.68]) fix(gx - dir * 0.030, hy, z + w - 0.095, 0.05, 0.05, 0.028, 0xb3b8bd);
+      tube(gx + dir * 0.075, 1.18, z + 0.045, 0, 0, 0, 0.013, 1.98, 0xfff9ec);
+      qX(Qbloom, gx + dir * 0.030, 1.18, z + 0.045, 2.10, 0.30, dir, FULL);
+      fix(gx + dir * 0.02, 2.22, z + w / 2, 0.02, 0.06, w - 0.10, 0xf6f1e2);
+    }
+    fix(gx, 1.18, cz, 0.07, 0.05, len, 0xd7d1bf);
+    fix(gx - dir * 0.01, 2.24, cz, 0.09, 0.09, len, 0xc9c3b1);
+    fix(gx - dir * 0.01, 0.13, cz, 0.09, 0.10, len, 0x8b8574);
+    // DECOR BAND above the case. A cooler tops out at 2.9 m and this wall runs
+    // to 7.4 — without this it is four and a half metres of bare drywall down
+    // the whole length of the aisle, which is the exact fault the perimeter
+    // gondola's `upper` option exists to fix.
+    fix(wallX + dir * 0.10, 3.30, cz, 0.06, 1.00, len, 0xe8dfc6);
+    fix(wallX + dir * 0.12, 3.84, cz, 0.05, 0.12, len, P.terra);
+    fix(wallX + dir * 0.12, 2.82, cz, 0.05, 0.13, len, P.terra);
+    // FROZEN FOODS at the back where it meets the rear case line, DAIRY as you
+    // come forward — the same order a real cold wall runs in, and cycling the
+    // cell stops two identical panels landing side by side.
+    let wsn = 0;
+    for (let z = z0 + 2.2; z < z1 - 1.6; z += 6.4) {
+      fix(wallX + dir * 0.15, 3.32, z, 0.04, 0.80, 5.10, 0xd6c9a8);
+      qX(Qwsign, wallX + dir * 0.19, 3.32, z, 4.90, 0.70, dir,
+        cellUV(wsn++ < 2 ? 2 : 3, 1, 4));
+    }
+    qUp(Qshadow, mid + dir * 0.35, 0.006, cz, 3.4, len, FULL);
+    solid(wallX - 0.05 * dir, 0, z0 - 0.05, gx + dir * 0.06, 2.34, z1 + 0.05);
+  }
+
   // 7 island gondolas between neighbouring aisles + 2 shallow wall runs
   // Deliberately CLUMPED rather than alternating. Alternating profiles averages
   // out: every aisle ends up bounded by one dense run and one sparse one and
@@ -1380,8 +1482,17 @@ export function buildStore(THREE, scene) {
   // deck and a decor band above it. WRW is declared in the FLOOR block.
   // The two wall runs do NOT break: they lie ALONG the walkway rather than
   // across it, so a cross-aisle in a real store terminates at them.
-  buildRun(90, STORE.minX + WRW / 2 + 0.04, WRW / 2,
-    [{ dir: 1, dept: DEPTS[0], aisle: 0 }], { profile: PROFILES[2], upper: 1, segs: ONE_SEG });
+  //
+  // ROUND 5 — AISLE 1 IS THE CHILLED AISLE. Round 4's eight aisles measured
+  // within 5.6 points of each other while eleven reference photographs spanned
+  // 29, and the reason was that all eight were the same thing: two gondolas.
+  // The two lowest-scoring product aisles in the reference set are both FROZEN
+  // aisles (34.4% and 35.1%) — a wall of lit glass doors is a completely
+  // different image from a wall of packages, and this store did not have one.
+  // The left perimeter wall already backs onto the frozen section of the rear
+  // case line, so the cold aisle wraps the corner exactly as it does in a real
+  // store. Same footprint, same collider depth, no change to the nav lane.
+  coolerRunZ(STORE.minX, 1, -BODY - EC_D, BODY + EC_D);
   buildRun(91, STORE.maxX - WRW / 2 - 0.04, WRW / 2,
     [{ dir: -1, dept: DEPTS[(AISLE_COUNT - 1) % DEPTS.length], aisle: AISLE_COUNT - 1 }],
     { profile: PROFILES[0], upper: -1, segs: ONE_SEG });
@@ -1541,19 +1652,30 @@ export function buildStore(THREE, scene) {
     // ---- the two operating leaves -----------------------------------------
     // Held very slightly ajar so the gap between them reads as a way through.
     const lz = fz + 0.20;
+    // A shop entry leaf is GLASS in a narrow stile-and-rail frame, not a metal
+    // slab with a light patch on it. The glazed area is a slice of the SAME
+    // exterior plate, UV-mapped to the leaf's real position in the opening, so
+    // the car park lines up across the door and the fixed lights either side.
+    const uAt = (px) => (px - gx0) / w;
+    const vAt = (py) => (py - 0.14) / 3.28;
     for (const s of [-1, 1]) {
       const lx = cx + s * 0.50;
-      fix(lx, 1.30, lz, 0.94, 2.32, 0.055, 0x8e959c, BfixF);          // leaf frame
-      fix(lx, 1.30, lz + 0.012, 0.80, 2.10, 0.035, 0xc9d6dc, BfixF);  // vision panel
-      fix(lx, 0.30, lz + 0.03, 0.92, 0.42, 0.05, 0x6e757c, BfixF);    // kick plate
-      fix(lx, 2.42, lz + 0.03, 0.92, 0.10, 0.05, 0x6e757c, BfixF);    // top rail
-      // push bar across the leaf and a vertical pull on the stile
-      fix(lx, 1.02, lz + 0.075, 0.76, 0.055, 0.055, 0xb9bec5, BfixF);
-      for (const e of [-1, 1]) fix(lx + e * 0.36, 1.02, lz + 0.055, 0.045, 0.055, 0.05, 0x8b9198, BfixF);
-      fix(lx + s * 0.40, 1.35, lz + 0.085, 0.045, 1.02, 0.045, 0xcfd4d9, BfixF);
+      fix(lx, 1.30, lz, 0.94, 2.32, 0.055, 0x9aa1a8, BfixF);          // leaf stiles
+      Qout.rect([lx, 1.44, lz + 0.030], [0.39, 0, 0], [0, 0.92, 0],
+        uAt(lx - 0.39), vAt(0.52), uAt(lx + 0.39), vAt(2.36));
+      fix(lx, 0.30, lz + 0.05, 0.92, 0.42, 0.05, 0x767d84, BfixF);    // kick plate
+      fix(lx, 2.42, lz + 0.05, 0.92, 0.10, 0.05, 0x767d84, BfixF);    // top rail
+      for (const e of [-1, 1]) {                                       // stiles
+        fix(lx + e * 0.42, 1.30, lz + 0.05, 0.10, 2.32, 0.05, 0x8e959c, BfixF);
+      }
+      // push bar across the leaf and a vertical pull on the lock stile
+      fix(lx, 1.02, lz + 0.100, 0.78, 0.062, 0.062, 0xd2d7dc, BfixF);
+      for (const e of [-1, 1]) fix(lx + e * 0.37, 1.02, lz + 0.072, 0.05, 0.062, 0.056, 0x8b9198, BfixF);
+      fix(lx + s * 0.40, 1.46, lz + 0.110, 0.048, 1.02, 0.048, 0xdfe4e9, BfixF);
+      for (const hy of [0.98, 1.94]) fix(lx + s * 0.40, hy, lz + 0.080, 0.042, 0.05, 0.05, 0xa9aeb4, BfixF);
       // decals: CAUTION AUTOMATIC DOOR at head height, IN / OUT below it
-      qZ(Qdecal, lx, 2.16, lz + 0.045, 0.42, 0.21, 1, cellUV(0, 4, 1));
-      qZ(Qdecal, lx, 1.68, lz + 0.045, 0.24, 0.24, 1, cellUV(s > 0 ? 1 : 2, 4, 1));
+      qZ(Qdecal, lx, 2.16, lz + 0.062, 0.42, 0.21, 1, cellUV(0, 4, 1));
+      qZ(Qdecal, lx, 1.72, lz + 0.062, 0.24, 0.24, 1, cellUV(s > 0 ? 1 : 2, 4, 1));
     }
     // the meeting stile, and the header the operators live in
     fix(cx, 1.30, lz + 0.02, 0.075, 2.32, 0.08, 0x6e757c, BfixF);
@@ -2055,7 +2177,7 @@ export function buildStore(THREE, scene) {
   const sharp = (m, b) => PK.sharpen(THREE, m, b);
   soup(Qrail, sharp(new THREE.MeshLambertMaterial({ map: T.rail, color: 0xfffdf4, emissive: 0x2a2620 }), -0.7), 'rails');
   soup(Qslot, sharp(new THREE.MeshLambertMaterial({ map: T.slot, color: 0xf6f0dd }), -0.9), 'uprights');
-  soup(Qpeg, sharp(new THREE.MeshLambertMaterial({ map: T.peg, color: 0xf0e9d6 }), -0.9), 'backPanels');
+  soup(Qpeg, sharp(new THREE.MeshLambertMaterial({ map: T.peg, color: 0xece8dc }), -0.9), 'backPanels');
   soup(Qdangle, new THREE.MeshBasicMaterial({
     map: T.dangle, color: 0xeae3d2, side: THREE.DoubleSide,
   }), 'danglers');
@@ -2097,7 +2219,7 @@ export function buildStore(THREE, scene) {
   const bl = soup(Qbloom, bloomMat, 'lightBloom', ceilGroup);
   if (bl) bl.renderOrder = 5;
   const shadowMat = new THREE.MeshBasicMaterial({
-    map: T.glow, color: 0x120f0a, transparent: true, opacity: 0.70, depthWrite: false,
+    map: T.glow, color: 0x12121a, transparent: true, opacity: 0.70, depthWrite: false,
   });
   const sm = soup(Qshadow, shadowMat, 'contactShadows'); if (sm) sm.renderOrder = 1;
   soup(Qpatch, new THREE.MeshBasicMaterial({ map: T.patch, color: 0xd6d1c3 }), 'floorPatches');

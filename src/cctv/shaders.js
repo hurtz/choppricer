@@ -303,3 +303,82 @@ void main() {
   gl_FragColor = vec4(col, 1.0);
 }`,
 };
+
+// ---------------------------------------------------------------------------
+// A monitor with nothing on the other end of the cable. Two flavours:
+//   mode 0  analogue snow — an old composite input with no sync. Full-rate
+//           white noise, a coarse blotch under it, and a sync bar crawling up.
+//   mode 1  the manufacturer's blue NO SIGNAL card on a modern panel.
+// Same panel physics tail as ScreenShader so a dark monitor sits in the same
+// room as the live ones: backlight leak, white point, sheen, polariser lip.
+// ---------------------------------------------------------------------------
+export const DeadShader = {
+  name: 'CCTVDead',
+  uniforms: {
+    tCard:  { value: null },
+    uRect:  { value: null },
+    uRes:   { value: null },
+    uMode:  { value: 0.0 },
+    uTime:  { value: 0.0 },
+    uSeed:  { value: 0.0 },
+    uSheen: { value: 0.05 },
+    uPhase: { value: 0.0 },
+    uScan:  { value: 0.07 },
+    uPanel: { value: null },
+  },
+  vertexShader: QUAD_VERT,
+  fragmentShader: /* glsl */`
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D tCard;
+uniform vec4 uRect;
+uniform vec2 uRes;
+uniform float uMode, uTime, uSeed, uSheen, uPhase, uScan;
+uniform vec3 uPanel;
+${COMMON}
+
+void main() {
+  vec2 l = vUv;
+  vec2 fc = gl_FragCoord.xy;
+  vec3 col;
+
+  if (uMode < 0.5) {
+    // Snow. Two octaves so it has grain AND blotch — one octave of pure hash
+    // reads as a flat grey rectangle once it is 136px wide on the wall.
+    float n  = h21(fc * 1.31 + vec2(uSeed * 13.1, uSeed * 7.7));
+    float n2 = h21(floor(fc * 0.34) + vec2(uSeed * 3.3, 91.0));
+    float s = mix(n, n2, 0.30);
+    // A dead composite input on a twelve-year-old CRT in an unlit room is a
+    // DIM grey fizz, not a lightbox. Full-amplitude snow out-shone every live
+    // feed on the wall and pulled the eye straight to the one panel that has
+    // nothing to say.
+    col = vec3(s * 0.40 + 0.032);
+    col *= 0.86 + 0.30 * n2;
+    // the sync bar that never quite locks, crawling up the picture
+    float rb = fract(l.y + uTime * 0.21);
+    float bar = smoothstep(0.0, 0.018, rb) * (1.0 - smoothstep(0.018, 0.085, rb));
+    col *= 1.0 + 0.55 * bar;
+    col *= vec3(0.985, 1.0, 1.020);
+  } else {
+    col = mix(vec3(0.030, 0.049, 0.132), vec3(0.015, 0.026, 0.079), l.y);
+    col += 0.008 * (h21(fc * 0.9 + uSeed) - 0.5);
+  }
+
+  vec2 cp = uRect.xy + vec2(l.x, 1.0 - l.y) * uRect.zw;
+  vec4 c = texture2D(tCard, vec2(cp.x / uRes.x, 1.0 - cp.y / uRes.y));
+  col = mix(col, c.rgb, c.a);
+
+  col *= 1.0 - uScan * (0.5 + 0.5 * sin(l.y * uRect.w * 3.14159265));
+  col = col * 0.960 + 0.017;
+  col *= uPanel;
+
+  float d = l.x * 0.78 + l.y * 0.60;
+  col += exp(-pow((d - (0.62 + 0.30 * sin(uPhase))) * 2.6, 2.0)) * uSheen * vec3(0.82, 0.88, 1.0);
+
+  vec2 e = min(l, 1.0 - l) * uRect.zw;
+  float ep = min(e.x, e.y);
+  col *= 0.74 + 0.26 * smoothstep(0.0, 4.0, ep);
+
+  gl_FragColor = vec4(clamp(col, 0.0, 1.0), 1.0);
+}`,
+};

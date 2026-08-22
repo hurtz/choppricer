@@ -344,15 +344,15 @@ export function pegTex(THREE) {
   const N = 128;
   const [c, g] = cv(N, N);
   const rng = makeRng(0x9E6);
-  g.fillStyle = '#b8ae97'; g.fillRect(0, 0, N, N);
+  g.fillStyle = '#b7b1a4'; g.fillRect(0, 0, N, N);
   for (let i = 0; i < 900; i++) {            // powder-coat grain and grime
-    g.fillStyle = `rgba(${ri(rng, 120, 190)},${ri(rng, 112, 180)},${ri(rng, 96, 160)},${rr(rng, 0.06, 0.22)})`;
+    g.fillStyle = `rgba(${ri(rng, 122, 188)},${ri(rng, 118, 180)},${ri(rng, 108, 168)},${rr(rng, 0.06, 0.22)})`;
     g.fillRect(rng() * N, rng() * N, rr(rng, 1, 4), rr(rng, 1, 4));
   }
   const P = N / 12;                          // 25 mm slot pitch
   for (let ry = 0; ry < 12; ry++) for (let rx = 0; rx < 12; rx++) {
     const x = (rx + 0.5) * P, y = (ry + 0.5) * P;
-    g.fillStyle = 'rgba(34,30,23,0.72)';
+    g.fillStyle = 'rgba(32,32,34,0.72)';
     g.fillRect(x - P * 0.16, y - P * 0.30, P * 0.32, P * 0.60);
     g.fillStyle = 'rgba(255,250,236,0.30)';
     g.fillRect(x - P * 0.16, y + P * 0.28, P * 0.32, 1.1);
@@ -393,26 +393,42 @@ export function shelfAOTex(THREE) {
   // every cavity under 40% brightness, which put the printed packaging in there
   // below the threshold where any of it reads — a real cast shadow is a sharp
   // edge with recoverable detail behind it, not a black hole.
-  mouth.addColorStop(0.00, '#14100a');        // dead black right under the deck
-  mouth.addColorStop(0.035, '#241f16');
-  mouth.addColorStop(0.085, '#453e33');       // the lip's cast shadow band
-  mouth.addColorStop(0.160, '#7d7565');
-  mouth.addColorStop(0.260, '#b3aa98');
-  mouth.addColorStop(0.400, '#d8d0c0');
-  mouth.addColorStop(0.600, '#f6f1e6');
-  mouth.addColorStop(0.780, '#fefcf6');
-  mouth.addColorStop(0.880, '#cbc3b4');       // deck contact seam
-  mouth.addColorStop(0.945, '#6a6254');
-  mouth.addColorStop(1.00, '#2b2720');
+  // ROUND 5. Softened about 12% and the band narrowed. Measured mean VALUE of a
+  // shelf close-up was 0.37-0.40 against 0.52-0.56 for reference/store_01 and
+  // _02, and the cavity card was most of it: it was multiplying the top quarter
+  // of every cavity down toward black over the ENTIRE mouth. The band stays
+  // hard-edged — that was the round-4 win and it is real — but a shadow cast by
+  // a shelf lip in a room lit to 800 lux does not take a facing to 8% grey.
+  //
+  // ...and ROUND 5 made them NEUTRAL, which turned out to matter more than the
+  // softening. A hue mask over a shelf close-up put 22% of the frame in the
+  // saturated warm band, and it was not the packaging: it was the shadowed
+  // pegboard visible in every cavity. Multiply blending COMPOUNDS chroma — a
+  // 12%-saturated cream panel under a 26%-saturated brown shadow card lands at
+  // 35%, well past anything in the reference photography. An occlusion card is
+  // a light-LEVEL change, not a pigment; and what fills the deepest part of a
+  // shelf cavity is bounce off the cool fill, so if it leans anywhere it leans
+  // the other way. Every surface in here is still as warm as it was painted.
+  mouth.addColorStop(0.00, '#1c1d20');        // deepest, right under the deck
+  mouth.addColorStop(0.035, '#2b2c30');
+  mouth.addColorStop(0.085, '#535459');       // the lip's cast shadow band
+  mouth.addColorStop(0.160, '#8d8e91');
+  mouth.addColorStop(0.260, '#c0c1c1');
+  mouth.addColorStop(0.400, '#e0e0de');
+  mouth.addColorStop(0.600, '#f7f6f2');
+  mouth.addColorStop(0.780, '#fefdfa');
+  mouth.addColorStop(0.880, '#d2d2cf');       // deck contact seam
+  mouth.addColorStop(0.945, '#87888b');
+  mouth.addColorStop(1.00, '#4f5054');
   g.fillStyle = mouth; g.fillRect(0, 0, 8, 256);
   const deck = g.createLinearGradient(0, 0, 0, 256);
-  deck.addColorStop(0.00, '#181409');         // hard against the back panel
-  deck.addColorStop(0.10, '#332d1d');
-  deck.addColorStop(0.26, '#6e6551');
-  deck.addColorStop(0.48, '#aca391');
-  deck.addColorStop(0.74, '#ddd6c8');
-  deck.addColorStop(0.90, '#f8f4ea');
-  deck.addColorStop(1.00, '#fffdf7');         // the lit strip at the lip
+  deck.addColorStop(0.00, '#1e1f23');         // hard against the back panel
+  deck.addColorStop(0.10, '#3e3f44');
+  deck.addColorStop(0.26, '#7c7d80');
+  deck.addColorStop(0.48, '#a5a6a6');
+  deck.addColorStop(0.74, '#d8d8d5');
+  deck.addColorStop(0.90, '#f6f5f1');
+  deck.addColorStop(1.00, '#fffefc');         // the lit strip at the lip
   g.fillStyle = deck; g.fillRect(8, 0, 8, 256);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
@@ -449,14 +465,14 @@ export function floorWearTex(THREE) {
     const x = (k + 0.5) * N / 9;
     const grd = g.createLinearGradient(x - N * 0.052, 0, x + N * 0.052, 0);
     grd.addColorStop(0, 'rgba(255,255,255,0)');
-    grd.addColorStop(0.5, 'rgba(122,114,100,0.30)');
+    grd.addColorStop(0.5, 'rgba(118,117,114,0.30)');
     grd.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grd; g.fillRect(x - N * 0.052, 0, N * 0.104, N);
   }
   for (const y of [N * 0.14, N * 0.86]) {         // front + back cross-aisles
     const grd = g.createLinearGradient(0, y - N * 0.06, 0, y + N * 0.06);
     grd.addColorStop(0, 'rgba(255,255,255,0)');
-    grd.addColorStop(0.5, 'rgba(116,108,94,0.30)');
+    grd.addColorStop(0.5, 'rgba(113,112,109,0.30)');
     grd.addColorStop(1, 'rgba(255,255,255,0)');
     g.fillStyle = grd; g.fillRect(0, y - N * 0.06, N, N * 0.12);
   }

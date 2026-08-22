@@ -79,56 +79,56 @@ export const DEPTS = [
     sign: ['BREAD', 'BAKING NEEDS', 'FLOUR / SUGAR', 'COOKIES'],
     kinds: [K.bag, K.midBox, K.smallBox, K.wideBox, K.tallBox, K.pouch, K.tallJar, K.smallBag],
     soft: [K.bag, K.pouch, K.tallJar, K.smallBag],
-    colors: mix('cream', 'white', 'red', 'yellow', 'brown', 'orange', 'blue'),
+    colors: mix('cream', 'cream', 'red', 'yellow', 'brown', 'white'),
   },
   {
     name: 'canned', key: 'canned', blade: 'CANNED GOODS',
     sign: ['CANNED VEGETABLES', 'SOUPS / BROTH', 'CANNED FRUITS', 'PORK & BEANS'],
     kinds: [K.can, K.can, K.bigCan, K.jar, K.tallJar, K.midBox, K.pouch, K.smallBox],
     soft: [K.jar, K.tallJar, K.pouch],
-    colors: mix('red', 'red', 'green', 'silver', 'blue', 'orange', 'white', 'yellow'),
+    colors: mix('red', 'red', 'red', 'green', 'green', 'silver', 'yellow'),
   },
   {
     name: 'pasta', key: 'pasta', blade: 'PASTA / SAUCE',
     sign: ['SPAGHETTI / SAUCES', 'RICE & DRY BEANS', 'MEXICAN', 'ASIAN'],
     kinds: [K.jar, K.midBox, K.smallBox, K.tallBox, K.tallJar, K.bigCan, K.pouch, K.squat],
     soft: [K.jar, K.tallJar, K.pouch, K.squat],
-    colors: mix('red', 'red', 'yellow', 'green', 'green', 'cream', 'orange'),
+    colors: mix('red', 'red', 'green', 'cream', 'yellow'),
   },
   {
     name: 'snacks', key: 'snacks', blade: 'SNACKS / CHIPS',
     sign: ['CHIPS & SNACKS', 'CANDIES', 'CRACKERS', 'NUTS'],
     kinds: [K.bag, K.bag, K.smallBag, K.wideBox, K.midBox, K.pouch, K.tinyBox, K.tallJar],
     soft: [K.bag, K.smallBag, K.pouch, K.tallJar],
-    colors: mix('orange', 'red', 'yellow', 'blue', 'blue', 'green', 'purple', 'teal', 'black'),
+    colors: mix('orange', 'orange', 'red', 'red', 'yellow', 'yellow', 'blue', 'green', 'purple'),
   },
   {
     name: 'soda', key: 'soda', blade: 'SODA / JUICE',
     sign: ['SOFT DRINKS', 'JUICES', 'BOTTLED WATER', 'SPORTS DRINKS'],
     kinds: [K.sodaBtl, K.case12, K.sodaBtl, K.bottle, K.jug, K.case12, K.squat, K.can],
     soft: [K.sodaBtl, K.bottle, K.jug, K.squat],
-    colors: mix('red', 'blue', 'blue', 'green', 'orange', 'purple', 'white', 'teal', 'silver'),
+    colors: mix('red', 'red', 'blue', 'blue', 'green', 'orange', 'purple', 'silver', 'white'),
   },
   {
     name: 'breakfast', key: 'breakfast', blade: 'CEREAL / COFFEE',
     sign: ['CEREAL', 'COFFEE / TEA', 'BREAKFAST FOODS', 'SYRUP / JAM'],
     kinds: [K.cerealBox, K.cerealBox, K.midBox, K.jar, K.tallBox, K.smallBox, K.tallJar, K.pouch],
     soft: [K.jar, K.tallJar, K.pouch],
-    colors: mix('yellow', 'yellow', 'red', 'red', 'blue', 'orange', 'brown', 'purple'),
+    colors: mix('yellow', 'yellow', 'red', 'red', 'blue', 'brown', 'orange'),
   },
   {
     name: 'paper', key: 'paper', blade: 'PAPER / CLEANING',
     sign: ['PAPER GOODS', 'LAUNDRY', 'CLEANING SUPPLIES', 'TRASH BAGS'],
     kinds: [K.jug, K.wideBox, K.bag, K.jug, K.midBox, K.cerealBox, K.squat, K.bottle],
     soft: [K.jug, K.bag, K.squat, K.bottle],
-    colors: mix('blue', 'blue', 'blue', 'white', 'white', 'teal', 'green', 'yellow', 'orange'),
+    colors: mix('blue', 'blue', 'blue', 'blue', 'white', 'white', 'teal', 'yellow', 'green'),
   },
   {
     name: 'health', key: 'health', blade: 'HEALTH / BEAUTY',
     sign: ['HEALTH & BEAUTY', 'BABY CARE', 'VITAMINS', 'PET SUPPLIES'],
     kinds: [K.smallBox, K.bottle, K.tinyBox, K.midBox, K.smallBag, K.jar, K.squat, K.pouch],
     soft: [K.bottle, K.jar, K.squat, K.pouch, K.smallBag],
-    colors: mix('white', 'white', 'teal', 'purple', 'blue', 'pink', 'silver', 'green'),
+    colors: mix('white', 'white', 'white', 'silver', 'purple', 'pink', 'teal', 'blue'),
   },
 ];
 
@@ -136,16 +136,28 @@ export const FROZEN = {
   name: 'frozen', key: 'frozen', blade: 'FROZEN', sign: ['FROZEN'],
   kinds: [K.wideBox, K.midBox, K.smallBag, K.bag, K.tallBox, K.pouch],
   soft: [K.smallBag, K.bag, K.pouch],
-  colors: mix('white', 'blue', 'blue', 'teal', 'red', 'green', 'silver', 'orange', 'yellow'),
+  colors: mix('white', 'blue', 'blue', 'blue', 'teal', 'silver', 'red', 'green'),
 };
 
 // Atlas-cell pools. Cell i of each atlas was drawn with department i%8's
 // vocabulary, so a department takes its themed cells plus a few strays —
 // real neighbouring SKUs are not all from one design family.
+// ROUND 5. The strays used to be drawn from the WHOLE atlas, which put a
+// carton of crackers — complete with its warm serving-suggestion photo — on the
+// cleaning shelf four times out of eight. Cells 6 and 7 mod 8 are the non-food
+// vocabularies (cleaning, health & beauty); a non-food department now takes its
+// strays from the other non-food cells only. Food departments still borrow
+// freely from each other, which is real: neighbouring SKUs on a grocery shelf
+// genuinely are not all from one design family.
 function poolFor(idx, total, strays) {
   const p = [];
   for (let k = idx % 8; k < total; k += 8) p.push(k);
-  for (let k = 0; k < strays; k++) p.push((idx * 5 + k * 7 + 3) % total);
+  const nonFood = (idx % 8) >= 6;
+  for (let k = 0; k < strays; k++) {
+    let c = (idx * 5 + k * 7 + 3) % total;
+    if (nonFood !== ((c % 8) >= 6)) c = (c - (c % 8)) + (nonFood ? 6 + (k % 2) : (c + 1) % 6);
+    p.push(c % total);
+  }
   return p;
 }
 [...DEPTS, FROZEN].forEach((d, i) => {
@@ -246,7 +258,7 @@ export function fillShelf(B, rng, dept, opts) {
   // Vertical gradient: the top deck is faced right up to the lip, the bottom
   // deck sits several inches back. That gradient alone changes how an aisle
   // reads far more than any single item does.
-  const deckSetback = (1 - pull) * 0.030;
+  const deckSetback = (1 - pull) * 0.024;
 
   // ---- ROUND-3 VACANCY PLAN ----------------------------------------------
   // Round-2 shelves were 100% full and perfectly faced, which no store on
@@ -289,7 +301,13 @@ export function fillShelf(B, rng, dept, opts) {
     // put facings THROUGH the price rail and through each other in the round-3
     // renders. Pay for the lean in clearance.
     const lean = Math.abs(Math.sin(roll)) * sy * 0.5;
-    const back = half + 0.014 + lean + setback;
+    // ROUND 5. This was a flat 14 mm of clearance behind the lip on EVERY unit,
+    // so a strip of bright deck showed in front of every single facing and the
+    // run read as a display rather than as a shelf that has been faced. A stock
+    // clerk faces product TO the lip; on a busy day it ends up slightly proud
+    // of it. 2 mm minimum, and the rail stands 12 mm in front of the lip, so a
+    // proud facing still clears it.
+    const back = half + 0.002 + rr(rng, 0, 0.020) + lean + setback;
     const cx = isZ ? lip - face * back : a;
     const cz = isZ ? a : lip - face * back;
     if (kind.t === 'box' || kind.t === 'bag') {
@@ -380,7 +398,7 @@ export function fillShelf(B, rng, dept, opts) {
       // lamp actually returns, and the print does not sink because the mask's
       // brightness channel still carries the ink.
       const shade = lit * (litAt ? litAt(a) : 1) * 0.82 * rr(rng, 0.90, 1.10);
-      const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.30, 1.60));
+      const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.42, 1.75));
       const vLit = Math.min(0.97, baseHsl[2] / 100 * rr(rng, 0.86, 1.38));
       // Set per INSTANCE below, not once per variety: eight identical facings
       // in a row at one exact colour is a flat field with no internal edges,

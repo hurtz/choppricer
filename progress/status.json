@@ -1,8 +1,8 @@
 {
  "pieces": {
   "store": {
-   "round": 4,
-   "state": "passed",
+   "round": 5,
+   "state": "critiquing",
    "shots": [
     {
      "round": 0,
@@ -38,6 +38,21 @@
      "round": 4,
      "path": "../shots/b5_a.png",
      "t": 1787426358.228731
+    },
+    {
+     "round": 5,
+     "path": "../shots/b6_a.png",
+     "t": 1787431311.715828
+    },
+    {
+     "round": 5,
+     "path": "../shots/b6_cross.png",
+     "t": 1787431583.822918
+    },
+    {
+     "round": 5,
+     "path": "../shots/r5_cross.png",
+     "t": 1787431779.448586
     }
    ],
    "gaps": [
@@ -58,10 +73,10 @@
      "text": "The two surfaces filling the largest solid angle of the frame \u2014 ceiling and floor \u2014 are still flat-shaded planes with a texture on them. (1) The floor returns ZERO specular under a lit ceiling; every real photo shows the ceiling light rows mirrored as long vertical smears. 'Until light physically bounces off the floor, nothing further up the list will matter.' (2) Ceiling troffers are emissive quads coplanar with the tile, not recessed housings with tube shapes and a shadow line. (3) BINARY TELLS: an unlit pink placeholder cube on a grey stick, untextured grey cart proxies, a blank grey plane where a sign texture failed. Any one ends the test alone."
     }
    ],
-   "updated": 1787426575.076761,
-   "note": "Root causes, none of which were the reported symptom: the 'failing diffuser map' was ceiling clutter (conduit, sprinkler branches, dangler strings) hung INSIDE the troffer well between lamp plane and door. The olive ceiling was a Lambert plane whose normal points down, so the HemisphereLight fed it ground colour at full strength across the largest surface in the scene. Far-floor blowout was the reflection's across-aisle blur growing uncapped. Both 'placeholders' were real geometry, not failed textures - three unrelated sage greens at three depths reading as one void. AO was never weak: the light rig had ~half its budget arriving from everywhere at once, so occlusion cards were fighting flat fill.",
+   "updated": 1787431779.4485812,
+   "note": "Cross-aisle: runs built in segments with per-segment colliders, walkway verified unblocked x=-22 to +22 with a uniform 2.50m clear band, no pinch or pocket. Sightline works. Door 2 storefront built from config EXIT2. Freezer glass reflects with Fresnel + double-glazing ghost displaced by 2*gap*tan(theta), sharing the floor's uniform bag so the two mirrors cannot disagree about where the lamps are. Palette root-caused not tuned: every light in the rig was warm, and every multiply/occlusion card was brown - multiply COMPOUNDS chroma, so a 12%-saturated pegboard under a 26%-saturated brown shadow lands at 35%.",
    "gap": "The two surfaces filling the largest solid angle of the frame \u2014 ceiling and floor \u2014 are still flat-shaded planes with a texture on them. (1) The floor returns ZERO specular under a lit ceiling; every real photo shows the ceiling light rows mirrored as long vertical smears. 'Until light physically bounces off the floor, nothing further up the list will matter.' (2) Ceiling troffers are emissive quads coplanar with the tile, not recessed housings with tube shapes and a shadow line. (3) BINARY TELLS: an unlit pink placeholder cube on a grey stick, untextured grey cart proxies, a blank grey plane where a sign texture failed. Any one ends the test alone.",
-   "verdict": "PASS on the gate \u2014 all 8 aisles 37.3-42.9% (mean 36.3 -> 41.0). Floor reflection costs only 0.09ms (2% of frame); scene is draw-call bound, so no need to cheapen it on the 8 monitor feeds."
+   "verdict": "Edge density mean 41.0 -> 44.2, spread 5.6 -> 7.0. Warm-band pixels 37.7-40.7% -> 7.7-11.3% (references 5.6-11.4%). Mean saturation 0.33-0.35 -> 0.23-0.25 (references 0.27-0.32)."
   },
   "cctv": {
    "round": 2,
@@ -94,8 +109,8 @@
    "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
   },
   "agents": {
-   "round": 4,
-   "state": "passed",
+   "round": 5,
+   "state": "building",
    "shots": [
     {
      "round": 0,
@@ -160,8 +175,8 @@
      "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
     }
    ],
-   "updated": 1787428559.548615,
-   "note": "Design fix: two doors 35m apart PLUS a per-subject door preference (people leave by the door they came in by). With two doors alone the misaim table went flat again because position still implied destination. A third door was built, measured and discarded - 13 points of difficulty for no design gain, numbers left in the file so nobody rebuilds it. Barge fixed not cut: needed BOTH ending up through the cop (97->81% still caught) and costing 1.5s of wind (->59%). Carts are real ~100-strut wire trolleys at 7 draw calls each, down from 10. Powerups are real lit objects.",
+   "updated": 1787431240.563095,
+   "note": "R5 lung: gate + no-sprint-while-gassed + 1.4s tank/1.72 regen. Rationing now beats always-sprint 75.0% vs 38.5% (round 4: 74.0 vs 81.3, wrong sign). Mid cross-aisle picked up by nav; back route replaced by it.",
    "gap": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it.",
    "verdict": "PASS on distribution. Median bolt-to-grab 1.13s -> 3.03s; catchUnder1s 61.3% -> 15.7%. Branch split fixed: comes-at-cop 97.1% -> 89%, out-the-back 0% -> 61%. Door-camping INVERTED: camper was 80.7/67.3 at wrong-aisle 1/2, now 22.5/4.0; pursuing cut bot 79.5/60.0/58.0."
   },
@@ -211,6 +226,38 @@
   }
  },
  "log": [
+  {
+   "t": 1787431779.448587,
+   "piece": "store",
+   "role": "builder",
+   "round": 5,
+   "state": "critiquing",
+   "text": "Cross-aisle: runs built in segments with per-segment colliders, walkway verified unblocked x=-22 to +22 with a uniform 2.50m clear band, no pinch or pocket. Sightline works. Door 2 storefront built from config EXIT2. Freezer glass reflects with Fresnel + double-glazing ghost displaced by 2*gap*tan(theta), sharing the floor's uniform bag so the two mirrors cannot disagree about where the lamps are. Palette root-caused not tuned: every light in the rig was warm, and every multiply/occlusion card was brown - multiply COMPOUNDS chroma, so a 12%-saturated pegboard under a 26%-saturated brown shadow lands at 35%."
+  },
+  {
+   "t": 1787431583.822918,
+   "piece": "store",
+   "role": "builder",
+   "round": 5,
+   "state": "building",
+   "text": "R5 FINAL. Per-aisle edge density 40.4 / 42.9 / 44.0 / 44.2 / 44.5 / 44.7 / 45.3 / 47.4 \u2014 mean 44.2, SPREAD 7.0 (round 4: mean 41.0, spread 5.6). (1) Mid-store cross-aisle at z=-0.70, 3.6 m clear; runs build in two segments, colliders stop at the segment ends, verified 2.50 m of inflated-free nav width at every run centreline and the centreline unblocked wall to wall. Endcaps on all four segment ends, aisle signs at both walkway mouths of all 8 aisles, blades repeated every ~4.3 m on both faces, perpendicular troffer row overhead that the floor mirror knows about, and nothing parked in the band. Sightline works: a figure 20 m away across the store is plainly visible. (2) Door 2 storefront built from the same storefront() as Door 1, sited on config's EXIT2 \u2014 glazed leaves showing the real car park through them, push bars, pulls, CAUTION/IN/OUT decals, operator header + sensors, vestibule returns and soffit, walk-off mat, bollards, cart corral, hours plate, lit EXIT/DOOR 2 box. src/agents.js's placeholder leaves + green EXIT box now double up on BOTH doors and can be deleted. (3) Freezer glass is a real angle-correct mirror: fresnel 0.04 -> 1.0, double-glazing ghost that walks off the primary as the angle opens, thermal haze at the mullions, general in the pane normal, sharing the floor's light field. Costs 0.34 ms in its worst view on a busy machine (0.15 ms measured idle). (4) The sepia was root-caused with a hue mask, not by eye: an all-warm light rig plus BROWN multiply/occlusion cards, and multiply compounds chroma. Neutral illuminant + neutral occlusion + desaturated floor/ceiling tints + brighter food-photo swatches + no food photography on cleaning/HBA packaging: warm band 37.7% -> 7.7-11.3% of frame against 7.2-11.4% for the references; value 0.45 -> 0.50 against 0.49-0.52. (5) Aisle 1 rebuilt as a CHILLED aisle \u2014 a reach-in cooler bank down the left wall \u2014 because the two lowest-scoring product aisles in the reference set are both frozen aisles and this store did not have one. Budget: store 107 meshes / 1.80 M tris, 299 calls in an aisle view, 4.03 ms per full sim+render step."
+  },
+  {
+   "t": 1787431311.715828,
+   "piece": "store",
+   "role": "builder",
+   "round": 5,
+   "state": "building",
+   "text": "R5: (1) MID-STORE CROSS-AISLE \u2014 every gondola run now builds in two segments with a 3.6 m clear walkway at z=-0.70; colliders stop at the segment ends so the nav grid opens (verified: 2.50 m of inflated-free width at every run centreline, ~6 cells at 0.42, centreline unblocked wall to wall). Endcaps + promo headers on all four segment ends, aisle-number signs hung at BOTH cross-aisle mouths of all 8 aisles, category blades repeated every ~4.3 m on both faces with one always planted a blade-length back from the walkway, and a perpendicular troffer row over the walkway that the floor mirror was taught about. Nothing parks in it: perimeter pallets, one cart and any powerup landing in the band get pushed out. (2) DOOR 2 STOREFRONT \u2014 storefront() built once, called at EXIT and EXIT2: textured exterior (canopy soffit, treeline, parked cars, asphalt with stall lines) replacing the flat 0xd9e6ee plate, full shopfront extrusion, two operating leaves with push bars/pulls/kickplates/CAUTION-AUTOMATIC-DOOR + IN/OUT decals, operator header with sensors, vestibule returns + soffit + lit cove, walk-off mat, bollards inside and out, cart corral, hours plate, and a lit EXIT/DOOR-N box. src/agents.js's placeholder can come out. (3) FREEZER GLASS \u2014 real fresnel-weighted analytic mirror sharing the floor's uniform bag and light field: 0.04 at normal, 1.0 at grazing, double-glazing ghost displaced by 2*gap*tan(theta), thermal haze at the mullions, general in the pane normal. Costs 0.148 ms in its worst view. Head-on it is now CLEARER than the old flat 0.20 veil so the product inside reads. (4) SEPIA \u2014 root-caused by hue mask, not by eye: every light in the rig was warm, and every multiply/occlusion card (cavity AO, cavity gradient, floor wear) was brown, which COMPOUNDS chroma. Neutral illuminant, neutral occlusion, desaturated floor/ceiling tints, brighter food-photo swatches, no food photography on cleaning/HBA packaging. Warm band 37.7%->9.3% of frame against 7.2-11.4% for the references. (5) SPREAD \u2014 profiles pushed much further apart and aisle 1 rebuilt as a CHILLED aisle (reach-in doors down the left wall). Spread 5.6 -> 7.2 points, mean 41.0 -> 43.7."
+  },
+  {
+   "t": 1787431240.563096,
+   "piece": "agents",
+   "role": "builder",
+   "round": 5,
+   "state": "building",
+   "text": "R5 lung: gate + no-sprint-while-gassed + 1.4s tank/1.72 regen. Rationing now beats always-sprint 75.0% vs 38.5% (round 4: 74.0 vs 81.3, wrong sign). Mid cross-aisle picked up by nav; back route replaced by it."
+  },
   {
    "t": 1787430382.460625,
    "piece": "game",
@@ -556,5 +603,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787430382.460626
+ "updated": 1787431779.4485881
 }

@@ -260,9 +260,15 @@ float chopLight( vec2 q, float bx, float bz ) {
   float dc = q.y - uCrossZ;
   float wc = 0.21 + bz * 0.35;
   float cx = fract( q.x / uFixPitch );
-  float ec = clamp( bx / uFixPitch, 0.03, 0.55 );
+  // The burnisher runs along the AISLES, so in the cross-aisle the lobe's long
+  // axis is across the line of sight and the individual fixtures would stay
+  // resolved forever. They do not: the wax there is scuffed in every direction
+  // by cross traffic, so let the long sigma soften the duty cycle too or the
+  // reflection reads as a row of discrete bright blocks.
+  float cb = max( bx, bz * 0.28 );
+  float ec = clamp( cb / uFixPitch, 0.03, 0.55 );
   float cduty = smoothstep( 0.0, ec, cx ) * smoothstep( 0.0, ec, uFixDuty - cx );
-  float cmerge = smoothstep( 0.20, 1.60, bx / uFixPitch );
+  float cmerge = smoothstep( 0.20, 1.60, cb / uFixPitch );
   float cross = exp( - ( dc * dc ) / ( wc * wc ) ) * uCrossAmp
     * mix( cduty, uFixDuty * 0.88, cmerge );
   return ( rows * mix( duty * lamp, uFixDuty * 0.88, merge ) + cross ) * ext;
@@ -474,15 +480,18 @@ export function reflectiveGlass(THREE, U, opts = {}) {
     side: THREE.FrontSide,
     vertexShader: `
 varying vec3 vChopW;
+varying vec3 vChopN;
 varying vec2 vChopUv;
 void main() {
   vChopW = ( modelMatrix * vec4( position, 1.0 ) ).xyz;
+  vChopN = normalize( mat3( modelMatrix ) * normal );
   vChopUv = uv;
   gl_Position = projectionMatrix * modelViewMatrix * vec4( position, 1.0 );
 }`,
     fragmentShader: `
 precision highp float;
 varying vec3 vChopW;
+varying vec3 vChopN;
 varying vec2 vChopUv;
 uniform vec3 uTint, uFloorCol, uHaze, uRoomCol;
 uniform float uTintA, uGap, uGhost, uGGloss, uPaneAsp;
@@ -531,9 +540,12 @@ vec3 chopTrace( vec3 O, vec3 R, float haze ) {
 void main() {
   vec3 Pw = vChopW;
   vec3 V = normalize( Pw - cameraPosition );
-  // every cooler door in this store is a plane on the back wall facing -Z
-  float ct = clamp( V.z, 0.0, 1.0 );
-  vec3 R = normalize( vec3( V.x, V.y, - V.z ) );
+  // General in the pane normal, because round 5 also stood a bank of these
+  // doors down the aisle-1 wall — where the whole point is that you see them at
+  // every angle from head-on to eighty degrees as you walk past.
+  vec3 N = normalize( vChopN );
+  float ct = clamp( - dot( V, N ), 0.0, 1.0 );
+  vec3 R = reflect( V, N );
 
   // THERMAL HAZE. Distance to the nearest edge of THIS pane, in pane widths,
   // corrected for the door's aspect so the haze band is the same physical
@@ -548,8 +560,9 @@ void main() {
 
   vec3 refl = chopTrace( Pw, R, haze );
   // the inner pane, 2 * gap * tan(theta) away in the plane of the glass
-  float tanT = length( vec2( R.x, R.y ) ) / max( abs( R.z ), 0.14 );
-  vec3 off = normalize( vec3( R.x, R.y, 0.0 ) + vec3( 0.0, 1e-5, 0.0 ) ) * ( 2.0 * uGap * tanT );
+  vec3 Rp = R - N * dot( R, N );
+  float tanT = length( Rp ) / max( abs( dot( R, N ) ), 0.14 );
+  vec3 off = normalize( Rp + vec3( 0.0, 1e-5, 0.0 ) ) * ( 2.0 * uGap * tanT );
   vec3 ghost = chopTrace( Pw + off, R, haze );
   refl = refl + ghost * uGhost;
   refl = mix( refl, uHaze * ( 0.55 + 0.85 * dot( refl, vec3( 0.33 ) ) ), haze * 0.55 );

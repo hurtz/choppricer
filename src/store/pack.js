@@ -294,13 +294,57 @@ export function cartonAtlas(THREE, deptKeys) {
   return maskTex(THREE, c);
 }
 
+
+// PRODUCT HERO — what goes where the food photo goes on non-food packaging.
+// A full-strength brand field with the bottle reversed out of it in white, a
+// burst and a couple of sparkles. Detergent and shampoo cartons are 60-80% one
+// saturated colour with the product in white on top; that ratio is the whole
+// reason reference/store_02's cleaning aisle measures as the bluest frame in
+// the set, and it is exactly what round 4 was missing.
+function heroPanel(g, cx, cy, rw, rh, rng) {
+  g.fillStyle = ink(255, 230);                       // solid brand field
+  g.fillRect(cx - rw * 1.05, cy - rh * 1.05, rw * 2.1, rh * 2.1);
+  g.fillStyle = ink(255, 170);                       // darker brand shadow half
+  g.fillRect(cx - rw * 1.05, cy + rh * 0.25, rw * 2.1, rh * 0.80);
+  // the product, in white, three-quarter height
+  const bw = rw * 0.52, bh = rh * 1.32;
+  g.fillStyle = ink(10, 252);
+  g.beginPath();
+  g.moveTo(cx - bw * 0.5, cy + bh * 0.44);
+  g.lineTo(cx - bw * 0.5, cy - bh * 0.10);
+  g.quadraticCurveTo(cx - bw * 0.42, cy - bh * 0.30, cx - bw * 0.16, cy - bh * 0.34);
+  g.lineTo(cx - bw * 0.16, cy - bh * 0.48);
+  g.lineTo(cx + bw * 0.16, cy - bh * 0.48);
+  g.lineTo(cx + bw * 0.16, cy - bh * 0.34);
+  g.quadraticCurveTo(cx + bw * 0.42, cy - bh * 0.30, cx + bw * 0.5, cy - bh * 0.10);
+  g.lineTo(cx + bw * 0.5, cy + bh * 0.44);
+  g.closePath(); g.fill();
+  g.fillStyle = ink(255, 120);                       // the label ON the bottle
+  g.fillRect(cx - bw * 0.42, cy - bh * 0.02, bw * 0.84, bh * 0.30);
+  g.fillStyle = ink(10, 240);                        // cap
+  g.fillRect(cx - bw * 0.20, cy - bh * 0.56, bw * 0.40, bh * 0.10);
+  // sparkles — the universal "this makes things clean" device
+  g.fillStyle = ink(6, 254);
+  for (let k = 0; k < 4; k++) {
+    const a = rng() * 6.29, r = rw * rr(rng, 0.55, 0.95);
+    const px = cx + Math.cos(a) * r, py = cy + Math.sin(a) * r * 0.8;
+    const sz = rw * rr(rng, 0.07, 0.14);
+    g.beginPath();
+    g.moveTo(px, py - sz); g.lineTo(px + sz * 0.22, py - sz * 0.22);
+    g.lineTo(px + sz, py); g.lineTo(px + sz * 0.22, py + sz * 0.22);
+    g.lineTo(px, py + sz); g.lineTo(px - sz * 0.22, py + sz * 0.22);
+    g.lineTo(px - sz, py); g.lineTo(px - sz * 0.22, py - sz * 0.22);
+    g.closePath(); g.fill();
+  }
+}
+
 const PHOTO_MODES = ['plate', 'bowl', 'pile', 'window', 'stack', 'plate', 'window'];
 
 function cartonDesign(g, i, W, H, M, rng, deptKeys) {
   // fam sets the tonal family, arch sets the LAYOUT. 24 cells that share one
   // template read as one product recoloured 24 times, which is exactly the
   // repetition the blind test picked up on.
-  const fam = i < 10 ? 0 : (i < 18 ? 1 : 2);
+  const fam = i < 8 ? 0 : (i < 18 ? 1 : 2);
   const arch = i % 7;                       // 0..6, see the switch below
   const x0 = M, fw = W - M;
   const brand = pk(rng, i % 7 === 6 ? VALUE_BRANDS : BRANDS);
@@ -311,17 +355,24 @@ function cartonDesign(g, i, W, H, M, rng, deptKeys) {
   const wmFace = pk(rng, [FACE.fat, FACE.fat, FACE.impact, FACE.geo, FACE.serif,
     FACE.human, FACE.slab, FACE.didone, FACE.plate, FACE.script]);
   const photoMode = PHOTO_MODES[(i * 3 + fam) % PHOTO_MODES.length];
-  const noPhoto = arch === 3;               // flour / sugar / detergent look
+  // ROUND 5. Cells 6 and 7 mod 8 are the CLEANING and HEALTH & BEAUTY
+  // vocabularies. Round 4 put a plate of food on a bottle of bleach, which is
+  // both absurd and — because the food palette is warm — most of why the one
+  // aisle that should have measured like reference/store_02 (15.4% of frame in
+  // the blue band) came out at 1.6%. Non-food packaging gets a hero device: a
+  // full-bleed brand field with the product itself reversed out in white.
+  const nonFood = (i % 8) >= 6;
+  const noPhoto = arch === 3 || nonFood;    // flour / sugar / detergent look
   g.textBaseline = 'alphabetic';
 
   // ---- ground -------------------------------------------------------------
   if (fam === 0) {
     g.fillStyle = ink(14, 250); g.fillRect(0, 0, W, H);            // white stock
-    g.fillStyle = ink(255, 205); g.fillRect(0, 0, W, H * 0.135);
+    g.fillStyle = ink(255, 232); g.fillRect(0, 0, W, H * 0.135);
     g.fillStyle = ink(255, 150); g.fillRect(0, H * 0.135, W, H * 0.012);
-    g.fillStyle = ink(255, 190); g.fillRect(0, H - H * 0.075, W, H * 0.075);
+    g.fillStyle = ink(255, 214); g.fillRect(0, H - H * 0.075, W, H * 0.075);
   } else if (fam === 1) {
-    g.fillStyle = ink(255, 198); g.fillRect(0, 0, W, H);           // full bleed
+    g.fillStyle = ink(255, 224); g.fillRect(0, 0, W, H);           // full bleed
     g.fillStyle = ink(255, 135); g.fillRect(0, 0, W, H * 0.10);
     g.fillStyle = ink(255, 160); g.fillRect(0, H - H * 0.10, W, H * 0.10);
   } else {
@@ -376,6 +427,8 @@ function cartonDesign(g, i, W, H, M, rng, deptKeys) {
   if (!noPhoto) {
     foodPhoto(g, photoX, photoY, photoR, photoR * (arch === 1 ? 0.62 : 0.80),
       rng, photoMode, foodBand(desc));
+  } else if (nonFood && photoR > 0) {
+    heroPanel(g, photoX, photoY, photoR, photoR * 0.86, rng);
   }
 
   // ---- wordmark, roughly a quarter of the face height ---------------------
@@ -513,8 +566,13 @@ export function pouchAtlas(THREE, deptKeys) {
     }
 
     const pdesc = pk(rng, DESC[deptKeys[i % deptKeys.length]] || DESC.snacks);
-    foodPhoto(g, M + (W - M) * 0.52, H * 0.66, (W - M) * 0.34, H * 0.21, rng,
-      PHOTO_MODES[(i * 5) % PHOTO_MODES.length], foodBand(pdesc));
+    // no plate of food on a bag of cotton pads — see cartonDesign's nonFood
+    if ((i % 8) >= 6) {
+      heroPanel(g, M + (W - M) * 0.52, H * 0.63, (W - M) * 0.30, H * 0.22, rng);
+    } else {
+      foodPhoto(g, M + (W - M) * 0.52, H * 0.66, (W - M) * 0.34, H * 0.21, rng,
+        PHOTO_MODES[(i * 5) % PHOTO_MODES.length], foodBand(pdesc));
+    }
 
     const brand = pk(rng, BRANDS);
     g.fillStyle = ink(14, 250);
@@ -863,10 +921,12 @@ export function cavityTex(THREE) {
   // CanvasTexture flips Y, so canvas row 0 becomes v=1 — the top of the
   // cavity, hard up under the next shelf, which is the dark end.
   const grd = g.createLinearGradient(0, 0, 0, 64);
-  grd.addColorStop(0, 'rgba(16,13,9,0.82)');     // v=1: under the next shelf
-  grd.addColorStop(0.22, 'rgba(20,17,12,0.60)');
-  grd.addColorStop(0.60, 'rgba(24,20,14,0.24)');
-  grd.addColorStop(1, 'rgba(24,20,14,0.00)');    // v=0: the deck
+  // ROUND 5: neutral, not brown. See shelfAOTex — multiply layers compound
+  // chroma, and this one sits on top of the pegboard in every single cavity.
+  grd.addColorStop(0, 'rgba(15,15,17,0.82)');    // v=1: under the next shelf
+  grd.addColorStop(0.22, 'rgba(18,18,21,0.60)');
+  grd.addColorStop(0.60, 'rgba(21,21,24,0.24)');
+  grd.addColorStop(1, 'rgba(21,21,24,0.00)');    // v=0: the deck
   g.fillStyle = grd; g.fillRect(0, 0, 4, 64);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
@@ -926,8 +986,16 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
         float scaled = chopM.b * 4.0;
         float band = min( 3.0, floor( scaled ) );
         float amt = clamp( scaled - band, 0.0, 1.0 );
-        vec3 f01 = mix( vec3( 0.80, 0.52, 0.17 ), vec3( 0.34, 0.50, 0.15 ), step( 0.5, band ) );
-        vec3 f23 = mix( vec3( 0.66, 0.13, 0.09 ), vec3( 0.95, 0.85, 0.50 ), step( 2.5, band ) );
+        // ROUND 5. These four swatches are the serving-suggestion photography on
+        // every carton, and three of the four were warm and DARK: golden at
+        // (0.80,0.52,0.17) is a mud brown and olive at (0.34,0.50,0.15) is army
+        // green. A hue mask over a shelf close-up showed the photo ovals were
+        // the single biggest remaining source of the sepia cast — a blue
+        // detergent carton with a khaki blob over half its face reads khaki.
+        // Food photography on packaging is lit hard and reproduces BRIGHT.
+        // Same four hues, opened up about two stops.
+        vec3 f01 = mix( vec3( 0.88, 0.66, 0.34 ), vec3( 0.46, 0.68, 0.24 ), step( 0.5, band ) );
+        vec3 f23 = mix( vec3( 0.82, 0.20, 0.13 ), vec3( 0.97, 0.91, 0.68 ), step( 2.5, band ) );
         vec3 food = mix( f01, f23, step( 1.5, band ) );
         vec3 base = mix( vec3( 1.0 ), vColor, chopM.r );
         base = mix( base, food, amt );

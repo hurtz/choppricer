@@ -107,7 +107,7 @@
 // true. Quote both.
 // Re-run: window.__CHOP.agents.benchReal(200) / .benchCamp(200)
 import {
-  TUNING, EXIT, aisleX, AISLE_LEN, AISLE_COUNT, AISLE_GAP, SHELF_W,
+  TUNING, EXIT, EXIT2, aisleX, AISLE_LEN, AISLE_COUNT, AISLE_GAP, SHELF_W,
   STORE, FRONT_WALK_Z, SERVICE_DESK,
 } from './config.js';
 import { makeNav } from './agents/nav.js';
@@ -150,9 +150,100 @@ const R4 = {
   stumbleT: 0.28,     // was 0.45
   bargeStagger: 1.25, // was 0.90
 };
+
+// ---------------------------------------------------------------------------
+// ROUND 5 — THE LUNG. The one thing round 4 failed at, taken.
+//
+// The failure was not "stamina is undertuned", it was that HOLDING SPRINT WAS
+// STRICTLY DOMINANT, for three separate reasons stacked on top of each other,
+// and only fixing all three at once flips it. Each one on its own measures as
+// noise or as a nerf, which is why round 4 gated the regen, saw -22 points, and
+// correctly refused to ship a third of a fix.
+//
+//   1. RECOVERY DID NOT CARE ABOUT THE KEY. `canSprint` goes false the instant
+//      you gas, so the man still holding it fell into the same regen branch as
+//      the man who let go. Letting go bought literally nothing.
+//   2. GASSED-AND-HOLDING WAS FASTER THAN FRESH-AND-WALKING. Gassed speed read
+//      `(wantSprint ? copRun : copWalk) * gassedPenalty`, so 5.05 x 0.62 = 3.13
+//      m/s while a cop with a FULL TANK who chose to walk did 2.35. Blowing
+//      your lungs out was an upgrade over pacing yourself. This is the one I
+//      missed for four rounds and it is the whole ballgame: no gate can beat a
+//      penalty state that is faster than the healthy state. A winded man does
+//      not get to sprint. Holding the key while gassed now does nothing at all.
+//   3. THE TANK OUTLASTED THE CHASE. 3.1 s of sprint, 9.1 s to refill, against
+//      a median chase that was 3.0 s at the end of round 4. One spend, no
+//      decisions. Now: 1.40 s tank, 0.81 s to refill from empty — a 2.2 s
+//      cycle, so the 6.4 s median chase this store now produces holds three
+//      spend-or-hold moments instead of one.
+//
+// [ABLATION TABLE FILLED IN BELOW ONCE MEASURED — see the header block.]
+// The trade is bought with the tank, not by softening `gassedPenalty` — which
+// is untouched at 0.62, and now bites harder because it multiplies copWalk.
+const R5 = {
+  staminaMax: 1.40,      // was 3.10 — one fat burst, not a whole chase
+  staminaDrain: 1.00,    // unchanged, so the tank still reads in seconds
+  staminaRegen: 1.72,    // was 0.34 — 0.81 s from empty to full, off the key
+  gassedRecover: 1.00,   // was 0.26 — WINDED means empty, and you get it ALL
+                         // back or none. 0.26 gave a 0.36 s stutter nobody can
+                         // see or count; a full-refill lockout is the thing the
+                         // player is choosing to avoid, and it is what makes
+                         // letting go early a decision rather than a rounding
+                         // error (the duty cycle is identical either way — what
+                         // differs is whether you still HAVE a burst in hand
+                         // when he goes for your shoulder).
+  boostTime: 2.20,       // was 4.00 — see below
+  regenHold: 0.00,       // THE GATE. Fraction of regen you get while the key is
+                         // still down. Zero: a man sprinting is not recovering.
+  gassedSprintMul: 0.35, // Fraction of the walk->run gap you keep while gassed.
+                         // THE FIX, and the constant that actually flips the
+                         // sign. It used to be effectively 1.00: a gassed cop
+                         // leaning on the key did copRun x gassedPenalty =
+                         // 3.13 m/s while a cop with a FULL TANK who chose to
+                         // walk did 2.35. At 0.35 he does 2.04 — he can still
+                         // lean into it, he is still slower than his own walk,
+                         // so letting go is strictly better and the dominance
+                         // is properly reversed.
+                         // Swept: 0.00 costs the naive always-sprint player
+                         // another 10.8 points (38.5% vs 49.3%) and buys the
+                         // competent one nothing at all (75.0% vs 74.7%). It
+                         // is a pure floor-lowering, so it is not free
+                         // difficulty worth taking. The ceiling is what the
+                         // gate buys; this is only how hard the floor is.
+                         // MUST stay under (copWalk/gassedPenalty - copWalk) /
+                         // (copRun - copWalk) = 0.533, or gassing out is an
+                         // upgrade over pacing yourself again.
+  // ---- what a shoulder costs, RE-PRICED against a 1.4 s tank ---------------
+  // Round 4 tuned the barge so that getting through the cop was worth
+  // something but not everything: 41% of the men who got past escaped, 59% were
+  // still run down. Those numbers were set against a cop who could sprint for
+  // 3.1 s and reclaim 2 m/s. Shorten the tank and the SAME two constants make a
+  // successful barge a foregone conclusion — measured, n=250, competent bot:
+  // 28 got through and 0 of them were caught, whatever the wind policy. That is
+  // round 3's "97% still caught" pathology with the sign flipped, and it is a
+  // direct consequence of this round's change, so it is this round's problem.
+  // See the sweep in the header. Both numbers come DOWN together.
+  bargeStagger: 0.55,    // was 1.25 (round 4, from round 3's 0.90)
+  bargeDump: 0.40,       // was 0.85 — the thief's adrenaline top-up on contact
+  bargeWindFrac: 0.48,   // was the absolute `bargeWind: 1.50`. 1.50 s against
+                         // the old 3.1 s tank was 48% of it; against a 1.4 s
+                         // tank the same absolute number is a total wipe every
+                         // single time, which stops it discriminating anything.
+                         // Held at the same FRACTION it was tuned to.
+};
 const K = {
   get copGrip()       { return T.copGrip       ?? 0.78; }, // lateral accel fraction at top speed
-  get gassedRecover() { return T.gassedRecover ?? 0.26; }, // stamina frac needed to un-gas
+  // --- ROUND 5 lung. All five already exist in TUNING at their round-4 values
+  // except regenHold/gassedSprintMul/bargeWindFrac, so these read R5 directly
+  // and want promoting — see the block above and the TUNING ask in the header.
+  get staminaMax()    { return R5.staminaMax; },
+  get staminaDrain()  { return R5.staminaDrain; },
+  get staminaRegen()  { return R5.staminaRegen; },
+  get gassedRecover() { return R5.gassedRecover; },        // stamina frac needed to un-gas
+  get boostTime()     { return R5.boostTime; },
+  get regenHold()     { return T.regenHold      ?? R5.regenHold; },
+  get gassedSprintMul(){return T.gassedSprintMul?? R5.gassedSprintMul; },
+  get bargeWindFrac() { return T.bargeWindFrac  ?? R5.bargeWindFrac; },
+  get bargeWind()     { return K.bargeWindFrac * K.staminaMax; }, // s of tank, gone
   // ROUND 4 — he was accelerating at 15.0 against the cop's copAccel of 9.0, so
   // every corner, every shopper, every stumble, the thief got back to speed 67%
   // harder than the man chasing him. The stated speed gap is 6% (5.35 vs 5.05);
@@ -257,7 +348,7 @@ const K = {
   get jukeLat()       { return T.jukeLat       ?? 1.75; }, // lateral steering authority
   get jukeLip()       { return T.jukeLip       ?? 0.97; }, // fraction of the usable half-lane
   get stumbleT()      { return R4.stumbleT; },   // s of lost pace after squeezing past
-  get bargeStagger()  { return R4.bargeStagger; },         // s the COP spends shaking it off
+  get bargeStagger()  { return R5.bargeStagger; },         // s the COP spends shaking it off
   get bargeSlow()     { return T.bargeSlow     ?? 0.22; }, // x speed while shaking it off
   get bargeThru()     { return T.bargeThru     ?? 0.95; }, // m he ends up past you
   get stumbleMul()    { return T.stumbleMul    ?? 0.72; },
@@ -286,8 +377,11 @@ const K = {
   // own, and it is the only place in this file where the cop's stamina decides
   // anything at all — see the note in updateCop for why it is also not enough
   // to make stamina a decision in general.
-  get bargeWind()     { return T.bargeWind     ?? 1.50; }, // s of cop stamina, gone
-  get bargeDump()     { return T.bargeDump     ?? 0.85; }, // thief adrenaline on contact
+  // ROUND 5 — this moved to `bargeWindFrac` at the top of K. It was 1.50 s
+  // against a 3.10 s tank; as an ABSOLUTE number against the 1.40 s tank it
+  // wipes the cop out every single time and stops discriminating anything, so
+  // it is a fraction of max now and holds the 48% it was actually tuned to.
+  get bargeDump()     { return R5.bargeDump; },            // thief adrenaline on contact
   // How much of the cop this particular thief wants to risk. Rolled per subject
   // so two identical-looking dispatches do not always play out the same way.
   get nerveLo()       { return T.nerveLo       ?? 0.55; }, // he will chance your shoulder
@@ -996,8 +1090,12 @@ export function createAgents(THREE, scene, world) {
   // chase to the doors contestable instead of decided ten metres out.
   const EXIT_SPEC = [
     { id: 'door1', label: 'DOOR 1', x: EXIT.x, z: EXIT.z, shoveMul: 0.35, sign: 0x8ef07a },
-    { id: 'door2', label: 'DOOR 2', x: clamp(SERVICE_DESK.x - 5.4, STORE.minX + 3, STORE.maxX - 3),
-      z: STORE.minZ + 0.6, shoveMul: 1.0, sign: 0x8ef07a },
+    // ROUND 5 — this was `SERVICE_DESK.x - 5.4`, my own guess at where a second
+    // door could go before there was one in config. The lead has since put
+    // EXIT2 in config.js and src/store.js builds its storefront off it, so the
+    // guess comes out: one source of truth, and the collider the thief shoves
+    // through is the glass he can see.
+    { id: 'door2', label: 'DOOR 2', x: EXIT2.x, z: EXIT2.z, shoveMul: 1.0, sign: 0x8ef07a },
   ];
   // A THIRD door was built, measured and thrown away, and the numbers are here
   // so nobody spends the afternoon rebuilding it. A fire exit at x=-2.5 gave, at
@@ -1038,7 +1136,6 @@ export function createAgents(THREE, scene, world) {
     }
     exitFs = EXITS.map((e) => nav.field(e.x, e.z));
     exitF = nav.field(EXITS.map((e) => ({ x: e.x, z: e.z, cost: 0 })));
-    placeExitSigns();
   }
   const toExit = (x, z) => nav.at(exitF, x, z);          // metres of route left
   const canReachExit = (x, z) => nav.reachable(exitF, x, z);
@@ -1054,44 +1151,13 @@ export function createAgents(THREE, scene, world) {
     return { i: best, exit: EXITS[best], dist: bd };
   }
 
-  // The door has to be legible or the second one is a trap rather than a choice.
-  // src/store.js draws the glazing and the entry doors at Door 1; it has nothing
-  // at Door 2 yet, so this puts a lit EXIT box and a pair of push-bar leaves
-  // there. Cheap, additive, mine — and flagged to the store builder to replace
-  // with a real storefront.
-  const exitProps = [];
-  function placeExitSigns() {
-    for (const p of exitProps) scene.remove(p);
-    exitProps.length = 0;
-    for (const e of EXITS) {
-      const g = new THREE.Group();
-      const face = e.z < 0 ? 1 : -1;                       // into the room
-      const lit = new THREE.MeshBasicMaterial({ color: e.sign });
-      const box = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.30, 0.09), lit);
-      box.position.set(0, 2.58, 0.10 * face); g.add(box);
-      const hood = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.06, 0.22),
-        new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.8 }));
-      hood.position.set(0, 2.76, 0.06 * face); g.add(hood);
-      // two leaves with a push bar, held ajar so the gap reads as a way through
-      const leafM = new THREE.MeshStandardMaterial({ color: 0xd6d9dc, roughness: 0.45, metalness: 0.2 });
-      const barM = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.4, metalness: 0.7 });
-      for (const s of [-1, 1]) {
-        const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.94, 2.12, 0.07), leafM);
-        leaf.position.set(s * 0.52, 1.06, 0.04 * face);
-        leaf.rotation.y = s * 0.20 * face; g.add(leaf);
-        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.06, 0.06), barM);
-        bar.position.set(s * 0.52, 1.02, 0.11 * face); g.add(bar);
-      }
-      const glow = new THREE.Mesh(G.ring, new THREE.MeshBasicMaterial({
-        color: e.sign, transparent: true, opacity: 0.20, side: THREE.DoubleSide, depthWrite: false,
-      }));
-      glow.rotation.x = -Math.PI / 2; glow.position.y = 0.02; glow.scale.setScalar(2.4);
-      g.add(glow);
-      g.position.set(e.x, 0, e.z);
-      scene.add(g); exitProps.push(g);
-      e.prop = g;
-    }
-  }
+  // ROUND 5 — THE PLACEHOLDER IS GONE. Round 4 drew a lit EXIT box and a pair
+  // of push-bar leaves at Door 2, because the second exit was mine, it decided
+  // 60% of chases, and there was nothing there to see. src/store.js now builds
+  // a real storefront at both doors off config's EXIT/EXIT2 — glazing, decals,
+  // bollards and its own lit EXIT box — so a chase builder drawing architecture
+  // is exactly the duplicate geometry it looks like. Deleted, on the store
+  // builder's own note that it matched the placeholder and could come out.
   buildExits();
 
   // ---- the escape field ----------------------------------------------------
@@ -1180,7 +1246,7 @@ export function createAgents(THREE, scene, world) {
   const cop = copRig.root;
   cop.userData = {
     rig: copRig, vel: V(0, 0, 0), speed: 0, phase: 0, heading: 0, prevHeading: 0,
-    stamina: T.staminaMax, gassed: false, boost: 0, breath: 0, lean: 0, skid: 0, turn: 0,
+    stamina: K.staminaMax, gassed: false, boost: 0, breath: 0, lean: 0, skid: 0, turn: 0,
     stagger: 0,
   };
   scene.add(cop);
@@ -1337,7 +1403,7 @@ export function createAgents(THREE, scene, world) {
     shoppers.forEach((s, i) => resetShopper(s, guiltyIdx.has(i)));
     cop.position.set(0, 0, FRONT_WALK_Z + 1.5);
     const cu = cop.userData;
-    cu.vel.set(0, 0, 0); cu.speed = 0; cu.stamina = T.staminaMax;
+    cu.vel.set(0, 0, 0); cu.speed = 0; cu.stamina = K.staminaMax;
     cu.gassed = false; cu.boost = 0; cu.heading = 0; cu.skid = 0; cu.stagger = 0;
     for (const p of powerups) { p.live = true; p.respawn = 0; p.mesh.visible = true; }
   }
@@ -1502,57 +1568,57 @@ export function createAgents(THREE, scene, world) {
     if (moving) { ix /= mag; iz /= mag; }
 
     const wantSprint = !frozen && !!input.sprint && moving;
+    u.wantSprint = wantSprint;              // telemetry: the gate is on the KEY
     const boosted = u.boost > 0;
     const canSprint = wantSprint && (boosted || (u.stamina > 0 && !u.gassed));
+    u.sprinting = canSprint;                // bench: counts BURSTS, not seconds
 
     if (boosted) {
       u.boost = Math.max(0, u.boost - dt);
-      u.stamina = T.staminaMax;                 // energy drink: you are not tired
+      u.stamina = K.staminaMax;                 // energy drink: you are not tired
       u.gassed = false;
     } else if (canSprint) {
-      u.stamina -= T.staminaDrain * dt;
+      u.stamina -= K.staminaDrain * dt;
     } else {
-      // STAMINA IS NOT A DECISION IN THIS GAME AND I COULD NOT MAKE IT ONE.
-      // Reporting the failure rather than shipping the machinery, because the
-      // machinery measured worse than nothing.
+      // ---- THE GATE. Round 4's one admitted failure, fixed here -------------
+      // `canSprint` goes false the instant you gas, so a player STILL HOLDING
+      // THE KEY lands in this branch. Ungated, he recovered at exactly the rate
+      // of the man who let go — so letting go bought nothing, and managing your
+      // wind was not a weak strategy, it was a strictly dominated one
+      // (always-sprint 76.0% vs ration 71.0% on this store).
       //
-      // The diagnosis is right: `canSprint` goes false the moment you gas, so a
-      // player still holding the key lands in this branch and gets his wind
-      // back at exactly the rate of one who let go — while moving faster,
-      // since a gassed man's speed is (wantSprint ? run : walk) x penalty.
-      // Holding sprint forever is strictly better than managing it. Round 3
-      // measured conserve 71.3 vs always-sprint 72.7 and called it a wash; the
-      // real number here was always-sprint 81.3 vs ration 74.0, i.e. managing
-      // your wind is actively PUNISHED.
+      // A man sprinting is not getting his breath back. `regenHold` is what he
+      // gets while the key is down, and it is zero.
       //
-      // So I gated recovery on actually being off the key (floggedRegen 0.15),
-      // added a bot that plays proper intervals, and swept gassedPenalty and
-      // copWalk around it. n=150 each, competent bot, right aisle:
-      //   as shipped         always-sprint 81.3%   ration  74.0%   (-7.3)
-      //   +regen gate        always-sprint 59.3%   pulse   62.0%   (+2.7)
-      //   +gate, gassed .55, walk 2.95            54.0% / 54.0%    ( 0.0)
-      // The gate does flip the sign — letting go becomes correct for the first
-      // time — and it is worth 2.7 points while costing the cop 22. It is not
-      // worth 22 points of difficulty to buy 2.7 points of decision.
-      //
-      // The reason is structural and no constant fixes it: the median chase is
-      // 3.0 s and the tank is 3.1 s, so the whole thing is decided before wind
-      // can matter. Stamina can only ever be a decision in the long branch —
-      // out the back, median 15.6 s — which is 35% of chases. If it is meant to
-      // be a real choice the fix is not in this line, it is a shorter tank
-      // (~1.4 s) that recharges fast, so a 3-second chase contains two or three
-      // spend-or-hold moments instead of one. That is a TUNING change with
-      // knock-on effects on every number in this file, so it is flagged, not
-      // taken, in a round that already moved the doors.
-      u.stamina += T.staminaRegen * dt * (moving ? 1 : 1.6);
+      // On its own this is a 25-point nerf and nothing else (round 4 measured
+      // it, priced it, and refused to ship it alone — correctly). It only
+      // becomes a mechanic next to the other two thirds: no-sprint-while-gassed
+      // below, and the short fast tank in R5. See the R5 block.
+      const held = wantSprint ? K.regenHold : 1;
+      u.stamina += K.staminaRegen * dt * held * (moving ? 1 : 1.6);
     }
-    u.stamina = clamp(u.stamina, 0, T.staminaMax);
+    u.stamina = clamp(u.stamina, 0, K.staminaMax);
     if (u.stamina <= 0.0001) u.gassed = true;
-    if (u.gassed && u.stamina >= K.gassedRecover * T.staminaMax) u.gassed = false;
+    if (u.gassed && u.stamina >= K.gassedRecover * K.staminaMax) u.gassed = false;
 
-    // Gassed = a wheezing labored jog, not a dead stop: run speed x penalty.
+    // ---- A WINDED MAN DOES NOT GET TO SPRINT -------------------------------
+    // This line read `(wantSprint ? T.copRun : T.copWalk) * T.gassedPenalty`,
+    // i.e. 5.05 x 0.62 = 3.13 m/s for a gassed cop holding the key, against
+    // 2.35 m/s for a cop with a FULL TANK who chose to walk. Blowing your lungs
+    // out made you 33% faster than pacing yourself, permanently, and no regen
+    // gate can ever beat a penalty state that outruns the healthy state. Four
+    // rounds of "stamina management pays nothing" was mostly this one line.
+    //
+    // Now the key does nothing once you are gassed: 2.35 x 0.62 = 1.46 m/s,
+    // well under the thief's 3.08 m/s cruise, so gassing out costs you ground
+    // instead of gaining it. `gassedPenalty` itself is UNTOUCHED at 0.62 — the
+    // game builder was right that softening it would just stop gassing meaning
+    // anything. It bites harder now because it multiplies the walk.
     let target = canSprint ? T.copRun : T.copWalk;
-    if (u.gassed) target = (wantSprint ? T.copRun : T.copWalk) * T.gassedPenalty;
+    if (u.gassed) {
+      const g = wantSprint ? K.gassedSprintMul : 0;
+      target = (T.copWalk + (T.copRun - T.copWalk) * g) * T.gassedPenalty;
+    }
     if (boosted) target *= T.boostMul;
     // Shaking off a shoulder — see barge(). Not a freeze, but not a wobble
     // either: a heavy man who has just been run through by a sprinting one is
@@ -2028,7 +2094,7 @@ export function createAgents(THREE, scene, world) {
       // shelf face, so that is what the grab asks for.
       if (u.speed > 0.6 && (u.vel.x * p.nx + u.vel.z * p.nz) < K.pickupReach) continue;
       p.live = false; p.mesh.visible = false; p.respawn = 16;
-      u.boost = T.boostTime; u.stamina = T.staminaMax; u.gassed = false;
+      u.boost = K.boostTime; u.stamina = K.staminaMax; u.gassed = false;
     }
   }
 
@@ -2089,7 +2155,7 @@ export function createAgents(THREE, scene, world) {
     // NOTE it is not the discriminator I expected it to be — see the note on
     // bargeWinded/bargeFresh in bench(); what decides a barge is the wind the
     // contact TAKES, not the level he happened to be at.
-    if (s.bargeStam == null) s.bargeStam = cop.userData.stamina / T.staminaMax;
+    if (s.bargeStam == null) s.bargeStam = cop.userData.stamina / K.staminaMax;
     s.stumble = K.stumbleT;
     s.bargeT = K.bargeGrace;
     s.duckSide = s.duck; s.duck = 0; s.duckT = 0;
@@ -2154,7 +2220,7 @@ export function createAgents(THREE, scene, world) {
     }
   }
 
-  function telemetry(api) {
+  function telemetry(api, dtLast) {
     if (!api.report) return;
     const u = cop.userData;
     let nearest = null, nd = Infinity, chase = null;
@@ -2179,9 +2245,41 @@ export function createAgents(THREE, scene, world) {
         };
       }
     }
+    // ROUND 5 CONTRACT ADDITION (additive; a HUD that ignores it is unchanged).
+    // The WIND bar is the game builder's, but the state machine behind it is
+    // mine and it should not have to re-derive it from `stamina < eps`. Three
+    // states and a countdown, which is exactly the READY / RECOVERING / WINDED
+    // panel it asked for:
+    //   winded     — gassed. You cannot sprint AT ALL and holding the key is
+    //                actively worse than letting go (see updateCop). `windIn`
+    //                is the seconds until you can go again, and it only ticks
+    //                DOWN IF THE KEY IS UP — that is the whole lesson, and a
+    //                countdown that stalls while you hold sprint teaches it
+    //                faster than any tooltip. Infinity while it is held.
+    //   recovering — off the key with something in the tank, refilling.
+    //   ready      — full. Nothing to gain by waiting; go.
+    // `burst` is the seconds of sprint currently in hand, which is what the
+    // segments should count. `fatigue` is a lagging 0..1 that rises fast and
+    // falls slow — a PULSE readout wants accumulated wear, not `1 - frac`
+    // restated a second time in a different shape.
+    const frac = u.stamina / K.staminaMax;
+    const held = u.wantSprint ? K.regenHold : 1;
+    const rate = K.staminaRegen * held;
+    const need = u.gassed ? K.gassedRecover * K.staminaMax - u.stamina
+                          : K.staminaMax - u.stamina;
+    u.fatigue = u.fatigue == null ? 0 : u.fatigue
+      + ((1 - frac) - u.fatigue) * (1 - Math.exp(-(1 - frac > u.fatigue ? 5.5 : 0.9) * dtLast));
     api.report({
-      stamina: u.stamina, staminaMax: T.staminaMax, boost: u.boost,
+      stamina: u.stamina, staminaMax: K.staminaMax, boost: u.boost,
       gassed: u.gassed, speed: u.speed, nearest, chase,
+      wind: u.gassed ? 'winded' : frac > 0.995 ? 'ready' : 'recovering',
+      windIn: need <= 0 ? 0 : rate > 0 ? need / rate : Infinity,
+      burst: u.gassed ? 0 : u.stamina / K.staminaDrain,
+      windFrac: frac, fatigue: u.fatigue,
+      // Seconds of sprint a FULL tank buys, so the bar can size its segments
+      // off the model instead of a hardcoded 3.1.
+      burstMax: K.staminaMax / K.staminaDrain,
+      refill: K.staminaMax / K.staminaRegen,
     });
   }
 
@@ -2203,7 +2301,7 @@ export function createAgents(THREE, scene, world) {
     updatePowerups(dt);
     for (const s of shoppers) updateShopper(s, dt, api, frozen);
     interactions(dt, api);
-    telemetry(api);
+    telemetry(api, dt);
   }
 
   // =========================================================================
@@ -2229,6 +2327,42 @@ export function createAgents(THREE, scene, world) {
   // { gapMul } moves the 'behind' separation, { seed }.
   // =========================================================================
   const routeLen = (fx, fz) => toExit(fx, fz);
+
+  // ROUND 5 — WHERE ARE THE CROSS-AISLES. The store builder cut a mid-store
+  // cross-aisle this round and my nav grid picks it up for free (it is built
+  // from the collider set, not from the floor plan), but the round-4 back-route
+  // metric does NOT: it tested `z > HALF_LEN - 2.2`, i.e. "did he reach the
+  // rear wall", and a thief who now cuts across the middle instead never trips
+  // it. The first bench run after the cut landed showed outTheBack 0/40 with
+  // the median chase up at 6.4 s, which is not the counterplay dying, it is the
+  // instrument pointing at the wrong corridor. So: find the corridors from the
+  // grid instead of naming them, and report which one he used.
+  function crossBands() {
+    const x0 = aisleX(0) - 1.0, x1 = aisleX(AISLE_COUNT - 1) + 1.0;
+    const rows = [];
+    for (let z = STORE.minZ + 0.5; z <= STORE.maxZ - 0.5; z += 0.25) {
+      let free = 0, tot = 0;
+      for (let x = x0; x <= x1; x += 0.35) { tot++; if (nav.free(x, z)) free++; }
+      rows.push({ z, f: free / tot });
+    }
+    // A lane row sits at ~0.55 open (eight lanes of a shelved store); a
+    // corridor row is open most of the way across. 0.72 splits them cleanly and
+    // is not near either mode.
+    const bands = [];
+    let run = null;
+    for (const r of rows) {
+      if (r.f > 0.72) { if (!run) run = { z0: r.z, z1: r.z }; else run.z1 = r.z; }
+      else if (run) { bands.push(run); run = null; }
+    }
+    if (run) bands.push(run);
+    return bands.filter((b) => b.z1 - b.z0 >= 0.4).map((b) => ({
+      z: (b.z0 + b.z1) / 2, half: (b.z1 - b.z0) / 2 + 0.75,
+      // front / mid / back, by where it sits in the shelf run
+      kind: (b.z0 + b.z1) / 2 < -HALF_LEN + 2.5 ? 'front'
+          : (b.z0 + b.z1) / 2 > HALF_LEN - 2.5 ? 'back' : 'mid',
+    }));
+  }
+
 
   // ---- the bot ------------------------------------------------------------
   // ROUND 4. There is no such thing as "the" catch rate; there is a catch rate
@@ -2277,9 +2411,45 @@ export function createAgents(THREE, scene, world) {
     return out;
   }
 
+  // ROUND 5 — the wind policies, hoisted so every bot can wear any of them.
+  // Hysteresis is not decoration: without the `blown` latch a threshold policy
+  // chatters on the boundary at ~60% duty and stops being an interval policy.
+  function windPolicy(st, thief, gap, slack) {
+    const u2 = cop.userData;
+    const frac = u2.stamina / K.staminaMax;
+    const urgent = gap < 3.4 || thief.state === 'shove';
+    const reserve = st.reserve ?? 0.28;
+    if (frac <= reserve + 1e-6) st.blown = true;
+    else if (frac >= 0.97) st.blown = false;
+    return st.conserve === false ? true
+      : st.conserve === 'pulse' ? (urgent || !u2.gassed)
+      : st.conserve === 'keep' ? (urgent || !st.blown)
+      // ROUND 5 — THE DEFAULT MOVED, and that it had to is the finding.
+      // 'loose' is round 4's default: sprint whenever the intercept is even
+      // slightly loose. Against a 3.10 s tank that was near-optimal — 83.3% on
+      // this store, dead level with holding the key down. Against a 1.40 s tank
+      // THE SAME BEHAVIOUR measures 43.0% and spends half the chase winded,
+      // because it empties the tank in the first two seconds and never gets it
+      // back. Nothing about the bot's routing changed; the lungs under it did.
+      // That is what "stamina became a decision" looks like from the inside: a
+      // policy that used to be free is now worth 32 points.
+      : st.conserve === 'loose' ? (slack < 1.1 || gap < 5.0 || thief.state === 'shove')
+      // ...so the competent default IS rationing now. This is also the round-4
+      // header's own description of the `cut` bot ("only spends sprint when the
+      // intercept is actually tight") finally matching the code under it.
+      : (urgent || slack < 0.35);
+  }
+
   function botGoal(thief, st, dt, tx, tz) {
     const u = cop.userData;
-    if (st.bot === 'chase') return { x: tx, z: tz, sprint: true };
+    if (st.bot === 'chase') {
+      // ROUND 5 — the naive bot holds the key, which is what naive MEANS now
+      // that holding it is no longer free. It still honours an explicit
+      // `conserve`, so the ladder can be sliced into route skill and wind
+      // skill instead of confounding the two.
+      const g = dist2d(cop.position.x, cop.position.z, tx, tz);
+      return { x: tx, z: tz, sprint: windPolicy(st, thief, g, 0) };
+    }
 
     // One Dijkstra out of the cop, a few times a second: exact route cost from
     // where he is standing to every cell in the building. Cheaper than one A*
@@ -2352,16 +2522,29 @@ export function createAgents(THREE, scene, world) {
     //   'ration' — walk until the intercept is actually tight. Arrives with a
     //              full tank, which is the only thing that survives a barge.
     //   default  — the middling thing a decent player does.
-    // Wind policies, kept because they are the instrument that measured
-    // stamina to be a non-decision — see updateCop. 'pulse' is interval
-    // running: sprint while there is anything in the tank, let go when you gas,
-    // go again when it is back. Anything inside grabbing range overrides it.
-    const u2 = cop.userData;
-    const sprint = st.conserve === false ? true
-      : st.conserve === 'pulse' ? (gap < 3.4 || thief.state === 'shove' || !u2.gassed)
-      : st.conserve === 'ration' ? (gap < 3.4 || slack < 0.35 || thief.state === 'shove')
-      : (slack < 1.1 || gap < 5.0 || thief.state === 'shove');
-    return { x: best.w.x, z: best.w.z, sprint };
+    // ROUND 5 — five wind policies, because "does stamina management pay?" is
+    // the headline this round and it has to be a measurement between named
+    // strategies, not an assertion. Every one of them is a thing a person
+    // actually does with a sprint key. All override to full sprint inside
+    // grabbing range or when he is on the push-bar — nobody paces themselves
+    // through the last two metres.
+    //   false     ALWAYS. Hold the key from the dispatch to the grab. The naive
+    //             human, and the policy that was strictly dominant for four
+    //             rounds.
+    //   'pulse'   INTERVALS, run into the ground. Sprint until the tank is
+    //             empty, let go, go again the moment you are allowed. Maximum
+    //             sprint fraction; pays the WINDED crawl every single cycle.
+    //   'keep'    INTERVALS WITH A RESERVE. Same rhythm, but let go at
+    //             `reserve` instead of at zero, so you never go winded and you
+    //             always have a burst in hand for a shoulder or a door. This is
+    //             the policy the design is meant to reward.
+    //   'ration'  WALK UNTIL IT IS TIGHT. Spend nothing until the intercept
+    //             actually needs it. Arrives full, moves slowly.
+    //   default   The middling thing a decent player does.
+    // Hysteresis matters and it is not decoration: without a latch, a
+    // threshold policy chatters on the boundary at ~60% duty and stops being an
+    // interval policy at all. `blown` is the latch.
+    return { x: best.w.x, z: best.w.z, sprint: windPolicy(st, thief, gap, slack) };
   }
 
   function botInput(thief, mode, st, dt) {
@@ -2486,6 +2669,7 @@ export function createAgents(THREE, scene, world) {
     const trace = [];
     const save = { pos: cop.position.clone(), ud: { ...cop.userData } };
     const R = [];                            // per-trial records
+    const bands = crossBands();              // the corridors the store ACTUALLY has
 
     for (let k = 0; k < n; k++) {
       setSeed((opts.seed ?? 1234) + k * 7919);
@@ -2547,9 +2731,9 @@ export function createAgents(THREE, scene, world) {
       cop.position.set(cx0, 0, cz0);
       solids.resolve(cop.position, BODY_R);
       cu.vel.set(cvx, 0, cvz); cu.speed = Math.hypot(cvx, cvz);
-      cu.stamina = T.staminaMax; cu.gassed = false; cu.skid = 0; cu.stagger = 0;
+      cu.stamina = K.staminaMax; cu.gassed = false; cu.skid = 0; cu.stagger = 0;
       cu.heading = Math.atan2(cvx, cvz);
-      cu.boost = mode === 'boost' ? T.boostTime : 0;
+      cu.boost = mode === 'boost' ? K.boostTime : 0;
 
       // 'none' means NO POWERUP AVAILABLE. It used to mean "the bot does not
       // detour for one", which is a different and much weaker claim — the round-2
@@ -2565,16 +2749,22 @@ export function createAgents(THREE, scene, world) {
         path: [], repath: 0, goal: { x: 0, z: 0 },
         lag: opts.lag ?? 0.16, hist: [thief.position.x, thief.position.z],
         bot: opts.bot ?? 'cut', conserve: opts.conserve, campFix: opts.campFix,
+        blown: false, reserve: opts.reserve,
         copF: null, copBuf: null, cfT: 0, planT: 0, route: null, campI: null,
         // All the desk actually told him: an aisle number. Not a position in it.
         blind: opts.blind !== false, seen: { x: aisleX(dAisle), z: 0 }, seenT: 0,
       };
 
-      let time = 0, done = 0, finalGap = 0, wentBack = false, ducked = false;
+      let time = 0, done = 0, finalGap = 0, ducked = false;
       let tBolt = NaN, gapAtBolt = NaN, routeAtBolt = NaN;
       let minGap = Infinity, sumTs = 0, sumCs = 0, nS = 0;
       let gassedT = 0, slowT = 0, boostT = 0, sumCm = 0, sumLat = 0, nLat = 0;
       let sprintT = 0, atCop = null, doorT = NaN, exitUsed = -1;
+      // ROUND 5. bursts = how many separate times he put his foot down. This is
+      // the number the design is actually aiming at ("a countable rhythm of
+      // short bursts"), and seconds-of-sprint cannot see it: 3.4 s in one go
+      // and 3.4 s in four goes are the same sprintFrac and a different game.
+      let bursts = 0, wasSprint = false, usedBand = null, wentBack = false;
       const api = {
         onBolt() {}, onHarass() {},
         onCatch() { done = 1; },
@@ -2597,6 +2787,20 @@ export function createAgents(THREE, scene, world) {
           if (thief.position.z > HALF_LEN - 2.2) wentBack = true;
           if (thief.duck) ducked = true;
           if (cu.speed > T.copWalk + 0.35) sprintT += dt;
+          if (cu.sprinting && !wasSprint) bursts++;
+          wasSprint = !!cu.sprinting;
+          // Which corridor did he actually run ALONG. Being inside the band is
+          // not enough — an aisle crosses every band. He has to be travelling
+          // down it, i.e. moving laterally and mostly laterally. The rear
+          // cross-aisle is not a clean corridor in this store (0.6 open, not
+          // 0.95) so it does not register as a band; `wentBack` still owns it
+          // and wins the tie, because reaching the rear wall is the strongest
+          // statement a route makes about itself.
+          if (Math.abs(thief.vel.x) > 1.1 && Math.abs(thief.vel.x) > Math.abs(thief.vel.z)) {
+            for (const b of bands) {
+              if (Math.abs(thief.position.z - b.z) < b.half) { usedBand = b.kind; break; }
+            }
+          }
           if (thief.state === 'shove' && !isFinite(doorT)) { doorT = time; exitUsed = thief.exitI; }
           // THE BRANCH. Half a second after the bolt, is he running AT the man
           // chasing him or away from him? Round 3's headline was the average of
@@ -2638,6 +2842,7 @@ export function createAgents(THREE, scene, world) {
         corner: nS ? sumCm / nS : NaN,
         copLat: nLat ? sumLat / nLat : NaN,
         aisle: ai, wentBack, ducked, barged: thief.bargeN > 0,
+        bursts, usedBand,
         bargeStam: thief.bargeStam,
         atCop: atCop === true, doorT, exitUsed,
         caughtShoving: done === 1 && isFinite(doorT),
@@ -2707,6 +2912,24 @@ export function createAgents(THREE, scene, world) {
       // Did he ever use the back of the store? The counterplay, measured.
       outTheBack: R.filter((r) => r.wentBack).length,
       outTheBackCaught: R.filter((r) => r.wentBack && r.done === 1).length,
+      // ROUND 5 — which corridor he actually ran along. `outTheBack` alone
+      // stopped describing the counterplay the moment the store grew a mid
+      // cross-aisle: the route is still "leave the aisle sideways and come down
+      // a different one", it just does not have to reach the rear wall to do
+      // it any more. Each entry carries its own catch rate, because a route
+      // that is never caught and a route that is always caught are both
+      // foregone conclusions wearing a chase.
+      viaBand: ['mid', 'back', 'front'].map((k) => {
+        const g = bolted.filter((r) => (r.wentBack ? 'back' : r.usedBand) === k);
+        const c = g.filter((r) => r.done === 1);
+        return `${k} n${g.length}${g.length ? `:${Math.round(c.length / g.length * 100)}%` : ''}`;
+      }).join(' ') + ` straight n${bolted.filter((r) => !r.wentBack && !r.usedBand).length}`,
+      crossBands: bands.map((b) => `${b.kind}@${b.z.toFixed(1)}`).join(' '),
+      // ROUND 5 — the countable rhythm, counted. Median separate sprints per
+      // chase. If this is 1 the tank is longer than the chase and stamina is a
+      // one-shot budget however pretty the bar is.
+      burstsPerChase_median: _f2(_q(bolted.map((r) => r.bursts), 0.5)),
+      burstsPerChase_p90: _f2(_q(bolted.map((r) => r.bursts), 0.9)),
       // ...and how often he committed to a shoulder and tried to go through you.
       squeezed: R.filter((r) => r.ducked).length,
       // He committed to a shoulder and you were not in front of it.
@@ -2831,6 +3054,12 @@ export function createAgents(THREE, scene, world) {
       fleeF = null; fleeBuf = null; fleeT = 0; fleeCx = fleeCz = 1e9;
     },
     tuning: T, K,
+    // ROUND 5 debug handles. R5 is mutable on purpose: the tank/regen/gate
+    // sweep in this round's report was run by poking these from the console,
+    // and anyone re-deriving the TUNING ask needs the same lever. crossBands()
+    // is how the back-route metric now finds the store's corridors instead of
+    // assuming where they are.
+    R4, R5, crossBands,
     get thieves() { return shoppers.filter((s) => s.guilty); },
   };
 }
