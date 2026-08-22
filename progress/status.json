@@ -124,8 +124,8 @@
    "verdict": "FAIL \u2014 overturns the builder's PASS. From the start the game actually creates (enterFloor teleports the cop to the aisle mouth, between thief and exit) the catch rate is 100% (80/80), median 1.2s to the grab. The builder's 1.5% came from a bench that starts the cop 4.32m BEHIND the thief \u2014 a geometry the game never produces."
   },
   "game": {
-   "round": 1,
-   "state": "critiquing",
+   "round": 2,
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -136,6 +136,11 @@
      "round": 1,
      "path": "../shots/game_r1_floor.png",
      "t": 1787413681.492088
+    },
+    {
+     "round": 2,
+     "path": "../shots/game_r2_desk.png",
+     "t": 1787416411.945306
     }
    ],
    "gaps": [
@@ -148,12 +153,29 @@
      "text": "Desk phase is near-unwinnable: ~12s from concealment tell to exit, 14 roster rows, only 3 of 7 subjects visible per camera."
     }
    ],
-   "updated": 1787413943.118903,
-   "note": "Desk roster with per-shopper DVR records, ambiguous alarms, write-up flow, Dale M. monologue, rank + Form 11-B demotion screen. Fixed name() bug that named every guest HOLCOMB, GREG.",
-   "gap": "Desk phase is near-unwinnable: ~12s from concealment tell to exit, 14 roster rows, only 3 of 7 subjects visible per camera."
+   "updated": 1787416472.604548,
+   "note": "Bench contradicted its own round-1 diagnosis: the 12s window was already 19-24s after the chase rewrite and the observer was already at 83.2%. Real defect was harassment firing on ANY shopper within 4.5m - in a 4m aisle every bystander you edge past files a complaint (0.75 demotions/shift). Fixed with contact-gated complaints + zone dispatch (DISPATCH greyed out for the last 20m of a thief's walk - 64.3% of the guesser's thieves hit that dead zone). Doubled burn-in fixed via cctv.floorBurnIn=false. Deleted the fabricated-escape watchdog: fired 0 times in 50 shift-minutes.",
+   "gap": "Desk phase is near-unwinnable: ~12s from concealment tell to exit, 14 roster rows, only 3 of 7 subjects visible per camera.",
+   "verdict": "PASS \u2014 reader outscores guesser 14:1 and keeps the job. Observer 79.4% catch / 0 demotions / 1532 pts; random guesser 37.0% / 1.56 demotions / 107 pts. 16x240s shifts per policy, n~220 thieves."
   }
  },
  "log": [
+  {
+   "t": 1787416472.6045492,
+   "piece": "game",
+   "role": "builder",
+   "round": 2,
+   "state": "passed",
+   "text": "Bench contradicted its own round-1 diagnosis: the 12s window was already 19-24s after the chase rewrite and the observer was already at 83.2%. Real defect was harassment firing on ANY shopper within 4.5m - in a 4m aisle every bystander you edge past files a complaint (0.75 demotions/shift). Fixed with contact-gated complaints + zone dispatch (DISPATCH greyed out for the last 20m of a thief's walk - 64.3% of the guesser's thieves hit that dead zone). Doubled burn-in fixed via cctv.floorBurnIn=false. Deleted the fabricated-escape watchdog: fired 0 times in 50 shift-minutes."
+  },
+  {
+   "t": 1787416411.945306,
+   "piece": "game",
+   "role": "builder",
+   "round": 2,
+   "state": "building",
+   "text": "Benched the desk phase (src/game/eval.js: screen-limited perfect-observer bot vs random-guesser bot, 16x240s shifts each, n~220 thieves/policy). Diagnosis was wrong: the window was never the problem \u2014 agents' chase rewrite already widened conceal-to-door to a 19-24s median, and the R1 observer already caught 83.2%. The real defect was that the CORRECT player got fired anyway (0.75 demotions/shift) because harassment fired on any shopper inside a 4.5m radius, i.e. every bystander you edge past walking to the subject you correctly identified. Fix = complaints only file against the subject the reticle is actually on (a contact, not a shared aisle); plus dispatch now targets the subject's zone instead of demanding an aisle number, which removed a dead zone where the DISPATCH button greyed out for the last ~20m of the thief's walk to Door 1 (10.7-64.3% of thieves spent time in it); plus a scrolling roster and a PA price-check hold. BEFORE observer 83.2% catch / 0.75 demotions per shift / 693 pts per shift, random 35.0% / 3.13 / 93, idle 0% and one loss every 24.6s. AFTER observer 79.4% catch / 0 demotions / 1532 pts per shift, random 37.0% / 1.56 / 107. Reader now outscores guesser 14:1 and keeps the job; guesser is still fired every 1.5 shifts. Also: killed the doubled floor burn-in by setting cctv.floorBurnIn=false (HUD owns REC + clock), switched door ETA to agents.thiefCruise() and route distance per the chase note, and deleted the R1 wedge watchdog's fabricated-escape branch (fired 0 times in ~50 shift-minutes)."
+  },
   {
    "t": 1787416410.056263,
    "piece": "store",
@@ -363,5 +385,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787416410.056264
+ "updated": 1787416472.6045508
 }

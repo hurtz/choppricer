@@ -77,6 +77,7 @@ const K = {
   get copLead()       { return T.copLead       ?? 0.30; }, // s of cop velocity the flood leads by
   get fleeEvery()     { return T.fleeEvery     ?? 0.17; }, // s between escape-field rebuilds
   get fleeMove()      { return T.fleeMove      ?? 0.70; }, // m of cop movement that forces one
+  get fleeNear()      { return T.fleeNear      ?? 12.0; }, // m: past this, rebuild lazily
   // He sees the uniform standing in the mouth of his aisle. He does not stroll
   // up to five metres to confirm it. Seeing the way out blocked IS the tell.
   get thiefLook()     { return T.thiefLook     ?? 8.60; }, // m
@@ -351,9 +352,16 @@ export function createAgents(THREE, scene, world) {
     const u = cop.userData;
     const lx = cop.position.x + u.vel.x * K.copLead;
     const lz = cop.position.z + u.vel.z * K.copLead;
+    // Where the cop is standing only changes the route while he is near it. Once
+    // he is twelve metres astern and the man is committed to the back of the
+    // store, the answer stops moving, so stop asking as often — that is most of
+    // a long chase, and it is where the rebuild would otherwise be pure waste.
+    const near = rd < K.fleeNear;
+    const every = near ? K.fleeEvery : K.fleeEvery * 3.5;
+    const move = near ? K.fleeMove : K.fleeMove * 3.0;
     fleeT -= dt;
-    if (fleeF && fleeT > 0 && dist2d(lx, lz, fleeCx, fleeCz) < K.fleeMove) return;
-    fleeT = K.fleeEvery; fleeCx = lx; fleeCz = lz; fleeBuilds++;
+    if (fleeF && fleeT > 0 && dist2d(lx, lz, fleeCx, fleeCz) < move) return;
+    fleeT = every; fleeCx = lx; fleeCz = lz; fleeBuilds++;
     if (!fleeBuf || fleeBuf.length !== nav.count) fleeBuf = new Float32Array(nav.count);
     fleeF = nav.field(EXIT.x, EXIT.z, {
       out: fleeBuf, avoid: { x: lx, z: lz, r: K.copThreatR, w },

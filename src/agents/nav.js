@@ -100,8 +100,12 @@ export function makeNav(boxes, bounds, opt = {}) {
     }
     for (let k = 0; k < N; k++) if (clr[k] === 255) clr[k] = CLEARCAP;
   }
+  // Baked once. This is read eight times per popped cell inside the flood, which
+  // now runs several times a second during a chase; as a function call with a
+  // divide in it, it was a measurable slice of the frame.
   const hug = opt.hug ?? 0.55;
-  const stepMul = (v) => 1 + hug * (1 - clr[v] / CLEARCAP);
+  const mul = new Float32Array(N);
+  for (let k = 0; k < N; k++) mul[k] = 1 + hug * (1 - clr[k] / CLEARCAP);
 
   // ---- line of sight -------------------------------------------------------
   // Supercover walk: any cell the segment touches must be free. Conservative on
@@ -191,6 +195,7 @@ export function makeNav(boxes, bounds, opt = {}) {
   // orthogonals free, so a body never clips a corner it could not fit past).
   const NI = NI0, NJ = NJ0;
   const NC = [1, 1, 1, 1, R2, R2, R2, R2];
+  const NCC = NC.map((c) => c * cell);   // step length, baked
 
   // ---- threat ---------------------------------------------------------------
   // A soft, finite cost bubble the flood has to pay to cross. This is the whole
@@ -256,7 +261,7 @@ export function makeNav(boxes, bounds, opt = {}) {
         const v = idx(vi, vj);
         if (blocked[v]) continue;
         if (n >= 4 && (blocked[idx(ui, vj)] || blocked[idx(vi, uj)])) continue;
-        const nd = du + NC[n] * cell * (TH ? stepMul(v) + TH[v] : stepMul(v));
+        const nd = du + NCC[n] * (TH ? mul[v] + TH[v] : mul[v]);
         if (nd < D[v]) { D[v] = nd; hPush(v, nd); }
       }
     }
@@ -355,7 +360,7 @@ export function makeNav(boxes, bounds, opt = {}) {
         const v = idx(vi, vj);
         if (blocked[v]) continue;
         if (n >= 4 && (blocked[idx(ui, vj)] || blocked[idx(vi, uj)])) continue;
-        const nd = gu + NC[n] * cell * stepMul(v);
+        const nd = gu + NCC[n] * mul[v];
         if (_mark[v] === ep && _g[v] <= nd) continue;
         _mark[v] = ep; _g[v] = nd; _from[v] = u;
         hPush(v, nd + h(v));
