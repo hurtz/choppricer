@@ -88,6 +88,23 @@ const K = {
   get thiefPanicGap() { return T.thiefPanicGap ?? 3.00; }, // metres at which fear starts
   get thiefPanicBand(){ return T.thiefPanicBand?? 0.90; }, // metres from fear to flat-out
   get thiefSecond()   { return T.thiefSecond   ?? 0.42; }, // wind regained per sec when clear
+  // ROUND 4 — the reason no unboosted stern chase was EVER won, in one number.
+  // thiefPanic 0.965 x thiefRun 5.35 = 5.16 m/s and copRun is 5.05. The panic
+  // surge was documented as "always available": a thief with footsteps on him
+  // ran 5.16 for as long as the footsteps lasted, so the last three metres were
+  // arithmetically uncloseable without a powerup, forever. THAT is why the back
+  // route measured 0 caught in 270 attempts — not the length of the detour, the
+  // fact that adrenaline never ran out. Now it does: a second, finite tank that
+  // only drains while he is actually being pressed. Ride his shoulder for four
+  // seconds and it is gone, and a cop who kept anything in the bank runs him
+  // down. This is also what makes the cop's OWN stamina a decision — sprint the
+  // whole way and you arrive gassed at a man who still has his surge; sit two
+  // metres off him and spend it, and the last stretch is yours.
+  get thiefAdren()    { return T.thiefAdren    ?? 4.20; }, // sec of adrenaline
+  get thiefAdrenBack(){ return T.thiefAdrenBack?? 0.17; }, // regained per sec when clear
+  // Seconds with your shoulder on a push-bar. A door is not a teleport; this is
+  // the beat that makes a chase to the doors contestable at the doors.
+  get doorShove()     { return T.doorShove     ?? 0.85; }, // sec at the staff-end door
   get navHug()        { return T.navHug        ?? 0.55; }, // route cost for scraping geometry
   get harassSpeed()   { return T.harassSpeed   ?? 0.90; }, // m/s: standing still never offends
   get harassAim()     { return T.harassAim     ?? 0.45; }, // cos(cop velocity, shopper)
@@ -119,7 +136,19 @@ const K = {
   get threatAhead()   { return T.threatAhead   ?? 3.00; }, // m of route
   // He sees the uniform standing in the mouth of his aisle. He does not stroll
   // up to five metres to confirm it. Seeing the way out blocked IS the tell.
-  get thiefLook()     { return T.thiefLook     ?? 8.60; }, // m
+  //
+  // ROUND 4 — this number was the sub-second collection. Round 3 set it at
+  // 8.6 m, so a thief who was fourteen metres up the aisle when the cop was
+  // dispatched into its mouth kept AMBLING TOWARDS HIM for five and a half
+  // metres before he reacted, while the cop came the other way at 5 m/s. The
+  // two of them closed the gap together and 61% of catches landed inside one
+  // second of the bolt. That is not a chase, it is a handshake. An aisle is
+  // 26 m long and a uniform stepping into the end of it is visible down the
+  // whole of it; the look now covers the aisle, so the bolt happens on the
+  // dispatch and the chase is whatever distance the dispatch actually bought
+  // you. It still needs line of sight and it still needs him to be ON the
+  // route, so a cop at his post across the store never trips it.
+  get thiefLook()     { return T.thiefLook     ?? 17.0; }, // m
   get thiefBlockCos() { return T.thiefBlockCos ?? 0.60; }, // cop must be this near his route line
   // The squeeze. 1.58 m of usable half-lane against a 1.15 m catch radius means
   // a shelf-hugging thief clears a centred cop by 0.43 m — thin, readable, and
@@ -354,9 +383,122 @@ export function createAgents(THREE, scene, world) {
     walkMinZ: STORE.minZ + 0.35, walkMaxZ: STORE.maxZ - 0.6,
   });
   let nav = buildNav();
-  let exitF = nav.field(EXIT.x, EXIT.z);
+
+  // ---- WAYS OUT ------------------------------------------------------------
+  // ROUND 4. There used to be exactly one door, and that one fact was quietly
+  // the biggest problem in the game. A bot that ignores the dispatch entirely,
+  // walks to Door 1 and stands on it scores 80.7% / 67.3% at wrong-aisle +/-1
+  // and +/-2, against 60.0% / 47.3% for a bot that actually goes and chases the
+  // man. The aisle number — the single thing the whole desk phase exists to make
+  // the player read — was worth about four points, and the dominant strategy was
+  // to throw the dispatch away and guard the only hole in the building.
+  //
+  // You cannot fix that with movement constants. One door means the thief's
+  // destination is public knowledge, and public knowledge beats a scouting
+  // report every time. So: TWO doors, both on the front wall, thirty-five metres
+  // apart — Door 1 in the front-left corner where the glazing already is, and
+  // Door 2 down at the service-desk end of the checkout run. Now:
+  //   - camping is a coin flip you mostly lose, because the escape flood has the
+  //     cop priced into it and a cop standing on one door simply makes the other
+  //     one cheaper. Guarding a door is now the thing that sends him to the
+  //     other door;
+  //   - being NEAR HIM is the only position that covers both, and the aisle
+  //     number is the only thing that puts you near him. The dispatch is worth
+  //     something again, which is the entire point of the desk;
+  //   - the front cross-aisle becomes the real ground to hold, not one corner.
+  // Both doors stay on the front wall on purpose: a back door would make half
+  // the store's dispatches a straight footrace away from the checkouts and would
+  // have made game.js's door-alarm countdown a lie.
+  //
+  // `shove` is the second half of it — see updateShopper's 'shove' state. You do
+  // not teleport through a door at a dead run; you hit it, and for a beat you are
+  // a stationary man with his shoulder on a push-bar. That beat is what makes a
+  // chase to the doors contestable instead of decided ten metres out.
+  const EXIT_SPEC = [
+    { id: 'door1', label: 'DOOR 1', x: EXIT.x, z: EXIT.z, shoveMul: 0.35, sign: 0x8ef07a },
+    { id: 'door2', label: 'DOOR 2', x: clamp(SERVICE_DESK.x - 5.4, STORE.minX + 3, STORE.maxX - 3),
+      z: STORE.minZ + 0.6, shoveMul: 1.0, sign: 0x8ef07a },
+  ];
+  // Snap each door onto ground a body can actually stand on, and drop any the
+  // store has walled off this rebuild — src/store.js is rebuilt in parallel and
+  // the collider set moves under us. If only Door 1 survives, everything below
+  // degrades to exactly the old single-exit behaviour.
+  let EXITS = [];
+  let exitFs = [];      // one static flood per door
+  let exitF = null;     // static flood from ALL doors: metres of route to the nearest way out
+  function buildExits() {
+    const probe = nav.field(EXIT.x, EXIT.z);
+    EXITS = [];
+    for (const sp of EXIT_SPEC) {
+      let bx = sp.x, bz = sp.z, ok = false;
+      for (let r = 0; r <= 8 && !ok; r++) {
+        for (let a = 0; a < (r ? 12 : 1) && !ok; a++) {
+          const th = (a / 12) * Math.PI * 2;
+          const x = clamp(sp.x + Math.cos(th) * r * 0.55, STORE.minX + 1, STORE.maxX - 1);
+          const z = clamp(sp.z + Math.abs(Math.sin(th)) * r * 0.55, STORE.minZ + 0.5, STORE.maxZ - 1);
+          if (nav.free(x, z) && nav.reachable(probe, x, z)) { bx = x; bz = z; ok = true; }
+        }
+      }
+      if (!ok && EXITS.length) continue;                 // walled off this rebuild
+      EXITS.push({ ...sp, x: bx, z: bz, shove: K.doorShove * sp.shoveMul });
+    }
+    exitFs = EXITS.map((e) => nav.field(e.x, e.z));
+    exitF = nav.field(EXITS.map((e) => ({ x: e.x, z: e.z, cost: 0 })));
+    placeExitSigns();
+  }
   const toExit = (x, z) => nav.at(exitF, x, z);          // metres of route left
   const canReachExit = (x, z) => nav.reachable(exitF, x, z);
+  // Which door is this man actually heading for. game.js wants it for the alarm
+  // countdown, which used to measure everyone against Door 1 whether or not that
+  // was the door they were walking at.
+  function exitOf(x, z) {
+    let best = 0, bd = Infinity;
+    for (let e = 0; e < exitFs.length; e++) {
+      const d = nav.at(exitFs[e], x, z);
+      if (d < bd) { bd = d; best = e; }
+    }
+    return { i: best, exit: EXITS[best], dist: bd };
+  }
+
+  // The door has to be legible or the second one is a trap rather than a choice.
+  // src/store.js draws the glazing and the entry doors at Door 1; it has nothing
+  // at Door 2 yet, so this puts a lit EXIT box and a pair of push-bar leaves
+  // there. Cheap, additive, mine — and flagged to the store builder to replace
+  // with a real storefront.
+  const exitProps = [];
+  function placeExitSigns() {
+    for (const p of exitProps) scene.remove(p);
+    exitProps.length = 0;
+    for (const e of EXITS) {
+      const g = new THREE.Group();
+      const face = e.z < 0 ? 1 : -1;                       // into the room
+      const lit = new THREE.MeshBasicMaterial({ color: e.sign });
+      const box = new THREE.Mesh(new THREE.BoxGeometry(0.92, 0.30, 0.09), lit);
+      box.position.set(0, 2.58, 0.10 * face); g.add(box);
+      const hood = new THREE.Mesh(new THREE.BoxGeometry(1.02, 0.06, 0.22),
+        new THREE.MeshStandardMaterial({ color: 0x2a2c30, roughness: 0.8 }));
+      hood.position.set(0, 2.76, 0.06 * face); g.add(hood);
+      // two leaves with a push bar, held ajar so the gap reads as a way through
+      const leafM = new THREE.MeshStandardMaterial({ color: 0xd6d9dc, roughness: 0.45, metalness: 0.2 });
+      const barM = new THREE.MeshStandardMaterial({ color: 0x9aa0a6, roughness: 0.4, metalness: 0.7 });
+      for (const s of [-1, 1]) {
+        const leaf = new THREE.Mesh(new THREE.BoxGeometry(0.94, 2.12, 0.07), leafM);
+        leaf.position.set(s * 0.52, 1.06, 0.04 * face);
+        leaf.rotation.y = s * 0.20 * face; g.add(leaf);
+        const bar = new THREE.Mesh(new THREE.BoxGeometry(0.78, 0.06, 0.06), barM);
+        bar.position.set(s * 0.52, 1.02, 0.11 * face); g.add(bar);
+      }
+      const glow = new THREE.Mesh(G.ring, new THREE.MeshBasicMaterial({
+        color: e.sign, transparent: true, opacity: 0.20, side: THREE.DoubleSide, depthWrite: false,
+      }));
+      glow.rotation.x = -Math.PI / 2; glow.position.y = 0.02; glow.scale.setScalar(2.4);
+      g.add(glow);
+      g.position.set(e.x, 0, e.z);
+      scene.add(g); exitProps.push(g);
+      e.prop = g;
+    }
+  }
+  buildExits();
 
   // ---- the escape field ----------------------------------------------------
   // Same flood, from the same doors, with the cop priced in. A thief who is
@@ -405,7 +547,11 @@ export function createAgents(THREE, scene, world) {
     if (fleeF && fleeT > 0 && dist2d(lx, lz, fleeCx, fleeCz) < move) return;
     fleeT = every; fleeCx = lx; fleeCz = lz; fleeBuilds++;
     if (!fleeBuf || fleeBuf.length !== nav.count) fleeBuf = new Float32Array(nav.count);
-    fleeF = nav.field(EXIT.x, EXIT.z, {
+    // Seeded from EVERY door at once, so "which way out" and "how do I get round
+    // that man" are the same question and get one answer. A cop parked on Door 1
+    // raises the cost of every cell near Door 1; Door 2 is then simply cheaper,
+    // and the descent walks him there without anybody writing a rule about it.
+    fleeF = nav.field(EXITS.map((e) => ({ x: e.x, z: e.z, cost: 0 })), {
       out: fleeBuf,
       avoid: {
         x: lx, z: lz, r: K.copThreatR, w,
@@ -473,7 +619,8 @@ export function createAgents(THREE, scene, world) {
       state: 'walk', timer: 0, path: [], repathIn: 0, wind: 1, aim: null, aimT: 0,
       bolted: false, escaped: false, caught: false, angry: 0, harassArmed: true,
       concealT: 0, look: 0, lean: 0, target: null, dropCartAt: null,
-      duck: 0, duckT: 0, duckCop: 0, stumble: 0, bargeT: 0, bargeN: 0, nerve: 1,
+      duck: 0, duckT: 0, stumble: 0, bargeT: 0, bargeN: 0, nerve: 1,
+      adren: 1, shoveT: 0, exitI: 0,
     };
     shoppers.push(s);
     return s;
@@ -548,7 +695,8 @@ export function createAgents(THREE, scene, world) {
     s.path = []; s.repathIn = 0; s.guilty = !!guilty; s.bolted = false;
     s.escaped = false; s.caught = false; s.angry = 0; s.harassArmed = true;
     s.concealT = guilty ? rr(2.5, 7.0) : 0; s.look = 0; s.lean = 0; s.wind = 1;
-    s.aim = null; s.aimT = 0; s.duck = 0; s.duckT = 0; s.duckCop = 0;
+    s.aim = null; s.aimT = 0; s.duck = 0; s.duckT = 0;
+    s.adren = 1; s.shoveT = 0; s.exitI = 0;
     s.stumble = 0; s.bargeT = 0; s.bargeN = 0;
     s.nerve = rr(K.nerveLo, K.nerveHi);
     s.hasCart = true; s.cart.visible = true; s.mesh.visible = true;
@@ -709,11 +857,6 @@ export function createAgents(THREE, scene, world) {
              : (s.position.x - laneC >= 0 ? 1 : -1);
       }
       s.duck = side; s.duckT = K.jukeHold;
-      // Where you were standing at the moment he committed. THIS, and not
-      // whether you can mirror his footwork afterwards, is what decides the
-      // barge — see interactions(). He is going through that shoulder either
-      // way; the only question is whether you were in front of it.
-      s.duckCop = copOff;
     }
     const want = laneC + s.duck * LANE_FREE * K.jukeLip;
     const lat = clamp((want - s.position.x) / 0.70, -1, 1);
@@ -838,8 +981,14 @@ export function createAgents(THREE, scene, world) {
   function thiefPace(s, copD, dt) {
     const near = clamp((K.thiefPanicGap - copD) / K.thiefPanicBand, 0, 1);
     s.wind = clamp(s.wind - dt * (1 + near * 1.4) / K.thiefWind, 0, 1);
-    const cruise = lerp(K.thiefTired, 1, s.wind);           // opening sprint, fading
-    const surge = lerp(K.thiefTired, K.thiefPanic, near);   // fear, always available
+    // Adrenaline is a SECOND tank and it is finite. It only empties while he is
+    // actually being pressed, so a cop who hangs back is not spending it for
+    // him — closing to inside three metres is what costs him, and that is now a
+    // real decision on both sides of the chase. See K.thiefAdren.
+    s.adren = clamp(s.adren - dt * near / K.thiefAdren
+                            + dt * (1 - near) * K.thiefAdrenBack, 0, 1);
+    const cruise = lerp(K.thiefTired, 1, s.wind);              // opening sprint, fading
+    const surge = lerp(K.thiefTired, K.thiefPanic, near * s.adren);  // fear, and it runs out
     s.dbgNear = near;
     return T.thiefRun * Math.max(cruise, surge);
   }
@@ -903,7 +1052,10 @@ export function createAgents(THREE, scene, world) {
 
     const copD = dist2d(s.position.x, s.position.z, cop.position.x, cop.position.z);
     s.aisle = aisleOf(s.position.x);
-    if (s.state !== 'bolt') s.wind = clamp(s.wind + dt * K.thiefSecond, 0, 1);
+    if (s.state !== 'bolt') {
+      s.wind = clamp(s.wind + dt * K.thiefSecond, 0, 1);
+      s.adren = clamp(s.adren + dt * K.thiefAdrenBack, 0, 1);
+    }
 
     // ---- guilty timeline: browse -> conceal -> drift -> bolt
     if (s.guilty && !s.bolted) {
@@ -979,7 +1131,7 @@ export function createAgents(THREE, scene, world) {
         dir = navToExit(s, false, dt);
         target = T.thiefWalk * 1.12;
         s.look = Math.sin(s.phase * 0.8) * 0.5;
-        if (dist2d(s.position.x, s.position.z, EXIT.x, EXIT.z) < 1.4) { escape(s, api); return; }
+        if (atExit(s) >= 0) { startShove(s); break; }
         break;
       }
       case 'react': {
@@ -1005,7 +1157,26 @@ export function createAgents(THREE, scene, world) {
         target = thiefPace(s, copD, dt);
         if (s.stumble > 0) { s.stumble = Math.max(0, s.stumble - dt); target *= K.stumbleMul; }
         s.look = 0;
-        if (dist2d(s.position.x, s.position.z, EXIT.x, EXIT.z) < 1.35) { escape(s, api); return; }
+        if (atExit(s) >= 0) { startShove(s); break; }
+        break;
+      }
+      // ---- the door -------------------------------------------------------
+      // A door is not a teleport. He arrives at a dead run, hits the leaf, and
+      // for the better part of a second he is a stationary man with his
+      // shoulder on a push-bar and his back to you. THAT is what makes a chase
+      // to the doors contestable at the doors instead of decided ten metres
+      // out, and it is why the pursuing cop — the intuitive, thematic action —
+      // now has an ending available to him. He is grabbable throughout; the
+      // grab is a plain one, because a man leaning on a door is not juking.
+      case 'shove': {
+        s.shoveT -= dt; target = 0; s.look = 0;
+        const e = EXITS[s.exitI] || EXITS[0];
+        // still creeping at the leaf, so a grab is a real tackle and not a
+        // freeze-frame two metres short
+        dir = { x: (e.x - s.position.x), z: (e.z - s.position.z), dist: 1 };
+        const dm = Math.hypot(dir.x, dir.z) || 1; dir.x /= dm; dir.z /= dm;
+        target = 0.55;
+        if (s.shoveT <= 0) { escape(s, api); return; }
         break;
       }
     }
@@ -1042,6 +1213,20 @@ export function createAgents(THREE, scene, world) {
     }
     solids.resolve(s.position, BODY_R);
     animateShopper(s, dt, target);
+  }
+
+  // Which door he is at, if any. -1 otherwise.
+  function atExit(s) {
+    for (let i = 0; i < EXITS.length; i++) {
+      const e = EXITS[i];
+      if (dist2d(s.position.x, s.position.z, e.x, e.z) < 1.35) return i;
+    }
+    return -1;
+  }
+  function startShove(s) {
+    const i = atExit(s);
+    if (i < 0) return;
+    s.exitI = i; s.state = 'shove'; s.shoveT = EXITS[i].shove; s.duck = 0; s.duckT = 0;
   }
 
   function escape(s, api) {
@@ -1140,16 +1325,37 @@ export function createAgents(THREE, scene, world) {
   // can get to it. Footwork does not beat footwork in a corridor.
   //
   // So the barge. He picks a shoulder (squeezePast) and he is going through it.
-  // If you were within grabSlack of the lane centreline when he committed, you
-  // had both shoulders covered and you have him. If you had drifted off one
-  // side, he goes past the other one, and all it costs him is the stumble —
-  // half a second at three quarters pace, with you facing the wrong way.
   //
-  // That is the whole tactical content of a corked aisle: HOLD THE MIDDLE.
-  // It is readable, it is learnable, and it does not care how fast you can
-  // twitch, which is what makes it survive contact with a real player.
+  // ROUND 4 — this asked the wrong question and so it never fired. It used to
+  // read the cop's offset from the lane centreline AT THE MOMENT HE COMMITTED.
+  // A pursuit bot steers at the thief, the thief is near the middle of the lane
+  // when he decides, therefore the cop was near the middle too, therefore the
+  // cop always "covered" him: 114 of 200 chases committed to a shoulder, 7
+  // actually got through, and all 7 of those were caught anyway. Nine tuning
+  // constants for a mechanic that changed nothing.
+  //
+  // What decides a shoulder in real life is not where you were standing a
+  // second ago, it is whether you are in front of THAT shoulder when he
+  // arrives. So: measure the separation ACROSS his line of run, at contact. If
+  // you are more than grabSlack off it, he is past you and it costs him only
+  // the stumble. If the cop is behind him it is not a barge at all, it is a
+  // chase-down, and those always grab.
+  //
+  // The arithmetic that makes it a duel and not a coin flip: the juke moves him
+  // ~1.5 m sideways over the last 4.4 m of closing, which at ten metres a second
+  // of closing speed is a lateral rate near 3.5 m/s. A 5 m/s cop with copGrip
+  // 0.78 has about 7 m/s^2 of lateral authority, so mirroring it from a standing
+  // start takes him half a second he does not have. From the MIDDLE he only has
+  // to find 1.1 m and he makes it; from one side he needs 2.6 m and he does not.
+  // That is the whole tactical content of a corked aisle: HOLD THE MIDDLE. It is
+  // readable, it is learnable, and it does not care how fast you can twitch.
   function copCovers(s) {
-    return Math.abs(s.duckCop ?? 0) < K.grabSlack;
+    const m = Math.hypot(s.vel.x, s.vel.z);
+    if (m < 1.2) return true;                       // not running past anybody
+    const fx = s.vel.x / m, fz = s.vel.z / m;
+    const dx = cop.position.x - s.position.x, dz = cop.position.z - s.position.z;
+    if (dx * fx + dz * fz < -0.10) return true;     // cop is astern: a chase-down grab
+    return Math.abs(dz * fx - dx * fz) < K.grabSlack;
   }
   function barge(s) {
     s.bargeN = (s.bargeN || 0) + 1;
@@ -1189,7 +1395,16 @@ export function createAgents(THREE, scene, world) {
         nearest = { id: s.id, dist: d, guilty: s.guilty, aisle: s.aisle, fleeing: s.state === 'bolt' };
       }
       if (s.state === 'bolt' && !s.caught) {
-        chase = { id: s.id, dist: d, thiefToExit: dist2d(s.position.x, s.position.z, EXIT.x, EXIT.z) };
+        // ROUND 4: metres to the door HE is going to, not to Door 1. With two
+        // ways out, measuring everyone against one of them is a lie the HUD
+        // then repeats. See exits / exitDistOf in the export block.
+        const ex = exitOf(s.position.x, s.position.z);
+        chase = {
+          id: s.id, dist: d, exit: ex.i, exitLabel: ex.exit ? ex.exit.label : 'DOOR 1',
+          thiefToExit: Math.min(ex.dist, dist2d(s.position.x, s.position.z,
+            ex.exit ? ex.exit.x : EXIT.x, ex.exit ? ex.exit.z : EXIT.z)),
+          shoving: s.state === 'shove',
+        };
       }
     }
     api.report({
@@ -1205,7 +1420,7 @@ export function createAgents(THREE, scene, world) {
     api = api || {};
     if (world.colliders && world.colliders.length !== solidCount) {
       solids = makeSolids(world); solidCount = world.colliders.length;
-      nav = buildNav(); exitF = nav.field(EXIT.x, EXIT.z);
+      nav = buildNav(); buildExits();
       fleeF = null; fleeBuf = null; fleeT = 0; fleeCx = fleeCz = 1e9;
       for (const s of shoppers) { s.aim = null; s.aimT = 0; s.path = []; }
       buildPowerups();
@@ -1564,7 +1779,7 @@ export function createAgents(THREE, scene, world) {
     get nav() { return nav; }, get exitField() { return exitF; }, toExit,
     get escapeField() { return escapeField(); }, get fleeBuilds() { return fleeBuilds; },
     rebuildNav() {
-      nav = buildNav(); exitF = nav.field(EXIT.x, EXIT.z);
+      nav = buildNav(); buildExits();
       fleeF = null; fleeBuf = null; fleeT = 0; fleeCx = fleeCz = 1e9;
     },
     tuning: T, K,

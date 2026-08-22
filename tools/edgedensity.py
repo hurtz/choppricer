@@ -25,10 +25,11 @@ def density(path, size=(1024, 576), thresh=12.0):
     gy = np.abs(np.diff(a, axis=0))[:, :-1]
     return float((np.hypot(gx, gy) > thresh).mean() * 100.0)
 
-args = [a for a in sys.argv[1:] if not a.startswith("--")]
-gate = None
-for i, a in enumerate(sys.argv):
-    if a == "--gate": gate = float(sys.argv[i + 1])
+gate, args, skip = None, [], False
+for i, a in enumerate(sys.argv[1:], 1):
+    if skip: skip = False; continue
+    if a == "--gate": gate = float(sys.argv[i + 1]); skip = True
+    elif not a.startswith("--"): args.append(a)
 
 rows = []
 for p in args:

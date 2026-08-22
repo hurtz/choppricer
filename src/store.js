@@ -288,7 +288,7 @@ export function buildStore(THREE, scene) {
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(SW, SD),
     PK.sharpen(THREE, new THREE.MeshStandardMaterial({
-      map: T.floor, color: 0xdfd2ba, roughness: 0.22, metalness: 0.14 }), -0.9));
+      map: T.floor, color: 0xe9dcc4, roughness: 0.24, metalness: 0.05 }), -0.9));
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(CX, 0, CZ);
   floor.receiveShadow = true;
@@ -563,7 +563,7 @@ export function buildStore(THREE, scene) {
     // jugs, paper packs, 12-packs: four tall decks with air above everything
     { key: 'bulky', steps: [0.395, 0.445, 0.500, 0.445], vacancy: 1.55, base: 0.165 },
     // mid-reset: whole bays stripped, tag holders left on the rail
-    { key: 'reset', steps: [0.245, 0.275, 0.315, 0.365, 0.275], vacancy: 2.80, base: 0.140 },
+    { key: 'reset', steps: [0.245, 0.275, 0.315, 0.365, 0.275], vacancy: 1.80, base: 0.140 },
     { key: 'mixed', steps: [0.235, 0.275, 0.245, 0.315, 0.365], vacancy: 0.70, base: 0.115 },
   ];
   function deckPlan(r, prof) {
@@ -679,6 +679,41 @@ export function buildStore(THREE, scene) {
           fix(lip - f.dir * (dep * 0.30), DECK[d] - 0.056, z,
             dep * 0.56, 0.032, 0.020, 0x847c6b);
         }
+        // SHELF DIVIDERS. Clear acrylic fins between facing blocks — standard
+        // on about half the decks in a modern store, and a whole extra rhythm
+        // of hard vertical edges right where the frame is largest.
+        // WIRE dividers, not solid fins: a front post and a top rail. A solid
+        // acrylic fin looks right side-on but presents its whole face to a
+        // camera looking DOWN the aisle, and a run of them walls the shelf off
+        // behind a repeating cream slab — measured as a 3-point edge-density
+        // LOSS in the long aisle view.
+        if (rng() < 0.40) {
+          const dh = Math.min(head * 0.62, 0.16);
+          for (let z = z0 + rr(rng, 0.2, 0.7); z < z1 - 0.1; z += rr(rng, 0.34, 0.92)) {
+            fix(lip - f.dir * (dep * 0.14), DECK[d] + dh / 2, z, 0.008, dh, 0.008, 0xd9d2c0);
+            fix(lip - f.dir * (dep * 0.30), DECK[d] + dh, z, dep * 0.42, 0.008, 0.008, 0xd9d2c0);
+          }
+        }
+        // SHELF-EDGE WOBBLERS. A printed flag on a springy stem clipped to the
+        // rail, sticking out into the aisle at an angle. Every store has them,
+        // no rendered store does, and they are the highest-contrast small
+        // object available at exactly eye level.
+        if (DECK[d] > 0.42 && rng() < 0.52) {
+          for (let k = 0, n = ri(rng, 1, 3); k < n; k++) {
+            const wz = rr(rng, z0 + 0.6, z1 - 0.6);
+            const tilt = rr(rng, -0.45, 0.45);
+            fix(lip + f.dir * 0.035, DECK[d] - 0.006, wz, 0.055, 0.020, 0.006, P.metal);
+            const wy = DECK[d] + 0.075, w = rr(rng, 0.085, 0.115);
+            const uv = cellUV((rng() * 8) | 0, 4, 2);
+            for (const sgn of [1, -1]) {
+              Qdangle.rect([lip + f.dir * 0.075, wy, wz + sgn * 0.003],
+                [0, 0, sgn * f.dir * (w / 2) * Math.cos(tilt)],
+                [Math.sin(tilt) * w * 0.30, w * 0.36, 0],
+                uv[0], uv[1], uv[2], uv[3]);
+            }
+            fix(lip + f.dir * 0.055, DECK[d] + 0.030, wz, 0.045, 0.062, 0.004, P.metal);
+          }
+        }
         // pull: top decks are faced right up to the lip, bottom decks sink back
         const pull = d / (DECK.length - 1);
         fillShelf(B, rng, f.dept, {
@@ -716,7 +751,7 @@ export function buildStore(THREE, scene) {
       // aisle, and about the densest small detail available at eye level. They
       // hang PROUD of the cavity AO card, so they catch the light and read as
       // bright clutter against the shadowed facings behind them.
-      for (let s = 0; s < ri(rng, 2, 4); s++) {
+      for (let s = 0; s < ri(rng, 3, 6); s++) {
         const d0 = ri(rng, Math.min(2, DECK.length - 1), DECK.length - 1);
         const zc = rr(rng, z0 + 1.0, z1 - 1.0);
         const top = DECK[d0] - 0.045;
@@ -832,6 +867,43 @@ export function buildStore(THREE, scene) {
         y += h;
       }
       z += w + rr(rng, 0.02, 0.28);
+    }
+
+    // A run mid-reset is not just empty — a real one has the crew's U-boat
+    // parked against it, loaded with case stock, and cut cases on the deck.
+    // Round 3 added the bare bays without adding the WORK that creates them,
+    // which made the stripped aisle read as neglected rather than as busy.
+    if (prof.key === 'reset') {
+      for (const f of faces) {
+        for (let k = 0, n = ri(rng, 2, 3); k < n; k++) {
+          const uz = rr(rng, z0 + 2.0, z1 - 2.0);
+          const ux = x + f.dir * (halfW + 0.30);
+          fix(ux, 0.10, uz, 0.44, 0.08, 1.15, 0x4a4640);            // deck
+          for (const e of [-1, 1]) {
+            fix(ux, 0.80, uz + e * 0.56, 0.42, 1.32, 0.05, 0x8d8676); // end frames
+            for (let b = 0; b < 4; b++) {
+              fix(ux, 0.30 + b * 0.33, uz + e * 0.56, 0.40, 0.035, 0.06, 0xb9b3a4);
+            }
+          }
+          fix(ux, 0.62, uz, 0.42, 0.035, 1.10, 0x9d9583);            // mid shelf
+          for (const [by, bn] of [[0.14, 3], [0.655, 3]]) {
+            let cz = uz - 0.50;
+            for (let c = 0; c < bn && cz < uz + 0.42; c++) {
+              const cw = rr(rng, 0.24, 0.36), ch = rr(rng, 0.16, 0.24);
+              const hs = pick(rng, f.dept.colors);
+              col.setHSL(hs[0] / 360, hs[1] / 100 * 0.55,
+                Math.min(0.75, hs[2] / 100 * rr(rng, 0.9, 1.25)));
+              B.box.push(ux + rr(rng, -0.02, 0.02), by + ch / 2, cz + cw / 2,
+                0, rr(rng, -0.10, 0.10), 0, 0.40, ch, cw * 0.96, col, (rng() * 24) | 0);
+              cz += cw + rr(rng, 0.005, 0.03);
+            }
+          }
+          for (const [dx, dz] of [[-0.15, -0.48], [0.15, -0.48], [-0.15, 0.48], [0.15, 0.48]]) {
+            fix(ux + dx, 0.04, uz + dz, 0.07, 0.08, 0.08, 0x2f3237);
+          }
+          qUp(Qshadow, ux, 0.006, uz, 1.3, 2.0, FULL);
+        }
+      }
     }
 
     // Perimeter runs carry an upper deck above the 2.05 m top rail: bulk packs
@@ -971,11 +1043,40 @@ export function buildStore(THREE, scene) {
 
   flushPkg(Bfront, 'frontend');
 
+  // FRONT WALL DRESSING. Looking down any aisle toward the front you end up on
+  // four metres of bare painted drywall above the checkouts; a real front wall
+  // carries a poster run, a rub rail and department signage. No colliders — it
+  // is all flat against a wall the chase never touches.
+  {
+    const py = 2.55;
+    for (let px = STORE.minX + 9; px < STORE.maxX - 5; px += 3.15) {
+      if (Math.abs(px - EXIT.x) < 4.2) continue;
+      fix(px, py, STORE.minZ + 0.10, 2.05, 1.30, 0.05, 0xf1e9d5, BfixF);
+      qZ(Qpromo, px, py + 0.02, STORE.minZ + 0.135, 1.92, 1.16, 1,
+        cellUV((rng() * 4) | 0, 1, 4));
+      fix(px, py + 0.70, STORE.minZ + 0.11, 2.20, 0.10, 0.07, P.terra, BfixF);
+    }
+    fix(CX, 1.16, STORE.minZ + 0.08, SW, 0.10, 0.05, P.woodDark, BfixF);   // rub rail
+    fix(CX, 0.28, STORE.minZ + 0.08, SW, 0.56, 0.05, 0xd9cfb6, BfixF);     // dado
+  }
+
   // storefront: bright glazing + entry doors near EXIT
   const gx0 = EXIT.x - 3.4, gx1 = EXIT.x + 3.4;
   Qbright.rect([(gx0 + gx1) / 2, 1.7, STORE.minZ + 0.09], [(gx1 - gx0) / 2, 0, 0], [0, 1.55, 0], 0, 0, 1, 1);
   fix((gx0 + gx1) / 2, 3.45, STORE.minZ + 0.12, gx1 - gx0 + 0.6, 0.55, 0.14, P.terra, BfixF);
-  for (const gx of [gx0, EXIT.x, gx1]) fix(gx, 1.7, STORE.minZ + 0.13, 0.14, 3.2, 0.10, 0x4a4f57, BfixF);
+  // mullions, transom bar, push bars and a poster on the glass — a single flat
+  // bright plate is one of the loudest CG shapes in the whole front of store
+  for (let gx = gx0; gx <= gx1 + 0.01; gx += 1.13) {
+    fix(gx, 1.7, STORE.minZ + 0.13, 0.10, 3.2, 0.10, 0x4a4f57, BfixF);
+  }
+  for (const gx of [gx0, EXIT.x, gx1]) fix(gx, 1.7, STORE.minZ + 0.135, 0.16, 3.2, 0.12, 0x3c4149, BfixF);
+  fix((gx0 + gx1) / 2, 2.62, STORE.minZ + 0.13, gx1 - gx0, 0.11, 0.10, 0x4a4f57, BfixF);
+  fix((gx0 + gx1) / 2, 1.05, STORE.minZ + 0.15, gx1 - gx0, 0.06, 0.08, 0xb9b3a4, BfixF);
+  fix((gx0 + gx1) / 2, 0.22, STORE.minZ + 0.14, gx1 - gx0, 0.44, 0.10, 0x4a4f57, BfixF);
+  for (const px of [gx0 + 1.7, gx1 - 1.7]) {
+    fix(px, 1.75, STORE.minZ + 0.16, 0.70, 0.95, 0.03, 0xf3ecd9, BfixF);
+    qZ(Qpromo, px, 1.75, STORE.minZ + 0.178, 0.64, 0.88, 1, cellUV((rng() * 4) | 0, 1, 4));
+  }
   fix((gx0 + gx1) / 2, 0.10, STORE.minZ + 1.1, gx1 - gx0, 0.02, 2.2, 0x3b3f45);
 
   // service desk
@@ -1349,7 +1450,11 @@ export function buildStore(THREE, scene) {
   });
   const sm = soup(Qshadow, shadowMat, 'contactShadows'); if (sm) sm.renderOrder = 1;
   const glowMat = new THREE.MeshBasicMaterial({
-    map: T.glow, transparent: true, opacity: 0.42, depthWrite: false,
+    // 0.42 blew the near floor to clipped white under every fixture, which
+    // DESTROYED the VCT chip detail there — the aisle-6 view lost 7 points of
+    // edge density in the bottom band to exactly that. A reflection should
+    // brighten the floor, not erase it.
+    map: T.glow, transparent: true, opacity: 0.24, depthWrite: false,
     blending: THREE.AdditiveBlending,
   });
   const gm = soup(Qglow, glowMat, 'floorGlow'); if (gm) gm.renderOrder = 2;

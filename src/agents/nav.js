@@ -19,7 +19,8 @@
 //
 //   makeNav(boxes, bounds, opt) -> {
 //     free(x,z), clearSeg(ax,az,bx,bz), snap(x,z),
-//     field(gx,gz) -> Float32Array,
+//     field(gx,gz) -> Float32Array,          // one goal
+//     field([{x,z,cost}], opt) -> ...        // many goals, one flood
 //     steer(F, x, z, opt) -> {x,z,tx,tz,dist} | null,
 //     path(ax,az,bx,bz) -> [{x,z}],
 //     nx, nz, cell, blocked, openFrac,
@@ -255,14 +256,28 @@ export function makeNav(boxes, bounds, opt = {}) {
   // Flood costs out from a goal. Every agent heading for the same place shares
   // one of these; it only has to be rebuilt when the store changes shape — or,
   // with opt.avoid, when the thing being avoided has moved.
+  // `gx` may be a single world x, or an ARRAY of goals [{x,z,cost}] — one flood
+  // seeded from all of them at once, each optionally starting at a nonzero cost.
+  // That is how "the cheapest way out of this building" is one field rather than
+  // a per-door beauty contest: a door that is slow to get through (the staff
+  // door, the crowd at the checkouts) is simply seeded further from zero, and
+  // the descent picks the door on its own, with the cop already priced in.
   function field(gx, gz, o = {}) {
+    if (Array.isArray(gx)) { o = gz || {}; }
     const D = o.out && o.out.length === N ? o.out : new Float32Array(N);
     D.fill(Infinity);
-    const g = snapCell(gx, gz);
-    if (g < 0) return D;
+    const goals = Array.isArray(gx) ? gx : [{ x: gx, z: gz, cost: 0 }];
     const av = o.avoid;
     const TH = av && av.r > 0 ? threatMask(av) : null;
-    hClear(); D[g] = 0; hPush(g, 0);
+    hClear();
+    let seeded = 0;
+    for (const gl of goals) {
+      const g = snapCell(gl.x, gl.z);
+      if (g < 0) continue;
+      const c = gl.cost || 0;
+      if (c < D[g]) { D[g] = c; hPush(g, c); seeded++; }
+    }
+    if (!seeded) return D;
     while (hN) {
       const u = hPop();
       const du = D[u];

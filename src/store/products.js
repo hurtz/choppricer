@@ -231,7 +231,7 @@ export function fillShelf(B, rng, dept, opts) {
   // Vertical gradient: the top deck is faced right up to the lip, the bottom
   // deck sits several inches back. That gradient alone changes how an aisle
   // reads far more than any single item does.
-  const deckSetback = (1 - pull) * 0.048;
+  const deckSetback = (1 - pull) * 0.030;
 
   // ---- ROUND-3 VACANCY PLAN ----------------------------------------------
   // Round-2 shelves were 100% full and perfectly faced, which no store on
@@ -336,7 +336,7 @@ export function fillShelf(B, rng, dept, opts) {
     const maxSet = Math.max(0, depth - Math.min(depth * 0.94, 0.21) - 0.02);
     const skuSetback = shopped
       ? Math.min(maxSet, deckSetback + rr(rng, 0.10, 0.22))
-      : deckSetback + rr(rng, 0.0, 0.028);
+      : deckSetback + rr(rng, 0.0, 0.016);
 
     // Cap the whole brand block. Four varieties x six facings of one design is
     // 24 identical faces in a row, which is the exact repetition round 2 was
@@ -397,7 +397,7 @@ export function fillShelf(B, rng, dept, opts) {
       for (let k = 0; k < n && a < a1 - w * 0.55 && a - brandA0 < brandMax; k++) {
         const jitter = rr(rng, -0.006, 0.006);
         // per-item depth wander: 0-40 mm off the SKU's own setback
-        let itemSet = Math.max(0, skuSetback + rr(rng, -0.008, 0.040));
+        let itemSet = Math.max(0, skuSetback + rr(rng, -0.006, 0.028));
         // BASELINE yaw is now +-4 degrees on every single unit, not on one in
         // five. Nothing on a real shelf is square to the rail.
         let skew = rr(rng, -0.070, 0.070);
@@ -413,7 +413,12 @@ export function fillShelf(B, rng, dept, opts) {
         let lift = 0;
 
         if (rng() < pWrong) {
-          switch (ri(rng, 0, 5)) {
+          // A BAG has no side panel — the pillow silhouette turned 90 degrees
+          // is a fat hexagonal prism showing the plain wrap column stretched
+          // flat, which looks like a modelling error rather than like a
+          // customer having put something back sideways. Bags slump instead.
+          const wrong = soft ? pick(rng, [1, 2, 3, 4, 1, 2]) : ri(rng, 0, 5);
+          switch (wrong) {
             case 0:                        // face-turned: side panel to the aisle
               extraYaw += Math.PI / 2 * (rng() < 0.5 ? -1 : 1);
               break;

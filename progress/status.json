@@ -1,8 +1,8 @@
 {
  "pieces": {
   "store": {
-   "round": 2,
-   "state": "gap",
+   "round": 3,
+   "state": "critiquing",
    "shots": [
     {
      "round": 0,
@@ -23,6 +23,11 @@
      "round": 2,
      "path": "../shots/b2_a.png",
      "t": 1787416410.0562618
+    },
+    {
+     "round": 3,
+     "path": "../shots/b3_a.png",
+     "t": 1787420307.476487
     }
    ],
    "gaps": [
@@ -39,10 +44,10 @@
      "text": "Contact shadows / AO is now the single biggest tell \u2014 products have no darkening where they meet the deck, shelf cavities do not fall off to near-black, so shelves read as decals floating on a plane. Then: no per-instance variation WITHIN a facing block (20 identical chip bags, same lean, zero gaps); shelves 100% full when real stores run 10-20% gaps; everything the same matte diffuse with zero specular events."
     }
    ],
-   "updated": 1787416410.0562592,
-   "note": "Real printed type on every facing: invented wordmarks in real faces, descriptors, nutrition panels, UPC blocks, 7-11 lines of legal type. 48 designs across cartons/pouches/cans/bottles via per-instance atlas cells. fillShelf is now a planogram with brand blocks and per-run irregular deck heights. Shopped disorder: depth wander, 20% rotated, sold-out voids, backwards/crushed items. Fixed two bugs: cans/bottles were scaled to carton depth (lathed into ellipses) and their labels wrapped 3x so every angle showed a wordmark fragment.",
+   "updated": 1787420466.128221,
+   "note": "Contact shadows as two multiply passes in one atlas (cavity mouth + deck surface). Per-instance yaw/depth/scale jitter on EVERY unit plus deliberately wrong units. 12-18% emptiness with orphaned tag holders. Gondola hardware: rails broken at 4ft joints (~90 hard vertical edges per aisle recovered), slotted uprights, pegboard, clip strips. 4-state fixture atlas with dead tubes, sprinkler grid, ~90 danglers. Powerups are now real merchandising (bakery dump table, iced barrel cooler) with NO colliders so they cannot wall the cop off. Found a round-2 bug: every specular in the atlases was drawn white under multiply compositing - a no-op. Nothing in the store was ever glossy.",
    "gap": "Contact shadows / AO is now the single biggest tell \u2014 products have no darkening where they meet the deck, shelf cavities do not fall off to near-black, so shelves read as decals floating on a plane. Then: no per-instance variation WITHIN a facing block (20 identical chip bags, same lean, zero gaps); shelves 100% full when real stores run 10-20% gaps; everything the same matte diffuse with zero specular events.",
-   "verdict": "FAIL \u2014 still 10/10 called. BUT the packaging fix worked: 'I never got as far as the packaging on any of the four. All four were called from ceiling/lighting/geometry within two seconds. Packaging is now the THIRD thing that gives them away, not the first.'"
+   "verdict": "Edge-density gate PASSES: 25.2-25.6% -> 37.9-39.0%, above the lowest real photo (37.5%). 8-aisle survey 34.9-40.8%, span widened 0.4 -> 5.9 pts."
   },
   "cctv": {
    "round": 2,
@@ -182,6 +187,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787420466.128224,
+   "piece": "store",
+   "role": "builder",
+   "round": 3,
+   "state": "critiquing",
+   "text": "Contact shadows as two multiply passes in one atlas (cavity mouth + deck surface). Per-instance yaw/depth/scale jitter on EVERY unit plus deliberately wrong units. 12-18% emptiness with orphaned tag holders. Gondola hardware: rails broken at 4ft joints (~90 hard vertical edges per aisle recovered), slotted uprights, pegboard, clip strips. 4-state fixture atlas with dead tubes, sprinkler grid, ~90 danglers. Powerups are now real merchandising (bakery dump table, iced barrel cooler) with NO colliders so they cannot wall the cop off. Found a round-2 bug: every specular in the atlases was drawn white under multiply compositing - a no-op. Nothing in the store was ever glossy."
+  },
+  {
+   "t": 1787420307.4764879,
+   "piece": "store",
+   "role": "builder",
+   "round": 3,
+   "state": "building",
+   "text": "R3: cavity+deck AO (2-col multiply atlas, mouth AND deck-surface passes) as the headline fix; per-instance yaw/depth/scale/gap on every unit plus 2-3 deliberately wrong units per block (face-turned, crushed, leaning, shoved deep, missing); 12-18% vacancy with bare bays and orphan tag holders; Phong+per-texel gloss for cans/bottles/bags and a glint() that actually works (round 2 composited every sheen as white-under-multiply, a no-op, so nothing was glossy); gondola hardware \u2014 rails broken at every 4ft joint, punched-slot uprights, deck brackets, perforated back panels, wire dividers, clip strips, shelf wobblers; ceiling rebuilt \u2014 4-state fixture atlas with dead/warm/dim tubes and jittered pitch, third light row, sprinkler GRID, conduit, speakers, ~90 danglers, 8x8 tile map with stains/grilles/heavy fissure grain; floor \u2014 VCT chip pattern at real density, non-repeating wear layer, per-fixture reflections, tinted gondola smear; back rows on every deck (was 1 row, 60% bare board); per-run merchandising profiles (tight/mixed/bulky/reset) for genuine aisle-to-aisle spread; full-depth perimeter runs with upper deck; powerups are now real merchandising (bakery dump table, iced barrel cooler, riser cards) with NO colliders. EDGE DENSITY: r2 25.2-25.6% (span 0.4) -> r3 37.9/38.3/38.9/39.0% on b3_a-d, GATE 37 PASSES; 8-aisle survey 34.9-40.8% (span 5.9). Budget: desk 323 calls/1.79M tris/5.1ms, floor 311/1.72M/4.3ms (gl.finish-synced, min of 4). 46 colliders unchanged, 15 powerup spots, all outside colliders."
+  },
   {
    "t": 1787419691.500611,
    "piece": "agents",
@@ -455,5 +476,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787419691.5006132
+ "updated": 1787420466.128226
 }
