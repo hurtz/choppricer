@@ -38,16 +38,17 @@ export function floorTex(THREE) {
       g.fillStyle = hsl(h, s, l);
       g.fillRect(tx * S, ty * S, S, S);
       // speckle — the classic vinyl composition chip pattern
-      const n = 900;
+      const n = 2600;
       for (let i = 0; i < n; i++) {
         const x = tx * S + rng() * S, y = ty * S + rng() * S;
         const v = rng();
-        if (v < 0.42) g.fillStyle = `hsl(${h - 6} ${s + 8}% ${l - 16}%)`;
-        else if (v < 0.72) g.fillStyle = `hsl(${h + 8} ${s + 4}% ${l + 8}%)`;
-        else if (v < 0.9) g.fillStyle = `hsl(${h + 2} ${s}% ${l - 7}%)`;
-        else g.fillStyle = `hsl(${h - 14} ${s + 16}% ${l - 26}%)`;
-        const w = rr(rng, 1.2, 3.4), hh = rr(rng, 1.2, 3.0);
-        g.fillRect(x, y, w, hh);
+        if (v < 0.36) g.fillStyle = `hsl(${h - 6} ${s + 10}% ${l - 24}%)`;
+        else if (v < 0.66) g.fillStyle = `hsl(${h + 8} ${s + 4}% ${l + 14}%)`;
+        else if (v < 0.86) g.fillStyle = `hsl(${h + 2} ${s}% ${l - 11}%)`;
+        else g.fillStyle = `hsl(${h - 14} ${s + 18}% ${l - 38}%)`;
+        const w = rr(rng, 1.4, 4.2), hh = rr(rng, 1.3, 3.6);
+        g.save(); g.translate(x, y); g.rotate(rng() * 3.14);
+        g.fillRect(-w / 2, -hh / 2, w, hh); g.restore();
       }
       // grout / tile seam. Round 3: pushed from 46% to a hard dark line with a
       // bright wax bead beside it — at twenty metres the old seam aliased away
@@ -104,22 +105,32 @@ export function ceilTex(THREE) {
     const roll = rng();
     const grille = roll < 0.045;             // return-air grille
     const patched = roll >= 0.045 && roll < 0.10;
-    const base = [rr(rng, 36, 47), rr(rng, 10, 19), patched ? rr(rng, 76, 82) : rr(rng, 84, 91)];
+    const base = [rr(rng, 34, 49), rr(rng, 9, 21), patched ? rr(rng, 70, 79) : rr(rng, 80, 93)];
     g.fillStyle = hsl(base[0], base[1], base[2]);
     g.fillRect(tx * S + 3, ty * S + 3, S - 6, S - 6);
     // fissured / pinhole acoustic texture — the fine grain that stops the tile
     // reading as a painted rectangle when the camera gets near it
-    for (let i = 0; i < 2200; i++) {
-      g.fillStyle = `rgba(128,120,104,${rr(rng, 0.06, 0.30)})`;
-      g.fillRect(tx * S + rng() * S, ty * S + rng() * S, rr(rng, 1.2, 3.4), rr(rng, 1.2, 3.4));
+    // Mineral-fibre tile is punched with thousands of pinholes and cut with
+    // random fissures. Round 2 drew them at 6-30% alpha, which averaged out to
+    // a smooth painted rectangle past six metres — the ceiling was the single
+    // flattest region in every render.
+    for (let i = 0; i < 5200; i++) {
+      const d = rng();
+      g.fillStyle = d < 0.72
+        ? `rgba(96,88,72,${rr(rng, 0.16, 0.52)})`
+        : `rgba(255,252,242,${rr(rng, 0.14, 0.42)})`;
+      const w = rr(rng, 1.4, 3.8), hh = rr(rng, 1.4, 3.4);
+      g.fillRect(tx * S + rng() * S, ty * S + rng() * S, w, hh);
     }
-    for (let i = 0; i < 70; i++) {
-      g.strokeStyle = `rgba(138,130,112,${rr(rng, 0.07, 0.24)})`;
-      g.lineWidth = rr(rng, 1.2, 3.6);
+    for (let i = 0; i < 150; i++) {
+      g.strokeStyle = rng() < 0.7
+        ? `rgba(104,96,80,${rr(rng, 0.14, 0.40)})`
+        : `rgba(255,251,240,${rr(rng, 0.12, 0.34)})`;
+      g.lineWidth = rr(rng, 1.2, 4.2);
       g.beginPath();
       let x = tx * S + rng() * S, y = ty * S + rng() * S;
       g.moveTo(x, y);
-      for (let k = 0; k < 4; k++) g.lineTo(x += rr(rng, -30, 30), y += rr(rng, -30, 30));
+      for (let k = 0; k < 4; k++) g.lineTo(x += rr(rng, -34, 34), y += rr(rng, -34, 34));
       g.stroke();
     }
     if (grille) {                            // eggcrate return-air register
@@ -155,14 +166,14 @@ export function ceilTex(THREE) {
   // line on one side of it — that shadow is what survives to twenty metres.
   for (let i = 0; i <= T; i++) {
     const p = i * S;
-    g.fillStyle = 'rgba(58,53,42,0.60)';
+    g.fillStyle = 'rgba(48,44,34,0.78)';
     g.fillRect(p - 4.5, 0, 9, N); g.fillRect(0, p - 4.5, N, 9);
     g.fillStyle = '#bdb5a0';
     g.fillRect(p - 3.2, 0, 6.4, N); g.fillRect(0, p - 3.2, N, 6.4);
     g.fillStyle = 'rgba(255,252,242,0.92)';
     g.fillRect(p - 1.4, 0, 2.0, N); g.fillRect(0, p - 1.4, N, 2.0);
-    g.fillStyle = 'rgba(46,42,33,0.42)';     // shadow gap under the flange
-    g.fillRect(p + 3.2, 0, 2.6, N); g.fillRect(0, p + 3.2, N, 2.6);
+    g.fillStyle = 'rgba(40,36,28,0.58)';     // shadow gap under the flange
+    g.fillRect(p + 3.2, 0, 2.8, N); g.fillRect(0, p + 3.2, N, 2.8);
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
 }
@@ -299,24 +310,37 @@ export function pegTex(THREE) {
 // the head height, then a hard dark seam in the bottom few percent where the
 // product meets the deck. This is the round-3 headline change — without it
 // every facing is evenly lit and the whole gondola reads as a decal on a plane.
+// TWO gradients in one 2-column atlas so both AO passes share one material and
+// one draw call. store.js selects with AO_UV.mouth / AO_UV.deck.
+//   left  (u 0..0.5)  cavity mouth: v=1 hard under the deck above -> v=0 deck
+//   right (u 0.5..1)  deck surface: v=1 hard against the back panel -> v=0 lip
+// The DECK pass is the one round-3 nearly missed. A side-by-side crop against
+// the reference photography showed the single largest flat region in the frame
+// was not the product at all — it was the bare cream deck surface receding
+// behind the facings on every shelf below eye level.
+export const AO_UV = { mouth: [0.02, 0, 0.48, 1], deck: [0.52, 0, 0.98, 1] };
 export function shelfAOTex(THREE) {
-  const [c, g] = cv(8, 256);
-  // canvas row 0 -> v = 1 = hard under the shelf above.
-  // Kept DELIBERATELY shallow: the near-black belongs at the BACK of the
-  // cavity (cavityTex, behind the product) — this card sits across the mouth,
-  // so an aggressive ramp here just puts every facing in shadow and inverts
-  // the tonal relationship with the shelf lips.
-  const grd = g.createLinearGradient(0, 0, 0, 256);
-  grd.addColorStop(0.00, '#5f594d');          // hard under the deck above
-  grd.addColorStop(0.06, '#8e8779');
-  grd.addColorStop(0.14, '#bdb5a5');
-  grd.addColorStop(0.26, '#dcd5c7');
-  grd.addColorStop(0.40, '#f0ebe0');
-  grd.addColorStop(0.80, '#fdfaf3');
-  grd.addColorStop(0.94, '#ece5d8');          // deck contact seam
-  grd.addColorStop(0.980, '#b7af9f');
-  grd.addColorStop(1.00, '#948c7c');
-  g.fillStyle = grd; g.fillRect(0, 0, 8, 256);
+  const [c, g] = cv(16, 256);
+  const mouth = g.createLinearGradient(0, 0, 0, 256);
+  mouth.addColorStop(0.00, '#3d382f');        // hard under the deck above
+  mouth.addColorStop(0.05, '#5f594d');
+  mouth.addColorStop(0.13, '#8d8676');
+  mouth.addColorStop(0.24, '#bab2a2');
+  mouth.addColorStop(0.38, '#e0d9cc');
+  mouth.addColorStop(0.70, '#fdfaf3');
+  mouth.addColorStop(0.87, '#d6cfc2');        // deck contact seam
+  mouth.addColorStop(0.950, '#7b7466');
+  mouth.addColorStop(1.00, '#494336');
+  g.fillStyle = mouth; g.fillRect(0, 0, 8, 256);
+  const deck = g.createLinearGradient(0, 0, 0, 256);
+  deck.addColorStop(0.00, '#3a352c');         // hard against the back panel
+  deck.addColorStop(0.14, '#57503f');
+  deck.addColorStop(0.34, '#8d8674');
+  deck.addColorStop(0.58, '#c2baa8');
+  deck.addColorStop(0.80, '#e8e2d5');
+  deck.addColorStop(0.94, '#fbf7ee');
+  deck.addColorStop(1.00, '#fefcf6');         // the lit strip at the lip
+  g.fillStyle = deck; g.fillRect(8, 0, 8, 256);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   t.colorSpace = THREE.SRGBColorSpace;

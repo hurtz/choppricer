@@ -76,7 +76,7 @@
   },
   "agents": {
    "round": 3,
-   "state": "critiquing",
+   "state": "gap",
    "shots": [
     {
      "round": 0,
@@ -107,6 +107,11 @@
      "round": 3,
      "path": "../shots/agents_r3.png",
      "t": 1787417927.564773
+    },
+    {
+     "round": 3,
+     "path": "../shots/critic3_x.png",
+     "t": 1787419577.229595
     }
    ],
    "gaps": [
@@ -121,12 +126,20 @@
     {
      "round": 2,
      "text": "A corked 4m aisle is impassable: the thief's nav avoid radius (1.80m) is WIDER than the aisle half-lane (AISLE_GAP/2 - BODY_R = 1.58m), so he can never route around a cop standing in it and walks into the 1.15m catch radius. He needs counterplay \u2014 a back-of-store route, a second exit, or a juke past a blocking body. Then re-bench from enterFloor's actual spawn."
+    },
+    {
+     "round": 3,
+     "text": "61% of correctly-dispatched chases (368/600) end with the grab inside 1s of the bolt: postSpawn parks the cop at a fixed z=-10 while the thief is uniform over a 22m aisle, so half the dispatches land inside 10m, and the corked thief's default is to run AT the cop, turning any gap into a ~1s head-on. Catch median from dispatch is 1.13s - FASTER than round 2's 1.7s. The 68->73% headline came from adding an escape hatch (25% route out the back, 0/270 caught if you follow), not from making the catches harder."
+    },
+    {
+     "round": 3,
+     "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
     }
    ],
-   "updated": 1787418081.848556,
+   "updated": 1787419691.500607,
    "note": "Root cause was NOT the avoid radius: nav.steer did greedy descent FIRST then filtered, so a corked aisle fouled every point, got=false, and it fell back to 'furthest visible point' \u2014 the far side of the cop. The thief sprinted INTO him. Fix prices the cop as a cost inside the Dijkstra flood, but ONLY downstream of the runner: without that filter a cop merely behind prices the ground the thief stands on and the stern chase leaks 1.3% -> 79%.",
-   "gap": "A corked 4m aisle is impassable: the thief's nav avoid radius (1.80m) is WIDER than the aisle half-lane (AISLE_GAP/2 - BODY_R = 1.58m), so he can never route around a cop standing in it and walks into the 1.15m catch radius. He needs counterplay \u2014 a back-of-store route, a second exit, or a juke past a blocking body. Then re-bench from enterFloor's actual spawn.",
-   "verdict": "Builder claims 68.0% no-powerup from the REAL spawn (was 100%), loses by 2.96m; wrong-aisle-by-2 now 34.7% (was 96.7%); legacy behind-spawn 0.7% preserved; incidental free boosts 0.00%."
+   "gap": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it.",
+   "verdict": "FAIL \u2014 real progress, but the collection is still the majority case. Independently: no-powerup 72.7% (builder 68.0), free boosts 0.001, legacy behind-spawn 0.8% \u2014 those hold. Misaim does NOT: wrong-by-1 60.0% (claimed 44.7), wrong-by-2 47.3% (claimed 34.7), because the builder's pursuit bot is weaker than a competent player."
   },
   "game": {
    "round": 3,
@@ -169,6 +182,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787419691.500611,
+   "piece": "agents",
+   "role": "critic",
+   "round": 3,
+   "state": "gap",
+   "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
+  },
+  {
+   "t": 1787419577.229596,
+   "piece": "agents",
+   "role": "critic",
+   "round": 3,
+   "state": "gap",
+   "text": "61% of correctly-dispatched chases (368/600) end with the grab inside 1s of the bolt: postSpawn parks the cop at a fixed z=-10 while the thief is uniform over a 22m aisle, so half the dispatches land inside 10m, and the corked thief's default is to run AT the cop, turning any gap into a ~1s head-on. Catch median from dispatch is 1.13s - FASTER than round 2's 1.7s. The 68->73% headline came from adding an escape hatch (25% route out the back, 0/270 caught if you follow), not from making the catches harder."
+  },
   {
    "t": 1787418081.848557,
    "piece": "agents",
@@ -426,5 +455,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787418081.8485582
+ "updated": 1787419691.5006132
 }

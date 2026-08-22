@@ -65,7 +65,7 @@ export const DEPTS = [
     sign: ['BREAD', 'BAKING NEEDS', 'FLOUR / SUGAR', 'COOKIES'],
     kinds: [K.bag, K.midBox, K.smallBox, K.wideBox, K.tallBox, K.pouch, K.tallJar, K.smallBag],
     soft: [K.bag, K.pouch, K.tallJar, K.smallBag],
-    colors: mix('cream', 'brown', 'red', 'yellow', 'white', 'orange'),
+    colors: mix('cream', 'brown', 'red', 'yellow', 'white', 'orange', 'blue', 'green'),
   },
   {
     name: 'canned', key: 'canned', blade: 'CANNED GOODS',
@@ -158,12 +158,66 @@ function poolFor(idx, total, strays) {
 //   tag    optional (aStart, aWidth, cell) callback -> emits a shelf-edge tag
 // Kinds whose natural height suits this deck's clear height. Falls back to the
 // shortest available rather than returning nothing.
+const STACKABLE = new Set([K.can, K.bigCan, K.jar, K.tallJar, K.tinyBox,
+  K.smallBox, K.wideBox, K.case12, K.pouch]);
+
 function fits(kinds, headroom) {
   const ok = kinds.filter((k) => k.h[0] <= headroom - 0.02 && k.h[1] <= headroom + 0.06);
-  if (ok.length) return ok;
+  // ROUND 3: prefer kinds that actually USE the cavity. A 5in jar merchandised
+  // under a 15in deck leaves a 10in band of empty air above every facing, and
+  // that band — repeated the length of the run — is why round-2 aisles read as
+  // rows of decals with cream gaps rather than as a packed wall of product.
+  if (ok.length) {
+    // 2:1 in favour of kinds that fill the cavity on their own. Weighting
+    // stackables equally sent a 15in deck a wall of 4in boxes stacked six
+    // high, which is a worse repetition artefact than the air gap it fixed.
+    const tall = ok.filter((k) => k.h[1] >= headroom * 0.60);
+    const stackers = ok.filter((k) => STACKABLE.has(k) && k.h[1] < headroom * 0.60);
+    const pool = tall.concat(tall, stackers);
+    return pool.length ? pool : ok;
+  }
   const loose = kinds.filter((k) => k.h[0] <= headroom - 0.01);
   if (loose.length) return loose;
   return [kinds.reduce((a, b) => (a.h[0] <= b.h[0] ? a : b))];
+}
+
+// ---------------------------------------------------------------------------
+// BACK ROWS. A real gondola shelf is 22in deep and stocked three or four units
+// back; round 2 stocked exactly one row, so roughly 60% of every deck was bare
+// cream board receding behind the facings. Side-by-side crops against the
+// reference photography showed that band — not the product — was the single
+// largest flat region in the frame.
+//
+// These rows are mostly occluded by the facings in front of them, so they are
+// plain boxes with no tags, no stacking and no anomalies: the cheapest
+// geometry that removes the flat area and shows through the gaps.
+export function fillBackRow(B, rng, dept, opts) {
+  const { axis, a0, a1, lip, face, deckY, headroom, depth, lit, col } = opts;
+  const isZ = axis === 'z';
+  const baseRy = isZ ? (face > 0 ? Math.PI / 2 : -Math.PI / 2) : (face > 0 ? 0 : Math.PI);
+  let a = a0;
+  let guard = 0;
+  while (a < a1 - 0.05 && guard++ < 300) {
+    if (rng() < 0.10) { a += rr(rng, 0.05, 0.26); continue; }
+    const w = rr(rng, 0.07, 0.23);
+    const h = Math.max(0.06, Math.min(headroom - 0.02, rr(rng, headroom * 0.5, headroom * 0.97)));
+    const pd = Math.min(depth, rr(rng, 0.10, 0.19));
+    const hsl = pick(rng, dept.colors);
+    const cell = (rng() * 24) | 0;
+    const n = ri(rng, 1, 4);
+    for (let k = 0; k < n && a < a1 - w * 0.5; k++) {
+      col.setHSL(hsl[0] / 360, Math.min(1, hsl[1] / 100 * rr(rng, 1.1, 1.45)),
+        Math.min(0.92, hsl[2] / 100 * rr(rng, 0.80, 1.22)));
+      col.multiplyScalar(lit * 0.70 * rr(rng, 0.90, 1.08));
+      const back = pd / 2 + 0.008;
+      const cx = isZ ? lip - face * back : a + w / 2;
+      const cz = isZ ? a + w / 2 : lip - face * back;
+      B.box.push(cx, deckY + h / 2, cz, 0, baseRy + rr(rng, -0.10, 0.10), 0,
+        w * 0.98, h, pd, col, cell);
+      a += w + rr(rng, 0, 0.007);
+    }
+    a += rr(rng, 0.002, 0.022);
+  }
 }
 
 export function fillShelf(B, rng, dept, opts) {
@@ -284,22 +338,28 @@ export function fillShelf(B, rng, dept, opts) {
       ? Math.min(maxSet, deckSetback + rr(rng, 0.10, 0.22))
       : deckSetback + rr(rng, 0.0, 0.028);
 
-    for (let v = 0; v < varieties && a < a1 - w * 0.6; v++) {
+    // Cap the whole brand block. Four varieties x six facings of one design is
+    // 24 identical faces in a row, which is the exact repetition round 2 was
+    // called on — real planograms give a brand 60-90 cm of shelf, not three
+    // metres of it.
+    const brandA0 = a;
+    const brandMax = rr(rng, 0.42, 0.95);
+    for (let v = 0; v < varieties && a < a1 - w * 0.6 && a - brandA0 < brandMax; v++) {
       // flavour shift — hue walks, saturation and lightness stay in family
       const hueShift = v === 0 ? 0 : rr(rng, 14, 62) * (rng() < 0.5 ? -1 : 1) * v;
       const hh = (baseHsl[0] + hueShift + 360) % 360;
-      const shade = lit * rr(rng, 0.93, 1.05);
-      const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.0, 1.20));
-      const vLit = Math.min(0.94, baseHsl[2] / 100 * rr(rng, 0.94, 1.12));
+      const shade = lit * 0.70 * rr(rng, 0.90, 1.10);
+      const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.30, 1.60));
+      const vLit = Math.min(0.95, baseHsl[2] / 100 * rr(rng, 0.80, 1.30));
       // Set per INSTANCE below, not once per variety: eight identical facings
       // in a row at one exact colour is a flat field with no internal edges,
       // and a photographed shelf has none of those. Cartons that came off the
       // same press still catch the light differently once a customer has
       // handled them.
       const tone = () => {
-        col.setHSL(hh / 360, vSat * rr(rng, 0.93, 1.05),
-          Math.min(0.95, vLit * rr(rng, 0.90, 1.11)));
-        col.multiplyScalar(shade * rr(rng, 0.93, 1.07));
+        col.setHSL(hh / 360, vSat * rr(rng, 0.90, 1.08),
+          Math.min(0.96, vLit * rr(rng, 0.82, 1.22)));
+        col.multiplyScalar(shade * rr(rng, 0.88, 1.10));
       };
       tone();
 
@@ -312,12 +372,12 @@ export function fillShelf(B, rng, dept, opts) {
       // Cans, jars and small boxes get stacked until they nearly reach the
       // shelf above — that is what a stock clerk actually does, and it is what
       // keeps a cavity from reading as a half-empty display case.
-      const stackable = kind.t === 'can' || kind === K.tinyBox || kind === K.smallBox
-        || kind === K.wideBox || kind === K.case12 || kind === K.pouch;
+      const stackable = STACKABLE.has(kind);
       let stack = 1;
       if (stackable) {
-        const fits = Math.floor((headroom - 0.015) / h);
-        if (fits >= 2 && rng() < 0.82) stack = Math.min(fits, rng() < 0.35 ? 3 : 2);
+        const nFit = Math.floor((headroom - 0.015) / h);
+        // a stock clerk stacks two, sometimes three. Never six.
+      if (nFit >= 2 && rng() < 0.90) stack = Math.min(nFit, rng() < 0.30 ? 3 : 2);
       }
 
       // ---- ROUND-3 PER-INSTANCE VARIATION ---------------------------------
@@ -334,7 +394,7 @@ export function fillShelf(B, rng, dept, opts) {
       // and without this the leftover ended up hovering in mid-air over the
       // hole it was supposed to be resting on.
       let lastA = null, lastTop = 0, lastSet = 0;
-      for (let k = 0; k < n && a < a1 - w * 0.55; k++) {
+      for (let k = 0; k < n && a < a1 - w * 0.55 && a - brandA0 < brandMax; k++) {
         const jitter = rr(rng, -0.006, 0.006);
         // per-item depth wander: 0-40 mm off the SKU's own setback
         let itemSet = Math.max(0, skuSetback + rr(rng, -0.008, 0.040));

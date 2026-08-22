@@ -594,33 +594,44 @@ export function canAtlas(THREE, deptKeys) {
     g.beginPath(); g.rect(0, 0, W, H); g.clip();
     g.textBaseline = 'alphabetic';
 
-    const pale = i % 2 === 0;
-    g.fillStyle = pale ? ink(16, 250) : ink(255, 190);
+    // ROUND 3: half the cells were bare white stock carrying two thin brand
+    // stripes, and after the cylindrical shading multiply they rendered as pale
+    // grey tubes with no colour anywhere. Real canned goods are dominated by a
+    // full-width brand field. Pale cells keep a white label PANEL but sit it on
+    // a coloured ground, top and bottom.
+    const pale = i % 3 !== 2;
+    g.fillStyle = ink(255, pale ? 175 : 150);
     g.fillRect(0, 0, W, H);
+    if (pale) {                                 // white label panel in the middle
+      g.fillStyle = ink(18, 250);
+      g.fillRect(0, H * 0.255, W, H * 0.44);
+    }
     // steel lid and base rim — mapped to the cylinder caps too
     g.fillStyle = ink(8, 150); g.fillRect(0, 0, W, H * 0.085);
     g.fillStyle = ink(8, 96); g.fillRect(0, H * 0.085, W, H * 0.022);
     g.fillStyle = ink(8, 120); g.fillRect(0, H - H * 0.075, W, H * 0.075);
     // brand bands
-    g.fillStyle = ink(255, pale ? 170 : 120);
-    g.fillRect(0, H * 0.135, W, H * 0.115);
-    g.fillStyle = ink(255, pale ? 200 : 145);
-    g.fillRect(0, H * 0.70, W, H * 0.075);
+    g.fillStyle = ink(255, pale ? 110 : 105);
+    g.fillRect(0, H * 0.135, W, H * 0.125);
+    g.fillStyle = ink(255, pale ? 240 : 200);
+    g.fillRect(0, H * 0.245, W, H * 0.014);
+    g.fillStyle = ink(255, pale ? 120 : 130);
+    g.fillRect(0, H * 0.695, W, H * 0.085);
 
     const brand = pk(rng, BRANDS);
     const desc = pk(rng, DESC[deptKeys[i % deptKeys.length]] || DESC.canned);
     const face = pk(rng, [FACE.fat, FACE.serif, FACE.didone, FACE.plate, FACE.geo]);
     for (let r = 0; r < REP; r++) {
       const cx = seg * (r + 0.5);
-      g.fillStyle = pale ? ink(255, 130) : ink(14, 250);
+      g.fillStyle = ink(255, pale ? 245 : 250);
       fitText(g, brand, cx, H * 0.225, seg * 0.90, H * 0.095, face, '900');
-      g.fillStyle = pale ? ink(20, 45) : ink(20, 245);
+      g.fillStyle = pale ? ink(20, 40) : ink(20, 245);
       fitText(g, desc, cx, H * 0.325, seg * 0.92, H * 0.058, FACE.grot, '700');
       // the food picture that fills the middle of nearly every can label
       foodPhoto(g, cx, H * 0.50, seg * 0.34, H * 0.115, rng,
         PHOTO_MODES[(i * 2 + 1) % PHOTO_MODES.length], foodBand(desc));
-      g.fillStyle = pale ? ink(12, 40) : ink(20, 240);
-      fitText(g, pk(rng, FLASH), cx, H * 0.755, seg * 0.80, H * 0.052, FACE.fat, '900');
+      g.fillStyle = ink(255, pale ? 246 : 240);
+      fitText(g, pk(rng, FLASH), cx, H * 0.762, seg * 0.80, H * 0.052, FACE.fat, '900');
       legalBlock(g, cx - seg * 0.44, H * 0.815, seg * 0.86, 3, H * 0.030, rng,
         pale ? ink(18, 85) : ink(40, 150));
     }
@@ -628,11 +639,11 @@ export function canAtlas(THREE, deptKeys) {
 
     // cylindrical shading, then two REAL specular bands on the tinplate
     const e = g.createLinearGradient(0, 0, W, 0);
-    e.addColorStop(0.00, 'rgba(0,0,0,0.66)');
-    e.addColorStop(0.18, 'rgba(0,0,0,0.10)');
+    e.addColorStop(0.00, 'rgba(0,0,0,0.52)');
+    e.addColorStop(0.18, 'rgba(0,0,0,0.06)');
     e.addColorStop(0.50, 'rgba(0,0,0,0.00)');
-    e.addColorStop(0.82, 'rgba(0,0,0,0.24)');
-    e.addColorStop(1.00, 'rgba(0,0,0,0.66)');
+    e.addColorStop(0.82, 'rgba(0,0,0,0.18)');
+    e.addColorStop(1.00, 'rgba(0,0,0,0.52)');
     g.globalCompositeOperation = 'multiply';
     g.fillStyle = e; g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'source-over';
@@ -794,7 +805,9 @@ export function tagAtlas(THREE) {
 
     // the big numeral — this is what a shopper's eye locks onto and it is
     // the dominant mark on every tag in every reference photo
-    const dollars = ri(rng, 0, 9), cents = ri(rng, 0, 99);
+    // grocery prices cluster at 99/49/29 cents and rarely start at zero
+    const dollars = rng() < 0.16 ? 0 : ri(rng, 1, 9);
+    const cents = rng() < 0.55 ? pk(rng, [99, 49, 29, 79, 19, 89, 59, 39]) : ri(rng, 0, 99);
     g.fillStyle = sale ? '#1b1a17' : '#141312';
     g.textAlign = 'left';
     const py = sale ? CH * 0.66 : CH * 0.58;
@@ -863,6 +876,29 @@ export function cavityTex(THREE) {
 // ---------------------------------------------------------------------------
 // PACKAGE MATERIAL — one mask atlas + a per-instance brand colour + a
 // per-instance atlas cell. See the channel contract at the top of the file.
+// Sharpen a mapped material by biasing it toward a finer mip level.
+//
+// WHY. Edge maps of a round-3 render against the reference photography showed
+// the deficit precisely: my facings are clean OUTLINES with blank interiors
+// past about five metres, while every package in a photograph stays covered in
+// internal detail at any distance. That is mipmapping doing exactly what it is
+// designed to do — averaging the print away — where a camera's optics do not.
+// A negative LOD bias plus the anisotropy already in place puts the printed
+// detail back. It costs some shimmer, which a real photograph also has.
+export function sharpen(THREE, m, bias = -0.8) {
+  const prev = m.onBeforeCompile;
+  m.onBeforeCompile = (sh, r) => {
+    if (prev) prev(sh, r);
+    sh.fragmentShader = sh.fragmentShader.replace(
+      'texture2D( map, vMapUv )', `texture2D( map, vMapUv, ${bias.toFixed(2)} )`);
+  };
+  // the stock implementation reads `this.onBeforeCompile`, so it has to be
+  // called bound or it throws inside the renderer's program cache
+  const k = m.customProgramCacheKey;
+  m.customProgramCacheKey = function () { return k.call(this) + 'sharp' + bias; };
+  return m;
+}
+
 // `spec` turns the material Phong instead of Lambert. Round-2 shaded cans,
 // glossy bottles, foil bags and coated board with one identical matte diffuse,
 // and a real aisle is DOMINATED by specular events: the bright vertical band
@@ -886,7 +922,7 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
     sh.fragmentShader = 'uniform vec2 uCell;\nvarying vec2 vCell;\nfloat chopGloss;\n'
       + sh.fragmentShader
         .replace('#include <map_fragment>', `
-        vec4 chopM = texture2D( map, vCell + clamp( vMapUv, 0.0015, 0.9985 ) * uCell );
+        vec4 chopM = texture2D( map, vCell + clamp( vMapUv, 0.0015, 0.9985 ) * uCell, -0.85 );
         float scaled = chopM.b * 4.0;
         float band = min( 3.0, floor( scaled ) );
         float amt = clamp( scaled - band, 0.0, 1.0 );
