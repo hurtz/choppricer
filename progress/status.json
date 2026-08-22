@@ -2,7 +2,7 @@
  "pieces": {
   "store": {
    "round": 2,
-   "state": "critiquing",
+   "state": "gap",
    "shots": [
     {
      "round": 0,
@@ -18,6 +18,11 @@
      "round": 2,
      "path": "../shots/store_r2_a.png",
      "t": 1787415923.291967
+    },
+    {
+     "round": 2,
+     "path": "../shots/b2_a.png",
+     "t": 1787416410.0562618
     }
    ],
    "gaps": [
@@ -28,12 +33,16 @@
     {
      "round": 1,
      "text": "Content gap, not a rendering gap. (1) Product facings are flat colour fields with grey bars instead of real printed type \u2014 ~60% of the tell. (2) ~8 box meshes recoloured, 5-8 identical copies per shelf; real shelves carry 6-15 SKUs of mixed height/width and something on nearly every shelf is a bottle/jar/pouch/bag. (3) Zero 'shopped' disorder \u2014 every face perfectly flush, unrotated, evenly spaced, no sold-out voids."
+    },
+    {
+     "round": 2,
+     "text": "Contact shadows / AO is now the single biggest tell \u2014 products have no darkening where they meet the deck, shelf cavities do not fall off to near-black, so shelves read as decals floating on a plane. Then: no per-instance variation WITHIN a facing block (20 identical chip bags, same lean, zero gaps); shelves 100% full when real stores run 10-20% gaps; everything the same matte diffuse with zero specular events."
     }
    ],
-   "updated": 1787416044.741007,
+   "updated": 1787416410.0562592,
    "note": "Real printed type on every facing: invented wordmarks in real faces, descriptors, nutrition panels, UPC blocks, 7-11 lines of legal type. 48 designs across cartons/pouches/cans/bottles via per-instance atlas cells. fillShelf is now a planogram with brand blocks and per-run irregular deck heights. Shopped disorder: depth wander, 20% rotated, sold-out voids, backwards/crushed items. Fixed two bugs: cans/bottles were scaled to carton depth (lathed into ellipses) and their labels wrapped 3x so every angle showed a wordmark fragment.",
-   "gap": "Content gap, not a rendering gap. (1) Product facings are flat colour fields with grey bars instead of real printed type \u2014 ~60% of the tell. (2) ~8 box meshes recoloured, 5-8 identical copies per shelf; real shelves carry 6-15 SKUs of mixed height/width and something on nearly every shelf is a bottle/jar/pouch/bag. (3) Zero 'shopped' disorder \u2014 every face perfectly flush, unrotated, evenly spaced, no sold-out voids.",
-   "verdict": "FAIL \u2014 blind A/B: critic classified 10/10 correctly (4 renders, 6 photos), confidence 97-100, zero ambiguous. Every render called from the PACKAGING alone, within a second."
+   "gap": "Contact shadows / AO is now the single biggest tell \u2014 products have no darkening where they meet the deck, shelf cavities do not fall off to near-black, so shelves read as decals floating on a plane. Then: no per-instance variation WITHIN a facing block (20 identical chip bags, same lean, zero gaps); shelves 100% full when real stores run 10-20% gaps; everything the same matte diffuse with zero specular events.",
+   "verdict": "FAIL \u2014 still 10/10 called. BUT the packaging fix worked: 'I never got as far as the packaging on any of the four. All four were called from ceiling/lighting/geometry within two seconds. Packaging is now the THIRD thing that gives them away, not the first.'"
   },
   "cctv": {
    "round": 2,
@@ -145,6 +154,14 @@
   }
  },
  "log": [
+  {
+   "t": 1787416410.056263,
+   "piece": "store",
+   "role": "critic",
+   "round": 2,
+   "state": "gap",
+   "text": "Contact shadows / AO is now the single biggest tell \u2014 products have no darkening where they meet the deck, shelf cavities do not fall off to near-black, so shelves read as decals floating on a plane. Then: no per-instance variation WITHIN a facing block (20 identical chip bags, same lean, zero gaps); shelves 100% full when real stores run 10-20% gaps; everything the same matte diffuse with zero specular events."
+  },
   {
    "t": 1787416044.74101,
    "piece": "store",
@@ -346,5 +363,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787416044.741011
+ "updated": 1787416410.056264
 }

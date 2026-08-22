@@ -316,10 +316,13 @@ export function createGame(hudEl, deps = {}) {
     r.announced = false; r.trap = false; r.item = L.pick(L.ITEMS);
     newLine(s, r);
   }
-  // A thief who walks into a checkout lane can wedge there forever: agents.js
-  // routes around the gondolas only, so the front-of-store furniture is not in
-  // its graph. Left alone that parks a permanent CONCEALMENT flag on the wall
-  // and the shift never produces another subject. Watchdog it here.
+  // ROUND 2: agents.js rebuilt its navigation on an occupancy grid flooded from
+  // the real collider set, and the wedge it used to compensate for is gone. The
+  // bench confirms it — across ~50 shift-minutes the "he is close enough, call
+  // it an escape" branch fired ZERO times, so it is deleted: fabricating a loss
+  // the player never saw was always the worst thing in this file. What is left
+  // is a plain stuck-shopper recycle, which fired twice in the same 50 minutes.
+  // If it ever reads zero as well, delete this too.
   function stallWatch(dt) {
     for (const s of shoppersOf()) {
       if (!s.guilty || s.escaped || s.caught) continue;
@@ -328,14 +331,7 @@ export function createGame(hudEl, deps = {}) {
       const de = d2(s.position.x, s.position.z, EXIT.x, EXIT.z);
       if (de < (s.__best == null ? Infinity : s.__best) - 0.5) { s.__best = de; s.__stall = 0; continue; }
       s.__stall = (s.__stall || 0) + dt;
-      if (s.__stall > 9 && de < 10) {       // close enough — call it: he is outside
-        s.escaped = true; s.vel.set(0, 0, 0);
-        s.mesh.visible = false; s.cart.visible = false; s.bang.visible = false;
-        recs.delete(s.id); s.__stall = 0; s.__best = Infinity;
-        G.dbg.stallEscape++;
-        score('escape', s);
-        rearmT = Math.min(rearmT, 5);
-      } else if (s.__stall > 16 && st.mode === 'desk') {
+      if (s.__stall > 16 && st.mode === 'desk') {
         G.dbg.stallPutBack++;
         putBack(s); rearmT = Math.min(rearmT, 4);
       }

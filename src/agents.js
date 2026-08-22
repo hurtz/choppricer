@@ -65,8 +65,15 @@ const K = {
   // Radius stays under the 5.3 m aisle pitch so a cop in aisle 4 never makes
   // aisle 3 expensive; the weight is what a thief will pay to get past him,
   // measured against the ~30 m the back-of-store detour actually costs.
+  // The weight is set against a real distance. Crossing this bubble at the shelf
+  // lip costs about 0.62 x w metres of route, and the longest detour the store
+  // offers — back out of the aisle, along the rear cross-aisle, down the next
+  // one — is about 55 m. At 70 the lip crossing prices at ~43 m, so he goes the
+  // long way round from most of the aisle and comes through you near the mouth,
+  // where the detour genuinely is worse. Below ~45 he squeezes from everywhere
+  // and the cork is back; above ~90 he runs from a cop who is nowhere near him.
   get copThreatR()    { return T.copThreatR    ?? 3.00; }, // m
-  get copThreatW()    { return T.copThreatW    ?? 22.0; }, // route-cost multiplier at the centre
+  get copThreatW()    { return T.copThreatW    ?? 70.0; }, // route-cost multiplier at the centre
   get copLead()       { return T.copLead       ?? 0.30; }, // s of cop velocity the flood leads by
   get fleeEvery()     { return T.fleeEvery     ?? 0.17; }, // s between escape-field rebuilds
   get fleeMove()      { return T.fleeMove      ?? 0.70; }, // m of cop movement that forces one
@@ -77,13 +84,23 @@ const K = {
   // The squeeze. 1.58 m of usable half-lane against a 1.15 m catch radius means
   // a shelf-hugging thief clears a centred cop by 0.43 m — thin, readable, and
   // beatable by a cop who steps to the right shoulder. That margin IS the duel.
-  get jukeRange()     { return T.jukeRange     ?? 3.20; }, // m at which he commits
+  get jukeRange()     { return T.jukeRange     ?? 5.20; }, // m at which he commits
+  // How far off the lane centreline you can drift and still have both his
+  // shoulders covered. 1.58 m of half-lane minus the 1.15 m the grab reaches
+  // leaves 0.43 m of daylight either side; give it a little back so holding the
+  // middle is a real position and not a pixel.
+  get grabSlack()     { return T.grabSlack     ?? 0.62; }, // m
+  get bargeGrace()    { return T.bargeGrace    ?? 0.50; }, // s of no-grab while he is through you
   get jukeAhead()     { return T.jukeAhead     ?? 0.34; }, // cos: how "in the way" you must be
   get jukeHold()      { return T.jukeHold      ?? 0.85; }, // s the chosen shoulder is locked in
   get jukeLat()       { return T.jukeLat       ?? 1.75; }, // lateral steering authority
   get jukeLip()       { return T.jukeLip       ?? 0.97; }, // fraction of the usable half-lane
   get stumbleT()      { return T.stumbleT      ?? 0.45; }, // s of lost pace after squeezing past
   get stumbleMul()    { return T.stumbleMul    ?? 0.72; },
+  // How much of the cop this particular thief wants to risk. Rolled per subject
+  // so two identical-looking dispatches do not always play out the same way.
+  get nerveLo()       { return T.nerveLo       ?? 0.55; }, // he will chance your shoulder
+  get nerveHi()       { return T.nerveHi       ?? 1.55; }, // he wants no part of you
 };
 
 // main.js maps KeyW -> input.z = -1, but its floor camera sits at cop.z - 7.6
@@ -316,12 +333,21 @@ export function createAgents(THREE, scene, world) {
   let fleeBuilds = 0;
   const escapeField = () => fleeF || exitF;
   function updateFlee(dt) {
-    let running = false;
+    let running = null, rd = Infinity;
     for (const s of shoppers) {
       if (s.escaped || s.caught) continue;
-      if (s.state === 'bolt' || s.state === 'react') { running = true; break; }
+      if (s.state !== 'bolt' && s.state !== 'react') continue;
+      const d = dist2d(s.position.x, s.position.z, cop.position.x, cop.position.z);
+      if (d < rd) { rd = d; running = s; }
     }
     if (!running) { fleeF = null; fleeT = 0; fleeCx = fleeCz = 1e9; return; }
+    // Nerve. Without it the decision is a pure function of where he was standing
+    // when you walked in, so a player who has done it twenty times knows from the
+    // aisle marker whether this one turns and runs or comes through him. One
+    // thief will take his chances past your shoulder from eight metres out;
+    // another is already heading for the back wall from four. Same shared field
+    // — there is only ever one man being chased — scaled by whose it is.
+    const w = K.copThreatW * (running.nerve || 1);
     const u = cop.userData;
     const lx = cop.position.x + u.vel.x * K.copLead;
     const lz = cop.position.z + u.vel.z * K.copLead;
@@ -330,8 +356,7 @@ export function createAgents(THREE, scene, world) {
     fleeT = K.fleeEvery; fleeCx = lx; fleeCz = lz; fleeBuilds++;
     if (!fleeBuf || fleeBuf.length !== nav.count) fleeBuf = new Float32Array(nav.count);
     fleeF = nav.field(EXIT.x, EXIT.z, {
-      out: fleeBuf,
-      avoid: { x: lx, z: lz, r: K.copThreatR, w: K.copThreatW },
+      out: fleeBuf, avoid: { x: lx, z: lz, r: K.copThreatR, w },
     });
   }
 
@@ -392,7 +417,7 @@ export function createAgents(THREE, scene, world) {
       state: 'walk', timer: 0, path: [], repathIn: 0, wind: 1, aim: null, aimT: 0,
       bolted: false, escaped: false, caught: false, angry: 0, harassArmed: true,
       concealT: 0, look: 0, lean: 0, target: null, dropCartAt: null,
-      duck: 0, duckT: 0, stumble: 0,
+      duck: 0, duckT: 0, duckCop: 0, stumble: 0, bargeT: 0, bargeN: 0, nerve: 1,
     };
     shoppers.push(s);
     return s;
@@ -467,7 +492,9 @@ export function createAgents(THREE, scene, world) {
     s.path = []; s.repathIn = 0; s.guilty = !!guilty; s.bolted = false;
     s.escaped = false; s.caught = false; s.angry = 0; s.harassArmed = true;
     s.concealT = guilty ? rr(2.5, 7.0) : 0; s.look = 0; s.lean = 0; s.wind = 1;
-    s.aim = null; s.aimT = 0; s.duck = 0; s.duckT = 0; s.stumble = 0;
+    s.aim = null; s.aimT = 0; s.duck = 0; s.duckT = 0; s.duckCop = 0;
+    s.stumble = 0; s.bargeT = 0; s.bargeN = 0;
+    s.nerve = rr(K.nerveLo, K.nerveHi);
     s.hasCart = true; s.cart.visible = true; s.mesh.visible = true;
     s.held.visible = false; s.bang.visible = false; s.target = null;
     s.stole = false;
@@ -614,6 +641,11 @@ export function createAgents(THREE, scene, world) {
              : (s.position.x - laneC >= 0 ? 1 : -1);
       }
       s.duck = side; s.duckT = K.jukeHold;
+      // Where you were standing at the moment he committed. THIS, and not
+      // whether you can mirror his footwork afterwards, is what decides the
+      // barge — see interactions(). He is going through that shoulder either
+      // way; the only question is whether you were in front of it.
+      s.duckCop = copOff;
     }
     const want = laneC + s.duck * LANE_FREE * K.jukeLip;
     const lat = clamp((want - s.position.x) / 0.70, -1, 1);
@@ -1031,16 +1063,49 @@ export function createAgents(THREE, scene, world) {
   }
 
   // ---- catch / telemetry ---------------------------------------------------
-  function interactions(api) {
+  //
+  // A committed thief coming the other way is not caught by proximity, he is
+  // caught by BEING IN FRONT OF HIM. Round 2's grab was a bare radius test, and
+  // in a 4.0 m aisle a bare radius test cannot be beaten: the lane gives 1.58 m
+  // of half-width, the grab reaches 1.15 m of it, and a cop with any lateral
+  // authority at all covers the 0.43 m of daylight faster than a running body
+  // can get to it. Footwork does not beat footwork in a corridor.
+  //
+  // So the barge. He picks a shoulder (squeezePast) and he is going through it.
+  // If you were within grabSlack of the lane centreline when he committed, you
+  // had both shoulders covered and you have him. If you had drifted off one
+  // side, he goes past the other one, and all it costs him is the stumble —
+  // half a second at three quarters pace, with you facing the wrong way.
+  //
+  // That is the whole tactical content of a corked aisle: HOLD THE MIDDLE.
+  // It is readable, it is learnable, and it does not care how fast you can
+  // twitch, which is what makes it survive contact with a real player.
+  function copCovers(s) {
+    return Math.abs(s.duckCop ?? 0) < K.grabSlack;
+  }
+  function barge(s) {
+    s.bargeN = (s.bargeN || 0) + 1;
+    s.stumble = K.stumbleT;
+    s.bargeT = K.bargeGrace;
+    s.duck = 0; s.duckT = 0;
+    // He does not pass politely. Shoulder to the ribs, both bodies displaced.
+    let dx = s.position.x - cop.position.x, dz = s.position.z - cop.position.z;
+    const m = Math.hypot(dx, dz) || 1; dx /= m; dz /= m;
+    cop.position.x -= dx * 0.20; cop.position.z -= dz * 0.20;
+    cop.userData.vel.multiplyScalar(0.78);
+    s.position.x += dx * 0.12; s.position.z += dz * 0.12;
+  }
+  function interactions(dt, api) {
     for (const s of shoppers) {
       if (s.escaped || s.caught || !s.guilty) continue;
       if (!s.bolted && s.state !== 'react') continue;
+      if (s.bargeT > 0) { s.bargeT -= dt; continue; }
       const d = dist2d(s.position.x, s.position.z, cop.position.x, cop.position.z);
-      if (d <= T.catchRadius) {
-        s.caught = true; s.vel.set(0, 0, 0); s.state = 'caught';
-        s.rig.armL.rotation.x = -2.5; s.rig.armR.rotation.x = -2.5;   // hands up
-        api.onCatch && api.onCatch(s);
-      }
+      if (d > T.catchRadius) continue;
+      if (s.duck && !copCovers(s)) { barge(s); continue; }
+      s.caught = true; s.vel.set(0, 0, 0); s.state = 'caught';
+      s.rig.armL.rotation.x = -2.5; s.rig.armR.rotation.x = -2.5;     // hands up
+      api.onCatch && api.onCatch(s);
     }
   }
 
@@ -1082,7 +1147,7 @@ export function createAgents(THREE, scene, world) {
     if (!frozen) updateFlee(dt);
     updatePowerups(dt);
     for (const s of shoppers) updateShopper(s, dt, api, frozen);
-    interactions(api);
+    interactions(dt, api);
     telemetry(api);
   }
 
@@ -1126,11 +1191,23 @@ export function createAgents(THREE, scene, world) {
       // by running parallel to it.
       if (p && p.live) { gx = p.x + p.nx * 0.55; gz = p.z + p.nz * 0.55; }
     }
-    if (gx === undefined) { gx = thief.position.x; gz = thief.position.z; }
+    // `lag` is the only knob that separates this bot from an oracle: it steers
+    // at where the subject was `lag` seconds ago. At 0 it mirrors a sidestep
+    // perfectly and no squeeze past it can ever work, which is a true statement
+    // about a perfect tracker and a false one about a man on a keyboard.
+    const lag = st.lag || 0;
+    if (lag > 0) {
+      st.hist.push(thief.position.x, thief.position.z);
+      const keep = Math.max(2, Math.round(lag / dt) * 2 + 2);
+      while (st.hist.length > keep) st.hist.splice(0, 2);
+    }
+    const tx = lag > 0 ? st.hist[0] : thief.position.x;
+    const tz = lag > 0 ? st.hist[1] : thief.position.z;
+    if (gx === undefined) { gx = tx; gz = tz; }
     if (u.boost > 0) st.gotBoost = true;
 
     // lead the target when we can see him
-    if (gx === thief.position.x && nav.clearSeg(cop.position.x, cop.position.z, gx, gz)) {
+    if (gx === tx && nav.clearSeg(cop.position.x, cop.position.z, gx, gz)) {
       gx += thief.vel.x * 0.28; gz += thief.vel.z * 0.28;
     }
     st.repath -= dt;
@@ -1244,6 +1321,7 @@ export function createAgents(THREE, scene, world) {
       const st = {
         gotBoost: mode !== 'pickup', puTarget: null, puT: 0, detour: opts.detour ?? 7,
         path: [], repath: 0, goal: { x: 0, z: 0 },
+        lag: opts.lag ?? 0, hist: [thief.position.x, thief.position.z],
       };
 
       let time = 0, done = 0, finalGap = 0, wentBack = false, ducked = false;
@@ -1298,7 +1376,7 @@ export function createAgents(THREE, scene, world) {
         slowFrac: nS ? slowT / (nS * dt) : NaN,
         corner: nS ? sumCm / nS : NaN,
         copLat: nLat ? sumLat / nLat : NaN,
-        aisle: ai, wentBack, ducked,
+        aisle: ai, wentBack, ducked, barged: thief.bargeN > 0,
         // Starting geometry, so a result can be sliced by how deep in the aisle
         // he was when you walked in on him instead of only pooled.
         z0: tzz, d0: dist2d(txx, tzz, cx0, cz0),
@@ -1324,7 +1402,9 @@ export function createAgents(THREE, scene, world) {
       outTheBack: R.filter((r) => r.wentBack).length,
       // ...and how often he committed to a shoulder and tried to go through you.
       squeezed: R.filter((r) => r.ducked).length,
-      squeezeWon: R.filter((r) => r.ducked && r.done === 2).length,
+      // He committed to a shoulder and you were not in front of it.
+      barged: R.filter((r) => r.barged).length,
+      bargedThenCaught: R.filter((r) => r.barged && r.done === 1).length,
       // Grabbed before he even finished flinching — you landed on top of him.
       caughtStanding: caught.filter((r) => r.noBolt).length,
       // Catch rate sliced by how far away he was when you walked in. Pooling
