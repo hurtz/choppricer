@@ -9,13 +9,15 @@ import {
 import { makeRng, rr, ri, pick, Batch, Quads } from './store/kit.js';
 import { DEPTS, FROZEN, fillShelf } from './store/products.js';
 import * as TX from './store/tex.js';
+import * as PK from './store/pack.js';
 
 // ---------------------------------------------------------------------------
 // PALETTE — warm cream / sage / terracotta, wood-tone uprights. Never grey.
 const P = {
   deck:     0xf0e8d4,   // shelf boards, cream steel
   deckDark: 0xd9cfb6,
-  peg:      0xe4dcc6,   // gondola back panel
+  shelfUnder: 0x6f6656, // undersides read far darker than tops — see buildRun
+  peg:      0xb3a992,   // gondola back panel, shadowed behind the product
   upright:  0xcfc3a6,
   kick:     0x5c5445,
   wood:     0xc9a878,   // end panels
@@ -30,6 +32,9 @@ const P = {
   cart:     0xa9adb2,
 };
 
+// Atlas cell i is drawn with department i%8's vocabulary — see products.js.
+const DEPT_KEYS = DEPTS.map((d) => d.key);
+
 let TEX = null;
 function textures(THREE) {
   if (TEX) return TEX;
@@ -40,10 +45,13 @@ function textures(THREE) {
     rail: TX.railTex(THREE),
     wood: TX.woodTex(THREE, [30, 40, 60], 77),
     wall: TX.wallTex(THREE),
-    boxA: TX.boxAtlas(THREE),
-    bagA: TX.bagAtlas(THREE),
-    can: TX.canMask(THREE),
-    bottle: TX.bottleMask(THREE),
+    // round-2 packaging: real printed type, one atlas per package family
+    boxA: PK.cartonAtlas(THREE, DEPT_KEYS),
+    bagA: PK.pouchAtlas(THREE, DEPT_KEYS),
+    can: PK.canAtlas(THREE, DEPT_KEYS),
+    bottle: PK.bottleAtlas(THREE, DEPT_KEYS),
+    tag: PK.tagAtlas(THREE),
+    cavity: PK.cavityTex(THREE),
     sign: TX.signAtlas(THREE, DEPTS),
     blade: TX.bladeAtlas(THREE, DEPTS),
     lane: TX.laneAtlas(THREE),
@@ -77,82 +85,51 @@ const qUp = (Q, x, y, z, w, l, uv) =>
   Q.rect([x, y, z], [w / 2, 0, 0], [0, 0, -l / 2], uv[0], uv[1], uv[2], uv[3]);
 const FULL = [0, 0, 1, 1];
 
-// ---------------------------------------------------------------------------
-// PACKAGE SHADER — one greyscale mask + a per-instance brand colour.
-//   mask.r = how much brand colour bleeds through (0 = white label stock)
-//   mask.g = print brightness (barcodes, shadow gradients, edge shading)
-function chopPackageMat(THREE, mask, extra = {}) {
-  const m = new THREE.MeshLambertMaterial({ map: mask, color: 0xffffff, ...extra });
-  m.onBeforeCompile = (sh) => {
-    sh.fragmentShader = sh.fragmentShader
-      .replace('#include <map_fragment>', `
-        vec4 chopM = texture2D( map, vMapUv );
-        diffuseColor.rgb *= mix( vec3( 1.0 ), vColor, chopM.r ) * ( 0.26 + 0.74 * chopM.g );
-      `)
-      .replace('#include <color_fragment>', '');
-  };
-  m.customProgramCacheKey = () => 'chopPkg';
-  return m;
-}
+// The package shader, the atlas-cell UV remap and the mask channel contract
+// all live in ./store/pack.js now.
 
 function pillowGeo(THREE) {
+  // A bag is not a box. The sealed crimps at top and bottom pinch to almost
+  // nothing while the middle bulges past the nominal footprint — without that
+  // silhouette a chip bag just reads as a carton with a crinkle texture on it.
   const g = new THREE.BoxGeometry(1, 1, 1, 1, 2, 1);
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) {
     const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    const t = Math.abs(y) > 0.25 ? 0.42 : 1.0;      // pinch the sealed top/bottom
-    p.setZ(i, z * t);
-    p.setX(i, x * (Math.abs(y) > 0.25 ? 0.93 : 1.0));
+    const crimp = Math.abs(y) > 0.25;
+    p.setZ(i, z * (crimp ? 0.20 : 1.34));
+    p.setX(i, x * (crimp ? 0.86 : 1.0));
+    if (crimp) p.setY(i, y * 0.96);
   }
   g.computeVertexNormals();
   return g;
 }
 
-// Remap a box-ish geometry onto one cell of a package atlas. Only the +Z face
-// gets the printed design; every other face gets the cell's plain wrap column,
-// so a shelf viewed down-aisle shows colour and size variety instead of four
-// hundred copies of the same barcode.
-function atlasVariant(THREE, base, cell, cols, rows, margin) {
-  const g = base.clone();
-  const uv = g.attributes.uv;
-  const cx = cell % cols, cy = Math.floor(cell / cols);
-  const u0 = cx / cols, u1 = (cx + 1) / cols;
-  const v0 = 1 - (cy + 1) / rows, v1 = 1 - cy / rows;
-  const du = u1 - u0, dv = v1 - v0;
-  const fu0 = u0 + du * margin, fu1 = u1 - du * 0.004;
-  const su0 = u0 + du * 0.02, su1 = u0 + du * margin * 0.82;
-  const remap = (start, end, a, b, c, d) => {
-    for (let i = start; i <= end; i++) {
-      uv.setXY(i, a + uv.getX(i) * (b - a), c + uv.getY(i) * (d - c));
-    }
-  };
-  // BoxGeometry group order: px, nx, py, ny, pz, nz. Faces can have unequal
-  // vertex counts when the box is segmented, so derive each span from the index.
-  const idx = g.index;
-  for (let k = 0; k < 6; k++) {
-    const gr = g.groups[k];
-    let lo = Infinity, hi = -Infinity;
-    for (let i = gr.start; i < gr.start + gr.count; i++) {
-      const v = idx.getX(i);
-      if (v < lo) lo = v;
-      if (v > hi) hi = v;
-    }
-    if (k === 4) remap(lo, hi, fu0, fu1, v0, v1);                     // printed front
-    else if (k === 2) remap(lo, hi, su0, su1, v1 - dv * 0.13, v1);    // top
-    else if (k === 3) remap(lo, hi, su0, su1, v0, v0 + dv * 0.13);    // bottom
-    else remap(lo, hi, su0, su1, v0, v1);                             // sides + back
-  }
-  uv.needsUpdate = true;
-  g.clearGroups();
-  return g;
-}
-
-function bottleGeo(THREE) {
-  const pts = [
-    [0.02, -0.50], [0.40, -0.50], [0.47, -0.455], [0.47, -0.30], [0.47, -0.10],
-    [0.47, 0.10], [0.45, 0.20], [0.31, 0.30], [0.19, 0.36], [0.18, 0.44],
-    [0.23, 0.458], [0.23, 0.50], [0.02, 0.50],
-  ].map(([r, y]) => new THREE.Vector2(r, y));
+// Four lathe profiles. A cleaning or HBA shelf in a real store is a row of
+// obviously DIFFERENT silhouettes — trigger sprays next to gallon jugs next to
+// squat jars — and one repeated soda-bottle shape is spotted immediately.
+// Kept coarse: these are instanced ~5000 times and the scene renders 9x a frame.
+const BOTTLE_PROFILES = {
+  soda: [
+    [0.03, -0.50], [0.44, -0.50], [0.47, -0.44], [0.47, 0.06],
+    [0.44, 0.19], [0.24, 0.32], [0.18, 0.42], [0.23, 0.462], [0.03, 0.50],
+  ],
+  jug: [                       // detergent / juice: wide, square-shouldered
+    [0.03, -0.50], [0.49, -0.50], [0.50, -0.42], [0.50, 0.18],
+    [0.46, 0.28], [0.22, 0.36], [0.20, 0.44], [0.26, 0.47], [0.03, 0.50],
+  ],
+  squat: [                     // jar: short, wide, big lid
+    [0.03, -0.50], [0.47, -0.50], [0.50, -0.40], [0.50, 0.12],
+    [0.44, 0.24], [0.38, 0.30], [0.40, 0.46], [0.36, 0.50], [0.03, 0.50],
+  ],
+  spray: [                     // trigger cleaner: slim body, long neck, head
+    [0.03, -0.50], [0.40, -0.50], [0.42, -0.42], [0.42, 0.10],
+    [0.30, 0.20], [0.13, 0.26], [0.13, 0.36], [0.30, 0.40],
+    [0.30, 0.50], [0.03, 0.50],
+  ],
+};
+function bottleGeo(THREE, key) {
+  const pts = BOTTLE_PROFILES[key].map(([r, y]) => new THREE.Vector2(r, y));
   return new THREE.LatheGeometry(pts, 9);
 }
 
@@ -190,7 +167,10 @@ export function buildStore(THREE, scene) {
   const G = {
     box: new THREE.BoxGeometry(1, 1, 1),
     can: new THREE.CylinderGeometry(0.5, 0.5, 1, 9, 1, false),
-    bottle: bottleGeo(THREE),
+    bottle: bottleGeo(THREE, 'soda'),
+    bJug: bottleGeo(THREE, 'jug'),
+    bSquat: bottleGeo(THREE, 'squat'),
+    bSpray: bottleGeo(THREE, 'spray'),
     bag: pillowGeo(THREE),
     tube: new THREE.CylinderGeometry(0.5, 0.5, 1, 7, 1, true),
     orb: new THREE.SphereGeometry(0.5, 7, 5),
@@ -199,35 +179,41 @@ export function buildStore(THREE, scene) {
 
   // ---- shared materials ---------------------------------------------------
   const M = {
-    pkgBox: chopPackageMat(THREE, T.boxA),
-    pkgCan: chopPackageMat(THREE, T.can),
-    pkgBottle: chopPackageMat(THREE, T.bottle),
-    pkgBag: chopPackageMat(THREE, T.bagA),
+    pkgBox: PK.chopPackageMat(THREE, T.boxA, PK.ATLAS.carton),
+    pkgCan: PK.chopPackageMat(THREE, T.can, PK.ATLAS.can),
+    pkgBottle: PK.chopPackageMat(THREE, T.bottle, PK.ATLAS.bottle),
+    pkgBag: PK.chopPackageMat(THREE, T.bagA, PK.ATLAS.pouch),
     fix: new THREE.MeshLambertMaterial({ color: 0xffffff }),
     wood: new THREE.MeshLambertMaterial({ map: T.wood, color: 0xffffff }),
   };
 
-  const BOX_V = [0, 1, 2, 3].map((k) => atlasVariant(THREE, G.box, k, 2, 2, 0.133));
-  const BAG_V = [0, 1].map((k) => atlasVariant(THREE, G.bag, k, 2, 1, 0.117));
+  // ONE geometry per package family, UVs normalised into unit-cell space. The
+  // per-instance aCell attribute offsets into the atlas, so 24 carton designs
+  // cost the same single draw call that 1 design used to.
+  const PG = {
+    box: PK.unitCellUV(THREE, G.box, 'box', PK.ATLAS.carton.wrap),
+    bag: PK.unitCellUV(THREE, G.bag, 'box', PK.ATLAS.pouch.wrap),
+    can: PK.unitCellUV(THREE, G.can, 'can', 0),
+    soda: PK.unitCellUV(THREE, G.bottle, 'lathe', 0),
+    jug: PK.unitCellUV(THREE, G.bJug, 'lathe', 0),
+    squat: PK.unitCellUV(THREE, G.bSquat, 'lathe', 0),
+    spray: PK.unitCellUV(THREE, G.bSpray, 'lathe', 0),
+  };
+  const BSHAPES = ['soda', 'jug', 'squat', 'spray'];
 
-  // products.js only knows B.box / B.can / B.bottle / B.bag; fan the box and bag
-  // pushes out over the atlas variants so no two neighbours are the same print.
-  // Pick the print from the brand colour, not at random: every facing of one SKU
-  // shares a colour, so a run of 8 comes out as 8 identical packages the way a
-  // real planogram does — while the next SKU along gets a different carton.
-  const multi = (arr) => ({
-    push(px, py, pz, ex, ey, ez, sx, sy, sz, c) {
-      const h = (c.r * 733 + c.g * 1471 + c.b * 2879) | 0;
-      arr[((h % arr.length) + arr.length) % arr.length].push(px, py, pz, ex, ey, ez, sx, sy, sz, c);
-    },
-    box(px, py, pz, sx, sy, sz, c) { this.push(px, py, pz, 0, 0, 0, sx, sy, sz, c); },
-  });
   const newPkg = () => {
-    const boxes = BOX_V.map((g) => new Batch(THREE, g, M.pkgBox));
-    const bags = BAG_V.map((g) => new Batch(THREE, g, M.pkgBag));
-    const can = new Batch(THREE, G.can, M.pkgCan);
-    const bottle = new Batch(THREE, G.bottle, M.pkgBottle);
-    return { box: multi(boxes), bag: multi(bags), can, bottle, _all: [...boxes, ...bags, can, bottle] };
+    const box = new Batch(THREE, PG.box, M.pkgBox, PK.ATLAS.carton);
+    const bag = new Batch(THREE, PG.bag, M.pkgBag, PK.ATLAS.pouch);
+    const can = new Batch(THREE, PG.can, M.pkgCan, PK.ATLAS.can);
+    const bs = {};
+    for (const k of BSHAPES) bs[k] = new Batch(THREE, PG[k], M.pkgBottle, PK.ATLAS.bottle);
+    // products.js pushes bottles with a `shape` key; route to that lathe.
+    const bottle = {
+      push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell, shape) {
+        (bs[shape] || bs.soda).push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell);
+      },
+    };
+    return { box, bag, can, bottle, _all: [box, bag, can, ...BSHAPES.map((k) => bs[k])] };
   };
   const flushPkg = (B, name, parent = root) => {
     B._all.forEach((b, i) => { const m = b.build(name + '.' + i); if (m) parent.add(m); });
@@ -251,6 +237,9 @@ export function buildStore(THREE, scene) {
   const Qlane = new Quads(), Qpromo = new Quads(), Qwsign = new Quads();
   const Qstrip = new Quads(), Qglow = new Quads(), Qglass = new Quads();
   const Qcool = new Quads(), Qbright = new Quads(), Qshadow = new Quads();
+  // Qtag: one shelf-edge tag per SKU run, width keyed to that SKU's facing.
+  // Qcav: the gradient that darkens the back of every shelf cavity.
+  const Qtag = new Quads(), Qcav = new Quads();
 
   // =========================================================================
   // FLOOR
@@ -328,15 +317,29 @@ export function buildStore(THREE, scene) {
   ceilGroup.add(ceilPlane);
 
   const LY = CEIL_H - 0.045;
+  // Discrete 4ft fixtures with a real dark gap between them. Round 1 ran one
+  // continuous 100%-white ribbon the length of the store, which is the single
+  // most obviously synthetic thing about a CG ceiling.
+  const FIX_L = 2.34, FIX_GAP = 0.62;
   const lightRow = (x, z0, z1) => {
-    const len = z1 - z0;
-    qDown(Qstrip, x, LY, (z0 + z1) / 2, 0.44, len, [0, 0, len / 2.44, 1]);
-    fix(x, LY + 0.09, (z0 + z1) / 2, 0.56, 0.16, len, 0xefe7d4, BfixC);
+    const pitch = FIX_L + FIX_GAP;
+    const n = Math.max(1, Math.round((z1 - z0) / pitch));
+    const span = n * pitch - FIX_GAP;
+    let z = (z0 + z1) / 2 - span / 2 + FIX_L / 2;
+    for (let k = 0; k < n; k++, z += pitch) {
+      qDown(Qstrip, x, LY, z, 0.44, FIX_L, FULL);
+      fix(x, LY + 0.085, z, 0.54, 0.15, FIX_L + 0.04, 0xe6ddc8, BfixC);
+    }
   };
   const lightRowX = (z, x0, x1) => {
-    const len = x1 - x0;
-    Qstrip.rect([(x0 + x1) / 2, LY, z], [0, 0, -0.22], [len / 2, 0, 0], 0, 0, len / 2.44, 1);
-    fix((x0 + x1) / 2, LY + 0.09, z, len, 0.16, 0.56, 0xefe7d4, BfixC);
+    const pitch = FIX_L + FIX_GAP;
+    const n = Math.max(1, Math.round((x1 - x0) / pitch));
+    const span = n * pitch - FIX_GAP;
+    let x = (x0 + x1) / 2 - span / 2 + FIX_L / 2;
+    for (let k = 0; k < n; k++, x += pitch) {
+      Qstrip.rect([x, LY, z], [0, 0, -0.22], [FIX_L / 2, 0, 0], 0, 0, 1, 1);
+      fix(x, LY + 0.085, z, FIX_L + 0.04, 0.15, 0.54, 0xe6ddc8, BfixC);
+    }
   };
   for (let i = 0; i < AISLE_COUNT; i++) {
     lightRow(aisleX(i) - 0.95, -HALF - 1.6, HALF + 1.6);
@@ -383,21 +386,36 @@ export function buildStore(THREE, scene) {
   // =========================================================================
   // GONDOLA RUNS
   // =========================================================================
-  const DECK = [0.17, 0.555, 0.94, 1.325, 1.71];
-  const LIT = [0.70, 0.80, 0.90, 1.00, 1.08];
   const BODY = HALF - 0.62;                 // gondola body half-length in Z
   const EC_D = 0.44;                        // endcap shelf depth
   const ECDECK = [0.22, 0.68, 1.14, 1.60];
 
-  function deckDepths(halfDepth) {
-    const f = [1.0, 0.96, 0.91, 0.85, 0.78];
-    return f.map((v) => halfDepth * v);
+  // A real gondola is set to whatever is on it: an 8in clear deck for canned
+  // goods, 15in for cereal. Uniform spacing all the way down every run was
+  // forcing every SKU to the same height and undoing the size variety — so
+  // each run gets its own irregular deck plan, and products.js then picks
+  // kinds that actually fit the deck it is filling.
+  const DECK_STEPS = [0.215, 0.245, 0.275, 0.315, 0.365, 0.425];
+  function deckPlan(r) {
+    const ys = [];
+    let y = rr(r, 0.115, 0.165);
+    let guard = 0;
+    while (y < SHELF_H - 0.235 && guard++ < 12) {
+      ys.push(y);
+      y += pick(r, DECK_STEPS) + 0.036;
+    }
+    return ys;
+  }
+  function deckDepths(halfDepth, n) {
+    return Array.from({ length: n }, (_, i) => halfDepth * (1.0 - 0.22 * (i / Math.max(1, n - 1))));
   }
 
   function buildRun(idx, x, halfW, faces, opts = {}) {
     const B = newPkg();
     const z0 = -BODY, z1 = BODY, len = z1 - z0;
-    const dd = deckDepths(halfW - 0.05);
+    const DECK = deckPlan(rng);
+    const LIT = DECK.map((_, i) => 0.88 + 0.20 * (i / Math.max(1, DECK.length - 1)));
+    const dd = deckDepths(halfW - 0.05, DECK.length);
 
     // kick plate + base
     fix(x, 0.075, 0, halfW * 2 - 0.10, 0.15, len, P.kick);
@@ -414,12 +432,25 @@ export function buildStore(THREE, scene) {
         const dep = dd[d];
         // shelf board
         fix(lip - f.dir * (dep / 2), DECK[d] - 0.018, 0, dep + 0.02, 0.036, len, d === 0 ? P.deckDark : P.deck);
+        // UNDERSIDE — markedly darker than the top. This is what makes an
+        // aisle wall read as alternating bright and dark horizontal bands
+        // instead of one evenly lit slab.
+        fix(lip - f.dir * (dep / 2), DECK[d] - 0.041, 0, dep + 0.015, 0.020, len, P.shelfUnder);
         // price rail on the lip
         qX(Qrail, lip + f.dir * 0.012, DECK[d] - 0.020, 0, len, 0.062, f.dir, [0, 0, len / 1.0, 1]);
         const head = (DECK[d + 1] !== undefined ? DECK[d + 1] : SHELF_H + 0.03) - DECK[d] - 0.036;
+        // cavity gradient: dark under the shelf above, fading down. Also what
+        // makes a sold-out void read as a black hole rather than a beige gap.
+        qX(Qcav, lip - f.dir * (dep - 0.01), DECK[d] + head * 0.5, 0, len, head, f.dir, FULL);
+        // pull: top decks are faced right up to the lip, bottom decks sink back
+        const pull = d / (DECK.length - 1);
         fillShelf(B, rng, f.dept, {
           axis: 'z', a0: z0 + 0.05, a1: z1 - 0.05, lip, face: f.dir,
-          deckY: DECK[d], headroom: head, depth: dep, lit: LIT[d], col,
+          deckY: DECK[d], headroom: head, depth: dep, lit: LIT[d], col, pull,
+          tag: (aStart, aw) => {
+            qX(Qtag, lip + f.dir * 0.020, DECK[d] - 0.021, aStart + aw / 2, aw, 0.050,
+              f.dir, cellUV((rng() * 16) | 0, 4, 4));
+          },
         });
         // top deck gets a second row behind the facings — otherwise the chase
         // camera looks straight down onto a bare cream board the length of the run
@@ -427,7 +458,7 @@ export function buildStore(THREE, scene) {
           fillShelf(B, rng, f.dept, {
             axis: 'z', a0: z0 + 0.05, a1: z1 - 0.05, lip: lip - f.dir * (dep * 0.55),
             face: f.dir, deckY: DECK[d], headroom: head, depth: dep * 0.48,
-            lit: LIT[d] * 0.88, col,
+            lit: LIT[d] * 0.88, col, pull: 1,
           });
         }
       }
@@ -465,6 +496,11 @@ export function buildStore(THREE, scene) {
           fillShelf(B, rng, faces[0].dept, {
             axis: 'x', a0: x - halfW + 0.04, a1: x + halfW - 0.04, lip, face: dir,
             deckY: ECDECK[d], headroom: head, depth: EC_D * 0.92, lit: 1.05, col,
+            pull: d / (ECDECK.length - 1),
+            tag: (aStart, aw) => {
+              qZ(Qtag, aStart + aw / 2, ECDECK[d] - 0.021, lip + dir * 0.020, aw, 0.050,
+                dir, cellUV((rng() * 16) | 0, 4, 4));
+            },
           });
         }
         // promo header
@@ -485,7 +521,7 @@ export function buildStore(THREE, scene) {
         const h = rr(rng, 0.22, 0.30), w = rr(rng, 0.5, 0.85);
         col.setHSL(rr(rng, 25, 38) / 360, rr(rng, 0.22, 0.4), rr(rng, 0.42, 0.58));
         B.box.push(x + rr(rng, -0.1, 0.1), SHELF_H + 0.06 + h / 2 + s * h, z,
-          0, rr(rng, -0.06, 0.06), 0, halfW * 1.5, h, w, col);
+          0, rr(rng, -0.06, 0.06), 0, halfW * 1.5, h, w, col, (rng() * 24) | 0);
       }
     }
 
@@ -559,7 +595,7 @@ export function buildStore(THREE, scene) {
       qX(Qrail, x - 0.42 - 0.15, y - 0.018, laneCZ + 0.4, 2.0, 0.05, -1, [0, 0, 2.0, 1]);
       fillShelf(B, rng, DEPTS[3], {
         axis: 'z', a0: laneCZ - 0.6, a1: laneCZ + 1.4, lip: x - 0.42 - 0.14, face: -1,
-        deckY: y, headroom: 0.30, depth: 0.26, lit: 1.02, col,
+        deckY: y, headroom: 0.30, depth: 0.26, lit: 1.02, col, pull: 0.9,
       });
     }
     qUp(Qshadow, x + 0.05, 0.006, laneCZ, 2.4, laneLen + 1.4, FULL);
@@ -606,6 +642,11 @@ export function buildStore(THREE, scene) {
       fillShelf(B, rng, FROZEN, {
         axis: 'x', a0: coolX0 + 0.15, a1: coolX1 - 0.15, lip, face: -1,
         deckY: CD[d], headroom: 0.34, depth: 0.68, lit: 1.22, col,
+        pull: d / Math.max(1, CD.length - 1),
+        tag: (aStart, aw) => {
+          qZ(Qtag, aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048,
+            -1, cellUV((rng() * 16) | 0, 4, 4));
+        },
       });
     }
     flushPkg(B, 'cooler');
@@ -680,6 +721,11 @@ export function buildStore(THREE, scene) {
       fillShelf(B, rng, DEPTS[7], {
         axis: 'x', a0: wx0 + 0.1, a1: wx1 - 0.1, lip: wz - 0.31, face: -1,
         deckY: RD[d], headroom: 0.40, depth: 0.60, lit: 1.0, col,
+        pull: d / Math.max(1, RD.length - 1),
+        tag: (aStart, aw) => {
+          qZ(Qtag, aStart + aw / 2, RD[d] - 0.021, wz - 0.31 - 0.020, aw, 0.048,
+            -1, cellUV((rng() * 16) | 0, 4, 4));
+        },
       });
     }
     flushPkg(B, 'wetrack');
@@ -765,6 +811,14 @@ export function buildStore(THREE, scene) {
       });
     }
   }
+  // FRONT CROSS-AISLE. Most of a chase actually runs along here, not down an
+  // aisle, so aisle-only spots left the cop unable to reach a boost in about a
+  // quarter of chases. A checkout cooler and a donut box on a front end-cap are
+  // both completely natural placements. Kept clear of the lanes and the exit
+  // run so nothing here narrows the walkable route to the doors.
+  powerupSpots.push({ x: aisleX(1) + PITCH / 2, z: FRONT_WALK_Z + 0.6, kind: 'energy' });
+  powerupSpots.push({ x: aisleX(4) + PITCH / 2, z: FRONT_WALK_Z + 0.6, kind: 'donuts' });
+  powerupSpots.push({ x: aisleX(6) + PITCH / 2, z: FRONT_WALK_Z - 0.9, kind: 'energy' });
 
   // =========================================================================
   // FLUSH BATCHES + QUAD SOUPS
@@ -783,6 +837,13 @@ export function buildStore(THREE, scene) {
     parent.add(m); return m;
   };
   soup(Qrail, new THREE.MeshLambertMaterial({ map: T.rail, color: 0xfffdf4, emissive: 0x2a2620 }), 'rails');
+  // shelf cavities: dark under the shelf above, clearing toward the deck
+  const cavMat = new THREE.MeshBasicMaterial({
+    map: T.cavity, transparent: true, depthWrite: false,
+  });
+  const cv2 = soup(Qcav, cavMat, 'shelfCavities'); if (cv2) cv2.renderOrder = -1;
+  // one tag per SKU run — irregular rhythm, keyed to the facing above it
+  soup(Qtag, new THREE.MeshBasicMaterial({ map: T.tag, color: 0xf6f1e4 }), 'shelfTags');
   soup(Qsign, new THREE.MeshBasicMaterial({ map: T.sign, color: 0xf2ecdd }), 'aisleSigns');
   soup(Qblade, new THREE.MeshBasicMaterial({ map: T.blade, color: 0xf0ead9 }), 'bladeSigns');
   soup(Qlane, new THREE.MeshBasicMaterial({ map: T.lane, color: 0xfaf4e6 }), 'laneSigns');
@@ -809,11 +870,11 @@ export function buildStore(THREE, scene) {
   // =========================================================================
   // LIGHTING
   // =========================================================================
-  scene.add(new THREE.AmbientLight(0xffeed4, 0.52));
-  const hemi = new THREE.HemisphereLight(0xfff5e4, 0x9c8b6e, 0.72);
+  scene.add(new THREE.AmbientLight(0xffeed4, 0.38));
+  const hemi = new THREE.HemisphereLight(0xfff5e4, 0x7a6c50, 0.70);
   hemi.position.set(0, CEIL_H, 0);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff3e0, 0.42);
+  const key = new THREE.DirectionalLight(0xfff3e0, 0.60);
   key.position.set(CX + 9, CEIL_H + 7, CZ - 12);
   key.target.position.set(CX, 0, CZ);
   key.castShadow = true;

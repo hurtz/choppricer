@@ -22,7 +22,7 @@
 // Re-run any time with: window.__CHOP.agents.benchAll(400)
 import {
   TUNING, EXIT, aisleX, AISLE_LEN, AISLE_COUNT, AISLE_GAP, SHELF_W,
-  STORE, FRONT_WALK_Z,
+  STORE, FRONT_WALK_Z, SERVICE_DESK,
 } from './config.js';
 import { makeNav } from './agents/nav.js';
 
@@ -59,6 +59,31 @@ const K = {
   get navHug()        { return T.navHug        ?? 0.55; }, // route cost for scraping geometry
   get harassSpeed()   { return T.harassSpeed   ?? 0.90; }, // m/s: standing still never offends
   get harassAim()     { return T.harassAim     ?? 0.45; }, // cos(cop velocity, shopper)
+
+  // --- ROUND 3: counterplay in a corked aisle -------------------------------
+  // The cop is a cost in the escape flood, not just a body to swerve round.
+  // Radius stays under the 5.3 m aisle pitch so a cop in aisle 4 never makes
+  // aisle 3 expensive; the weight is what a thief will pay to get past him,
+  // measured against the ~30 m the back-of-store detour actually costs.
+  get copThreatR()    { return T.copThreatR    ?? 3.00; }, // m
+  get copThreatW()    { return T.copThreatW    ?? 22.0; }, // route-cost multiplier at the centre
+  get copLead()       { return T.copLead       ?? 0.30; }, // s of cop velocity the flood leads by
+  get fleeEvery()     { return T.fleeEvery     ?? 0.17; }, // s between escape-field rebuilds
+  get fleeMove()      { return T.fleeMove      ?? 0.70; }, // m of cop movement that forces one
+  // He sees the uniform standing in the mouth of his aisle. He does not stroll
+  // up to five metres to confirm it. Seeing the way out blocked IS the tell.
+  get thiefLook()     { return T.thiefLook     ?? 8.60; }, // m
+  get thiefBlockCos() { return T.thiefBlockCos ?? 0.60; }, // cop must be this near his route line
+  // The squeeze. 1.58 m of usable half-lane against a 1.15 m catch radius means
+  // a shelf-hugging thief clears a centred cop by 0.43 m — thin, readable, and
+  // beatable by a cop who steps to the right shoulder. That margin IS the duel.
+  get jukeRange()     { return T.jukeRange     ?? 3.20; }, // m at which he commits
+  get jukeAhead()     { return T.jukeAhead     ?? 0.34; }, // cos: how "in the way" you must be
+  get jukeHold()      { return T.jukeHold      ?? 0.85; }, // s the chosen shoulder is locked in
+  get jukeLat()       { return T.jukeLat       ?? 1.75; }, // lateral steering authority
+  get jukeLip()       { return T.jukeLip       ?? 0.97; }, // fraction of the usable half-lane
+  get stumbleT()      { return T.stumbleT      ?? 0.45; }, // s of lost pace after squeezing past
+  get stumbleMul()    { return T.stumbleMul    ?? 0.72; },
 };
 
 // main.js maps KeyW -> input.z = -1, but its floor camera sits at cop.z - 7.6
@@ -70,6 +95,13 @@ const BODY_R = 0.42;          // agent collision radius
 const CART_R = 0.34;
 const HALF_LEN = AISLE_LEN / 2;
 const LANE_HALF = AISLE_GAP / 2;
+// How far off the lane centreline a body can actually get. AISLE_GAP 4.0 gives a
+// 2.0 m half-lane; take the body radius off it and there is 1.58 m. Every
+// "can he get past?" number in this file is measured against THIS, not against
+// AISLE_GAP — round 2 used an avoid radius of 1.80 m, which is wider than the
+// lane, so a cop standing in an aisle corked it completely and the thief had no
+// move except to run into him.
+const LANE_FREE = LANE_HALF - BODY_R;   // 1.58 m
 const AISLE_PITCH = AISLE_GAP + SHELF_W;
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -269,6 +301,40 @@ export function createAgents(THREE, scene, world) {
   const toExit = (x, z) => nav.at(exitF, x, z);          // metres of route left
   const canReachExit = (x, z) => nav.reachable(exitF, x, z);
 
+  // ---- the escape field ----------------------------------------------------
+  // Same flood, from the same doors, with the cop priced in. A thief who is
+  // running reads THIS one, so "out the back, along the rear cross-aisle and
+  // down another aisle" is a route the search can actually return — it was
+  // never available before, because the cop only ever existed as a filter on
+  // the aim point of a descent that had already been computed without him.
+  //
+  // One field, shared by every runner in the store (they are all avoiding the
+  // same man), rebuilt on a timer or when he moves, and only while somebody is
+  // actually running. Measured at ~0.35 ms a flood on an 8-aisle store; at
+  // 6 rebuilds a second that is well under a tenth of one frame.
+  let fleeF = null, fleeBuf = null, fleeT = 0, fleeCx = 1e9, fleeCz = 1e9;
+  let fleeBuilds = 0;
+  const escapeField = () => fleeF || exitF;
+  function updateFlee(dt) {
+    let running = false;
+    for (const s of shoppers) {
+      if (s.escaped || s.caught) continue;
+      if (s.state === 'bolt' || s.state === 'react') { running = true; break; }
+    }
+    if (!running) { fleeF = null; fleeT = 0; fleeCx = fleeCz = 1e9; return; }
+    const u = cop.userData;
+    const lx = cop.position.x + u.vel.x * K.copLead;
+    const lz = cop.position.z + u.vel.z * K.copLead;
+    fleeT -= dt;
+    if (fleeF && fleeT > 0 && dist2d(lx, lz, fleeCx, fleeCz) < K.fleeMove) return;
+    fleeT = K.fleeEvery; fleeCx = lx; fleeCz = lz; fleeBuilds++;
+    if (!fleeBuf || fleeBuf.length !== nav.count) fleeBuf = new Float32Array(nav.count);
+    fleeF = nav.field(EXIT.x, EXIT.z, {
+      out: fleeBuf,
+      avoid: { x: lx, z: lz, r: K.copThreatR, w: K.copThreatW },
+    });
+  }
+
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
   // ---- cop -----------------------------------------------------------------
@@ -326,6 +392,7 @@ export function createAgents(THREE, scene, world) {
       state: 'walk', timer: 0, path: [], repathIn: 0, wind: 1, aim: null, aimT: 0,
       bolted: false, escaped: false, caught: false, angry: 0, harassArmed: true,
       concealT: 0, look: 0, lean: 0, target: null, dropCartAt: null,
+      duck: 0, duckT: 0, stumble: 0,
     };
     shoppers.push(s);
     return s;
@@ -400,7 +467,7 @@ export function createAgents(THREE, scene, world) {
     s.path = []; s.repathIn = 0; s.guilty = !!guilty; s.bolted = false;
     s.escaped = false; s.caught = false; s.angry = 0; s.harassArmed = true;
     s.concealT = guilty ? rr(2.5, 7.0) : 0; s.look = 0; s.lean = 0; s.wind = 1;
-    s.aim = null; s.aimT = 0;
+    s.aim = null; s.aimT = 0; s.duck = 0; s.duckT = 0; s.stumble = 0;
     s.hasCart = true; s.cart.visible = true; s.mesh.visible = true;
     s.held.visible = false; s.bang.visible = false; s.target = null;
     s.stole = false;
@@ -472,7 +539,14 @@ export function createAgents(THREE, scene, world) {
   }
 
   // Steer away from other bodies so the aisles feel occupied, not ghostly.
-  function avoid(ent, dirx, dirz, radius, strength) {
+  //
+  // `tangent` is for a runner. Plain radial repulsion from a cop who is directly
+  // ahead points STRAIGHT BACKWARDS, so a thief squeezing past would brake to a
+  // halt a metre in front of him and be collected — the avoidance was doing the
+  // cop's job for him. For a runner the backward half of the repulsion is thrown
+  // away and only the sideways half survives: he slides round you, he does not
+  // back off you.
+  function avoid(ent, dirx, dirz, radius, strength, tangent) {
     let ax = 0, az = 0;
     for (const o of shoppers) {
       if (o === ent || o.escaped || !o.mesh.visible) continue;
@@ -486,11 +560,67 @@ export function createAgents(THREE, scene, world) {
     const d = Math.hypot(dx, dz);
     if (d < radius + 0.3 && d > 1e-4) {
       const w = (1 - d / (radius + 0.3)) * strength * 1.3;
-      ax += (dx / d) * w; az += (dz / d) * w;
+      let rx = dx / d, rz = dz / d;
+      if (tangent) {
+        const along = rx * dirx + rz * dirz;
+        if (along < 0) { rx -= along * dirx; rz -= along * dirz; }
+        const m2 = Math.hypot(rx, rz);
+        if (m2 < 1e-4) { rx = 0; rz = 0; } else { rx /= m2; rz /= m2; }
+      }
+      ax += rx * w; az += rz * w;
     }
     const nx = dirx + ax, nz = dirz + az;
     const m = Math.hypot(nx, nz) || 1;
     return { x: nx / m, z: nz / m };
+  }
+
+  // ---- the squeeze ---------------------------------------------------------
+  // A thief with a uniform in his way does not stop and he does not turn round:
+  // the doors are the only thing in his world. He picks a shoulder and goes.
+  //
+  // The shoulder is chosen ONCE and held, so it is a read the player can make
+  // from the chair instead of per-frame noise, and so guessing right is worth
+  // something. He takes the side with more daylight; dead-centre he goes against
+  // whichever way the cop is already drifting — which is exactly the tell a
+  // player can bait by leaning one way and stepping the other.
+  //
+  // The arithmetic that makes it a duel rather than a coin flip: 1.58 m of
+  // usable half-lane against a 1.15 m catch radius. A shelf-hugging thief clears
+  // a dead-centre cop by 0.43 m. Move 0.43 m onto his shoulder and you have him.
+  function squeezePast(s, dir, copD, dt) {
+    s.duckT = Math.max(0, (s.duckT || 0) - dt);
+    const cdx = cop.position.x - s.position.x, cdz = cop.position.z - s.position.z;
+    const ahead = copD > 1e-3 ? (cdx * dir.x + cdz * dir.z) / copD : 0;
+
+    // He is through. Charge the stumble: a body that has just thrown itself
+    // sideways round somebody is not instantly back at top speed, and that half
+    // second is the cop's second chance if he turns quickly enough.
+    if (s.duck && (ahead < 0.05 || copD > K.jukeRange + 1.4)) {
+      if (copD < K.jukeRange + 1.4) s.stumble = K.stumbleT;
+      s.duck = 0; s.duckT = 0;
+    }
+    // Only a body actually in the way provokes one, and only inside an aisle —
+    // out on the cross-aisles there is room to go round and no duel to have.
+    if (copD > K.jukeRange || ahead < K.jukeAhead) return dir;
+    if (Math.abs(s.position.z) > HALF_LEN - 0.25) return dir;
+
+    const laneC = aisleX(aisleOf(s.position.x));
+    if (!s.duck || s.duckT <= 0) {
+      const copOff = cop.position.x - laneC;
+      let side = copOff > 0.12 ? -1 : copOff < -0.12 ? 1 : 0;
+      if (!side) {
+        const drift = cop.userData.vel.x;
+        side = Math.abs(drift) > 0.45 ? (drift > 0 ? -1 : 1)
+             : (s.position.x - laneC >= 0 ? 1 : -1);
+      }
+      s.duck = side; s.duckT = K.jukeHold;
+    }
+    const want = laneC + s.duck * LANE_FREE * K.jukeLip;
+    const lat = clamp((want - s.position.x) / 0.70, -1, 1);
+    const w = clamp((K.jukeRange - copD) / (K.jukeRange - 0.80), 0, 1) * K.jukeLat;
+    const nx = dir.x + lat * w, nz = dir.z;
+    const m = Math.hypot(nx, nz) || 1;
+    return { x: nx / m, z: nz / m, dist: dir.dist };
   }
 
   // ---- cop update ----------------------------------------------------------
@@ -617,7 +747,7 @@ export function createAgents(THREE, scene, world) {
   // Escape direction, read off the exit field. No repathing, no waypoint list
   // and no thrash — and it cannot point at a wall, which is the entire reason
   // this file no longer navigates off config.js's floor plan.
-  function navToExit(s, avoidCop, dt) {
+  function navToExit(s, flee, dt) {
     // Re-reading the field every frame is pure cost: the aim point is stable for
     // several metres of running. Refresh it on a timer, when he reaches it, or
     // when it stops being something he can see.
@@ -625,7 +755,11 @@ export function createAgents(THREE, scene, world) {
     const px = s.position.x, pz = s.position.z;
     let a = s.aim;
     if (!a || s.aimT <= 0 || dist2d(px, pz, a.x, a.z) < 0.85 || !nav.clearSeg(px, pz, a.x, a.z)) {
-      const d = nav.steer(exitF, px, pz, { avoid: avoidCop, look: 6.5 });
+      // A runner reads the cop-priced field and looks further down it, because
+      // committing to the back of the store is a decision you cannot make while
+      // only looking six metres ahead.
+      const F = flee ? escapeField() : exitF;
+      const d = nav.steer(F, px, pz, { look: flee ? 11.0 : 6.5 });
       s.aimT = 0.13;
       a = s.aim = d ? { x: d.tx, z: d.tz } : null;
     }
@@ -637,6 +771,22 @@ export function createAgents(THREE, scene, world) {
     const dx = a.x - px, dz = a.z - pz;
     const m = Math.hypot(dx, dz) || 1;
     return { x: dx / m, z: dz / m, dist: m };
+  }
+
+  // Is the cop standing between this shopper and the way he is walking out?
+  // `s.aim` is the route point navToExit last handed him, so this is "is that
+  // man on my line", not "is that man near me".
+  function seesBlocker(s, copD) {
+    const a = s.aim;
+    if (!a || copD < 1e-3) return false;
+    let rx = a.x - s.position.x, rz = a.z - s.position.z;
+    const rm = Math.hypot(rx, rz);
+    if (rm < 0.25) return false;
+    rx /= rm; rz /= rm;
+    const ux = (cop.position.x - s.position.x) / copD;
+    const uz = (cop.position.z - s.position.z) / copD;
+    if (ux * rx + uz * rz < K.thiefBlockCos) return false;
+    return nav.clearSeg(s.position.x, s.position.z, cop.position.x, cop.position.z);
   }
 
   // Is the cop bearing down on this shopper under his own steam?
@@ -665,7 +815,18 @@ export function createAgents(THREE, scene, world) {
           s.held.position.set(0.22, 1.02, 0.24);
         }
       }
+      // ROUND 3. He is walking out with a jacket full of steaks and a uniform
+      // has just appeared in the mouth of his aisle, in line with the doors. He
+      // does not amble up to within four and a half metres to make sure. Seeing
+      // the way out blocked IS the tell, and it is the difference between a
+      // chase and a collection: the old radius let him bolt at 3.4 m from a cop
+      // already at a dead sprint, which is 0.3 s of "chase" and 100% caught.
+      // Needs line of sight and needs the cop to actually be ON his route, so a
+      // cop stood at his post across the store never trips it.
       if (s.state === 'drift' && copD < T.suspicionRadius) { s.state = 'react'; s.timer = K.thiefReact; }
+      else if (s.state === 'drift' && copD < K.thiefLook && seesBlocker(s, copD)) {
+        s.state = 'react'; s.timer = K.thiefReact;
+      }
       if (s.state === 'conceal' && copD < T.suspicionRadius && s.timer < 1.2) { s.state = 'react'; s.timer = K.thiefReact; }
     } else if (!s.guilty) {
       // ---- innocent: turn and yell, never run
@@ -715,7 +876,7 @@ export function createAgents(THREE, scene, world) {
         break;
       }
       case 'drift': {
-        dir = navToExit(s, null, dt);
+        dir = navToExit(s, false, dt);
         target = T.thiefWalk * 1.12;
         s.look = Math.sin(s.phase * 0.8) * 0.5;
         if (dist2d(s.position.x, s.position.z, EXIT.x, EXIT.z) < 1.4) { escape(s, api); return; }
@@ -734,14 +895,15 @@ export function createAgents(THREE, scene, world) {
         break;
       }
       case 'bolt': {
-        // Aim point comes off the exit field, held clear of the cop where there
-        // is a choice. He will still run straight at you if you have properly
-        // cut him off — getting in front of him is supposed to be how you win.
-        dir = navToExit(s, {
-          x: cop.position.x + cop.userData.vel.x * 0.35,
-          z: cop.position.z + cop.userData.vel.z * 0.35, r: 1.8,
-        }, dt);
+        // The route already knows where the cop is — see escapeField(). If the
+        // front of his aisle is corked and the back of the store is genuinely
+        // cheaper, that is the route this returns, on its own, because it is the
+        // cheaper one. If squeezing past is cheaper, it returns that instead,
+        // hugging the shelf, and squeezePast() commits him to a shoulder.
+        dir = navToExit(s, true, dt);
+        dir = squeezePast(s, dir, copD, dt);
         target = thiefPace(s, copD, dt);
+        if (s.stumble > 0) { s.stumble = Math.max(0, s.stumble - dt); target *= K.stumbleMul; }
         s.look = 0;
         if (dist2d(s.position.x, s.position.z, EXIT.x, EXIT.z) < 1.35) { escape(s, api); return; }
         break;
@@ -756,7 +918,8 @@ export function createAgents(THREE, scene, world) {
     }
 
     if (dir) {
-      const av = avoid(s, dir.x, dir.z, s.state === 'bolt' ? 1.15 : 1.5, s.state === 'bolt' ? 0.9 : 1.25);
+      const run = s.state === 'bolt';
+      const av = avoid(s, dir.x, dir.z, run ? 1.15 : 1.5, run ? 0.9 : 1.25, run);
       // Corner cost: you cannot take a 90 at full tilt. Charge it against the
       // ROUTE direction, not the crowd-avoidance one — steer()'s lateral grip
       // already handles jostle, and billing it twice meant every shopper the
@@ -910,10 +1073,13 @@ export function createAgents(THREE, scene, world) {
     if (world.colliders && world.colliders.length !== solidCount) {
       solids = makeSolids(world); solidCount = world.colliders.length;
       nav = buildNav(); exitF = nav.field(EXIT.x, EXIT.z);
+      fleeF = null; fleeBuf = null; fleeT = 0; fleeCx = fleeCz = 1e9;
+      for (const s of shoppers) { s.aim = null; s.aimT = 0; s.path = []; }
       buildPowerups();
     }
     const frozen = !!api.frozen;
     updateCop(dt, input, frozen);
+    if (!frozen) updateFlee(dt);
     updatePowerups(dt);
     for (const s of shoppers) updateShopper(s, dt, api, frozen);
     interactions(api);
@@ -980,9 +1146,11 @@ export function createAgents(THREE, scene, world) {
     return { x: dir.x, z: FWD_SIGN * dir.z, sprint: true };
   }
 
+  // NaN used to survive into the sort here, which silently scrambles the order
+  // and prints a percentile that is not one. Drop them.
   const _q = (a, p) => {
-    if (!a.length) return NaN;
-    const b = [...a].sort((x, y) => x - y);
+    const b = a.filter(isFinite).sort((x, y) => x - y);
+    if (!b.length) return NaN;
     return b[Math.min(b.length - 1, Math.floor(p * b.length))];
   };
   const _mean = (a) => (a.length ? a.reduce((x, y) => x + y, 0) / a.length : NaN);
@@ -990,7 +1158,8 @@ export function createAgents(THREE, scene, world) {
 
   function bench(opts = {}) {
     const n = opts.n ?? 200;
-    const mode = opts.mode ?? 'none';       // 'none' | 'boost' | 'pickup'
+    const mode = opts.mode ?? 'none';       // 'none' | 'ignore' | 'pickup' | 'boost'
+    const spawn = opts.spawn ?? 'aisle';    // 'aisle' | 'back' | 'front' | 'behind'
     const dt = 1 / 60, maxT = opts.maxT ?? 30;
     const crowd = opts.crowd !== false;
     const gapMul = opts.gapMul ?? 0.96;
@@ -1021,30 +1190,63 @@ export function createAgents(THREE, scene, world) {
       thief.position.set(txx, 0, tzz);
       thief.stole = true; thief.state = 'drift'; thief.path = []; thief.repathIn = 0;
       thief.hasCart = false; thief.cart.visible = false;
-      // point him at the exit, then drop the cop a suspicion-radius behind him
+      // Point him at the exit; he is strolling out with the steaks.
       const w0 = nav.steer(exitF, thief.position.x, thief.position.z, { look: 4 });
       let fx = w0 ? w0.x : EXIT.x - thief.position.x;
       let fz = w0 ? w0.z : EXIT.z - thief.position.z;
       const fm = Math.hypot(fx, fz) || 1; fx /= fm; fz /= fm;
       thief.vel.set(fx * T.thiefWalk, 0, fz * T.thiefWalk);
-      const jit = rr(-0.6, 0.6);
-      const bx = -(fx * Math.cos(jit) - fz * Math.sin(jit));
-      const bz = -(fx * Math.sin(jit) + fz * Math.cos(jit));
-      const gap = T.suspicionRadius * gapMul;
-      cop.position.set(thief.position.x + bx * gap, 0, thief.position.z + bz * gap);
-      solids.resolve(cop.position, BODY_R);
+
+      // ---- where the COP starts. This is the whole methodology. -------------
+      // The default is `aisle`, which reproduces game.js postSpawn({kind:'aisle'})
+      // EXACTLY: the player reads the monitors, presses DISPATCH, and the cop is
+      // teleported to the mouth of the subject's own aisle, standing between him
+      // and Door 1, stopped, with full wind. That is the geometry every real
+      // chase in this game starts from, so it is the geometry the headline
+      // number has to come from. `behind` is the old round-2 spawn — a cop
+      // 4.3 m astern of a thief already running — and it is kept only as a
+      // secondary scenario, because the game never actually produces it.
       const cu = cop.userData;
-      cu.vel.set(-bx * T.copRun * 0.7, 0, -bz * T.copRun * 0.7);
-      cu.stamina = T.staminaMax; cu.gassed = false;
+      const tAisle = aisleOf(thief.position.x);
+      const dAisle = clamp(tAisle + (opts.misaim ?? 0), 0, AISLE_COUNT - 1);
+      let cx0, cz0, cvx = 0, cvz = 0;
+      if (spawn === 'behind') {
+        const jit = rr(-0.6, 0.6);
+        const bx = -(fx * Math.cos(jit) - fz * Math.sin(jit));
+        const bz = -(fx * Math.sin(jit) + fz * Math.cos(jit));
+        const gap = T.suspicionRadius * gapMul;
+        cx0 = thief.position.x + bx * gap; cz0 = thief.position.z + bz * gap;
+        cvx = -bx * T.copRun * 0.7; cvz = -bz * T.copRun * 0.7;
+      } else if (spawn === 'back') {
+        cx0 = aisleX(dAisle); cz0 = HALF_LEN - 3.0;              // postSpawn 'back'
+      } else if (spawn === 'front') {
+        cx0 = Math.max(STORE.minX + 2, SERVICE_DESK.x - 3.0);    // postSpawn 'front'
+        cz0 = FRONT_WALK_Z;
+      } else {
+        cx0 = aisleX(dAisle); cz0 = -HALF_LEN + 3.0;             // postSpawn 'aisle'
+      }
+      cop.position.set(cx0, 0, cz0);
+      solids.resolve(cop.position, BODY_R);
+      cu.vel.set(cvx, 0, cvz); cu.speed = Math.hypot(cvx, cvz);
+      cu.stamina = T.staminaMax; cu.gassed = false; cu.skid = 0;
+      cu.heading = Math.atan2(cvx, cvz);
       cu.boost = mode === 'boost' ? T.boostTime : 0;
 
-      if (opts.nopu) for (const p of powerups) { p.live = false; p.respawn = 1e6; p.mesh.visible = false; }
+      // 'none' means NO POWERUP AVAILABLE. It used to mean "the bot does not
+      // detour for one", which is a different and much weaker claim — the round-2
+      // report published 1.5% from a call that was actually still handing the cop
+      // free cans. The documented call now does the obvious thing; `ignore`
+      // is the old behaviour, kept because boostFrac under it is the measurement
+      // that proves the shelf-lip reach gate still works.
+      if (mode === 'none' || opts.nopu) {
+        for (const p of powerups) { p.live = false; p.respawn = 1e6; p.mesh.visible = false; }
+      }
       const st = {
         gotBoost: mode !== 'pickup', puTarget: null, puT: 0, detour: opts.detour ?? 7,
         path: [], repath: 0, goal: { x: 0, z: 0 },
       };
 
-      let time = 0, done = 0, finalGap = 0;
+      let time = 0, done = 0, finalGap = 0, wentBack = false, ducked = false;
       let tBolt = NaN, gapAtBolt = NaN, routeAtBolt = NaN;
       let minGap = Infinity, sumTs = 0, sumCs = 0, nS = 0;
       let gassedT = 0, slowT = 0, boostT = 0, sumCm = 0, sumLat = 0, nLat = 0;
@@ -1067,6 +1269,8 @@ export function createAgents(THREE, scene, world) {
         }
         if (thief.bolted && !done) {
           if (g < minGap) minGap = g;
+          if (thief.position.z > HALF_LEN - 2.2) wentBack = true;
+          if (thief.duck) ducked = true;
           sumTs += thief.speed; sumCs += cu.speed; nS++;
           if (cu.gassed) gassedT += dt;
           if (cu.boost > 0) boostT += dt;
@@ -1094,7 +1298,11 @@ export function createAgents(THREE, scene, world) {
         slowFrac: nS ? slowT / (nS * dt) : NaN,
         corner: nS ? sumCm / nS : NaN,
         copLat: nLat ? sumLat / nLat : NaN,
-        aisle: ai,
+        aisle: ai, wentBack, ducked,
+        // Starting geometry, so a result can be sliced by how deep in the aisle
+        // he was when you walked in on him instead of only pooled.
+        z0: tzz, d0: dist2d(txx, tzz, cx0, cz0),
+        noBolt: !isFinite(tBolt),
       });
     }
 
@@ -1106,9 +1314,26 @@ export function createAgents(THREE, scene, world) {
     const esc = R.filter((r) => r.done === 2);
     const stall = R.filter((r) => r.done === 0);
     const res = {
-      mode, n, crowd,
+      mode, spawn, misaim: opts.misaim ?? 0, n, crowd,
       catchRate: +(caught.length / n * 100).toFixed(1),
       escaped: esc.length, stalled: stall.length,
+      // Seconds from DISPATCH (not from the bolt) to the grab. If this is ~1s
+      // the player never had a chase, whatever the catch rate says.
+      catchFromDispatch_median: _f2(_q(caught.map((r) => r.time), 0.5)),
+      // Did he ever use the back of the store? The counterplay, measured.
+      outTheBack: R.filter((r) => r.wentBack).length,
+      // ...and how often he committed to a shoulder and tried to go through you.
+      squeezed: R.filter((r) => r.ducked).length,
+      squeezeWon: R.filter((r) => r.ducked && r.done === 2).length,
+      // Grabbed before he even finished flinching — you landed on top of him.
+      caughtStanding: caught.filter((r) => r.noBolt).length,
+      // Catch rate sliced by how far away he was when you walked in. Pooling
+      // these hides the whole story: walking in on top of him is meant to be a
+      // catch, and it is a different event from a chase down the aisle.
+      byStartGap: [[0, 3], [3, 6], [6, 10], [10, 16], [16, 99]].map(([a, b]) => {
+        const g = R.filter((r) => r.d0 >= a && r.d0 < b);
+        return g.length ? `${a}-${b}m n${g.length}:${Math.round(g.filter((r) => r.done === 1).length / g.length * 100)}%` : null;
+      }).filter(Boolean).join(' '),
       // how badly the escapes were lost (cop-to-thief separation at the doors)
       missByM_median: _f2(_q(esc.map((r) => r.finalGap), 0.5)),
       missByM_p10: _f2(_q(esc.map((r) => r.finalGap), 0.1)),
@@ -1138,30 +1363,51 @@ export function createAgents(THREE, scene, world) {
     return res;
   }
 
+  // Every scenario is measured FROM THE REAL SPAWN unless you say otherwise.
   function benchAll(n = 200, opts = {}) {
     return [
       bench({ ...opts, n, mode: 'none' }),
+      bench({ ...opts, n, mode: 'ignore' }),
       bench({ ...opts, n, mode: 'pickup' }),
       bench({ ...opts, n, mode: 'boost' }),
     ];
   }
   // Compact one-line summary for sweeps.
+  const fmt = (r) => `${r.mode}${r.misaim ? `/off${r.misaim}` : ''}:${r.catchRate}%`
+    + ` miss${r.missByM_median}m near${r.minGapM_median}m t${r.catchFromDispatch_median}s back${r.outTheBack}`;
   function benchLine(n = 200, opts = {}) {
-    const a = benchAll(n, opts);
-    return a.map((r) => `${r.mode}:${r.catchRate}% miss${r.missByM_median}m near${r.minGapM_median}m`).join('  |  ');
+    return benchAll(n, opts).map(fmt).join('  |  ');
+  }
+  // THE report: the four numbers round 3 is judged on, all from postSpawn('aisle').
+  function benchReal(n = 200, opts = {}) {
+    const o = { ...opts, n, spawn: 'aisle' };
+    return {
+      noPowerup:   fmt(bench({ ...o, mode: 'none' })),
+      canGrabOne:  fmt(bench({ ...o, mode: 'pickup' })),
+      boostInHand: fmt(bench({ ...o, mode: 'boost' })),
+      wrongBy1:    fmt(bench({ ...o, mode: 'none', misaim: 1 })),
+      wrongBy2:    fmt(bench({ ...o, mode: 'none', misaim: 2 })),
+      wrongBy4:    fmt(bench({ ...o, mode: 'none', misaim: 4 })),
+      fromFrontEnd: fmt(bench({ ...o, mode: 'none', spawn: 'front' })),
+      legacyBehind: fmt(bench({ ...o, mode: 'none', spawn: 'behind' })),
+    };
   }
 
   return {
     cop, shoppers, powerups, reset,
     update: tick,
-    bench, benchAll, benchLine,
+    bench, benchAll, benchLine, benchReal,
     // debug handles
     // game.js counts down the door alarm off a thief's speed. TUNING.thiefRun is
     // his opening ceiling, not his cruise — use these instead so the ETA is true.
     thiefCruise: () => T.thiefRun * K.thiefTired,
     thiefTop: () => T.thiefRun * K.thiefPanic,
     get nav() { return nav; }, get exitField() { return exitF; }, toExit,
-    rebuildNav() { nav = buildNav(); exitF = nav.field(EXIT.x, EXIT.z); },
+    get escapeField() { return escapeField(); }, get fleeBuilds() { return fleeBuilds; },
+    rebuildNav() {
+      nav = buildNav(); exitF = nav.field(EXIT.x, EXIT.z);
+      fleeF = null; fleeBuf = null; fleeT = 0; fleeCx = fleeCz = 1e9;
+    },
     tuning: T, K,
     get thieves() { return shoppers.filter((s) => s.guilty); },
   };

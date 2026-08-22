@@ -26,6 +26,17 @@ const HALF = AISLE_LEN / 2;
 const d2 = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 const GUILTY = new Set(BEHAVIOUR_GUILTY);
 
+// A yield the browser will not throttle. setTimeout(0) is clamped to ~1s in a
+// backgrounded tab, and every agent here runs its tab in the background, which
+// turned a 90 second bench into a twenty minute one. MessageChannel is exempt.
+const yieldNow = (() => {
+  if (typeof MessageChannel !== 'function') return () => new Promise((r) => setTimeout(r, 0));
+  const ch = new MessageChannel();
+  let waiting = [];
+  ch.port1.onmessage = () => { const w = waiting; waiting = []; w.forEach((r) => r()); };
+  return () => new Promise((r) => { waiting.push(r); ch.port2.postMessage(0); });
+})();
+
 // mulberry32. game.js reaches for Math.random(); agents.js has its own stream.
 // Patching Math.random for the duration makes the game side reproducible and
 // leaves the agents side alone.
@@ -45,7 +56,7 @@ function mulberry32(a) {
 function makeDriver(ctx) {
   const { agents, input } = ctx;
   const nav = agents.nav;
-  const st = { path: [], repath: 0, gx: 0, gz: 0, dry: 0 };
+  const st = { path: [], repath: 0, gx: 0, gz: 0, dry: 0, leash: 0, was: 'desk' };
 
   function follow(pos) {
     while (st.path.length) {
@@ -67,15 +78,24 @@ function makeDriver(ctx) {
   return function drive(dt, game) {
     const cop = agents.cop.position;
     const t = game.bot.target();
+    if (st.was !== 'floor') { st.leash = 0; st.dry = 0; st.path = []; }
+    st.was = 'floor';
+    st.leash += dt;
     if (!t || t.caught || t.escaped) {
       st.dry += dt;
       input.x = 0; input.z = 0; input.sprint = false;
-      if (st.dry > 3.0) { game.enterDesk(); st.dry = 0; st.path = []; }
+      if (st.dry > 3.0) { game.enterDesk(); st.was = 'desk'; }
       return;
     }
     st.dry = 0;
     const gap = d2(cop.x, cop.z, t.position.x, t.position.z);
     const running = t.state === 'bolt' || t.state === 'react';
+    // Nobody stands in an aisle following a stranger for a minute. If the read
+    // was wrong the subject never runs, and the player goes back to post.
+    if (!running && st.leash > 14) {
+      input.x = 0; input.z = 0; input.sprint = false;
+      game.enterDesk(); st.was = 'desk'; return;
+    }
     // Lead him, but only when the segment is clear — leading through a gondola
     // aims the cop at a shelf.
     let gx = t.position.x, gz = t.position.z;
@@ -96,44 +116,85 @@ function makeDriver(ctx) {
 }
 
 // ------------------------------------------------------------------- policies
-// A read costs time. `react` is the whole budget for noticing a blinking badge
-// on one of eight monitors, switching to that channel, reading three rows of
-// 12px mono and hitting the key. 1.1s is generous to the machine and stingy to
-// a human, which is the direction an honest bench should err.
+// Perfect at INTERPRETING, limited to what the terminal actually shows. That
+// distinction is the whole bench. An oracle that reads every row on every
+// channel at once is not a player and flatters the design; the wall only ever
+// renders behaviour text for the ONE selected channel, and everything else is a
+// blinking red FLAG badge on a thumbnail.
+//
+// So the loop is: see a badge light up somewhere -> switch to that channel ->
+// read the three rows -> decide. Traps flag in exactly the same red, so every
+// trap costs a switch and a read, and that is the cost the ambiguity is
+// supposed to impose. Nothing here can tell a trap from a tell except the text.
 function observer(ctx, opts) {
-  const react = opts.react ?? 1.1;
-  const scan = opts.scan ?? 0.4;
-  let scanT = 0, lockId = null, lockT = 0;
+  const tSwitch = opts.switch ?? 0.55;   // notice the badge, hit the channel key
+  const tRead = opts.read ?? 0.95;       // read three rows of 12px mono
+  const tAct = opts.act ?? 0.35;         // select the row and hit dispatch
+  let phase = 'scan', timer = 0, cam = -1, ignore = new Map();
   return {
     name: 'observer',
     desk(dt, game) {
-      scanT -= dt;
-      if (lockId != null) {
-        lockT -= dt;
-        if (lockT <= 0) {
-          const row = game._g.desk.subjects.find((s) => s.id === lockId);
-          if (row && GUILTY.has(row.line)) {
-            game.bot.selectCam(row.cam); game.bot.select(row.id);
-            if (!game.bot.dispatch()) lockId = null; else { lockId = null; return; }
-          } else lockId = null;
-        }
-        return;
+      const G = game._g;
+      for (const [k, v] of ignore) if (v < G.now) ignore.delete(k);
+      timer -= dt;
+      if (phase === 'switch') {
+        if (timer > 0) return;
+        game.bot.selectCam(cam); phase = 'read'; timer = tRead; return;
       }
-      if (scanT > 0) return;
-      scanT = scan;
-      // Every row on every camera — the wall is in front of him, he can look.
-      const hot = game._g.desk.subjects.filter((s) => GUILTY.has(s.line));
-      if (!hot.length) return;
-      // Whoever is closest to the door is the one about to stop being a problem.
-      hot.sort((a, b) => rank(game, a) - rank(game, b));
-      lockId = hot[0].id; lockT = react;
+      if (phase === 'read') {
+        if (timer > 0) return;
+        // Only the rows the panel is showing, scroll window and all.
+        let rows = game.bot.visibleRows();
+        const hit = rows.find((s) => GUILTY.has(s.line));
+        if (hit) { game.bot.select(hit.id); phase = 'act'; timer = tAct; return; }
+        // Page down only when the tile badge says this camera has a flag and no
+        // flagged row is in the window — the one case where the answer can be
+        // underneath. Paging whenever more rows merely EXIST costs a read per
+        // row for nothing, because the roster already sorts flagged to the top;
+        // that policy alone cost this bot six points of catch rate.
+        const flagBelow = !rows.some((s) => s.flagged)
+          && G.desk.subjects.some((s) => s.cam === cam && s.flagged);
+        if (flagBelow && G.desk.scroll + rows.length < G.desk.rows) {
+          game.bot.scroll(1); timer = 0.45; return;
+        }
+        // Nothing readable on this channel: park it and stop coming back for a
+        // while, the way you stop chasing a camera that cried wolf.
+        ignore.set(cam, G.now + 6);
+        phase = 'scan'; return;
+      }
+      if (phase === 'act') {
+        if (timer > 0) return;
+        const row = G.desk.subjects.find((s) => s.id === G.desk.sel);
+        if (row && GUILTY.has(row.line)) {
+          // Two tells on one channel: park the one you are not walking to.
+          const other = game.bot.visibleRows()
+            .find((s) => s.id !== row.id && GUILTY.has(s.line));
+          if (other) { game.bot.select(other.id); game.bot.callHold(); game.bot.select(row.id); }
+          game.bot.dispatch();
+        }
+        phase = 'scan'; return;
+      }
+      // scan: the badges are the only thing legible at thumbnail size.
+      const lit = [];
+      for (let i = 0; i < ctx.cctv.cams.length; i++) {
+        if (ignore.has(i)) continue;
+        if (G.desk.subjects.some((s) => s.cam === i && s.flagged)) lit.push(i);
+      }
+      if (!lit.length) return;
+      // Closest to the door first — that is the one about to stop being yours.
+      lit.sort((a, b) => camUrgency(game, a) - camUrgency(game, b));
+      cam = lit[0]; phase = 'switch'; timer = tSwitch;
     },
   };
 }
-function rank(game, row) {
-  const s = game.bot.shopper(row.id);
-  if (!s) return 1e9;
-  return d2(s.position.x, s.position.z, EXIT.x, EXIT.z);
+function camUrgency(game, i) {
+  let best = 1e9;
+  for (const row of game._g.desk.subjects) {
+    if (row.cam !== i || !row.flagged) continue;
+    const s = game.bot.shopper(row.id);
+    if (s) best = Math.min(best, d2(s.position.x, s.position.z, EXIT.x, EXIT.z));
+  }
+  return best;
 }
 
 // Reacts to the badge, not the text. The terminal flags traps in exactly the
@@ -182,14 +243,19 @@ export async function run(ctx, opts = {}) {
       policy: name, shifts, seconds, thieves: 0, caught: 0, escaped: 0,
       complaints: 0, demotions: 0, points: 0, dispatches: 0, deadZone: 0,
       holds: 0, floorTime: 0, deskTime: 0, wuTime: 0,
+      stallEscape: 0, stallPutBack: 0,
     };
+    let windows = [];
     for (let k = 0; k < shifts; k++) {
       const seed = (opts.seed ?? 7717) + k * 104729;
       const r = await shift(ctx, name, { ...opts, seed, seconds, dt });
       for (const key of Object.keys(agg)) {
         if (typeof agg[key] === 'number' && key in r) agg[key] += r[key];
       }
+      windows = windows.concat(r.windows);
     }
+    agg.windowMedian = med(windows);
+    agg.windowP10 = q(windows, 0.10);
     const resolved = agg.caught + agg.escaped;
     const mins = (shifts * seconds) / 60;
     agg.catchRate = resolved ? +(100 * agg.caught / resolved).toFixed(1) : null;
@@ -217,11 +283,12 @@ async function shift(ctx, policyName, opts) {
 
   agents.reset();
   game._restart();
-  game.bot.FIX && null;
+  game._g.dbg.stallEscape = 0; game._g.dbg.stallPutBack = 0;
 
   const r = {
     thieves: 0, caught: 0, escaped: 0, complaints: 0, demotions: 0, points: 0,
     dispatches: 0, deadZone: 0, holds: 0, floorTime: 0, deskTime: 0, wuTime: 0,
+    windows: [],            // seconds from the concealment tell to the door
   };
   // A thief counts as dead-zoned when he resolves having spent time on a cross
   // aisle with an untouched analytics flag — i.e. the terminal saw him and the
@@ -234,8 +301,8 @@ async function shift(ctx, policyName, opts) {
     get aisle() { return gapi.aisle; },
     get frozen() { return gapi.frozen; },
     onBolt(s) { gapi.onBolt(s); },
-    onCatch(s) { r.caught++; closeOut(s); gapi.onCatch(s); },
-    onEscape(s) { r.escaped++; closeOut(s); gapi.onEscape(s); },
+    onCatch(s) { r.caught++; closeOut(s, false); gapi.onCatch(s); },
+    onEscape(s) { r.escaped++; closeOut(s, true); gapi.onEscape(s); },
     onHarass(s) {
       const before = game.st.complaints;
       gapi.onHarass(s);
@@ -243,16 +310,20 @@ async function shift(ctx, policyName, opts) {
     },
     report(t) { gapi.report(t); },
   };
-  function closeOut(s) {
+  // On an escape the elapsed time IS the window: tell on the wall to body
+  // through the doors. That is the number the whole desk phase is played inside.
+  function closeOut(s, escaped) {
     r.thieves++;
     const m = seen.get(s.id);
     if (m && m.dead) r.deadZone++;
+    if (escaped && m && m.tellAt != null) r.windows.push(+(clock - m.tellAt).toFixed(2));
     seen.delete(s.id);
   }
 
-  let prevMode = game.st.mode;
   let wasHeld = null;
+  let clock = 0;
   for (let i = 0; i < steps; i++) {
+    clock += dt;
     const mode = game.st.mode;
     if (mode === 'desk') {
       r.deskTime += dt;
@@ -283,15 +354,23 @@ async function shift(ctx, policyName, opts) {
     for (const s of agents.shoppers) {
       if (!s.guilty || !s.stole || s.escaped || s.caught) continue;
       let m = seen.get(s.id);
-      if (!m) { m = { dead: false }; seen.set(s.id, m); }
+      if (!m) { m = { dead: false, tellAt: clock }; seen.set(s.id, m); }
       if (game.st.mode === 'desk' && (s.position.z <= -HALF - 0.35 || s.position.z >= HALF + 0.35)) {
         m.dead = true;
       }
     }
-    prevMode = mode;
-    if ((i & 2047) === 2047) await new Promise((res) => setTimeout(res, 0));
+    if ((i & 2047) === 2047) await yieldNow();
   }
   r.points = game.st.points;
+  r.stallEscape = game._g.dbg.stallEscape;
+  r.stallPutBack = game._g.dbg.stallPutBack;
   Math.random = realRandom;
   return r;
 }
+
+const q = (a, p) => {
+  if (!a.length) return null;
+  const b = [...a].sort((x, y) => x - y);
+  return +b[Math.min(b.length - 1, Math.floor(p * b.length))].toFixed(1);
+};
+const med = (a) => q(a, 0.5);

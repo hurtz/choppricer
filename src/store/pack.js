@@ -11,7 +11,10 @@
 // MASK CHANNEL CONTRACT  (raw texture, NoColorSpace — see chopPackageMat)
 //   r  brand-colour amount.  0 = bare white stock, 255 = full per-instance brand
 //   g  print brightness.     0 = ink black, 255 = paper white
-//   b  food-photo tint.      1..127 ramps to warm amber, 128..255 ramps to red
+//   b  food-photo tint. Four 64-wide bands, each ramping 0 -> full strength:
+//        0..63 golden (grains, crackers, nuts)   64..127  green (vegetables)
+//      128..191 red (tomato, berry, meat)       192..255  cream (corn, cheese)
+//      Encoded with foodB(band, amount) below; decoded in chopPackageMat.
 //
 // One atlas per package family, per-instance UV offset picks the cell. That
 // keeps 24 carton designs x unlimited brand colours at ONE draw call per batch
@@ -39,6 +42,20 @@ function cv(w, h) {
 const ink = (r, g, b = 0) => `rgb(${r | 0},${g | 0},${b | 0})`;
 const rgba = (r, g, b, a) => `rgba(${r | 0},${g | 0},${b | 0},${a})`;
 const pk = (rng, a) => a[Math.floor(rng() * a.length) % a.length];
+
+// Pack a food-palette band + strength into one byte for the mask's b channel.
+const foodB = (band, amt) => band * 64 + Math.round(Math.min(0.97, Math.max(0.05, amt)) * 62);
+
+// Which palette a product's own words imply. Canned peas coming out green and
+// tomato paste coming out red is most of what stops a shelf reading as one
+// repeated brown blob.
+function foodBand(desc) {
+  const d = String(desc).toUpperCase();
+  if (/GREEN|PEAS|BROCCOLI|SPINACH|BEAN|PICKLE|LIME|HERB|VEGET|STIR FRY|FLORET/.test(d)) return 1;
+  if (/TOMATO|SAUCE|SALSA|BERRY|CHERRY|BEEF|PUNCH|CHILI|MARINARA|STRAWBER|PIZZA|PEPPERONI|GRAPE|KIDNEY/.test(d)) return 2;
+  if (/CORN|CHEESE|LEMON|BUTTER|VANILLA|CREAM|MILK|BANANA|HONEY|PEACH|ORANGE|MANDARIN|POTATO|FRIES|RICE|PASTA|MACARONI|NOODLE/.test(d)) return 3;
+  return 0;
+}
 
 // ---------------------------------------------------------------------------
 // TYPE HELPERS
@@ -115,45 +132,79 @@ function nutriPanel(g, x, y, w, h, rng) {
   }
 }
 
-// Serving-suggestion photography. Not a flat ellipse — a bowl or plate with
-// distinct pieces, a rim highlight and a cast shadow, tinted through the b
-// channel so it does NOT take the brand colour the way a flat blob would.
-function foodPhoto(g, cx, cy, rw, rh, rng, red) {
-  const base = red ? 150 : 60;                 // b-channel ramp anchor
-  const amt = (v) => ink(200, v, base + (red ? 70 : 55) * 1);
-  // plate / bowl
-  g.fillStyle = ink(30, 236, 0);
-  g.beginPath(); g.ellipse(cx, cy + rh * 0.30, rw * 1.02, rh * 0.52, 0, 0, 6.29); g.fill();
-  g.fillStyle = ink(24, 200, 0);
-  g.beginPath(); g.ellipse(cx, cy + rh * 0.34, rw * 0.80, rh * 0.38, 0, 0, 6.29); g.fill();
-  // heaped food
-  g.fillStyle = ink(90, 175, base + 40);
-  g.beginPath(); g.ellipse(cx, cy, rw * 0.86, rh * 0.72, 0, 0, 6.29); g.fill();
-  // individual pieces catch the light differently — this is the bit that reads
-  for (let i = 0; i < 26; i++) {
-    const a = rng() * 6.29, r = Math.sqrt(rng());
-    const px = cx + Math.cos(a) * rw * 0.74 * r;
-    const py = cy + Math.sin(a) * rh * 0.60 * r;
-    const s = rr(rng, rw * 0.10, rw * 0.21);
-    g.fillStyle = amt(rr(rng, 110, 235) | 0);
+// Serving-suggestion photography. Not one flat ellipse — a set of distinct
+// presentation modes, because 24 cartons that all carry the same plate of
+// brown blobs is the round-1 repetition failure wearing a better hat.
+// Tinted through the b channel so the food does NOT take the brand colour.
+function foodPhoto(g, cx, cy, rw, rh, rng, mode, band) {
+  const piece = (v) => ink(200, v, foodB(band, 0.92));
+  const alt = (band + 2) % 4;                  // a contrasting garnish palette
+  const other = (v) => ink(200, v, foodB(alt, 0.85));
+
+  if (mode === 'window') {                     // bordered photo panel
+    g.fillStyle = ink(6, 250); g.fillRect(cx - rw * 1.12, cy - rh * 1.12, rw * 2.24, rh * 2.24);
+    g.fillStyle = ink(120, 120, foodB(band, 0.75)); g.fillRect(cx - rw, cy - rh, rw * 2, rh * 2);
+  } else if (mode === 'plate') {
+    g.fillStyle = ink(30, 236, 0);
+    g.beginPath(); g.ellipse(cx, cy + rh * 0.30, rw * 1.02, rh * 0.52, 0, 0, 6.29); g.fill();
+    g.fillStyle = ink(24, 200, 0);
+    g.beginPath(); g.ellipse(cx, cy + rh * 0.34, rw * 0.80, rh * 0.38, 0, 0, 6.29); g.fill();
+  } else if (mode === 'bowl') {
+    g.fillStyle = ink(190, 190, 0);
+    g.beginPath(); g.ellipse(cx, cy + rh * 0.16, rw * 0.98, rh * 0.86, 0, 0, 3.15); g.fill();
+    g.fillStyle = ink(210, 245, 0);
+    g.beginPath(); g.ellipse(cx, cy - rh * 0.18, rw * 0.98, rh * 0.30, 0, 0, 6.29); g.fill();
+  }
+
+  // the heap itself
+  if (mode !== 'window') {
+    g.fillStyle = ink(90, 175, foodB(band, 0.70));
     g.beginPath();
-    g.ellipse(px, py, s, s * rr(rng, 0.62, 0.95), rng() * 3.1, 0, 6.29);
+    if (mode === 'stack') g.rect(cx - rw * 0.72, cy - rh * 0.75, rw * 1.44, rh * 1.5);
+    else g.ellipse(cx, cy, rw * 0.86, rh * 0.72, 0, 0, 6.29);
     g.fill();
-    if (rng() < 0.45) {                        // tiny specular pip on the piece
-      g.fillStyle = ink(60, 252, base * 0.4);
+  }
+
+  if (mode === 'stack') {
+    // wafers / crackers / slices seen edge-on: hard parallel rules
+    const n = 5 + (rng() * 4 | 0);
+    for (let i = 0; i < n; i++) {
+      const y = cy - rh * 0.70 + i * (rh * 1.4 / n);
+      g.fillStyle = piece(rr(rng, 150, 240) | 0);
+      g.fillRect(cx - rw * (0.60 + rng() * 0.14), y, rw * 1.3, rh * 1.4 / n * 0.66);
+      g.fillStyle = ink(40, 40, foodB(band, 0.45));
+      g.fillRect(cx - rw * 0.60, y + rh * 1.4 / n * 0.66, rw * 1.3, rh * 0.035);
+    }
+  } else {
+    const n = mode === 'window' ? 34 : 26;
+    for (let i = 0; i < n; i++) {
+      const a2 = rng() * 6.29, r = Math.sqrt(rng());
+      const px = cx + Math.cos(a2) * rw * (mode === 'window' ? 0.9 : 0.74) * r;
+      const py = cy + Math.sin(a2) * rh * (mode === 'window' ? 0.9 : 0.60) * r;
+      const sz = rr(rng, rw * 0.09, rw * 0.22);
+      g.fillStyle = rng() < 0.22 ? other(rr(rng, 120, 230) | 0) : piece(rr(rng, 110, 235) | 0);
       g.beginPath();
-      g.ellipse(px - s * 0.3, py - s * 0.34, s * 0.26, s * 0.18, 0, 0, 6.29);
+      if (rng() < 0.25) g.rect(px - sz, py - sz * 0.7, sz * 2, sz * 1.4);
+      else g.ellipse(px, py, sz, sz * rr(rng, 0.62, 0.95), rng() * 3.1, 0, 6.29);
       g.fill();
+      if (rng() < 0.45) {                      // specular pip
+        g.fillStyle = ink(60, 252, foodB(band, 0.16));
+        g.beginPath();
+        g.ellipse(px - sz * 0.3, py - sz * 0.34, sz * 0.26, sz * 0.18, 0, 0, 6.29);
+        g.fill();
+      }
     }
   }
   // garnish
-  g.fillStyle = ink(150, 150, 0);
-  for (let i = 0; i < 3; i++) {
-    const a = rng() * 6.29;
-    g.beginPath();
-    g.ellipse(cx + Math.cos(a) * rw * 0.5, cy + Math.sin(a) * rh * 0.4,
-      rw * 0.13, rh * 0.07, a, 0, 6.29);
-    g.fill();
+  if (mode !== 'stack' && rng() < 0.7) {
+    g.fillStyle = ink(60, 150, foodB(1, 0.85));   // green garnish
+    for (let i = 0; i < 3; i++) {
+      const a2 = rng() * 6.29;
+      g.beginPath();
+      g.ellipse(cx + Math.cos(a2) * rw * 0.5, cy + Math.sin(a2) * rh * 0.4,
+        rw * 0.13, rh * 0.07, a2, 0, 6.29);
+      g.fill();
+    }
   }
 }
 
@@ -199,7 +250,7 @@ function maskTex(THREE, canvas) {
 export function cartonAtlas(THREE, deptKeys) {
   const A = ATLAS.carton;
   const [c, g] = cv(A.cw * A.cols, A.ch * A.rows);
-  const rng = makeRng(0xC4A70;
+  const rng = makeRng(0xC4A701);
   const M = A.cw * A.wrap;
 
   for (let i = 0; i < A.cols * A.rows; i++) {
@@ -212,8 +263,14 @@ export function cartonAtlas(THREE, deptKeys) {
   return maskTex(THREE, c);
 }
 
+const PHOTO_MODES = ['plate', 'bowl', 'pile', 'window', 'stack', 'plate', 'window'];
+
 function cartonDesign(g, i, W, H, M, rng, deptKeys) {
+  // fam sets the tonal family, arch sets the LAYOUT. 24 cells that share one
+  // template read as one product recoloured 24 times, which is exactly the
+  // repetition the blind test picked up on.
   const fam = i < 10 ? 0 : (i < 18 ? 1 : 2);
+  const arch = i % 7;                       // 0..6, see the switch below
   const x0 = M, fw = W - M;
   const brand = pk(rng, i % 7 === 6 ? VALUE_BRANDS : BRANDS);
   const deptKey = deptKeys[i % deptKeys.length];
@@ -221,48 +278,101 @@ function cartonDesign(g, i, W, H, M, rng, deptKeys) {
   const flash = pk(rng, FLASH);
   const wt = pk(rng, WEIGHTS);
   const wmFace = pk(rng, [FACE.fat, FACE.fat, FACE.impact, FACE.geo, FACE.serif,
-    FACE.human, FACE.slab, FACE.didone]);
+    FACE.human, FACE.slab, FACE.didone, FACE.plate, FACE.script]);
+  const photoMode = PHOTO_MODES[(i * 3 + fam) % PHOTO_MODES.length];
+  const noPhoto = arch === 3;               // flour / sugar / detergent look
   g.textBaseline = 'alphabetic';
 
   // ---- ground -------------------------------------------------------------
   if (fam === 0) {
     g.fillStyle = ink(14, 250); g.fillRect(0, 0, W, H);            // white stock
-    g.fillStyle = ink(255, 205); g.fillRect(0, 0, W, H * 0.135);   // brand header
+    g.fillStyle = ink(255, 205); g.fillRect(0, 0, W, H * 0.135);
     g.fillStyle = ink(255, 150); g.fillRect(0, H * 0.135, W, H * 0.012);
     g.fillStyle = ink(255, 190); g.fillRect(0, H - H * 0.075, W, H * 0.075);
   } else if (fam === 1) {
     g.fillStyle = ink(255, 198); g.fillRect(0, 0, W, H);           // full bleed
     g.fillStyle = ink(255, 135); g.fillRect(0, 0, W, H * 0.10);
-    g.fillStyle = ink(14, 250); g.fillRect(x0 + fw * 0.05, H * 0.15, fw * 0.90, H * 0.26);
     g.fillStyle = ink(255, 160); g.fillRect(0, H - H * 0.10, W, H * 0.10);
   } else {
     g.fillStyle = ink(255, 92); g.fillRect(0, 0, W, H);            // dark rich
     g.fillStyle = ink(255, 58); g.fillRect(0, 0, W, H * 0.09);
-    g.fillStyle = ink(200, 235); g.fillRect(0, H * 0.60, W, H * 0.018);
   }
 
-  // ---- wordmark — roughly a quarter of the face height --------------------
-  const wmY = fam === 1 ? H * 0.33 : H * 0.255;
-  const wmPx = H * (fam === 1 ? 0.135 : 0.115);
+  // decorative ground pattern on some designs — stripes, checks, a burst
+  if (arch === 3 || arch === 6) {
+    g.save(); g.globalAlpha = 0.5;
+    if (rng() < 0.5) {
+      for (let k = -H; k < W + H; k += 14) {
+        g.fillStyle = ink(255, fam === 0 ? 225 : 130);
+        g.save(); g.translate(k, 0); g.rotate(0.5); g.fillRect(0, -H, 6, H * 3); g.restore();
+      }
+    } else {
+      for (let k = 0; k < H; k += 22) {
+        g.fillStyle = ink(255, fam === 0 ? 228 : 140);
+        g.fillRect(0, k, W, 9);
+      }
+    }
+    g.restore();
+  }
+
+  // ---- LAYOUT -------------------------------------------------------------
+  let wmY, wmPx, wmCx, wmMaxW, photoX, photoY, photoR, plate = true;
+  switch (arch) {
+    case 0:  // header wordmark, photo centred below
+      wmY = H * 0.255; wmPx = H * 0.115; wmCx = W * 0.5 + M * 0.35; wmMaxW = fw * 0.88;
+      photoX = x0 + fw * 0.52; photoY = H * 0.63; photoR = fw * 0.31; break;
+    case 1:  // big photo bottom 55%, wordmark high on colour
+      wmY = H * 0.20; wmPx = H * 0.125; wmCx = W * 0.5 + M * 0.35; wmMaxW = fw * 0.9;
+      photoX = x0 + fw * 0.5; photoY = H * 0.70; photoR = fw * 0.44; plate = false; break;
+    case 2:  // wordmark in an oval, photo behind it
+      wmY = H * 0.32; wmPx = H * 0.105; wmCx = W * 0.5 + M * 0.35; wmMaxW = fw * 0.72;
+      photoX = x0 + fw * 0.55; photoY = H * 0.60; photoR = fw * 0.36; break;
+    case 3:  // no photo: type-led, big ingredient panel
+      wmY = H * 0.30; wmPx = H * 0.155; wmCx = W * 0.5 + M * 0.35; wmMaxW = fw * 0.92;
+      photoX = 0; photoY = 0; photoR = 0; break;
+    case 4:  // wordmark left-aligned, photo to the right
+      wmY = H * 0.24; wmPx = H * 0.10; wmCx = x0 + fw * 0.06; wmMaxW = fw * 0.62;
+      photoX = x0 + fw * 0.68; photoY = H * 0.58; photoR = fw * 0.28; break;
+    case 5:  // narrow tall: stacked wordmark over a small window photo
+      wmY = H * 0.22; wmPx = H * 0.13; wmCx = W * 0.5 + M * 0.35; wmMaxW = fw * 0.94;
+      photoX = x0 + fw * 0.5; photoY = H * 0.55; photoR = fw * 0.30; break;
+    default: // 6: banded, wordmark low over a wide photo
+      wmY = H * 0.62; wmPx = H * 0.12; wmCx = W * 0.5 + M * 0.35; wmMaxW = fw * 0.86;
+      photoX = x0 + fw * 0.5; photoY = H * 0.34; photoR = fw * 0.38; break;
+  }
+
+  // ---- serving-suggestion photograph (drawn under the type) ---------------
+  if (!noPhoto) {
+    foodPhoto(g, photoX, photoY, photoR, photoR * (arch === 1 ? 0.62 : 0.80),
+      rng, photoMode, foodBand(desc));
+  }
+
+  // ---- wordmark, roughly a quarter of the face height ---------------------
+  if (plate && arch !== 4) {                 // white plate behind the mark
+    g.fillStyle = fam === 1 ? ink(14, 250) : ink(255, fam === 2 ? 210 : 245);
+    if (arch === 2) {
+      g.beginPath();
+      g.ellipse(wmCx, wmY - wmPx * 0.30, fw * 0.46, wmPx * 0.86, 0, 0, 6.29);
+      g.fill();
+    } else if (fam !== 0) {
+      g.fillRect(x0 + fw * 0.04, wmY - wmPx * 0.92, fw * 0.92, wmPx * 1.30);
+    }
+  }
   g.fillStyle = fam === 0 ? ink(255, 120) : (fam === 1 ? ink(255, 150) : ink(10, 250));
-  fitText(g, brand, W * 0.5 + M * 0.35, wmY, fw * 0.88, wmPx, wmFace, '900');
-  // a rule under the mark, the way a lot of house brands set it
-  if (rng() < 0.55) {
+  if (arch === 2 || (fam === 1 && plate)) g.fillStyle = ink(255, 130);
+  fitText(g, brand, wmCx, wmY, wmMaxW, wmPx, wmFace, '900', arch === 4 ? 'left' : 'center');
+  if (rng() < 0.5) {
     g.fillStyle = fam === 2 ? ink(20, 240) : ink(255, 140);
-    g.fillRect(x0 + fw * 0.10, wmY + wmPx * 0.20, fw * 0.80, H * 0.006);
+    g.fillRect(wmCx - (arch === 4 ? 0 : wmMaxW / 2), wmY + wmPx * 0.20, wmMaxW * 0.9, H * 0.006);
   }
 
   // ---- product descriptor -------------------------------------------------
   g.fillStyle = fam === 2 ? ink(30, 245) : ink(12, 40);
-  fitText(g, desc, W * 0.5 + M * 0.35, wmY + H * 0.075, fw * 0.86, H * 0.045,
-    pk(rng, [FACE.grot, FACE.human, FACE.geo]), '700');
-
-  // ---- serving-suggestion photograph --------------------------------------
-  const phY = H * 0.63, phR = fw * 0.31;
-  foodPhoto(g, x0 + fw * 0.52, phY, phR, phR * 0.80, rng, i % 3 === 0);
+  fitText(g, desc, wmCx, wmY + H * 0.070, wmMaxW * 0.96, H * 0.045,
+    pk(rng, [FACE.grot, FACE.human, FACE.geo]), '700', arch === 4 ? 'left' : 'center');
 
   // ---- flavour flash ribbon ----------------------------------------------
-  const flY = H * 0.455;
+  const flY = arch === 6 ? H * 0.755 : (arch === 1 ? H * 0.395 : H * 0.455);
   g.fillStyle = ink(255, fam === 2 ? 210 : 120);
   g.fillRect(0, flY, W, H * 0.052);
   g.fillStyle = ink(fam === 2 ? 255 : 10, fam === 2 ? 40 : 250);
@@ -274,9 +384,9 @@ function cartonDesign(g, i, W, H, M, rng, deptKeys) {
     const bx = x0 + fw * (rng() < 0.5 ? 0.19 : 0.80), by = H * 0.545;
     g.fillStyle = ink(255, 235);
     g.beginPath();
-    for (let k = 0; k < 20; k++) {              // starburst, not a plain circle
-      const a = (k / 20) * 6.283, r = (k % 2 ? 0.66 : 1.0) * fw * 0.115;
-      g[k ? 'lineTo' : 'moveTo'](bx + Math.cos(a) * r, by + Math.sin(a) * r * 0.9);
+    for (let k = 0; k < 20; k++) {
+      const a2 = (k / 20) * 6.283, r = (k % 2 ? 0.66 : 1.0) * fw * 0.115;
+      g[k ? 'lineTo' : 'moveTo'](bx + Math.cos(a2) * r, by + Math.sin(a2) * r * 0.9);
     }
     g.closePath(); g.fill();
     g.fillStyle = ink(20, 30);
@@ -284,18 +394,19 @@ function cartonDesign(g, i, W, H, M, rng, deptKeys) {
   }
 
   // ---- legal type + weight + barcode + nutrition flash --------------------
-  const legY = H * 0.815;
-  legalBlock(g, x0 + fw * 0.045, legY, fw * 0.52, 7, H * 0.0165, rng,
-    fam === 2 ? ink(60, 175) : ink(16, 78));
+  // Type-led designs give the panel far more room, the way a flour or a
+  // detergent carton does.
+  const legN = noPhoto ? 11 : 7;
+  legalBlock(g, x0 + fw * 0.045, noPhoto ? H * 0.60 : H * 0.815, fw * 0.52, legN,
+    H * 0.0165, rng, fam === 2 ? ink(60, 175) : ink(16, 78));
   g.textAlign = 'left';
   g.fillStyle = fam === 2 ? ink(40, 245) : ink(12, 45);
-  fitText(g, wt, x0 + fw * 0.045, H * 0.785, fw * 0.50, H * 0.030,
+  fitText(g, wt, x0 + fw * 0.045, noPhoto ? H * 0.565 : H * 0.785, fw * 0.50, H * 0.030,
     FACE.grot, '700', 'left');
-  nutriPanel(g, x0 + fw * 0.62, H * 0.700, fw * 0.34, H * 0.175, rng);
+  if (rng() < 0.82) nutriPanel(g, x0 + fw * 0.62, H * 0.700, fw * 0.34, H * 0.175, rng);
   barcode(g, x0 + fw * 0.62, H * 0.892, fw * 0.34, H * 0.082, rng);
 
-  // small circular nutrition claim, top corner
-  if (rng() < 0.5) {
+  if (rng() < 0.5) {                         // circular nutrition claim
     const nx = x0 + fw * 0.855, ny = H * 0.075, nr = fw * 0.095;
     g.fillStyle = fam === 1 ? ink(14, 250) : ink(255, 175);
     g.beginPath(); g.arc(nx, ny, nr, 0, 6.29); g.fill();
@@ -306,15 +417,12 @@ function cartonDesign(g, i, W, H, M, rng, deptKeys) {
   }
 
   // ---- plain wrap column: sides / top / bottom of every carton ------------
-  // Matches the front's bands so a box seen from the end still reads as the
-  // same product, but carries no duplicated barcode.
   g.fillStyle = fam === 0 ? ink(14, 236) : (fam === 1 ? ink(255, 178) : ink(255, 84));
   g.fillRect(0, 0, M, H);
   g.fillStyle = ink(255, fam === 2 ? 54 : 150);
   g.fillRect(0, 0, M, H * (fam === 1 ? 0.10 : 0.135));
   g.fillStyle = ink(255, fam === 2 ? 60 : 165);
   g.fillRect(0, H - H * 0.085, M, H * 0.085);
-  // a sliver of side-panel type so the end of a box is not a blank slab
   g.save();
   g.translate(M * 0.52, H * 0.52); g.rotate(-Math.PI / 2);
   g.fillStyle = fam === 2 ? ink(30, 220) : ink(16, 70);
@@ -364,7 +472,9 @@ export function pouchAtlas(THREE, deptKeys) {
       g.fillRect(k, H - H * 0.10, 1.3, H * 0.10);
     }
 
-    foodPhoto(g, M + (W - M) * 0.52, H * 0.66, (W - M) * 0.34, H * 0.21, rng, i % 4 === 1);
+    const pdesc = pk(rng, DESC[deptKeys[i % deptKeys.length]] || DESC.snacks);
+    foodPhoto(g, M + (W - M) * 0.52, H * 0.66, (W - M) * 0.34, H * 0.21, rng,
+      PHOTO_MODES[(i * 5) % PHOTO_MODES.length], foodBand(pdesc));
 
     const brand = pk(rng, BRANDS);
     g.fillStyle = ink(14, 250);
@@ -373,8 +483,8 @@ export function pouchAtlas(THREE, deptKeys) {
     fitText(g, brand, M + (W - M) * 0.5, H * 0.305, (W - M) * 0.86, H * 0.125,
       pk(rng, [FACE.fat, FACE.impact, FACE.geo, FACE.script]), '900');
     g.fillStyle = dark ? ink(20, 245) : ink(12, 40);
-    fitText(g, pk(rng, DESC[deptKeys[i % deptKeys.length]] || DESC.snacks),
-      M + (W - M) * 0.5, H * 0.395, (W - M) * 0.84, H * 0.055, FACE.grot, '800');
+    fitText(g, pdesc, M + (W - M) * 0.5, H * 0.395, (W - M) * 0.84, H * 0.055,
+      FACE.grot, '800');
     g.fillStyle = ink(255, dark ? 225 : 118);
     g.fillRect(0, H * 0.425, W, H * 0.052);
     g.fillStyle = ink(dark ? 255 : 12, dark ? 45 : 250);
@@ -410,14 +520,14 @@ export function pouchAtlas(THREE, deptKeys) {
 }
 
 // ---------------------------------------------------------------------------
-// CAN ATLAS — the label wraps the full circumference, so the wordmark is
-// repeated three times across the cell exactly as a real can prints it.
-// Whichever third faces the camera therefore always shows a brand.
+// CAN ATLAS — one full label per cell. unitCellUV folds the cylinder's u so
+// the whole label lands on the front-facing half; the hidden back takes the
+// squashed edge. That beats wrapping, which only ever showed a fragment.
 export function canAtlas(THREE, deptKeys) {
   const A = ATLAS.can;
   const [c, g] = cv(A.cw * A.cols, A.ch * A.rows);
   const rng = makeRng(0xCA5);
-  const REP = 3;
+  const REP = 1;
 
   for (let i = 0; i < A.cols * A.rows; i++) {
     const W = A.cw, H = A.ch, seg = W / REP;
@@ -449,7 +559,8 @@ export function canAtlas(THREE, deptKeys) {
       g.fillStyle = pale ? ink(20, 45) : ink(20, 245);
       fitText(g, desc, cx, H * 0.325, seg * 0.92, H * 0.058, FACE.grot, '700');
       // the food picture that fills the middle of nearly every can label
-      foodPhoto(g, cx, H * 0.50, seg * 0.34, H * 0.115, rng, i % 3 !== 1);
+      foodPhoto(g, cx, H * 0.50, seg * 0.34, H * 0.115, rng,
+        PHOTO_MODES[(i * 2 + 1) % PHOTO_MODES.length], foodBand(desc));
       g.fillStyle = pale ? ink(12, 40) : ink(20, 240);
       fitText(g, pk(rng, FLASH), cx, H * 0.755, seg * 0.80, H * 0.052, FACE.fat, '900');
       legalBlock(g, cx - seg * 0.44, H * 0.815, seg * 0.86, 3, H * 0.030, rng,
@@ -459,13 +570,11 @@ export function canAtlas(THREE, deptKeys) {
 
     // cylindrical shading + a hard vertical specular on the tinplate
     const e = g.createLinearGradient(0, 0, W, 0);
-    for (let r = 0; r < REP; r++) {
-      const b = r / REP;
-      e.addColorStop(b + 0.001, 'rgba(0,0,0,0.55)');
-      e.addColorStop(b + 0.10 / REP, 'rgba(255,255,255,0.30)');
-      e.addColorStop(b + 0.42 / REP, 'rgba(0,0,0,0.0)');
-      e.addColorStop(b + 0.99 / REP, 'rgba(0,0,0,0.55)');
-    }
+    e.addColorStop(0.00, 'rgba(0,0,0,0.62)');
+    e.addColorStop(0.20, 'rgba(255,255,255,0.26)');   // near-side sheen
+    e.addColorStop(0.50, 'rgba(0,0,0,0.00)');
+    e.addColorStop(0.80, 'rgba(0,0,0,0.20)');
+    e.addColorStop(1.00, 'rgba(0,0,0,0.62)');
     g.globalCompositeOperation = 'multiply';
     g.fillStyle = e; g.fillRect(0, H * 0.09, W, H * 0.83);
     g.globalCompositeOperation = 'source-over';
@@ -475,13 +584,13 @@ export function canAtlas(THREE, deptKeys) {
 }
 
 // ---------------------------------------------------------------------------
-// BOTTLE ATLAS — shrink-film label around a lathe. Same 3x repeat rule.
+// BOTTLE ATLAS — shrink-film label around a lathe, front-folded like the can.
 // Elongated white streaks are doing most of the "this is PET" work.
 export function bottleAtlas(THREE, deptKeys) {
   const A = ATLAS.bottle;
   const [c, g] = cv(A.cw * A.cols, A.ch * A.rows);
   const rng = makeRng(0xB07);
-  const REP = 3;
+  const REP = 1;
 
   for (let i = 0; i < A.cols * A.rows; i++) {
     const W = A.cw, H = A.ch, seg = W / REP;
@@ -522,16 +631,15 @@ export function bottleAtlas(THREE, deptKeys) {
     barcode(g, seg * 0.12, ly + lh * 0.03, seg * 0.5, lh * 0.10, rng);
 
     // curvature + two hard streaks
+    // two hard elongated streaks — this is how a viewer reads "PET bottle"
     const e = g.createLinearGradient(0, 0, W, 0);
-    for (let r = 0; r < REP; r++) {
-      const b = r / REP;
-      e.addColorStop(b + 0.001, 'rgba(0,0,0,0.60)');
-      e.addColorStop(b + 0.09 / REP, 'rgba(255,255,255,0.42)');
-      e.addColorStop(b + 0.20 / REP, 'rgba(255,255,255,0.05)');
-      e.addColorStop(b + 0.62 / REP, 'rgba(0,0,0,0.10)');
-      e.addColorStop(b + 0.80 / REP, 'rgba(255,255,255,0.22)');
-      e.addColorStop(b + 0.99 / REP, 'rgba(0,0,0,0.60)');
-    }
+    e.addColorStop(0.00, 'rgba(0,0,0,0.66)');
+    e.addColorStop(0.16, 'rgba(255,255,255,0.55)');
+    e.addColorStop(0.26, 'rgba(255,255,255,0.06)');
+    e.addColorStop(0.58, 'rgba(0,0,0,0.06)');
+    e.addColorStop(0.74, 'rgba(255,255,255,0.34)');
+    e.addColorStop(0.84, 'rgba(255,255,255,0.04)');
+    e.addColorStop(1.00, 'rgba(0,0,0,0.66)');
     g.globalCompositeOperation = 'multiply';
     g.fillStyle = e; g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'source-over';
@@ -604,14 +712,34 @@ export function tagAtlas(THREE) {
     g.font = `400 ${CH * 0.085}px ${FACE.mono}`;
     g.fillStyle = '#2a2824';
     g.fillText(`${ri(rng, 10000, 99999)} ${ri(rng, 10000, 99999)}`, CW * 0.50, CH * 0.955);
-    // metric strip down the left edge, as ESL-style tags print
-    g.fillStyle = sale ? '#b8190f' : '#8d8straight';
+    // coloured spine down the left edge, the way ESL-style tags print
+    g.fillStyle = sale ? '#b8190f' : (yellow ? '#c8a41c' : '#8d8676');
+    g.fillRect(0, 0, CW * 0.022, CH);
     g.restore();
   }
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   t.anisotropy = 16;
   t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
+// SHELF-CAVITY GRADIENT — a vertical ramp, near-opaque at the top where the
+// shelf above casts, clearing toward the deck. Sold-out voids read as dark
+// holes with this behind them instead of beige gaps.
+export function cavityTex(THREE) {
+  const [c, g] = cv(4, 64);
+  // CanvasTexture flips Y, so canvas row 0 becomes v=1 — the top of the
+  // cavity, hard up under the next shelf, which is the dark end.
+  const grd = g.createLinearGradient(0, 0, 0, 64);
+  grd.addColorStop(0, 'rgba(16,13,9,0.82)');     // v=1: under the next shelf
+  grd.addColorStop(0.22, 'rgba(20,17,12,0.60)');
+  grd.addColorStop(0.60, 'rgba(24,20,14,0.24)');
+  grd.addColorStop(1, 'rgba(24,20,14,0.00)');    // v=0: the deck
+  g.fillStyle = grd; g.fillRect(0, 0, 4, 64);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
   return t;
 }
 
@@ -628,9 +756,12 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
     sh.fragmentShader = 'uniform vec2 uCell;\nvarying vec2 vCell;\n' + sh.fragmentShader
       .replace('#include <map_fragment>', `
         vec4 chopM = texture2D( map, vCell + clamp( vMapUv, 0.0015, 0.9985 ) * uCell );
-        float sel = step( 0.5, chopM.b );
-        float amt = clamp( ( chopM.b - sel * 0.5 ) * 2.0, 0.0, 1.0 );
-        vec3 food = mix( vec3( 0.74, 0.45, 0.14 ), vec3( 0.60, 0.12, 0.09 ), sel );
+        float scaled = chopM.b * 4.0;
+        float band = min( 3.0, floor( scaled ) );
+        float amt = clamp( scaled - band, 0.0, 1.0 );
+        vec3 f01 = mix( vec3( 0.80, 0.52, 0.17 ), vec3( 0.34, 0.50, 0.15 ), step( 0.5, band ) );
+        vec3 f23 = mix( vec3( 0.66, 0.13, 0.09 ), vec3( 0.95, 0.85, 0.50 ), step( 2.5, band ) );
+        vec3 food = mix( f01, f23, step( 1.5, band ) );
         vec3 base = mix( vec3( 1.0 ), vColor, chopM.r );
         base = mix( base, food, amt );
         diffuseColor.rgb *= base * ( 0.045 + 0.955 * chopM.g );
@@ -646,6 +777,17 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
 // [wrap..1] x [0..1], every other face gets the narrow plain-wrap column on the
 // left. The shader then offsets by the per-instance cell origin, so one
 // geometry + one draw call serves every design in the atlas.
+// Re-derive u from each vertex's bearing around Y so that local +Z — the face
+// products.js always turns toward the aisle — sits at the middle of the label.
+function frontFold(g, uv, lo, hi, v0, v1) {
+  const pos = g.attributes.position;
+  for (let i = lo; i <= hi; i++) {
+    const th = Math.atan2(pos.getX(i), pos.getZ(i));
+    const u = 0.5 + Math.max(-Math.PI / 2, Math.min(Math.PI / 2, th)) / Math.PI;
+    uv.setXY(i, 0.004 + u * 0.992, v0 + uv.getY(i) * (v1 - v0));
+  }
+}
+
 export function unitCellUV(THREE, base, kind, wrap) {
   const g = base.clone();
   const uv = g.attributes.uv, idx = g.index;
@@ -674,16 +816,19 @@ export function unitCellUV(THREE, base, kind, wrap) {
       else remap(lo, hi, su0, su1, 0.02, 0.98);                     // sides + back
     }
   } else if (kind === 'can') {
-    // Cylinder: [0] side wraps the full circumference, [1] top cap, [2] bottom
+    // Cylinder: [0] side, [1] top cap, [2] bottom cap.
+    // Do NOT wrap the label around the full circumference — that shows a
+    // FRAGMENT of the wordmark at every viewing angle, which is the single
+    // most obviously wrong thing a canned-goods shelf can do. Instead fold u
+    // around the front: the whole label lands on the half we can actually see
+    // and the unseen back half takes the squashed edge.
     const [s0, s1] = span(g.groups[0]);
-    remap(s0, s1, 0.0, 1.0, 0.012, 0.988);
-    if (g.groups[1]) { const [a, b] = span(g.groups[1]); remap(a, b, 0.02, 0.14, 0.905, 0.985); }
-    if (g.groups[2]) { const [a, b] = span(g.groups[2]); remap(a, b, 0.02, 0.14, 0.015, 0.06); }
+    frontFold(g, uv, s0, s1, 0.012, 0.988);
+    if (g.groups[1]) { const [a, b] = span(g.groups[1]); remap(a, b, 0.30, 0.70, 0.905, 0.985); }
+    if (g.groups[2]) { const [a, b] = span(g.groups[2]); remap(a, b, 0.30, 0.70, 0.015, 0.06); }
   } else {
-    // Lathe: u around, v along the profile — already 0..1, just inset
-    for (let i = 0; i < uv.count; i++) {
-      uv.setXY(i, 0.002 + uv.getX(i) * 0.996, 0.004 + uv.getY(i) * 0.992);
-    }
+    // Lathe: same front-fold, v already runs along the profile
+    frontFold(g, uv, 0, uv.count - 1, 0.004, 0.996);
   }
   uv.needsUpdate = true;
   g.clearGroups();

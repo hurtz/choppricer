@@ -85,7 +85,7 @@ const HOLD = { dur: 9.0, cool: 21.0 };
 
 // Sub-fixes, individually switchable so the bench in ./game/eval.js can attribute
 // the change instead of guessing. Ship values are all true.
-const FIX = { post: true, hold: true, roster: true };
+const FIX = { post: true, hold: true, roster: true, harass: true };
 const ROWS = 3;                 // roster rows the analytics panel can physically fit
 
 export function createGame(hudEl, deps = {}) {
@@ -132,6 +132,9 @@ export function createGame(hudEl, deps = {}) {
     desk: { cam: 0, sel: null, subjects: [], scroll: 0, rows: 0 },
     get hold() { return { live: held, cool: holdCool, max: HOLD.cool, on: FIX.hold }; },
     floor: null, wu: null, hr: null,
+    // Is the round 1 wedge watchdog still earning its keep? agents.js rebuilt
+    // its navigation this round and claims the wedge is gone at source.
+    dbg: { stallEscape: 0, stallPutBack: 0 },
     get rankName() { return RANKS[clamp(st.rank | 0, 0, RANKS.length - 1)].toUpperCase(); },
     get tiles() { const c = cctvOf(); const t = c && c.tiles; return (t && t.length) ? t : FALLBACK; },
     get cop() { const a = agentsOf(); return a ? a.cop.position : { x: 0, z: 0 }; },
@@ -272,12 +275,21 @@ export function createGame(hudEl, deps = {}) {
   // ------------------------------------------------------------------ alarms
   function updateAlarm() {
     let best = null;
+    const a = agentsOf();
+    // Metres of ROUTE left, not line of sight — the door is round two corners
+    // from most of the store and a straight line reads short by a third.
+    const routeTo = (s) => (a && a.toExit ? a.toExit(s.position.x, s.position.z)
+      : d2(s.position.x, s.position.z, EXIT.x, EXIT.z));
+    // A bolting thief no longer runs thiefRun forever: that is his opening
+    // ceiling. He fades to a cruise, so timing the countdown off thiefRun told
+    // the player the door was closer than it was.
+    const runSpeed = (a && a.thiefCruise) ? a.thiefCruise() : TUNING.thiefRun;
     for (const s of shoppersOf()) {
       if (!s.guilty || s.escaped || s.caught) continue;
       if (s.state !== 'drift' && s.state !== 'bolt') continue;
-      const de = d2(s.position.x, s.position.z, EXIT.x, EXIT.z);
-      if (de > 12) continue;
-      const sp = s.state === 'bolt' ? TUNING.thiefRun : TUNING.thiefWalk * 1.12;
+      const de = routeTo(s);
+      if (!isFinite(de) || de > 14) continue;
+      const sp = s.state === 'bolt' ? runSpeed : TUNING.thiefWalk * 1.12;
       const eta = de / sp;
       if (!best || eta < best.eta) best = { eta, s };
     }
@@ -320,9 +332,11 @@ export function createGame(hudEl, deps = {}) {
         s.escaped = true; s.vel.set(0, 0, 0);
         s.mesh.visible = false; s.cart.visible = false; s.bang.visible = false;
         recs.delete(s.id); s.__stall = 0; s.__best = Infinity;
+        G.dbg.stallEscape++;
         score('escape', s);
         rearmT = Math.min(rearmT, 5);
       } else if (s.__stall > 16 && st.mode === 'desk') {
+        G.dbg.stallPutBack++;
         putBack(s); rearmT = Math.min(rearmT, 4);
       }
     }
@@ -541,7 +555,10 @@ export function createGame(hudEl, deps = {}) {
       stampT: 0, stampText: '', stampSub: '', clearLine: L.pick(L.AISLE_CLEAR),
     };
     st.mode = 'floor';
-    releaseHold();                 // you are here now; the PA is not the move
+    // The hold deliberately survives leaving the desk. Parking the OTHER one
+    // while you go deal with this one is the entire reason the PA exists; if it
+    // cleared on dispatch it would only ever delay somebody you were already
+    // walking towards. updateHold() drops it when you get close to him anyway.
     const a = agentsOf();
     if (a) {                       // the waddle across the store is implied
       const sp = postSpawn(p);
@@ -605,10 +622,19 @@ export function createGame(hudEl, deps = {}) {
     },
     onHarass(s) {
       if (st.mode !== 'floor' || !G.floor || G.floor.t < 0.8) return;
-      // One complaint at a time: walking through a busy aisle should not end the
-      // shift in four seconds. The guest still yells; it just does not re-file.
+      // A complaint is for a CONTACT — you walked up to this person because you
+      // decided this person was the thief. Sharing an aisle with a stranger is
+      // not a contact. agents.js can only offer a radius, and a 4.5m radius in a
+      // 4m aisle means every bystander you edge past files on you: the bench had
+      // a player who read every tell correctly still demoted three shifts in
+      // four, purely from walking to the subject he had correctly identified.
+      // Whoever the reticle is on is who you are confronting. Nobody else.
+      if (FIX.harass) {
+        const t = targetShopper();
+        if (!t || t.id !== s.id) return;
+      }
       if (G.floor.dialogue || G.now < harassCool) return;
-      harassCool = G.now + 12;
+      harassCool = G.now + (FIX.harass ? 5 : 12);
       const r = recOf(s);
       say(`${r.name} — GUEST`, L.pick(L.INNOCENT), true, 2.4, s.id);
       score('harass', s);

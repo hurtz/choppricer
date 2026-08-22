@@ -108,55 +108,57 @@ export function ceilTex(THREE) {
 // ---------------------------------------------------------------------------
 // LIGHT STRIP — one 2.44 m run of a 2-tube fluorescent strip fixture.
 export function stripTex(THREE) {
-  const [c, g] = cv(256, 64);
-  g.fillStyle = '#cfcabb'; g.fillRect(0, 0, 256, 64);
-  g.fillStyle = '#e5e1d2'; g.fillRect(0, 4, 256, 56);
-  const tube = (y0, y1) => {
-    const grd = g.createLinearGradient(0, y0, 0, y1);
-    grd.addColorStop(0, '#e9eede');
-    grd.addColorStop(0.35, '#fffef4');
-    grd.addColorStop(0.6, '#ffffff');
-    grd.addColorStop(1, '#eef2e0');
-    g.fillStyle = grd; g.fillRect(6, y0, 244, y1 - y0);
-  };
-  tube(10, 27); tube(35, 52);
-  // socket end caps
-  g.fillStyle = '#a8a394'; g.fillRect(0, 4, 8, 56); g.fillRect(248, 4, 8, 56);
-  g.fillStyle = 'rgba(120,116,104,0.5)'; g.fillRect(0, 28, 256, 6);
+  // ONE 4ft fixture, drawn end to end across the canvas — store.js now emits
+  // these as discrete fixtures with dark gaps between them rather than one
+  // infinite 100%-white ribbon at constant brightness.
+  const W = 256, H = 64;
+  const [c, g] = cv(W, H);
+  g.fillStyle = '#b9b4a5'; g.fillRect(0, 0, W, H);              // housing
+  g.fillStyle = '#d8d3c3'; g.fillRect(0, 3, W, H - 6);
+  // the prismatic lens: bright in the middle, falling off to the reflector
+  const grd = g.createLinearGradient(0, 4, 0, H - 4);
+  grd.addColorStop(0, '#cfd2c0');
+  grd.addColorStop(0.16, '#f4f5e6');
+  grd.addColorStop(0.42, '#ffffff');
+  grd.addColorStop(0.58, '#fffef6');
+  grd.addColorStop(0.86, '#eef0dd');
+  grd.addColorStop(1, '#c2c4b2');
+  g.fillStyle = grd; g.fillRect(13, 5, W - 26, H - 10);
+  // lens ribs — the fine striations that make a diffuser read as a diffuser
+  for (let x = 15; x < W - 15; x += 4) {
+    g.fillStyle = 'rgba(150,152,138,0.30)'; g.fillRect(x, 6, 1.1, H - 12);
+    g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(x + 1.6, 6, 1.0, H - 12);
+  }
+  // the dark seam where the two tubes meet behind the lens
+  g.fillStyle = 'rgba(122,120,106,0.34)'; g.fillRect(13, H / 2 - 2, W - 26, 4);
+  // socket end caps — solid, unlit metal, and big enough to actually read
+  g.fillStyle = '#8f8b7c'; g.fillRect(0, 3, 13, H - 6); g.fillRect(W - 13, 3, 13, H - 6);
+  g.fillStyle = '#6f6c60'; g.fillRect(0, 3, 4, H - 6); g.fillRect(W - 4, 3, 4, H - 6);
+  g.fillStyle = 'rgba(255,255,255,0.30)'; g.fillRect(4, 5, 2, H - 10);
   return tex(THREE, c, { rx: 1, ry: 1 });
 }
 
 // ---------------------------------------------------------------------------
 // PRICE RAIL — 1.0 m of shelf lip: cream channel packed with little tags.
 export function railTex(THREE) {
-  const N = 512, H = 56;
+  const N = 256, H = 56;
   const [c, g] = cv(N, H);
-  const rng = makeRng(31337);
+  // Round 2: the rail carries NO printed tags any more. Real tags align to each
+  // SKU's facing width, so store.js emits them one-per-SKU into its own quad
+  // soup — an irregular rhythm keyed to the product above. Drawing pseudo-random
+  // dashes into a tiling ribbon here produced a visible moire instead.
   const grd = g.createLinearGradient(0, 0, 0, H);
-  grd.addColorStop(0, '#ffffff');
-  grd.addColorStop(0.30, '#f5f0e2');
-  grd.addColorStop(0.75, '#e2dbc9');
-  grd.addColorStop(1, '#b9b1a0');
+  grd.addColorStop(0, '#fdfaf0');      // top return, catching the light run
+  grd.addColorStop(0.22, '#f3eddd');
+  grd.addColorStop(0.62, '#ded7c4');
+  grd.addColorStop(0.88, '#bdb5a3');
+  grd.addColorStop(1, '#8e8776');      // shadowed underside of the lip
   g.fillStyle = grd; g.fillRect(0, 0, N, H);
-  g.fillStyle = 'rgba(120,112,98,0.35)'; g.fillRect(0, 0, N, 3);
-  let x = 3;
-  while (x < N - 6) {
-    const w = rr(rng, 22, 44);
-    const sale = rng() < 0.22, tagStyle = rng();
-    g.fillStyle = sale ? '#ffe14a' : (tagStyle < 0.12 ? '#ffd6dd' : '#fffdf6');
-    g.fillRect(x, 7, w - 2, H - 16);
-    g.strokeStyle = 'rgba(90,84,72,0.35)'; g.lineWidth = 1;
-    g.strokeRect(x + 0.5, 7.5, w - 3, H - 17);
-    // price digits + a barcode smear
-    g.fillStyle = sale ? '#c02318' : '#2c2a26';
-    g.fillRect(x + 3, 12, Math.max(6, (w - 10) * rr(rng, 0.4, 0.75)), 11);
-    g.fillStyle = 'rgba(50,46,40,0.75)';
-    for (let b = x + 3; b < x + w - 5; b += 2.4) {
-      if (rng() < 0.6) g.fillRect(b, 27, rr(rng, 0.7, 1.6), 9);
-    }
-    if (sale) { g.fillStyle = '#c02318'; g.fillRect(x + 1, H - 9, w - 4, 3); }
-    x += w + rr(rng, 1, 5);
-  }
+  g.fillStyle = 'rgba(255,255,255,0.55)'; g.fillRect(0, 1, N, 2);
+  g.fillStyle = 'rgba(110,102,88,0.30)'; g.fillRect(0, 0, N, 1);
+  // the extruded channel that the tag strip slides into
+  g.fillStyle = 'rgba(120,112,98,0.22)'; g.fillRect(0, H * 0.30, N, 1.6);
+  g.fillStyle = 'rgba(255,255,255,0.30)'; g.fillRect(0, H * 0.34, N, 1.2);
   return tex(THREE, c, { rx: 1, ry: 1 });
 }
 

@@ -20,21 +20,40 @@ export const pick = (rng, arr) => arr[Math.floor(rng() * arr.length) % arr.lengt
 // --- instanced batch -------------------------------------------------------
 // Collect transforms first, allocate the InstancedMesh once at build().
 export class Batch {
-  constructor(THREE, geo, mat) {
-    this.THREE = THREE; this.geo = geo; this.mat = mat;
-    this.t = []; this.c = []; this.n = 0;
+  // `grid` (optional) = { cols, rows } of a package atlas. When present the
+  // batch also carries a per-instance `aCell` attribute holding that instance's
+  // atlas-cell UV origin, so one geometry + one draw call serves every design
+  // in the atlas instead of one geometry clone per design.
+  constructor(THREE, geo, mat, grid = null) {
+    this.THREE = THREE; this.geo = geo; this.mat = mat; this.grid = grid;
+    this.t = []; this.c = []; this.cells = []; this.n = 0;
   }
   // p / e(uler) / s(cale) are 3-arrays; col is a THREE.Color (working space).
-  push(px, py, pz, ex, ey, ez, sx, sy, sz, col) {
+  push(px, py, pz, ex, ey, ez, sx, sy, sz, col, cell = 0) {
     this.t.push(px, py, pz, ex, ey, ez, sx, sy, sz);
     this.c.push(col.r, col.g, col.b);
+    if (this.grid) this.cells.push(cell);
     this.n++;
   }
   box(px, py, pz, sx, sy, sz, col) { this.push(px, py, pz, 0, 0, 0, sx, sy, sz, col); }
   build(name) {
     if (!this.n) return null;
     const T = this.THREE;
-    const mesh = new T.InstancedMesh(this.geo, this.mat, this.n);
+    let geo = this.geo;
+    if (this.grid) {
+      // instanced attributes live on the geometry, so a batch that carries them
+      // needs its own clone — these are 24-120 vert primitives, so it is cheap
+      geo = this.geo.clone();
+      const { cols, rows } = this.grid;
+      const arr = new Float32Array(this.n * 2);
+      for (let i = 0; i < this.n; i++) {
+        const c = this.cells[i] | 0;
+        arr[i * 2] = (c % cols) / cols;
+        arr[i * 2 + 1] = 1 - (Math.floor(c / cols) % rows + 1) / rows;
+      }
+      geo.setAttribute('aCell', new T.InstancedBufferAttribute(arr, 2));
+    }
+    const mesh = new T.InstancedMesh(geo, this.mat, this.n);
     const m = new T.Matrix4(), q = new T.Quaternion(), eu = new T.Euler();
     const v = new T.Vector3(), sc = new T.Vector3(), col = new T.Color();
     for (let i = 0; i < this.n; i++) {

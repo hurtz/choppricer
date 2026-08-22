@@ -148,10 +148,20 @@ export function makeNav(boxes, bounds, opt = {}) {
   }
 
   // ---- binary heap ---------------------------------------------------------
-  const hI = [], hC = [];
-  function hClear() { hI.length = 0; hC.length = 0; }
+  // Typed and preallocated. This runs a few times a second during a chase (the
+  // escape field is re-flooded whenever the cop moves) and the JS-array version
+  // cost 2.4 ms a flood, which is a visible hitch inside a 16 ms frame. Same
+  // algorithm, no allocation, no push/pop: ~0.6 ms.
+  let hI = new Int32Array(1024), hC = new Float64Array(1024), hN = 0;
+  function hClear() { hN = 0; }
+  function hGrow() {
+    const i2 = new Int32Array(hI.length * 2); i2.set(hI); hI = i2;
+    const c2 = new Float64Array(hC.length * 2); c2.set(hC); hC = c2;
+  }
   function hPush(k, c) {
-    let n = hI.length; hI.push(k); hC.push(c);
+    if (hN === hI.length) hGrow();
+    let n = hN++;
+    hI[n] = k; hC[n] = c;
     while (n > 0) {
       const p = (n - 1) >> 1;
       if (hC[p] <= hC[n]) break;
@@ -161,8 +171,8 @@ export function makeNav(boxes, bounds, opt = {}) {
     }
   }
   function hPop() {
-    const top = hI[0], n = hI.length - 1;
-    hI[0] = hI[n]; hC[0] = hC[n]; hI.pop(); hC.pop();
+    const top = hI[0], n = --hN;
+    hI[0] = hI[n]; hC[0] = hC[n];
     let p = 0;
     for (;;) {
       const l = p * 2 + 1, r = l + 1;
@@ -182,15 +192,61 @@ export function makeNav(boxes, bounds, opt = {}) {
   const NI = NI0, NJ = NJ0;
   const NC = [1, 1, 1, 1, R2, R2, R2, R2];
 
+  // ---- threat ---------------------------------------------------------------
+  // A soft, finite cost bubble the flood has to pay to cross. This is the whole
+  // reason a cornered thief has anywhere to go.
+  //
+  // ROUND 3 — why this had to move into the COST FUNCTION. steer()'s `avoid` is
+  // an aim-point filter applied to one greedy descent of the field. The descent
+  // is computed first and the filter runs second, so the only thing `avoid` can
+  // ever do is pick a nearer point on the SAME line. When a cop stands in an
+  // aisle, every point on that line is fouled, `got` comes back false, and the
+  // routine falls back to the furthest visible point — which is the far side of
+  // the cop. The thief then sprints into him. No radius fixes that; a filter
+  // cannot invent a route the descent never offered. The threat has to be in
+  // the flood, so that "out the back and round" is a cost the search can weigh
+  // against "squeeze past him" and pick the cheaper one on its own.
+  //
+  // Deliberately soft, never blocking: a hard block can strand a thief in a
+  // pocket with an infinite field and no gradient at all, and being properly
+  // cornered should mean a desperate squeeze, not a freeze.
+  let _th = null, _tbox = null;
+  function threatMask(av) {
+    if (!_th) _th = new Float32Array(N);
+    if (_tbox) {                                   // clear last frame's bubble
+      for (let i = _tbox[0]; i <= _tbox[1]; i++)
+        for (let j = _tbox[2]; j <= _tbox[3]; j++) _th[idx(i, j)] = 0;
+    }
+    const r = av.r, w = av.w ?? 20;
+    const i0 = cxOf(av.x - r), i1 = cxOf(av.x + r);
+    const j0 = czOf(av.z - r), j1 = czOf(av.z + r);
+    _tbox = [i0, i1, j0, j1];
+    for (let i = i0; i <= i1; i++) {
+      const ddx = wx(i) - av.x;
+      for (let j = j0; j <= j1; j++) {
+        const ddz = wz(j) - av.z;
+        const d = Math.hypot(ddx, ddz);
+        if (d >= r) continue;
+        const t = 1 - d / r;
+        _th[idx(i, j)] = w * t * t;
+      }
+    }
+    return _th;
+  }
+
   // ---- distance field ------------------------------------------------------
   // Flood costs out from a goal. Every agent heading for the same place shares
-  // one of these; it only has to be rebuilt when the store changes shape.
-  function field(gx, gz) {
-    const D = new Float32Array(N).fill(Infinity);
+  // one of these; it only has to be rebuilt when the store changes shape — or,
+  // with opt.avoid, when the thing being avoided has moved.
+  function field(gx, gz, o = {}) {
+    const D = o.out && o.out.length === N ? o.out : new Float32Array(N);
+    D.fill(Infinity);
     const g = snapCell(gx, gz);
     if (g < 0) return D;
+    const av = o.avoid;
+    const TH = av && av.r > 0 ? threatMask(av) : null;
     hClear(); D[g] = 0; hPush(g, 0);
-    while (hI.length) {
+    while (hN) {
       const u = hPop();
       const du = D[u];
       const ui = u % nx, uj = (u / nx) | 0;
@@ -200,7 +256,7 @@ export function makeNav(boxes, bounds, opt = {}) {
         const v = idx(vi, vj);
         if (blocked[v]) continue;
         if (n >= 4 && (blocked[idx(ui, vj)] || blocked[idx(vi, uj)])) continue;
-        const nd = du + NC[n] * cell * stepMul(v);
+        const nd = du + NC[n] * cell * (TH ? stepMul(v) + TH[v] : stepMul(v));
         if (nd < D[v]) { D[v] = nd; hPush(v, nd); }
       }
     }
@@ -288,7 +344,7 @@ export function makeNav(boxes, bounds, opt = {}) {
     hClear(); _mark[s] = ep; _g[s] = 0; _from[s] = -1; hPush(s, h(s));
     let found = false;
     let guard = N * 2;
-    while (hI.length && guard-- > 0) {
+    while (hN && guard-- > 0) {
       const u = hPop();
       if (u === t) { found = true; break; }
       const gu = _g[u];
