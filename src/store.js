@@ -396,22 +396,56 @@ export function buildStore(THREE, scene) {
   solid(STORE.minX - 0.6, 0, STORE.minZ - 0.6, STORE.maxX + 0.6, WALL_H, STORE.minZ);
   solid(STORE.minX - 0.6, 0, STORE.maxZ, STORE.maxX + 0.6, WALL_H, STORE.maxZ + 0.6);
 
-  // sage band + terracotta pinstripe around the upper wall
+  // ROUND-4b — THE "BLANK GREY RECTANGLE WHERE A SIGN TEXTURE FAILED TO LOAD".
+  // No texture ever failed. The BACK wall carried a 47 m x 1.5 m unbroken slab
+  // of flat sage at 0x7d8b58, and the four department signs sitting on it are
+  // 7 m wide on 8-12 m centres — so between any two of them you were looking at
+  // four metres of featureless green, and the PRODUCE sign's own background
+  // (0x6f8a3f) is within a few percent of the band it sits on, so where it WAS
+  // visible it disappeared into the band as more of the same nothing. Three
+  // greens at three depths reading as one green void.
+  //
+  // Sage stays on the side walls, where it is a decor band and nothing is meant
+  // to be read against it. The back wall — the wall you look at down every
+  // single aisle, and the one the department signs live on — becomes a warm
+  // cream field with real horizontal structure, so a coloured sign on it reads
+  // as a sign. See also bladeAtlas, which was the third green.
+  // Explicit z ladder off the back wall, because the round-4 aisle-sign bug was
+  // exactly a sign quad landing coplanar with its own carrier. Each layer here
+  // clears the one behind it by at least 15 mm.
+  //   band face   maxZ-0.085   reveals  maxZ-0.095
+  //   pilasters   maxZ-0.120   panel    maxZ-0.140   sign quad  maxZ-0.160
   const bandY = 4.35;
-  fix(CX, bandY, STORE.maxZ - 0.06, SW, 1.5, 0.05, P.sage);
-  fix(CX, bandY - 0.83, STORE.maxZ - 0.07, SW, 0.14, 0.05, P.terra);
+  const bz0 = STORE.maxZ;
+  fix(CX, bandY, bz0 - 0.06, SW, 1.5, 0.05, 0xe8dfc6);
+  fix(CX, bandY + 0.76, bz0 - 0.07, SW, 0.13, 0.05, P.terra);            // top reveal
+  fix(CX, bandY - 0.83, bz0 - 0.07, SW, 0.14, 0.05, P.terra);            // bottom reveal
+  fix(CX, bandY - 0.70, bz0 - 0.07, SW, 0.05, 0.05, 0x9c9276);
   fix(STORE.minX + 0.06, bandY, CZ, 0.05, 1.5, SD, P.sage);
   fix(STORE.maxX - 0.06, bandY, CZ, 0.05, 1.5, SD, P.sage);
   fix(CX, bandY, STORE.minZ + 0.06, SW, 1.5, 0.05, P.sage, BfixF);
   fix(CX, bandY - 0.83, STORE.minZ + 0.07, SW, 0.14, 0.05, P.terra, BfixF);
 
-  // department signs high on the back wall
+  // Pilasters breaking the run. A decor band is never one continuous ribbon
+  // across a 47 m wall; it is panelised, and the breaks are most of what stops
+  // it reading as a blank slab. Drawn before the signs so a sign covers any it
+  // lands on, which is also how it works on a real wall.
+  for (let px = STORE.minX + 2.4; px < STORE.maxX - 2; px += 5.3) {
+    fix(px, bandY, bz0 - 0.10, 0.34, 1.46, 0.04, 0xd9cdae);
+    fix(px, bandY, bz0 - 0.115, 0.16, 1.46, 0.035, P.terra);
+  }
+
+  // department signs high on the back wall. Widened, and re-spaced so the runs
+  // of bare wall between them are about a sign-width rather than three.
   const deptSigns = [
-    ['PRODUCE', STORE.maxX - 8.5], ['MEAT & SEAFOOD', STORE.maxX - 20],
-    ['DAIRY', STORE.minX + 19], ['FROZEN FOODS', STORE.minX + 7],
+    ['PRODUCE', STORE.maxX - 7.0], ['MEAT & SEAFOOD', STORE.maxX - 18.5],
+    ['DAIRY', STORE.minX + 20.5], ['FROZEN FOODS', STORE.minX + 8.5],
   ];
   deptSigns.forEach(([, x], i) => {
-    qZ(Qwsign, x, bandY + 0.06, STORE.maxZ - 0.10, 7.0, 1.20, -1, cellUV(i, 1, 4));
+    // a raised painted panel first, so the sign is mounted ON something rather
+    // than being a decal floating on a flat field
+    fix(x, bandY + 0.06, bz0 - 0.125, 8.9, 1.42, 0.03, 0xd6c9a8);
+    qZ(Qwsign, x, bandY + 0.06, bz0 - 0.160, 8.6, 1.24, -1, cellUV(i, 1, 4));
   });
 
   // =========================================================================
@@ -422,17 +456,25 @@ export function buildStore(THREE, scene) {
   // cream field and the ceiling scored the lowest edge density of any band in
   // the image. The map now carries the contrast; the emissive only lifts the
   // black point so the tiles do not go muddy between fixtures.
+  // ROUND-4b. This was a Lambert, and a Lambert was the bug. The plane's normal
+  // points DOWN, so the HemisphereLight fed it the GROUND colour (0x7d7255, a
+  // dark olive) at full strength across its entire area, and no amount of
+  // tinting the material could get out from under that: the drop ceiling came
+  // out a muddy olive-brown, which is a colour no acoustic tile has ever been,
+  // and it was the single loudest thing in the top third of every frame.
+  // A drop ceiling has no meaningful shading variation anyway — it is a flat
+  // plane under diffuse light — so its value should be AUTHORED, not lit.
+  // Basic also drops one full lighting evaluation over the largest single
+  // surface in the scene, nine times a frame.
+  //
+  // The value target is unchanged and still comes from the reference: clearly
+  // under the fittings so the troffers have something to be bright against,
+  // but a warm off-white rather than mud.
   const ceilPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(SW, SD),
-    new THREE.MeshLambertMaterial({
+    new THREE.MeshBasicMaterial({
       map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 4.88, SD / 4.88); return t; })(),
-      // ROUND 4. This used to sit at 0xf2ead6 over a 0x6c6656 emissive, i.e.
-      // almost as bright as the lamps in it — which is why the whole frame
-      // lived in one narrow value band and why the ceiling measured as the
-      // flattest region in every render. A real store ceiling is a good two
-      // stops under its own light fittings; drop it there and the troffers
-      // suddenly have something to be bright AGAINST.
-      color: 0xbdb5a0, emissive: 0x2e2b24, emissiveIntensity: 1.0,
+      color: 0xa9a08b,
     }));
   PK.sharpen(THREE, ceilPlane.material, -0.9);
   ceilPlane.rotation.x = Math.PI / 2;    // normal points down
@@ -471,7 +513,17 @@ export function buildStore(THREE, scene) {
   // shelves below can be lit BY them instead of by a constant. lampAt() is what
   // makes a bay under a dead unit read as genuinely dimmer.
   const STRIPS = [];
-  const LAMP_B = [1.00, 0.90, 1.05, 0.34];
+  // ROUND-4b. This was [1.00, 0.90, 1.05, 0.34]: three states within 15% of one
+  // another and one dead one. So "product under a fixture is hotter than
+  // product between fixtures" had almost nothing to bite on — every live unit
+  // lit its bay identically and the only variation in the whole aisle was at
+  // the one-in-twenty dead unit. Real fluorescent strips are nothing like that
+  // uniform: tubes get relamped in ones and twos over years, so a run carries
+  // fresh units next to units at the end of their life pushing 30% less light.
+  // Widening the spread is what puts a genuine along-aisle brightness rhythm on
+  // the shelves, and it is driven by the SAME per-unit state that picks the
+  // lens cell, so a visibly aged lamp and the dimmer bay under it agree.
+  const LAMP_B = [1.14, 0.72, 0.94, 0.26];
   // axis 0 = long dimension along Z, axis 1 = along X.
   function troffer(x, z, axis, state) {
     const hx = (axis ? FIX_L : AP_W) / 2, hz = (axis ? AP_W : FIX_L) / 2;
@@ -503,8 +555,20 @@ export function buildStore(THREE, scene) {
     qDown(Qtsh, x, CEIL_H - 0.0012, z, hx * 2 + 0.62, hz * 2 + 0.62, FULL);
     // and the bloom. Additive, wider than the fixture, so at twenty metres a
     // strip of these stops resolving as separate lamps and becomes one line.
+    //
+    // ROUND-4b: TWO layers, and the second is what actually does the merging.
+    // A single halo 0.5 m wider than the aperture still falls to nothing inside
+    // the 60 mm joint, so a distant run stayed a dotted line of individually
+    // crisp lamps. The wide layer overlaps its neighbours by more than a full
+    // fixture length, so adjacent halos sum across every joint. It costs
+    // nothing up close — spread over that much world area it is a few percent
+    // per pixel — and it is only when the run compresses in screen space that
+    // the overlap piles up and the strip reads as one continuous bright line,
+    // which is exactly the distance-dependent behaviour that was asked for and
+    // exactly what a real run of troffers does down a long aisle.
     if (state !== 3) {
       qDown(Qbloom, x, DOOR - 0.004, z, hx * 2 + 0.52, hz * 2 + 0.30, FULL);
+      qDown(Qbloom, x, DOOR - 0.012, z, hx * 2 + 1.85, hz * 2 + 1.55, FULL);
     }
   }
   // A CONTINUOUS STRIP: 4 ft units butted end to end with the 60 mm joint you
@@ -567,6 +631,34 @@ export function buildStore(THREE, scene) {
     return wsum ? acc / wsum : 1;
   };
 
+  // ROUND-4b — THE "HARD BLACK SHARDS". The blind critic reported the diffuser
+  // map breaking into black shards at grazing angle and I went looking for the
+  // fault in stripTex. It is not there and never was. Round 4a recessed every
+  // troffer 105 mm into the tile, and ALL of the ceiling clutter below — HVAC
+  // diffusers, conduit, data cable, junction boxes, sprinkler branch lines —
+  // was still being hung at CEIL_H minus 0.05 to 0.15, i.e. INSIDE the well,
+  // between the lamp plane and the door. A 20 mm dark conduit threaded down the
+  // middle of a lit fixture, sampled at 70 degrees off normal, is exactly a
+  // hard black shard across the lamp. Hiding the ceilPipes batch and
+  // re-rendering removed every one of them, which is what confirmed it.
+  //
+  // CLUTTER_Y is the clearance plane: nothing that is not part of a fixture may
+  // sit above it. Anything hung from a drop ceiling hangs BELOW the tile, so
+  // this is also the physically correct place for all of it.
+  const CLUTTER_Y = DOOR - 0.055;
+  // ...and the light rows are on a known pitch, so anything RUNNING ALONG the
+  // aisles can also simply be kept out from under them rather than being
+  // allowed to land wherever. (Things crossing the aisles are left alone: a
+  // pipe passing under a fixture, and the shadow it drops on it, is real.)
+  const offRow = (x) => {
+    const k = Math.round(x / PITCH), c0 = k * PITCH;          // gondola rows
+    const c1 = c0 + (x > c0 ? PITCH / 2 : -PITCH / 2);        // aisle rows
+    const d0 = x - c0, d1 = x - c1;
+    if (Math.abs(d0) < 0.95) return c0 + Math.sign(d0 || 1) * 0.95;
+    if (Math.abs(d1) < 0.95) return c1 + Math.sign(d1 || 1) * 0.95;
+    return x;
+  };
+
   // SPRINKLER GRID. Round 2 ran seven dead-straight mains across X and nothing
   // along Z; a real wet system is a grid of mains and branch lines with a head
   // every ten feet, and it is one of the busiest things on a store ceiling.
@@ -574,31 +666,33 @@ export function buildStore(THREE, scene) {
     const z = STORE.minZ + 2.6 + k * (SD - 5) / 6 + rr(rng, -0.25, 0.25);
     tube(CX, CEIL_H - 0.30, z, 0, 0, Math.PI / 2, 0.075, SW - 1.2, 0xb04a34, BtubeC);
     for (let x = STORE.minX + 2.4; x < STORE.maxX - 2; x += 3.4) {
-      fix(x, CEIL_H - 0.20, z, 0.05, 0.20, 0.05, 0x8f8a7c, BfixC);
+      fix(x, CLUTTER_Y - 0.105, z, 0.05, 0.20, 0.05, 0x8f8a7c, BfixC);
       fix(x, CEIL_H - 0.34, z, 0.13, 0.05, 0.13, 0xc9c2ae, BfixC);
       fix(x, CEIL_H - 0.245, z, 0.10, 0.035, 0.10, 0xb04a34, BfixC);   // hanger
     }
   }
   for (let k = 0; k < 6; k++) {                // branch lines running along Z
-    const x = STORE.minX + 4.2 + k * (SW - 9) / 5 + rr(rng, -0.5, 0.5);
+    const x = offRow(STORE.minX + 4.2 + k * (SW - 9) / 5 + rr(rng, -0.5, 0.5));
     // ROUND-4 BUG. This euler was (0,0,0), which leaves a LatheGeometry-style
     // cylinder on its default +Y axis: every one of these six "branch lines"
     // was a 40 m vertical red pole standing free in the middle of an aisle,
     // punched through the floor and the roof. The blind critic called it
     // "architecturally impossible" in all four renders and was right. Rotating
     // about X sends +Y to +Z, which is what a branch line running along Z is.
-    tube(x, CEIL_H - 0.155, CZ, Math.PI / 2, 0, 0, 0.045, SD - 2.2, 0x9c4230, BtubeC);
+    // (4b: and it hung at CEIL_H-0.155 with a 45 mm radius, so its crown sat
+    // 5 mm inside the door plane — one of the shard sources.)
+    tube(x, CLUTTER_Y - 0.055, CZ, Math.PI / 2, 0, 0, 0.045, SD - 2.2, 0x9c4230, BtubeC);
     for (let z = STORE.minZ + 3; z < STORE.maxZ - 2; z += 3.05) {
-      fix(x, CEIL_H - 0.10, z, 0.055, 0.14, 0.055, 0x8f8a7c, BfixC);
+      fix(x, CLUTTER_Y, z, 0.055, 0.14, 0.055, 0x8f8a7c, BfixC);
     }
   }
   for (let k = 0; k < 12; k++) {
-    const x = STORE.minX + 3 + (k % 6) * (SW - 6) / 5 + rr(rng, -0.5, 0.5);
+    const x = offRow(STORE.minX + 3 + (k % 6) * (SW - 6) / 5 + rr(rng, -0.5, 0.5));
     const z = STORE.minZ + 5 + Math.floor(k / 6) * (SD - 12) + rr(rng, -0.8, 0.8);
-    fix(x, CEIL_H - 0.06, z, 1.18, 0.12, 1.18, 0xf2ecdb, BfixC);
-    fix(x, CEIL_H - 0.13, z, 1.02, 0.04, 1.02, 0xd7d0bc, BfixC);
+    fix(x, CLUTTER_Y - 0.01, z, 1.18, 0.12, 1.18, 0xf2ecdb, BfixC);
+    fix(x, CLUTTER_Y - 0.08, z, 1.02, 0.04, 1.02, 0xd7d0bc, BfixC);
     for (let b = -3; b <= 3; b++) {          // the blades of the diffuser
-      fix(x, CEIL_H - 0.15, z + b * 0.14, 0.98, 0.05, 0.045, 0x9d9682, BfixC);
+      fix(x, CLUTTER_Y - 0.10, z + b * 0.14, 0.98, 0.05, 0.045, 0x9d9682, BfixC);
     }
   }
   // ---- ceiling clutter ----------------------------------------------------
@@ -607,25 +701,35 @@ export function buildStore(THREE, scene) {
   // real drop ceiling carries and a rendered one never does.
   for (let k = 0; k < 14; k++) {
     const x = STORE.minX + 2.5 + rng() * (SW - 5), z = STORE.minZ + 2.5 + rng() * (SD - 5);
-    fix(x, CEIL_H - 0.05, z, 0.30, 0.09, 0.30, 0xe4ddc9, BfixC);
-    fix(x, CEIL_H - 0.10, z, 0.24, 0.03, 0.24, 0x5d574a, BfixC);
+    fix(x, CLUTTER_Y, z, 0.30, 0.09, 0.30, 0xe4ddc9, BfixC);
+    fix(x, CLUTTER_Y - 0.05, z, 0.24, 0.03, 0.24, 0x5d574a, BfixC);
   }
+  // Conduit crossing the aisles is fine — it passes UNDER the fixtures and the
+  // shadow it drops on them is real. Conduit running ALONG an aisle at the same
+  // x as a light row is what threaded a black rod down the length of a lit
+  // troffer, so those get pushed off the row as well as below the door plane.
   for (let k = 0; k < 11; k++) {             // conduit / loose data cable
     const z = STORE.minZ + 3 + rng() * (SD - 6);
     const x0 = STORE.minX + rr(rng, 1, 8), x1 = STORE.maxX - rr(rng, 1, 8);
-    tube((x0 + x1) / 2, CEIL_H - rr(rng, 0.06, 0.12), z, 0, 0, Math.PI / 2,
-      rr(rng, 0.018, 0.032), x1 - x0, k % 3 ? 0x8d8676 : 0x3c3a34, BtubeC);
+    // 4b: these were 36-64 mm across in near-black (0x3c3a34), which at twenty
+    // metres subtends well under a pixel and resolves as a hard aliased black
+    // rule ruled across the whole ceiling — the second-worst thing in the top
+    // of the frame once the shards were gone. Conduit in a store is galvanised
+    // EMT and the cable is run in trays: light grey, and thick enough to have a
+    // lit side and a shaded side rather than being a mathematical line.
+    tube((x0 + x1) / 2, CLUTTER_Y - rr(rng, 0.01, 0.07), z, 0, 0, Math.PI / 2,
+      rr(rng, 0.030, 0.052), x1 - x0, k % 3 ? 0x9c9482 : 0x6e675a, BtubeC);
     for (let x = x0 + 1.5; x < x1; x += rr(rng, 2.4, 5.0)) {
-      fix(x, CEIL_H - 0.05, z, 0.07, 0.10, 0.07, 0x8d8676, BfixC);
+      fix(x, CLUTTER_Y, z, 0.07, 0.10, 0.07, 0x8d8676, BfixC);
     }
   }
   for (let k = 0; k < 7; k++) {              // and the runs going the other way
-    const x = STORE.minX + 3 + rng() * (SW - 6);
+    const x = offRow(STORE.minX + 3 + rng() * (SW - 6));
     const z0 = STORE.minZ + rr(rng, 1, 7), z1 = STORE.maxZ - rr(rng, 1, 7);
-    tube(x, CEIL_H - rr(rng, 0.05, 0.11), (z0 + z1) / 2, Math.PI / 2, 0, 0,
-      rr(rng, 0.016, 0.028), z1 - z0, k % 2 ? 0x8d8676 : 0x46433a, BtubeC);
+    tube(x, CLUTTER_Y - rr(rng, 0.0, 0.06), (z0 + z1) / 2, Math.PI / 2, 0, 0,
+      rr(rng, 0.028, 0.046), z1 - z0, k % 2 ? 0x9c9482 : 0x746c5e, BtubeC);
     for (let z = z0 + 1.8; z < z1; z += rr(rng, 2.6, 5.4)) {
-      fix(x, CEIL_H - 0.045, z, 0.06, 0.09, 0.06, 0x8d8676, BfixC);
+      fix(x, CLUTTER_Y + 0.005, z, 0.06, 0.09, 0.06, 0x8d8676, BfixC);
     }
   }
   // PERIMETER TRACK LIGHTING. Aisle 0 and aisle 7 are nearly six metres wide
@@ -664,8 +768,14 @@ export function buildStore(THREE, scene) {
       Qdangle.rect([x, y, z + s * 0.004], [s * cs, 0, -s * sn], [0, h / 2, 0],
         uv[0], uv[1], uv[2], uv[3]);
     }
-    tube(x, (y + h / 2 + CEIL_H) / 2, z, 0, 0, 0, 0.006,
-      CEIL_H - y - h / 2, 0xb9b2a0);
+    // 4b: the string used to run all the way to CEIL_H. Danglers are scattered
+    // within +-0.62 m of a gondola centreline and the light row over that
+    // gondola has a 0.60 m aperture, so a good third of these threaded a 6 mm
+    // sub-pixel dark cylinder straight up the middle of a lit troffer well —
+    // the same black-shard mechanism as the conduit, just thinner and denser.
+    // A dangler hangs off the T-bar it is tied to, which is the door plane.
+    tube(x, (y + h / 2 + CLUTTER_Y) / 2, z, 0, 0, 0, 0.006,
+      CLUTTER_Y - y - h / 2, 0xb9b2a0);
   };
   // Two tiers. The high ones sit up among the sprinkler grid; the low ones hang
   // at 2.9-3.5 m where a shopper's head would clear them, which puts them right
@@ -1711,7 +1821,11 @@ export function buildStore(THREE, scene) {
   // one tag per SKU run — irregular rhythm, keyed to the facing above it
   soup(Qtag, sharp(new THREE.MeshBasicMaterial({ map: T.tag, color: 0xf6f1e4 }), -1.0), 'shelfTags');
   soup(Qsign, new THREE.MeshBasicMaterial({ map: T.sign, color: 0xf2ecdd }), 'aisleSigns');
-  soup(Qblade, new THREE.MeshBasicMaterial({ map: T.blade, color: 0xf0ead9 }), 'bladeSigns');
+  // 4b: was tinted 0xf0ead9, which knocked the new light blade field back down
+  // toward the wall tone it is supposed to stand out from. It is a lit acrylic
+  // panel; let it be its own value. Sharpened because it is almost always seen
+  // near edge-on and the category text on it is load-bearing for navigation.
+  soup(Qblade, sharp(new THREE.MeshBasicMaterial({ map: T.blade, color: 0xffffff }), -0.6), 'bladeSigns');
   soup(Qlane, new THREE.MeshBasicMaterial({ map: T.lane, color: 0xfaf4e6 }), 'laneSigns');
   soup(Qpromo, new THREE.MeshBasicMaterial({ map: T.promo, color: 0xfbf3e2 }), 'promoSigns');
   soup(Qwsign, new THREE.MeshBasicMaterial({ map: T.wallSign, color: 0xeee7d6 }), 'wallSigns');
@@ -1761,12 +1875,30 @@ export function buildStore(THREE, scene) {
   // =========================================================================
   // LIGHTING
   // =========================================================================
-  scene.add(new THREE.AmbientLight(0xffeed4, 0.52));
-  const hemi = new THREE.HemisphereLight(0xfff8ea, 0x7d7255, 0.92);
+  // ROUND-4b — DYNAMIC RANGE AND LIGHT DIRECTION.
+  // The round-3/4a rig was 0.52 ambient + 0.92 hemi against 0.82 key + 0.26
+  // fill: very close to half the total illumination arriving from every
+  // direction at once. That is the whole reason the AO read as "omnidirectional
+  // and too weak" — it was not the AO, it was that any occlusion card is
+  // fighting a metre of flat fill behind it, so nothing it darkens can actually
+  // get dark. Real aisle light comes from a strip four metres straight up: the
+  // vertical component dominates and the horizontal fill is bounce off the
+  // facing gondola, which is much weaker than this.
+  //
+  // Shifting roughly a third of the omnidirectional budget into the downward
+  // key is what lets the toe kick go near black, the lip shadow bite, and the
+  // deck tops separate from the deck faces — all cards that were already drawn
+  // and were simply being washed out. Overall exposure is held roughly level so
+  // the packaging print does not sink.
+  scene.add(new THREE.AmbientLight(0xffeed4, 0.34));
+  const hemi = new THREE.HemisphereLight(0xfff8ea, 0x6d6249, 0.62);
   hemi.position.set(0, CEIL_H, 0);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(0xfff3e0, 0.82);
-  key.position.set(CX + 9, CEIL_H + 7, CZ - 12);
+  // Steeper as well as stronger: this used to come in at about 30 degrees off
+  // horizontal, i.e. from the side, which is the one direction a supermarket is
+  // never lit from and which put the brightest face on the shelf UPRIGHTS.
+  const key = new THREE.DirectionalLight(0xfff3e0, 1.22);
+  key.position.set(CX + 5, CEIL_H + 16, CZ - 7);
   key.target.position.set(CX, 0, CZ);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);

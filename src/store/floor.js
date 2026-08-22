@@ -224,8 +224,20 @@ export function reflectiveFloor(THREE, opts) {
     // Tuned against reference/store_02 with the shot loop open: the smear has
     // to run the whole length of the aisle at the camera, so the along-aisle
     // sigma is roughly 25x the across-aisle one and grows three times as fast.
+    //
+    // ROUND-4b. The across-aisle term grew at 0.0075/m with NO CEILING, so a
+    // ray leaving the floor at 1 degree travelled 200 m of ceiling and came
+    // back with a lateral footprint of 1.6 m. The light rows are on a 2.65 m
+    // pitch, so at that width the row Gaussians overlapped into a constant and
+    // the whole far half of the aisle floor rendered as one featureless white
+    // sheet — visible in every round-4a capture as a blown-out slab past the
+    // gondola ends. A burnisher lobe is anisotropic precisely because it stays
+    // NARROW across the direction of travel: the across-aisle sigma barely
+    // grows, and both terms are now clamped, because a reflected footprint
+    // cannot keep widening once it already spans the whole source.
     uBlurA: { value: new THREE.Vector2(0.09, 0.80) },
-    uBlurB: { value: new THREE.Vector2(0.0075, 0.235) },
+    uBlurB: { value: new THREE.Vector2(0.0022, 0.235) },
+    uBlurMax: { value: new THREE.Vector2(0.42, 5.60) },
     uFade: { value: new THREE.Vector2(7.0, 30.0) },
   };
   mat.userData.chop = U;
@@ -243,7 +255,7 @@ export function reflectiveFloor(THREE, opts) {
 varying vec3 vChopW;
 uniform float uCeilH, uShelfH, uWallTop, uPitch, uRunHalf, uFixPitch, uFixDuty, uRowOff, uGloss;
 uniform float uRunMax, uEdgeX, uRowExt;
-uniform vec2 uWallMap, uBlurA, uBlurB, uFade;
+uniform vec2 uWallMap, uBlurA, uBlurB, uBlurMax, uFade;
 uniform vec3 uLightCol, uCeilCol;
 uniform sampler2D uWall, uBurn;
 
@@ -349,8 +361,8 @@ float chopLight( vec2 q, float bx, float bz ) {
     } else {
       float t = ( uCeilH - Pw.y ) / R.y;
       vec2 Q = ( Pw + R * t ).xz;
-      float bx = uBlurA.x + uBlurB.x * t;
-      float bz = uBlurA.y + uBlurB.y * t;
+      float bx = min( uBlurA.x + uBlurB.x * t, uBlurMax.x );
+      float bz = min( uBlurA.y + uBlurB.y * t, uBlurMax.y );
       refl = uCeilCol + uLightCol * chopLight( Q, bx, bz );
     }
     gl_FragColor.rgb = mix( gl_FragColor.rgb, refl, clamp( fres * gloss, 0.0, 1.0 ) );
@@ -358,6 +370,6 @@ float chopLight( vec2 q, float bx, float bz ) {
 }
 `);
   };
-  mat.customProgramCacheKey = () => 'chopFloorR4';
+  mat.customProgramCacheKey = () => 'chopFloorR4b';
   return mat;
 }

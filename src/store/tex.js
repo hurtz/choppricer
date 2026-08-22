@@ -940,18 +940,29 @@ export function signAtlas(THREE, aisles) {
 
 // BLADE SIGNS — small mid-aisle markers, 8 cells stacked 512x128.
 export function bladeAtlas(THREE, aisles) {
+  // ROUND-4b. These were a SAGE field with cream text — the same green as the
+  // back-wall decor band and as the PRODUCE department sign. Looking down an
+  // aisle you therefore got three unrelated green rectangles at three different
+  // depths stacked on top of one another, and the blind critic read the nearest
+  // one as "a grey banner with a corrupted texture occluding the PRODUCE sign".
+  // It was neither grey nor corrupted: it was a sage blade seen at 5 degrees
+  // off edge-on, in front of a sage band, in front of a sage sign.
+  // A real category blade is a light panel with DARK type on it, which is also
+  // the only version that stays legible at the grazing angle these are always
+  // seen at — and legibility here is load-bearing, the player navigates by it.
   const W = 512, H = 128;
   const [c, g] = cv(W, H * 8);
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (let a = 0; a < 8; a++) {
     const info = aisles[a % aisles.length];
     g.save(); g.translate(0, a * H);
-    g.fillStyle = SAGE; g.fillRect(0, 0, W, H);
-    g.fillStyle = '#4e5936'; g.fillRect(0, H - 9, W, 9);
+    g.fillStyle = '#f6f0dd'; g.fillRect(0, 0, W, H);
+    g.fillStyle = '#e6dcc0'; g.fillRect(0, H - 11, W, 11);   // shadowed bottom edge
     g.fillStyle = TERRA; g.fillRect(0, 0, 132, H);
+    g.fillStyle = 'rgba(0,0,0,0.20)'; g.fillRect(132, 0, 5, H);
     g.fillStyle = '#fffaf0';
     fitText(g, String(a + 1), 66, H / 2 + 4, 104, 104, '800');
-    g.fillStyle = '#fdf7e6';
+    g.fillStyle = '#37402a';
     fitText(g, info.blade, 132 + (W - 132) / 2, H / 2, W - 168, 58, '700');
     g.restore();
   }
