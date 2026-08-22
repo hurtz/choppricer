@@ -515,7 +515,7 @@ export function createHUD(hudEl) {
       : t.stamina / (t.staminaMax || 1)));
     const gassed = t.wind === 'winded' || t.gassed;
     const burst = gassed ? 0 : (t.burst != null ? t.burst : frac * bMax);
-    const held = !(t.windIn < Infinity);          // key still down: nothing is coming back
+    const held = t.windIn === Infinity;           // key still down: nothing is coming back
     const boost = t.boost > 0;
     const lvl = frac < 0.34 ? '#ff9a2e' : GRN;
     const col = boost ? '#ffe36a' : gassed ? RED : t.wind === 'ready' ? GRN : lvl;
@@ -554,11 +554,15 @@ export function createHUD(hudEl) {
     else head = `${burst.toFixed(1)}s`;
     tx(head, sx + sw - 14, sy + 78, { s: 26, w: 'bold', c: hc, a: 'right', ls: 1 });
 
-    // bottom row: what the key does, and a pulse that remembers
-    const hint = gassed && held ? 'RELEASE [SHIFT] TO GET IT BACK'
+    // Bottom row: what the key is doing, and a pulse that remembers. The held
+    // line states the mechanic rather than instructing — the headline next to it
+    // already says LET GO, and this is a DVR, not a coach.
+    const hint = gassed && held ? 'KEY HELD — NO RECOVERY'
+      : gassed ? 'WIND RETURNING'
       : t.sprint ? '[SHIFT] SPRINTING'
       : '[SHIFT] SPRINT   [WASD] MOVE';
-    tx(hint, sx + 16, sy + 92, { s: 12, w: gassed && held ? 'bold' : '', c: gassed && held ? RED : DIM, ls: 1 });
+    tx(hint, sx + 16, sy + 92,
+      { s: 12, w: gassed ? 'bold' : '', c: gassed && held ? RED : gassed ? '#ff9a2e' : DIM, ls: 1 });
     const fat = Math.max(0, Math.min(1, t.fatigue == null ? 1 - frac : t.fatigue));
     tx(`PULSE ${Math.round(96 + fat * 88)}`, sx + 16 + bw2, sy + 92,
       { s: 12, w: 'bold', c: fat > 0.66 ? RED : fat > 0.33 ? '#ff9a2e' : DIM, a: 'right' });

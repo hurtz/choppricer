@@ -197,7 +197,7 @@
    "verdict": "R5 shadow collapsed: 55 getters onto one spelling, 57 constants in K, 45 backed by config.js, 0 shadowing it. Value-preserving confirmed byte-identical across always/ration/chase/camp (46.0 / 74.7 / 43.3 / 21.3)."
   },
   "game": {
-   "round": 3,
+   "round": 5,
    "state": "passed",
    "shots": [
     {
@@ -219,6 +219,11 @@
      "round": 3,
      "path": "../shots/game_r3_floor.png",
      "t": 1787430098.6298869
+    },
+    {
+     "round": 5,
+     "path": "../shots/game_r5_floor.png",
+     "t": 1787434127.967762
     }
    ],
    "gaps": [
@@ -235,13 +240,29 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787430382.460624,
-   "note": "Two-door HUD deliberately REFUSES to read s.doorPref - printing the hidden preference would hand back the exact variable the two-door fix exists to hide. Reads the margin instead: outside doorBias no preference can change his destination, so it locks to ROUTE COMMITTED; inside the band it says BOTH DOORS LIVE and breaks ties on which door is closing faster. Measured naive-vs-biased read: disagree 6.2%, all inside the band where the panel already declines to commit. Attributed the stand-down fix via a FIX.close switch rather than seed-matched before/after, because eval.js patches Math.random so any change in RNG draw count re-rolls the stream.",
+   "updated": 1787434185.339201,
+   "note": "THE FINDING: with the sprint key held, desk separation collapses from +20.1pp to +3.8pp. A player who cannot hold his wind loses the chases he earned at the desk, so reading the roster stops paying at all - the desk read is worth nothing without the lungs to cash it. Independently measured rationing at +28.3pp against the chase builder's 28.7 from a completely different instrument. Eval driver rewritten to plan THEN ration (35.4% sprint duty cycle) because rationing needs something to ration against. WIND panel: 3 fat bursts sized off burstMax, READY/RECOVERING/WINDED/SPRINTING, and 'LET GO' flashing when the key is held because windIn is Infinity - a stalled countdown teaches it faster than any tooltip. Nothing in the HUD points at a powerup, deliberately: in hand it is +13, fetching it is worth nothing, so a locator would sell a losing plan.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
-   "verdict": "PASS, separation WIDER than round 3: observer 76.4% catch / 1416 pts / 0.00 demotions vs random 54.8% / 323 / 1.23. That is +21.6pp catch and 4.4x points. 3 seeds x 20 shifts x 240s = 240 shift-minutes, 1467 resolved thieves."
+   "verdict": "PASS. Observer 56.7% catch / 1002 pts / 0.00 demotions vs random 36.6% / 239 / 1.20. Separation +20.1pp and 4.2x points, intact after the chase got much harder (median 3.03s -> 5.83s). Observer spread across 3 seeds is 1.1pp."
   }
  },
  "log": [
+  {
+   "t": 1787434185.3392022,
+   "piece": "game",
+   "role": "builder",
+   "round": 5,
+   "state": "passed",
+   "text": "THE FINDING: with the sprint key held, desk separation collapses from +20.1pp to +3.8pp. A player who cannot hold his wind loses the chases he earned at the desk, so reading the roster stops paying at all - the desk read is worth nothing without the lungs to cash it. Independently measured rationing at +28.3pp against the chase builder's 28.7 from a completely different instrument. Eval driver rewritten to plan THEN ration (35.4% sprint duty cycle) because rationing needs something to ration against. WIND panel: 3 fat bursts sized off burstMax, READY/RECOVERING/WINDED/SPRINTING, and 'LET GO' flashing when the key is held because windIn is Infinity - a stalled countdown teaches it faster than any tooltip. Nothing in the HUD points at a powerup, deliberately: in hand it is +13, fetching it is worth nothing, so a locator would sell a losing plan."
+  },
+  {
+   "t": 1787434127.967763,
+   "piece": "game",
+   "role": "builder",
+   "round": 5,
+   "state": "building",
+   "text": "EVAL DRIVER REBUILT + WIND/PULSE REWORK. (1) Driver now plans then spends: one Dijkstra out of the cop + the thief's line to his door sampled every 2m, goal = earliest point on his line the cop beats him to; spend only when slack<0.35s, inside grabbing range, on a push-bar, or through a boost. Sprint duty 35.4%. Same shape as agents.js cut+ration, because bolting a wind policy onto a straight-line follower buys back only 6.7 of the 28.7. (2) Re-measured, 3 seeds x 20 shifts x 240s = 240 shift-min: observer 56.7% catch / 1002 pts-shift / 0.00 demotions-shift / 0.00 complaints-min; random 36.6% / 239 / 1.20 / 1.16. Separation +20.1pp catch, 4.2x points, INTACT. (3) WIND ABLATION, same routing, key held: observer 28.4% / 522, random 24.6% / 189 \u2014 rationing is worth +28.3pp to the observer (matches agents.js's independent 28.7) AND separation collapses to +3.8pp, i.e. the desk read only pays if you can finish the chase. (4) WIND panel rebuilt as a cadence instrument: 3 fat segments sized off burstMax, READY/RECOVERING/WINDED/SPRINTING off the reported state machine, headline = burst in hand or seconds to go, LET GO when windIn is Infinity, refill strip during the lockout, flash moved from spending to the ready edge, PULSE off lagging fatigue. No powerup locator anywhere \u2014 a detour costs what the drink buys. 0.70ms/frame."
+  },
   {
    "t": 1787434055.528399,
    "piece": "agents",
@@ -675,5 +696,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787434055.5284
+ "updated": 1787434185.339204
 }
