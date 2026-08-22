@@ -34,12 +34,12 @@ export const TUNING = {
   thiefWalk: 1.25,
   thiefRun: 5.35,
   copAccel: 9.0,
-  staminaMax: 3.1,       // seconds of sprint from full
+  staminaMax: 1.40,       // seconds of sprint from full
   staminaDrain: 1.0,
-  staminaRegen: 0.34,
+  staminaRegen: 1.72,
   gassedPenalty: 0.62,   // speed multiplier while winded
   boostMul: 1.42,
-  boostTime: 4.0,
+  boostTime: 3.00,
   suspicionRadius: 4.5,  // thief bolts when cop closes inside this
   catchRadius: 1.15,
 
@@ -88,7 +88,19 @@ export const TUNING = {
   // caught) AND costing him 1.5s of wind (-> 59%). The cop's sprint is 64% faster
   // than the thief's cruise and reclaims two metres a second, so push-through
   // alone was not a tactic. Half the tank is what makes it one.
-  bargeStagger: 1.25, bargeSlow: 0.22, bargeWind: 1.50, bargeDump: 0.85,
+  bargeStagger: 0.55,
+
+  // --- Round 5: the four-round bug ---
+  // Gassed speed read (wantSprint ? copRun : copWalk) * gassedPenalty, so a cop who
+  // had blown his lungs and was STILL HOLDING sprint did 5.05*0.62 = 3.13 m/s, while
+  // a full-tank cop who chose to walk did 2.35. Gassing out was an UPGRADE over
+  // pacing yourself, so no recovery gate could ever make rationing pay. Attribution:
+  // the gate was worth 5.9 points, this was worth 32.5.
+  // gassedSprintMul MUST stay under 0.53 or the inversion returns.
+  gassedSprintMul: 0.35,
+  gassedRecover: 1.00,   // WINDED is all-or-nothing
+  regenHold: 0.00,       // regen granted while the sprint key is still down
+ bargeSlow: 0.22, bargeWindFrac: 0.48, bargeDump: 0.85,
 };
 
 export const CAMERAS = [

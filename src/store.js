@@ -48,7 +48,6 @@ function textures(THREE) {
     strip: TX.stripTex(THREE),
     well: TX.wellTex(THREE),
     tsh: TX.trofferShadowTex(THREE),
-    wire: TX.cartMeshTex(THREE),
     rail: TX.railTex(THREE),
     wood: TX.woodTex(THREE, [30, 40, 60], 77),
     wall: TX.wallTex(THREE),
@@ -71,6 +70,10 @@ function textures(THREE) {
     lane: TX.laneAtlas(THREE),
     promo: TX.promoAtlas(THREE),
     glow: TX.glowTex(THREE),
+    // round-6: the floor never got the contact-shadow treatment round 3 gave
+    // the inside of every shelf cavity. Both maps are authored for MULTIPLY.
+    contact: TX.contactTex(THREE),
+    gao: TX.groundAOTex(THREE),
     coolerBack: TX.coolerBackTex(THREE),
     // round-5: the two storefronts
     outside: TX.outsideTex(THREE),
@@ -321,7 +324,35 @@ export function buildStore(THREE, scene) {
   //   Qbloom  additive halo, so a run of fixtures merges into a line at range
   //   Qpatch  tile-grid-aligned floor patches, a half-shade off the field
   const Qwell = new Quads(), Qtsh = new Quads(), Qbloom = new Quads();
-  const Qpatch = new Quads(), Qwire = new Quads();
+  const Qpatch = new Quads();
+  // ROUND-6 additions.
+  //   Qcontact  the soft dark gradient every base throws onto the floor,
+  //             100-300 mm out. Multiply-blended, so it darkens the floor's
+  //             REFLECTION too rather than being pasted on top of it.
+  //   Qled      the glow off a reach-in door's LED mullion strip. Its own soup
+  //             because it has to render BEFORE the glass (renderOrder 3), and
+  //             the ceiling bloom it used to share renders after everything.
+  // (Qshadow, the broad ambient pool, keeps its call sites but changes blend
+  // mode — see the flush block. A near-black normal-blended quad is a decal;
+  // multiplying is what a shadow physically is.)
+  const Qcontact = new Quads(), Qled = new Quads();
+  // A contact gradient hugging a base. v = 0 hard against the base, fading out
+  // over `dep` metres. Emitted 1 mm above the wear layer so nothing z-fights.
+  const CONT_Y = 0.0052;
+  const contactZ = (lipX, zmid, len, dir, dep = 0.30) => {
+    Qcontact.rect([lipX + dir * dep / 2, CONT_Y, zmid],
+      [0, 0, dir * len / 2], [dir * dep / 2, 0, 0], 0, 0, 1, 1);
+  };
+  const contactX = (lipZ, xmid, len, dir, dep = 0.30) => {
+    Qcontact.rect([xmid, CONT_Y, lipZ + dir * dep / 2],
+      [-dir * len / 2, 0, 0], [0, 0, dir * dep / 2], 0, 0, 1, 1);
+  };
+  // all four sides of a free-standing base — pallets, tables, barrels, carts.
+  // The corners double up, which is right: a corner is occluded twice.
+  const contactBox = (x, z, w, d, dep = 0.24) => {
+    contactZ(x - w / 2, z, d, -1, dep); contactZ(x + w / 2, z, d, 1, dep);
+    contactX(z - d / 2, x, w, -1, dep); contactX(z + d / 2, x, w, 1, dep);
+  };
 
   // =========================================================================
   // FLOOR — see ./store/floor.js. This is the round-4 headline change.
@@ -348,8 +379,13 @@ export function buildStore(THREE, scene) {
     });
   }
   // the left wall run is a reach-in cooler bank as of round 5: what the floor
-  // mirrors off it is pale blue lit glass, not department colour on cream steel
-  RUN_DEPTS.push({ x: -EDGE_X + 0.10, halfW: 0.60, colors: FROZEN.colors });
+  // mirrors off it is pale blue lit glass, not department colour on cream steel.
+  // ROUND 6 — `lit` is what finally makes wallLUT draw it as glass. Round 5
+  // handed it FROZEN.colors and the LUT dutifully painted department bands, so
+  // the brightest vertical surface in the store put a dull beige streak on the
+  // floor. That is half of "the dairy glass reflects nothing while the floor
+  // two metres away reflects hard".
+  RUN_DEPTS.push({ x: -EDGE_X + 0.10, halfW: 0.62, colors: FROZEN.colors, lit: true });
   RUN_DEPTS.push({ x: EDGE_X, halfW: WRW / 2, colors: DEPTS[(AISLE_COUNT - 1) % DEPTS.length].colors });
 
   const FIX_L = 2.34, STRIP_GAP = 0.06;    // one 4 ft troffer + the joint after it
@@ -368,7 +404,7 @@ export function buildStore(THREE, scene) {
   // instead. Same hue, same value, less saturation — the floor is still warm
   // beige VCT, it has just stopped being orange.
   const floorMat = FL.reflectiveFloor(THREE, {
-    map: T.floor, wall: T.wallLUT, burnish: T.burn, tint: 0xd6d0c2,
+    map: T.floor, wall: T.wallLUT, burnish: T.burn, tint: 0xe0dacc,
     ceilH: CEIL_H, shelfH: SHELF_H, pitch: PITCH, runHalf: SHELF_W / 2 + 0.02,
     fixPitch: FIX_L + STRIP_GAP, fixLen: FIX_L, rowOff: PITCH / 2,
     minX: STORE.minX, spanX: SW,
@@ -530,13 +566,31 @@ export function buildStore(THREE, scene) {
   // The value target is unchanged and still comes from the reference: clearly
   // under the fittings so the troffers have something to be bright against,
   // but a warm off-white rather than mud.
+  //
+  // ROUND 6 — THE CEILING WAS DARKER THAN THE FLOOR, WHICH IS BACKWARDS.
+  // Measured off my own round-5 captures: the ceiling band sat at V ~0.42 and
+  // the open floor at V ~0.55. That inversion is impossible. A supermarket
+  // ceiling is a matte near-white surface directly under every fixture in the
+  // building; it is the SECOND-BRIGHTEST surface in the frame after the lamps
+  // themselves, and the reason a real store photograph reads as bright is that
+  // the top third of it is bouncing light back down.
+  // Two causes and both are fixed: ceilTex was authoring a 175%-coverage dark
+  // grain over the board (see tex.js), and this tint knocked what survived
+  // down another 27%. The ceiling now sits clearly above the floor and clearly
+  // below the troffer lenses, which is the correct ordering.
+  // The map is a 600 x 1200 plank grid, so u repeats every 2.44 m and v every
+  // 4.88 m — the two axes are deliberately NOT the same.
   const ceilPlane = new THREE.Mesh(
     new THREE.PlaneGeometry(SW, SD),
     new THREE.MeshBasicMaterial({
-      map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 4.88, SD / 4.88); return t; })(),
-      color: 0xbbb6a9,
+      map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 2.44, SD / 4.88); return t; })(),
+      color: 0xe4dccb,
     }));
-  PK.sharpen(THREE, ceilPlane.material, -0.9);
+  // ROUND 6: was -0.9. A T-bar grid at 40 m subtends well under a pixel, and
+  // forcing a sharp mip on it ruled a hard white lattice across the whole far
+  // ceiling. Let the mip chain do its job past about fifteen metres; the tile
+  // grain still holds up close, which is all the bias was ever for.
+  PK.sharpen(THREE, ceilPlane.material, -0.30);
   ceilPlane.rotation.x = Math.PI / 2;    // normal points down
   ceilPlane.position.set(CX, CEIL_H, CZ);
   ceilGroup.add(ceilPlane);
@@ -962,6 +1016,26 @@ export function buildStore(THREE, scene) {
     { key: 'reset', steps: [0.255, 0.295, 0.335, 0.385, 0.285], vacancy: 2.55, base: 0.145 },
     { key: 'mixed', steps: [0.225, 0.265, 0.235, 0.305, 0.355], vacancy: 0.55, base: 0.108 },
   ];
+  // ROUND 6 — PERIMETER / CHILLED FACINGS. The critic reported the perimeter
+  // and chilled runs as identical, gapless, flush and 100% full, which
+  // contradicts the per-instance jitter and 12-18% vacancy shipped in round 3.
+  // They are not a separate code path — both go through fillShelf with every
+  // round-3 anomaly live. It is a STARVATION bug two steps upstream:
+  //   * the right-hand perimeter run was built on PROFILES[0] ('tight'), whose
+  //     deck steps are 0.158-0.198 m. Minus the 36 mm board that is ~0.13 m of
+  //     clear height, and products.js `fits` only admits kinds whose natural
+  //     height is under it. For DEPTS[7] that leaves exactly TWO of eight kinds
+  //     — smallBox and tinyBox — with every soft good excluded. Ten decks of
+  //     two box kinds 45-100 mm wide is the "identical facings" report,
+  //     literally: there was almost nothing else it could draw.
+  //   * 'tight' also carries vacancy 0.06, which divides the bare-bay roll by
+  //     sixteen. Chance of a reserved bay per deck: 1.4%. That is the "gapless".
+  // The perimeter wall gets its own plan: deck steps spanning 0.20-0.50 m so
+  // jugs, bottles, cereal and bags all physically fit, and a vacancy a shopped
+  // wall actually has. `fits` is loosened in products.js for the same reason.
+  const PERIM = {
+    key: 'perim', steps: [0.235, 0.395, 0.285, 0.505, 0.325, 0.445], vacancy: 1.5, base: 0.145,
+  };
   function deckPlan(r, prof) {
     const ys = [];
     let y = prof.base + rr(r, -0.012, 0.030);
@@ -1219,12 +1293,17 @@ export function buildStore(THREE, scene) {
           for (const s of [-1, 1]) fix(lip - f.dir * 0.05, 2.10, bz + s * 0.95, 0.15, 0.08, 0.04, P.metal);
         }
       }
-      // contact shadow where the run meets the floor — the single cheapest cue
-      // that anything in this store is actually sitting on the ground. Two
-      // passes: a wide soft ambient one and a tight near-black line right at
-      // the kick plate, which is what actually sells the contact.
+      // CONTACT SHADOW AT THE FLOOR. ROUND 6. Round 5 emitted a broad ambient
+      // pool here and a 0.46 m "tight" quad — but both were normal-blended
+      // near-black cards carrying a RADIAL map, so along a 25 m run the tight
+      // one was a uniform dark stripe with a razor edge down each side. The
+      // critic read one of them as a solid black band substituting for a
+      // shadow, with the case above it floating. It was.
+      // Now: a real 1-D ramp, near-black hard against the kick plate and gone
+      // by 300 mm, MULTIPLIED into the floor so it darkens the reflection as
+      // well as the tile — which is what an occluded mirror does.
       qUp(Qshadow, lip + f.dir * 0.06, 0.006, zmid, 2.6, len * 1.02, FULL);
-      qUp(Qshadow, lip + f.dir * 0.02, 0.007, zmid, 0.46, len * 1.01, FULL);
+      contactZ(lip - f.dir * 0.03, zmid, len * 1.005, f.dir, 0.34);
       // rubber bumper along the foot of the run
       fix(lip - f.dir * 0.012, 0.048, zmid, 0.030, 0.058, len, 0x4a4640);
     }
@@ -1268,6 +1347,13 @@ export function buildStore(THREE, scene) {
         // stub uprights framing the endcap
         fix(x - halfW + 0.03, 1.06, lip - dir * 0.05, 0.06, 1.95, 0.09, P.upright);
         fix(x + halfW - 0.03, 1.06, lip - dir * 0.05, 0.06, 1.95, 0.09, P.upright);
+        // ...and the contact shadow off its own plinth, which is what a shopper
+        // standing in the cross-aisle is looking straight down at
+        contactX(zEnd + dir * (EC_D + 0.075), x, halfW * 2 - 0.06, dir, 0.32);
+        for (const sx2 of [-1, 1]) {
+          contactZ(x + sx2 * (halfW - 0.02), zEnd + dir * (EC_D / 2 + 0.05),
+            EC_D + 0.10, sx2, 0.26);
+        }
       }
     }
 
@@ -1329,6 +1415,7 @@ export function buildStore(THREE, scene) {
             fix(ux + dx, 0.04, uz + dz, 0.07, 0.08, 0.08, 0x2f3237);
           }
           qUp(Qshadow, ux, 0.006, uz, 1.3, 2.0, FULL);
+          contactBox(ux, uz, 0.46, 1.18, 0.20);
         }
       }
     }
@@ -1419,7 +1506,10 @@ export function buildStore(THREE, scene) {
       fillShelf(B, rng, prof, {
         axis: 'z', a0: z0 + 0.15, a1: z1 - 0.15, lip, face: dir,
         deckY: CD[d], headroom: 0.34, depth: 0.66, lit: 1.26, col,
-        pull: d / Math.max(1, CD.length - 1), vacancy: 0.55,
+        // ROUND 6 — see the PERIMETER / CHILLED FACINGS note at buildRun. 0.55
+        // put a bare bay on one deck in six; a chilled run gets shopped harder
+        // than a dry one, not less.
+        pull: d / Math.max(1, CD.length - 1), vacancy: 1.35,
         tag: (aStart, aw, kindT) => {
           qX(Qtag, lip + dir * 0.020, CD[d] - 0.021, aStart + aw / 2, aw, 0.048, dir, tagUV(kindT));
         },
@@ -1434,8 +1524,20 @@ export function buildStore(THREE, scene) {
       fix(gx - dir * 0.030, 1.18, z, 0.030, 2.08, 0.030, 0x2c2e2c);
       fix(gx - dir * 0.048, 1.06, z + w - 0.095, 0.030, 1.32, 0.030, 0xd8dde2);
       for (const hy of [0.44, 1.68]) fix(gx - dir * 0.030, hy, z + w - 0.095, 0.05, 0.05, 0.028, 0xb3b8bd);
-      tube(gx + dir * 0.075, 1.18, z + 0.045, 0, 0, 0, 0.013, 1.98, 0xfff9ec);
-      qX(Qbloom, gx + dir * 0.030, 1.18, z + 0.045, 2.10, 0.30, dir, FULL);
+      // ROUND 6 — WHY THE DAIRY GLASS "REFLECTED NOTHING".
+      // It was not the shader. reflectiveGlass is on this run exactly as it is
+      // on the back wall. Two transcription faults, both only on this run:
+      //   * the LED mullion tube was hung at gx + dir*0.075, i.e. 75 mm OUTSIDE
+      //     the pane, floating in the aisle instead of inside the case;
+      //   * its bloom card was emitted through qX with d and h swapped — 2.10 m
+      //     along Z by 0.30 m tall — so instead of a vertical strip up the
+      //     mullion it was a 2.1 m HORIZONTAL additive bar across the middle of
+      //     every door, overlapping its neighbours two and a half deep, in a
+      //     soup with renderOrder 5, i.e. drawn on top of the glass.
+      // A 250%-overlapped additive bar over a fresnel surface erases it. The
+      // glass was working the whole time and was being painted out.
+      tube(gx - dir * 0.075, 1.18, z + 0.045, 0, 0, 0, 0.013, 1.98, 0xfff9ec);
+      qX(Qled, gx - dir * 0.030, 1.18, z + 0.045, 0.30, 2.10, dir, FULL);
       fix(gx + dir * 0.02, 2.22, z + w / 2, 0.02, 0.06, w - 0.10, 0xf6f1e2);
     }
     fix(gx, 1.18, cz, 0.07, 0.05, len, 0xd7d1bf);
@@ -1458,6 +1560,7 @@ export function buildStore(THREE, scene) {
         cellUV(wsn++ < 2 ? 2 : 3, 1, 4));
     }
     qUp(Qshadow, mid + dir * 0.35, 0.006, cz, 3.4, len, FULL);
+    contactZ(gx + dir * 0.03, cz, len, dir, 0.36);
     solid(wallX - 0.05 * dir, 0, z0 - 0.05, gx + dir * 0.06, 2.34, z1 + 0.05);
   }
 
@@ -1495,7 +1598,7 @@ export function buildStore(THREE, scene) {
   coolerRunZ(STORE.minX, 1, -BODY - EC_D, BODY + EC_D);
   buildRun(91, STORE.maxX - WRW / 2 - 0.04, WRW / 2,
     [{ dir: -1, dept: DEPTS[(AISLE_COUNT - 1) % DEPTS.length], aisle: AISLE_COUNT - 1 }],
-    { profile: PROFILES[0], upper: -1, segs: ONE_SEG });
+    { profile: PERIM, upper: -1, segs: ONE_SEG });
 
   // =========================================================================
   // HANGING AISLE SIGNS  (front mouth + back mouth, both faces)
@@ -1576,6 +1679,8 @@ export function buildStore(THREE, scene) {
       });
     }
     qUp(Qshadow, x + 0.05, 0.006, laneCZ, 2.4, laneLen + 1.4, FULL);
+    contactZ(x - 0.34, laneCZ, laneLen, -1, 0.30);
+    contactZ(x + 0.34, laneCZ, laneLen, 1, 0.30);
     solid(x - 0.62, 0, laneZ0 - 0.1, x + 0.82, 1.1, laneZ1 + 0.1);
   }
 
@@ -1709,6 +1814,7 @@ export function buildStore(THREE, scene) {
     qZ(Qexit, cx, 2.88, fz + 1.925, 0.86, 0.26, 1, cellUV(label, 2, 1));
     fix(cx, 3.08, fz + 1.86, 1.10, 0.07, 0.24, 0x24262a, BfixF);
     qUp(Qshadow, cx, 0.006, fz + 1.4, w + 1.2, 3.0, FULL);
+    contactX(fz + 1.92, cx, w + 0.2, 1, 0.34);
   }
   storefront(EXIT.x, 3.40, 0);
   // Door 2, on config.js's EXIT2 so there is exactly one source of truth for
@@ -1758,7 +1864,7 @@ export function buildStore(THREE, scene) {
       fillShelf(B, rng, FROZEN, {
         axis: 'x', a0: coolX0 + 0.15, a1: coolX1 - 0.15, lip, face: -1,
         deckY: CD[d], headroom: 0.34, depth: 0.68, lit: 1.22, col,
-        pull: d / Math.max(1, CD.length - 1), vacancy: 0.7,
+        pull: d / Math.max(1, CD.length - 1), vacancy: 1.35,
         tag: (aStart, aw, kindT) => {
           qZ(Qtag, aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048, -1, tagUV(kindT));
         },
@@ -1783,7 +1889,11 @@ export function buildStore(THREE, scene) {
       for (const hy of [0.44, 1.68]) fix(x + w - 0.095, hy, gz - 0.030, 0.028, 0.05, 0.05, 0xb3b8bd);
       // the LED strip up the inside of the mullion, and its glow on the glass
       tube(x + 0.045, 1.18, gz + 0.075, 0, 0, 0, 0.013, 1.98, 0xfff9ec);
-      qZ(Qbloom, x + 0.045, 1.18, gz + 0.030, 0.30, 2.10, -1, FULL);
+      // Qled, not Qbloom: the ceiling-bloom soup renders at renderOrder 5, i.e.
+      // after the glass at 4, so an additive card meant to sit INSIDE the case
+      // was in fact laid over the pane. Same fault as the dairy run, milder,
+      // and the reason the critic read this glass as "faintly present".
+      qZ(Qled, x + 0.045, 1.18, gz + 0.030, 0.30, 2.10, -1, FULL);
       // the shelf-edge label strip a door's worth of frozen product carries
       fix(x + w / 2, 2.22, gz + 0.02, w - 0.10, 0.06, 0.02, 0xf6f1e2);
     }
@@ -1791,6 +1901,7 @@ export function buildStore(THREE, scene) {
     fix((coolX0 + coolX1) / 2, 2.24, gz - 0.01, coolX1 - coolX0, 0.09, 0.09, 0xc9c3b1);
     fix((coolX0 + coolX1) / 2, 0.13, gz - 0.01, coolX1 - coolX0, 0.10, 0.09, 0x8b8574);
     qUp(Qshadow, cmid, 0.006, coolZ - 0.35, cw, 3.4, FULL);
+    contactX(gz - 0.03, cmid, cw, -1, 0.36);
     solid(coolX0, 0, coolZ - coolD / 2 - 0.1, coolX1, 2.3, coolZ + coolD / 2);
   }
 
@@ -1830,6 +1941,7 @@ export function buildStore(THREE, scene) {
       }
     }
     qUp(Qshadow, cx, 0.006, cz, w + 1.6, dpt + 1.6, FULL);
+    contactBox(cx, cz, w - 0.3, dpt - 0.3, 0.32);
     solid(cx - w / 2, 0, cz - dpt / 2, cx + w / 2, 0.8, cz + dpt / 2);
   }
   produceTable(prodX0 + 2.6, STORE.maxZ - 3.2, 5.6, 2.0, 0);
@@ -1871,6 +1983,7 @@ export function buildStore(THREE, scene) {
     }
     flushPkg(B, 'wetrack');
     qUp(Qshadow, wmid, 0.006, wz, ww, 2.6, FULL);
+    contactX(wz - 0.45, wmid, ww, -1, 0.32);
     solid(wx0, 0, wz - 0.45, wx1, 2.1, wz + 0.45);
   }
 
@@ -1891,6 +2004,7 @@ export function buildStore(THREE, scene) {
       y += h;
     }
     qUp(Qshadow, x, 0.006, z, w + 1.3, d + 1.3, FULL);
+    contactBox(x, z, w + 0.18, d + 0.18, 0.26);
     solid(x - w / 2 - 0.1, 0, z - d / 2 - 0.1, x + w / 2 + 0.1, Math.min(y, 1.3), z + d / 2 + 0.1);
   }
   // parked clear of x = aisleX(i): that centreline is the agents' nav spine
@@ -1936,6 +2050,7 @@ export function buildStore(THREE, scene) {
           fix(px, 0.78, z + sz2 * 0.50, 1.02, 1.45, 0.035, P.metal);
         }
         qUp(Qshadow, px, 0.006, z, 2.2, 2.2, FULL);
+        contactBox(px, z, 1.05, 1.05, 0.26);
         solid(px - 0.55, 0, z - 0.55, px + 0.55, 1.5, z + 0.55);
       } else {
         bulkStack(px, z, DEPTS[(k + 3) % DEPTS.length], 1.05, 1.05, ri(rng, 3, 6));
@@ -1953,10 +2068,28 @@ export function buildStore(THREE, scene) {
   // see-through is most of what identifies it at any distance. Four alpha-mapped
   // mesh panels plus a real tube frame, a plastic handle, a child seat and — on
   // the ones out on the floor — some shopping in the bottom.
-  const cartWire = (Q, cx, cy, cz, ex, ey, ez, ux, uy, uz) => {
-    const w = Math.hypot(ex, ey, ez) * 2, h = Math.hypot(ux, uy, uz) * 2;
-    Q.rect([cx, cy, cz], [ex, ey, ez], [ux, uy, uz], 0, 0, w / 0.062, h / 0.062);
-  };
+  //
+  // ROUND 6 — THE CART TRANSPARENCY BUG. This was a straight rendering fault
+  // and it was the loudest thing in the store.
+  //
+  // Round 4 built the basket out of four alpha-mapped cards: an 8x8 wire grid
+  // on a 128 px canvas, tiled every 62 mm, on a Phong material with
+  // transparent:true + alphaTest:0.22. Two things go wrong and they compound.
+  //   * 8 wires across a 62 mm cell is a wire every 7.75 mm. At any real
+  //     viewing distance that is well under a texel, so the mip chain averages
+  //     the whole cell to a single alpha of roughly 0.6 — uniformly, everywhere
+  //     on the card. alphaTest 0.22 never fires, because 0.6 > 0.22 across the
+  //     ENTIRE quad. There is no cut-out left; the card is a solid sheet.
+  //   * transparent:true then blends that sheet. So every basket rendered as a
+  //     milky white film with the floor tiles, the steel frame and the cardboard
+  //     boxes inside it all reading through at ~40%.
+  // Alpha-testing a wire grid finer than a texel cannot work — the information
+  // is gone before the test runs. So the basket is now REAL WIRE: individual
+  // 10 mm bars in the existing fixture batch. No alpha, no blending, no sort,
+  // correct occlusion and a correct silhouette, in the same draw call as every
+  // other fixture in the store. About 87 instances per cart, 16 carts, ~17k
+  // triangles total against a 1.8 M budget. (TX.cartMeshTex is left in place
+  // but is no longer used by anything.)
   function cart(x, z, yaw, loaded) {
     const c = Math.cos(yaw), s = Math.sin(yaw);
     const at = (dx, dz) => [x + dx * c - dz * s, z + dx * s + dz * c];
@@ -1965,22 +2098,32 @@ export function buildStore(THREE, scene) {
       col.setHex(hex);
       B.push(px, y, pz, 0, yaw, 0, sx, sy, sz, col);
     };
-    // basket: four wire panels, splayed the way a nesting basket actually is
-    const P = [
-      [0, 0.615, -0.455, 0.29, 0, 0, 0, 0.20, 0],       // front wall
-      [0, 0.645, 0.455, 0.29, 0, 0, 0, 0.17, 0],        // back wall
-      [-0.275, 0.615, 0, 0, 0, 0.455, 0, 0.20, 0],      // left
-      [0.275, 0.615, 0, 0, 0, 0.455, 0, 0.20, 0],       // right
-    ];
-    for (const [dx, y, dz, ex, ey, ez, ux, uy, uz] of P) {
-      const [px, pz] = at(dx, dz);
-      const rx = ex * c - ez * s, rz = ex * s + ez * c;
-      cartWire(Qwire, px, y, pz, rx, ey, rz, ux, uy, uz);
+    // basket: real wire. `axis` 0 = the panel spans local X, 1 = local Z.
+    const WR = 0.010, VP = 0.062, HP = 0.085;
+    const bright = 0xdfe4ea, dull = 0xa8aeb6;
+    // a vertical panel: bars up the face at VP, bars across it at HP
+    const panel = (dx, dz, y, half, halfH, axis) => {
+      for (let a = -half + WR; a <= half - WR + 1e-4; a += VP) {
+        const px = axis ? dx : dx + a, pz = axis ? dz + a : dz;
+        put(px, y, pz, axis ? WR : WR, halfH * 2, axis ? WR : WR,
+          (Math.round(a / VP) & 1) ? bright : dull);
+      }
+      for (let h = -halfH + WR; h <= halfH - WR + 1e-4; h += HP) {
+        put(dx, y + h, dz, axis ? WR * 0.85 : half * 2, WR * 0.85,
+          axis ? half * 2 : WR * 0.85, dull);
+      }
+    };
+    panel(0, -0.455, 0.615, 0.29, 0.20, 0);      // front wall
+    panel(0, 0.455, 0.645, 0.29, 0.17, 0);       // back wall
+    panel(-0.275, 0, 0.615, 0.455, 0.20, 1);     // left
+    panel(0.275, 0, 0.615, 0.455, 0.20, 1);      // right
+    // the floor of the basket — bars running fore-and-aft under bars running
+    // across, which is how a nesting basket is actually made
+    for (let a = -0.255; a <= 0.256; a += VP) {
+      put(a, 0.415, 0, WR, WR * 0.9, 0.91, dull);
     }
-    // the floor of the basket, and the fold-down child seat behind it
-    {
-      const [px, pz] = at(0, 0.0);
-      cartWire(Qwire, px, 0.415, pz, 0.275 * c, 0, 0.275 * s, -0.45 * s, 0, 0.45 * c);
+    for (let b = -0.44; b <= 0.441; b += HP) {
+      put(0, 0.423, b, 0.55, WR * 0.9, WR, bright);
     }
     // tube frame: top rail all round, corner posts, undercarriage, handle
     put(0, 0.815, -0.455, 0.58, 0.028, 0.028, 0xd6dae0);
@@ -2008,6 +2151,12 @@ export function buildStore(THREE, scene) {
       }
     }
     qUp(Qshadow, x, 0.006, z, 1.4, 1.8, FULL);
+    // four castors, each with its own tight pool — that is what actually reads
+    // as a cart standing on a floor rather than hovering 20 mm over it
+    for (const [dx, dz] of [[-0.225, -0.365], [0.225, -0.365], [-0.225, 0.365], [0.225, 0.365]]) {
+      const [px, pz] = at(dx, dz);
+      contactBox(px, pz, 0.09, 0.09, 0.085);
+    }
     solid(x - 0.42, 0, z - 0.6, x + 0.42, 1.0, z + 0.6);
   }
   const Bcart = newPkg();
@@ -2028,6 +2177,7 @@ export function buildStore(THREE, scene) {
   cart(aisleX(5) + PITCH / 2 - 1.05, XA0 - 1.25, -1.9, false);
   flushPkg(Bcart, 'cartload');
   qUp(Qshadow, sd.x, 0.006, sd.z, 7.6, 3.0, FULL);
+  contactBox(sd.x, sd.z, 6.4, 1.10, 0.30);
 
   // =========================================================================
   // POWERUP SPOTS — REAL MERCHANDISING, not markers
@@ -2095,6 +2245,7 @@ export function buildStore(THREE, scene) {
     }
     headerCard(x, 1.52, z, 0.46);
     qUp(Qshadow, x, 0.006, z, w + 1.0, d + 1.0, FULL);
+    contactBox(x, z, w + 0.10, d + 0.10, 0.22);
   }
 
   function energyBarrel(x, z) {
@@ -2125,6 +2276,7 @@ export function buildStore(THREE, scene) {
     }
     headerCard(x, 1.50, z, 0.42);
     qUp(Qshadow, x, 0.006, z, r * 2 + 1.0, r * 2 + 1.0, FULL);
+    contactBox(x, z, r * 2 + 0.06, r * 2 + 0.06, 0.22);
   }
 
   const putSpot = (x, z, kind) => {
@@ -2218,15 +2370,26 @@ export function buildStore(THREE, scene) {
   });
   const bl = soup(Qbloom, bloomMat, 'lightBloom', ceilGroup);
   if (bl) bl.renderOrder = 5;
+  // GROUND SHADOWS. ROUND 6 — both of these used to be one normal-blended
+  // near-black card at 0.70 opacity. A dark card PAINTED over a floor is a
+  // decal: it flattens the tile, it flattens the reflection under it, and where
+  // the card ends it ends at the card's edge rather than at a physical
+  // gradient. Multiply is what a shadow actually is — it scales whatever the
+  // floor was already returning, reflection included — so an occluded patch of
+  // mirror goes dim instead of going matte black.
+  //   Qshadow   the broad ambient pool, radial map, one per fixture
+  //   Qcontact  the tight ramp hugging every base, 100-340 mm out
   const shadowMat = new THREE.MeshBasicMaterial({
-    map: T.glow, color: 0x12121a, transparent: true, opacity: 0.70, depthWrite: false,
+    map: T.gao, color: 0xffffff, transparent: true, depthWrite: false,
+    blending: THREE.MultiplyBlending,
   });
-  const sm = soup(Qshadow, shadowMat, 'contactShadows'); if (sm) sm.renderOrder = 1;
+  const sm = soup(Qshadow, shadowMat, 'groundShadows'); if (sm) sm.renderOrder = 1;
+  const contactMat = new THREE.MeshBasicMaterial({
+    map: T.contact, color: 0xffffff, transparent: true, depthWrite: false,
+    blending: THREE.MultiplyBlending,
+  });
+  const cm = soup(Qcontact, contactMat, 'contactShadows'); if (cm) cm.renderOrder = 2;
   soup(Qpatch, new THREE.MeshBasicMaterial({ map: T.patch, color: 0xd6d1c3 }), 'floorPatches');
-  soup(Qwire, new THREE.MeshPhongMaterial({
-    map: T.wire, color: 0xffffff, shininess: 68, specular: 0x8f959c,
-    transparent: true, alphaTest: 0.22, side: THREE.DoubleSide, depthWrite: true,
-  }), 'cartMesh');
   // CAVITY AMBIENT OCCLUSION — multiplied over the product, so it has to run
   // after every opaque package and before the glass.
   const aoMat = new THREE.MeshBasicMaterial({
@@ -2243,6 +2406,13 @@ export function buildStore(THREE, scene) {
   // product inside the case actually reads; at grazing it goes to mirror.
   // aspect = door width / door height, so the haze band is the same physical
   // width along the jamb as along the head.
+  // ...and the LED mullion strips INSIDE the cases, which have to be laid down
+  // before the pane in front of them, not after it. See coolerRunZ.
+  const ledMat = new THREE.MeshBasicMaterial({
+    map: T.glow, color: 0xfff6e2, transparent: true, opacity: 0.42,
+    depthWrite: false, blending: THREE.AdditiveBlending,
+  });
+  const ld = soup(Qled, ledMat, 'coolerLed'); if (ld) ld.renderOrder = 3;
   const glassMat = FL.reflectiveGlass(THREE, floorMat.userData.chop, { aspect: 0.40 });
   const gl = soup(Qglass, glassMat, 'coolerGlass'); if (gl) gl.renderOrder = 4;
   scene.userData.chopGlass = glassMat.userData.chop;

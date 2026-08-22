@@ -96,86 +96,190 @@ export function floorTex(THREE) {
 // doubled, a T-bar with real contrast and a dark shadow line on one side, and
 // per-tile incident — water stains, cut tiles, return-air grilles, patched
 // tiles, sagging corners. Real supermarket ceilings are visibly beaten up.
+// ROUND 6 — THREE FAULTS, ALL CALLED, ALL REAL.
+//
+// 1. IT READ AS ASPHALT. The round-3 grain was 5200 rects of ~2.5 x 2.2 px on a
+//    128 px tile: 28 600 px of ink over 16 400 px of tile, i.e. 175% coverage.
+//    That is not a fissured mineral-fibre face, it is a solid noise field, and
+//    a solid dark noise field over a warm ground is exactly exposed aggregate.
+//    Real Armstrong/USG tile is a smooth pressed face with SPARSE pinholes and
+//    a handful of long cut fissures — under 12% coverage — and the tone comes
+//    from the board, not from the grain.
+// 2. THE GRAIN CROSSED THE GRID. It did not, strictly: the old grain was drawn
+//    per tile. But the tile was 610 mm SQUARE and the map repeated every 4.88 m,
+//    so an 8x8 block of near-identical square tiles tiled the whole ceiling and
+//    read as one continuous field with a grid ruled on top of it. A real store
+//    grid is 600 x 1200 planks: the long axis alone breaks the read, and the
+//    per-tile tone has to be wide enough to see.
+// 3. IT WAS DARKER THAN THE FLOOR. Half of that is the material tint in
+//    store.js; the other half is here — the board was authored at l = 80-93 and
+//    then had 175% dark grain multiplied over it. The board is now 86-96 with a
+//    third of the ink, so the tile is genuinely the second-brightest surface in
+//    the store, which is what a ceiling bouncing 4000 lm/fixture actually is.
+//
+// Layout: 4 columns x 4 rows over 2.44 m x 4.88 m => 610 x 1220 mm planks.
+// Cross tees run every 610 mm across u, main runners every 1220 mm along v.
 export function ceilTex(THREE) {
-  const N = 1024, T = 8, S = N / T;
+  const N = 1024, TX = 4, TY = 4, SX = N / TX, SY = N / TY;
   const [c, g] = cv(N, N);
   const rng = makeRng(90210);
-  g.fillStyle = '#ddd6c4'; g.fillRect(0, 0, N, N);
-  for (let ty = 0; ty < T; ty++) for (let tx = 0; tx < T; tx++) {
+  g.fillStyle = '#e6e0cf'; g.fillRect(0, 0, N, N);
+  for (let ty = 0; ty < TY; ty++) for (let tx = 0; tx < TX; tx++) {
     const roll = rng();
-    const grille = roll < 0.045;             // return-air grille
-    const patched = roll >= 0.045 && roll < 0.10;
-    const base = [rr(rng, 34, 49), rr(rng, 9, 21), patched ? rr(rng, 70, 79) : rr(rng, 80, 93)];
+    const grille = roll < 0.055;             // return-air grille
+    const patched = roll >= 0.055 && roll < 0.135;
+    // PER-TILE TONE. This is the single biggest change: neighbouring planks in
+    // a real ceiling are visibly different, because they were installed in
+    // different years out of different cartons and they yellow at different
+    // rates. A 10-point lightness spread is what makes the grid read as
+    // DISCRETE UNITS rather than as a ruled pattern on one surface.
+    const base = [rr(rng, 36, 52), rr(rng, 7, 19), patched ? rr(rng, 74, 82) : rr(rng, 86, 96)];
     g.fillStyle = hsl(base[0], base[1], base[2]);
-    g.fillRect(tx * S + 3, ty * S + 3, S - 6, S - 6);
-    // fissured / pinhole acoustic texture — the fine grain that stops the tile
-    // reading as a painted rectangle when the camera gets near it
-    // Mineral-fibre tile is punched with thousands of pinholes and cut with
-    // random fissures. Round 2 drew them at 6-30% alpha, which averaged out to
-    // a smooth painted rectangle past six metres — the ceiling was the single
-    // flattest region in every render.
-    for (let i = 0; i < 5200; i++) {
-      const d = rng();
-      g.fillStyle = d < 0.72
-        ? `rgba(84,77,62,${rr(rng, 0.16, 0.44)})`
-        : `rgba(255,253,246,${rr(rng, 0.16, 0.46)})`;
-      const w = rr(rng, 1.5, 3.9), hh = rr(rng, 1.4, 3.4);
-      g.fillRect(tx * S + rng() * S, ty * S + rng() * S, w, hh);
+    g.fillRect(tx * SX + 3, ty * SY + 3, SX - 6, SY - 6);
+    // Fissure direction is set by how the plank was laid — half the ceiling
+    // gets turned 90 degrees, which is exactly what a tiler does with a carton
+    // of directional board and is another break in the field.
+    const turned = rng() < 0.5;
+    g.save();
+    g.beginPath();
+    g.rect(tx * SX + 3, ty * SY + 3, SX - 6, SY - 6);
+    g.clip();
+    const cx0 = tx * SX + SX / 2, cy0 = ty * SY + SY / 2;
+    g.translate(cx0, cy0);
+    if (turned) g.rotate(Math.PI / 2);
+    g.translate(-cx0, -cy0);
+    // PINHOLES. Sparse, small, and mostly a touch darker than the board — a
+    // pressed acoustic face is perforated, not sprayed with gravel.
+    for (let i = 0; i < 900; i++) {
+      g.fillStyle = rng() < 0.80
+        ? `rgba(126,117,98,${rr(rng, 0.10, 0.26)})`
+        : `rgba(255,253,247,${rr(rng, 0.10, 0.28)})`;
+      const w = rr(rng, 1.1, 2.3);
+      g.fillRect(tx * SX + rng() * SX, ty * SY + rng() * SY, w, w * rr(rng, 0.8, 1.2));
     }
-    for (let i = 0; i < 150; i++) {
-      g.strokeStyle = rng() < 0.7
-        ? `rgba(88,80,66,${rr(rng, 0.13, 0.32)})`
-        : `rgba(255,252,244,${rr(rng, 0.13, 0.34)})`;
-      g.lineWidth = rr(rng, 1.2, 3.8);
+    // FISSURES. Long, shallow, running roughly with the plank — 30 of them,
+    // not 150, and each one visibly a cut rather than a scribble.
+    for (let i = 0; i < 30; i++) {
+      g.strokeStyle = rng() < 0.66
+        ? `rgba(112,103,86,${rr(rng, 0.16, 0.34)})`
+        : `rgba(255,252,244,${rr(rng, 0.14, 0.30)})`;
+      g.lineWidth = rr(rng, 1.4, 3.2);
       g.beginPath();
-      let x = tx * S + rng() * S, y = ty * S + rng() * S;
+      let x = tx * SX + rng() * SX, y = ty * SY + rng() * SY;
       g.moveTo(x, y);
-      for (let k = 0; k < 4; k++) g.lineTo(x += rr(rng, -34, 34), y += rr(rng, -34, 34));
+      for (let k = 0; k < 4; k++) g.lineTo(x += rr(rng, -12, 12), y += rr(rng, -46, 46));
       g.stroke();
     }
+    g.restore();
     if (grille) {                            // eggcrate return-air register
       g.fillStyle = '#9a927e';
-      g.fillRect(tx * S + 9, ty * S + 9, S - 18, S - 18);
-      for (let k = 14; k < S - 14; k += 9) {
+      g.fillRect(tx * SX + 9, ty * SY + 9, SX - 18, SY - 18);
+      for (let k = 14; k < SY - 14; k += 11) {
         g.fillStyle = 'rgba(38,36,30,0.72)';
-        g.fillRect(tx * S + k, ty * S + 12, 4.5, S - 24);
-        g.fillRect(tx * S + 12, ty * S + k, S - 24, 4.5);
+        g.fillRect(tx * SX + 12, ty * SY + k, SX - 24, 5);
+      }
+      for (let k = 14; k < SX - 14; k += 11) {
+        g.fillStyle = 'rgba(38,36,30,0.72)';
+        g.fillRect(tx * SX + k, ty * SY + 12, 5, SY - 24);
       }
       g.strokeStyle = 'rgba(255,252,240,0.55)'; g.lineWidth = 2;
-      g.strokeRect(tx * S + 9, ty * S + 9, S - 18, S - 18);
-    } else if (roll > 0.86) {                // water stain, ringed and off-centre
-      const sx = tx * S + rr(rng, S * 0.25, S * 0.75);
-      const sy = ty * S + rr(rng, S * 0.25, S * 0.75);
+      g.strokeRect(tx * SX + 9, ty * SY + 9, SX - 18, SY - 18);
+    } else if (roll > 0.885) {               // water stain, ringed and off-centre
+      const sx = tx * SX + rr(rng, SX * 0.25, SX * 0.75);
+      const sy = ty * SY + rr(rng, SY * 0.25, SY * 0.75);
       for (let ring = 3; ring >= 0; ring--) {
-        const rad = S * (0.14 + ring * 0.07);
-        g.fillStyle = `rgba(${152 - ring * 6},${128 - ring * 7},${88 - ring * 5},${0.055 + ring * 0.035})`;
+        const rad = SX * (0.20 + ring * 0.10);
+        g.fillStyle = `rgba(${168 - ring * 8},${140 - ring * 9},${94 - ring * 6},${0.050 + ring * 0.036})`;
         g.beginPath();
         for (let k = 0; k <= 22; k++) {
           const a = (k / 22) * 6.283, rp = rad * (0.78 + 0.34 * Math.abs(Math.sin(a * 2.3 + ring)));
-          g[k ? 'lineTo' : 'moveTo'](sx + Math.cos(a) * rp, sy + Math.sin(a) * rp * 0.86);
+          g[k ? 'lineTo' : 'moveTo'](sx + Math.cos(a) * rp, sy + Math.sin(a) * rp * 1.35);
         }
         g.closePath(); g.fill();
       }
-    } else if (roll > 0.80) {                // sagging tile: shadow on two edges
-      g.fillStyle = 'rgba(70,64,52,0.16)';
-      g.fillRect(tx * S + 3, ty * S + 3, S - 6, 12);
-      g.fillRect(tx * S + 3, ty * S + 3, 12, S - 6);
+    } else if (roll > 0.68) {                // sagging tile: it has dropped off
+      // the flange on one side, so the shadow is a WEDGE, not a border
+      const sd = rng() < 0.5;
+      const grd = sd
+        ? g.createLinearGradient(tx * SX, 0, tx * SX + SX * 0.55, 0)
+        : g.createLinearGradient(0, ty * SY, 0, ty * SY + SY * 0.45);
+      grd.addColorStop(0, 'rgba(58,52,42,0.30)');
+      grd.addColorStop(1, 'rgba(58,52,42,0)');
+      g.fillStyle = grd;
+      g.fillRect(tx * SX + 3, ty * SY + 3, SX - 6, SY - 6);
     }
   }
   // T-BAR. A real 15/16in grid reads as a light metal face with a hard shadow
   // line on one side of it — that shadow is what survives to twenty metres.
-  for (let i = 0; i <= T; i++) {
-    const p = i * S;
+  // Cross tees along u (610 mm), main runners along v (1220 mm) — the main
+  // runner is the heavier section and is drawn wider.
+  const bar = (x, y, w, h, heavy) => {
     g.fillStyle = 'rgba(26,23,17,0.92)';
-    g.fillRect(p - 5.2, 0, 10.4, N); g.fillRect(0, p - 5.2, N, 10.4);
-    g.fillStyle = '#cec6b0';
-    g.fillRect(p - 3.4, 0, 6.8, N); g.fillRect(0, p - 3.4, N, 6.8);
-    g.fillStyle = 'rgba(255,253,246,0.96)';
-    g.fillRect(p - 1.6, 0, 2.4, N); g.fillRect(0, p - 1.6, N, 2.4);
-    g.fillStyle = 'rgba(20,17,12,0.80)';     // shadow gap under the flange
-    g.fillRect(p + 3.4, 0, 3.4, N); g.fillRect(0, p + 3.4, N, 3.4);
-  }
+    g.fillRect(x - w, y - h, w * 2, h * 2);
+    g.fillStyle = '#d6cfb9';
+    g.fillRect(x - w * 0.62, y - h * 0.62, w * 1.24, h * 1.24);
+    g.fillStyle = heavy ? 'rgba(255,254,250,0.98)' : 'rgba(252,249,240,0.90)';
+    g.fillRect(x - w * 0.28, y - h * 0.28, w * 0.56, h * 0.56);
+  };
+  for (let i = 0; i <= TX; i++) bar(i * SX, N / 2, 5.0, N / 2, false);
+  for (let i = 0; i <= TY; i++) bar(N / 2, i * SY, N / 2, 6.4, true);
+  // the shadow gap under the flange — one side only, which is what reads as a
+  // suspended grid rather than as a painted lattice
+  g.fillStyle = 'rgba(20,17,12,0.72)';
+  for (let i = 0; i <= TX; i++) g.fillRect(i * SX + 5.0, 0, 3.2, N);
+  for (let i = 0; i <= TY; i++) g.fillRect(0, i * SY + 6.4, N, 4.0);
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
+}
+
+// ---------------------------------------------------------------------------
+// CONTACT SHADOW at the floor. ROUND 6.
+//
+// Every base in the store — gondola kick plates, freezer plinths, endcaps, cart
+// castors — met the floor at a hard clean line, and in one frame a solid black
+// band with a razor edge was standing in for the shadow, so the case read as
+// floating. Round 3 solved exactly this problem INSIDE the shelf cavities and
+// the floor never got it.
+//
+// Two maps, both authored for MULTIPLY blending so they darken whatever the
+// floor is already doing — including its reflection, which is the point: a real
+// mirror goes dark where something is sitting on it, it does not get a black
+// decal pasted over it.
+//   contactTex   1-D ramp: near-black at v = 0 (hard against the base) fading
+//                to white by v = 1, 100-300 mm out. Used as edge-hugging strips.
+//   groundAOTex  radial pool for the broad ambient darkening under a fixture.
+export function contactTex(THREE) {
+  const W = 8, H = 128;
+  const [c, g] = cv(W, H);
+  const grd = g.createLinearGradient(0, H, 0, 0);      // v = 0 is the BOTTOM row
+  grd.addColorStop(0.00, 'rgb(28,26,26)');
+  grd.addColorStop(0.10, 'rgb(58,55,54)');
+  grd.addColorStop(0.26, 'rgb(120,116,112)');
+  grd.addColorStop(0.52, 'rgb(196,192,186)');
+  grd.addColorStop(0.78, 'rgb(240,238,233)');
+  grd.addColorStop(1.00, 'rgb(255,255,255)');
+  g.fillStyle = grd; g.fillRect(0, 0, W, H);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
+  t.anisotropy = 4;
+  return t;
+}
+
+export function groundAOTex(THREE) {
+  const N = 128;
+  const [c, g] = cv(N, N);
+  const grd = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
+  grd.addColorStop(0.00, 'rgb(96,92,88)');
+  grd.addColorStop(0.22, 'rgb(140,136,130)');
+  grd.addColorStop(0.52, 'rgb(212,209,203)');
+  grd.addColorStop(0.80, 'rgb(247,246,242)');
+  grd.addColorStop(1.00, 'rgb(255,255,255)');
+  g.fillStyle = grd; g.fillRect(0, 0, N, N);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  return t;
 }
 
 // ---------------------------------------------------------------------------

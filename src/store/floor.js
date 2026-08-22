@@ -61,6 +61,33 @@ export function wallLUT(THREE, runs, minX, spanX) {
   for (const run of runs) {
     const x0 = px(run.x - run.halfW), x1 = px(run.x + run.halfW);
     const w = Math.max(2, x1 - x0);
+    // ROUND 6 — THE LIT COLD WALL. The blind critic's exact words about one
+    // frame: the dairy glass reflects nothing while the floor two metres away
+    // reflects hard. Half of that was the glass (fixed in store.js); the other
+    // half is HERE, because the floor's model of the aisle-1 wall was a shelf
+    // run in department colours. It is not: it is twenty-six metres of lit
+    // glass, and it is the brightest vertical surface in the store after the
+    // fixtures themselves. A floor that mirrors the ceiling cannot ignore it.
+    if (run.lit) {
+      g.fillStyle = '#2a2a2c';                                  // plinth
+      g.fillRect(x0, py(0.20), w, py(0) - py(0.20));
+      const grd = g.createLinearGradient(0, py(2.30), 0, py(0.20));
+      grd.addColorStop(0.0, '#cfe2ee');
+      grd.addColorStop(0.45, '#a9c6d6');
+      grd.addColorStop(1.0, '#7e9cb0');
+      g.fillStyle = grd;
+      g.fillRect(x0, py(2.30), w, py(0.20) - py(2.30));
+      // the LED mullion strips, which are what actually streak on the floor
+      for (let sx = x0 + 1; sx < x1; sx += Math.max(3, w / 5)) {
+        g.fillStyle = 'rgba(255,252,240,0.92)';
+        g.fillRect(sx, py(2.20), Math.max(1, w * 0.10), py(0.30) - py(2.20));
+      }
+      g.fillStyle = '#e9eef0';                                   // top valance
+      g.fillRect(x0, py(2.62), w, py(2.30) - py(2.62));
+      g.fillStyle = '#5d6b48';
+      g.fillRect(x0, py(WALL_TOP), w, py(2.62) - py(WALL_TOP));
+      continue;
+    }
     // kick plate + rubber bumper: the darkest thing at floor level anywhere in
     // the store, and the thing that puts a black streak under every run.
     g.fillStyle = '#241f18';
@@ -223,10 +250,50 @@ vec3 chopRun( float x ) {
 // Is there actually gondola at this z? Round 5 cut a 3.6 m walkway through
 // every island run, and a mirror that has not been told paints shelf streaks
 // straight across the one piece of open floor the change exists to create.
+//
+// ROUND 6. This used to be two step()s, i.e. a hard binary, and the critic's
+// fourth floor fault was exactly its consequence: "the streaks terminate at
+// hard straight edges at the cross-aisle". Nothing in an optical reflection
+// terminates at a hard straight edge — the lobe is finite, so the transition
+// spans at least the width of the blur. Continuous occupancy, smoothstepped
+// over roughly a shelf depth, and the caller MIXES on it instead of branching.
 float chopRunZ( float z ) {
-  float body = step( abs( z ), uBodyZ );
-  float gap = step( uCross.x, z ) * step( z, uCross.y );
+  float body = 1.0 - smoothstep( uBodyZ - 0.30, uBodyZ + 0.30, abs( z ) );
+  float gap = smoothstep( uCross.x - 0.34, uCross.x + 0.34, z )
+            * ( 1.0 - smoothstep( uCross.y - 0.34, uCross.y + 0.34, z ) );
   return body * ( 1.0 - gap );
+}
+// How close this point is to the END of a run — the outer ends and both faces
+// of the mid-store walkway. What stands there is not shelf: it is a wood end
+// panel with a red promo header over it, which is where the reflected BOGO
+// caps in every reference photograph come from.
+float chopEnd( float z ) {
+  float d = min( min( abs( z - uCross.x ), abs( z - uCross.y ) ),
+                 abs( abs( z ) - uBodyZ ) );
+  return 1.0 - smoothstep( 0.10, 0.80, d );
+}
+vec3 chopCapCol( float y ) {
+  // wood panel to 2.05, painted header band above it, dark reveal at the top
+  vec3 wood = vec3( 0.36, 0.27, 0.17 );
+  vec3 promo = vec3( 0.62, 0.17, 0.09 );
+  vec3 head = vec3( 0.40, 0.37, 0.31 );
+  vec3 c = mix( wood, promo, smoothstep( 2.00, 2.14, y ) );
+  return mix( c, head, smoothstep( 2.58, 2.72, y ) );
+}
+// The ceiling AS A SURFACE, not just as a set of lamps. Round 5's mirror
+// returned a flat uCeilCol between the light rows, so the only thing the floor
+// could ever show was strip lights — which is precisely what was reported. A
+// real burnished floor carries a dim, smeared copy of the whole tile field:
+// the T-bar grid, the per-plank tone, the darker mouths of the return-air
+// grilles. Cheap: two fract()s and a hash on a 0.61 x 1.22 m plank grid.
+float chopCeilTile( vec2 q, float b ) {
+  vec2 g = vec2( q.x / 0.61, q.y / 1.22 );
+  vec2 f = abs( fract( g ) - 0.5 );
+  // the grid lines wash out once the blur outruns the plank
+  float k = 1.0 - smoothstep( 0.10, 0.75, b );
+  float grid = max( smoothstep( 0.40, 0.50, f.x ), smoothstep( 0.42, 0.50, f.y ) );
+  float tone = chopHash( floor( g ) + 11.0 );
+  return 1.0 + k * ( ( tone - 0.5 ) * 0.55 - grid * 0.42 );
 }
 // The ceiling light field sampled at ceiling point q (xz), pre-blurred by the
 // reflected footprint (bx across the aisle, bz along it).
@@ -240,8 +307,17 @@ float chopLight( vec2 q, float bx, float bz ) {
 
   float zz = q.y / uFixPitch;
   float f = fract( zz );
-  float e = clamp( bz / uFixPitch, 0.03, 0.55 );
+  // ROUND 6. The blur half-width was clamped at 0.55 of a fixture pitch, but
+  // the duty cycle of the strip is 0.975 — a 60 mm joint between two 4 ft
+  // units. With e that wide the two ramps overlap before either reaches 1, so
+  // a strip that is continuous overhead came back off the floor as a train of
+  // separate blobs with 40% dark gaps between them. The mirror was disagreeing
+  // with the ceiling it was mirroring. Narrower ramps, and the joint bottoms
+  // out at a third rather than at zero, because a joint plate is a plate with
+  // two lit fixtures blooming across it, not a hole in the ceiling.
+  float e = clamp( bz / uFixPitch, 0.03, 0.34 );
   float duty = smoothstep( 0.0, e, f ) * smoothstep( 0.0, e, uFixDuty - f );
+  duty = 0.34 + 0.66 * duty;
   // per-fixture character: about one in eighteen is dead, the rest age to
   // different colour temperatures and brightnesses
   float id = floor( zz ) * 7.0 + floor( q.x / uPitch + 0.5 ) * 37.0;
@@ -266,8 +342,9 @@ float chopLight( vec2 q, float bx, float bz ) {
   // by cross traffic, so let the long sigma soften the duty cycle too or the
   // reflection reads as a row of discrete bright blocks.
   float cb = max( bx, bz * 0.28 );
-  float ec = clamp( cb / uFixPitch, 0.03, 0.55 );
+  float ec = clamp( cb / uFixPitch, 0.03, 0.34 );
   float cduty = smoothstep( 0.0, ec, cx ) * smoothstep( 0.0, ec, uFixDuty - cx );
+  cduty = 0.34 + 0.66 * cduty;
   float cmerge = smoothstep( 0.20, 1.60, cb / uFixPitch );
   float cross = exp( - ( dc * dc ) / ( wc * wc ) ) * uCrossAmp
     * mix( cduty, uFixDuty * 0.88, cmerge );
@@ -302,8 +379,17 @@ export function reflectiveFloor(THREE, opts) {
     uWallMap: { value: new THREE.Vector2(1 / spanX, minX) },
     // linear-space radiance. The lamp is deliberately over 1: a mirrored
     // fluorescent tube IS blown out on a real polished floor.
-    uLightCol: { value: new THREE.Color(4.55, 4.34, 3.72) },
-    uCeilCol: { value: new THREE.Color(0.30, 0.285, 0.245) },
+    // ROUND 6 — CALIBRATED AGAINST reference/store_05, the one reference frame
+    // that shows a long run of polished VCT under a full fixture strip. Two
+    // things measure differently there than round 5 assumed: the light smear is
+    // a LOW-CONTRAST sheen rather than a blown white bar, and the ceiling
+    // between the fixtures is bright enough that the far floor — which is
+    // almost pure mirror — comes back a pale grey, not a dark one. Round 5 had
+    // the lamp at 4.55 over a ceiling at 0.30, i.e. a 15:1 reflected contrast
+    // ratio on a surface whose real ratio is nearer 8:1, so the streaks read as
+    // stage lighting.
+    uLightCol: { value: new THREE.Color(3.30, 3.16, 2.76) },
+    uCeilCol: { value: new THREE.Color(0.40, 0.385, 0.345) },
     uGloss: { value: 0.88 },
     // ANISOTROPY. x = across the aisle, y = along it. The burnisher runs the
     // length of the aisle, so the lobe is several times longer than it is wide
@@ -331,10 +417,51 @@ export function reflectiveFloor(THREE, opts) {
     uCross: { value: new THREE.Vector2(opts.crossA ?? 1e9, opts.crossB ?? 1e9) },
     uBodyZ: { value: opts.bodyZ ?? 1e9 },
     uCrossAmp: { value: 1.05 },
-    uBlurA: { value: new THREE.Vector2(0.09, 0.80) },
-    uBlurB: { value: new THREE.Vector2(0.0022, 0.235) },
-    uBlurMax: { value: new THREE.Vector2(0.42, 5.60) },
+    // ROUND 6 — WHY THE STREAKS DID NOT CONVERGE.
+    //
+    // The critic's first floor fault was that the streaks keep the same width
+    // from the foreground to the vanishing point. The mirror maths was never
+    // wrong — the reflected ray genuinely foreshortens — so I went looking for
+    // what was cancelling it, and it was these four numbers.
+    //
+    // The along-aisle sigma started at 0.80 m and grew 0.235 m per metre of
+    // reflected path. A floor point three metres in front of a standing camera
+    // has a reflected path of about ten metres, so bz was already 3.15 m there
+    // — one and a third FIXTURE PITCHES. `merge` in chopLight is
+    // smoothstep(0.20, 1.60, bz/pitch), so it was pinned at 1.0 from three
+    // metres out to the back wall: no duty cycle, no joints, no individual
+    // fixtures, just a continuous constant-brightness band the whole length of
+    // the aisle. A band with no internal structure has nothing to converge
+    // WITH, which is why it read as paint. The across-aisle sigma then widened
+    // 40% over the same run, cancelling most of the perspective narrowing that
+    // was left.
+    //
+    // A burnisher lobe is narrow. Starting the along-aisle sigma at a fifth of
+    // a fixture pitch and growing it a quarter as fast means the near fixtures
+    // resolve as separate blobs with dark joints between them, they compress
+    // and merge somewhere around fifteen metres, and the whole thing narrows
+    // toward the vanishing point because nothing is fighting the perspective.
+    uBlurA: { value: new THREE.Vector2(0.075, 0.340) },
+    uBlurB: { value: new THREE.Vector2(0.0016, 0.084) },
+    uBlurMax: { value: new THREE.Vector2(0.30, 3.60) },
     uFade: { value: new THREE.Vector2(7.0, 30.0) },
+    // VCT is laid in 12 in tiles and every tile takes wax differently. The
+    // grout line between two of them is a recessed matte seam that reflects
+    // nothing, and the tiles either side are polished to different degrees and
+    // sit a fraction of a degree off each other — so a mirrored highlight
+    // crossing a floor is BROKEN AND DISPLACED at every seam. Round 5 ran the
+    // streaks continuously over the grout, which is the second thing the critic
+    // named. uTile is the real tile pitch the floor map lays down: 2.44 / 8.
+    uTile: { value: 2.44 / 8 },
+    uTileVar: { value: 0.40 },      // how much the per-tile wax varies
+    uTileTilt: { value: 0.019 },    // how far a tile displaces the mirrored ray
+    uSeam: { value: 0.52 },         // how completely the grout kills the mirror
+    // How hard the floor mirrors the SHELVING, as opposed to the lamps. Round 5
+    // sampled the wall LUT raw, and the LUT is authored dim on purpose, so the
+    // gondolas, the endcaps and the red promo caps were all present in the
+    // reflection at a few percent — i.e. invisibly. Only the strip lights ever
+    // made it out, which is the third thing the critic named.
+    uWallGain: { value: 1.45 },
   };
   mat.userData.chop = U;
 
@@ -349,7 +476,7 @@ export function reflectiveFloor(THREE, opts) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vChopW;
-uniform float uGloss;
+uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain;
 uniform vec2 uBlurA, uBlurB, uBlurMax, uFade;
 uniform sampler2D uBurn;
 ` + CHOP_SCENE_GLSL + `
@@ -375,52 +502,81 @@ uniform sampler2D uBurn;
     vec3( dot( gl_FragColor.rgb, vec3( 0.36, 0.48, 0.16 ) ) ) * vec3( 1.03, 1.0, 0.94 ),
     far * 0.55 );
   gl_FragColor.rgb *= 0.90 + 0.20 * burn2;
-  gl_FragColor.rgb *= 0.62 + 0.38 * smoothstep( 0.10, 0.55, burn );   // scuff arcs
+  gl_FragColor.rgb *= 0.74 + 0.26 * smoothstep( 0.10, 0.55, burn );   // scuff arcs
 
   if ( ny > 0.0025 ) {
-    vec3 R = normalize( vec3( Vd.x + ( burn - 0.5 ) * 0.055, ny, Vd.z ) );
+    // ---- PER TILE ---------------------------------------------------------
+    // A sales floor is not one mirror, it is four thousand small ones. Each
+    // 12 in tile takes wax differently and sits a fraction of a degree off its
+    // neighbours, and the grout line between them is a recessed matte seam.
+    // So: the gloss varies per tile, the mirrored ray is DISPLACED per tile,
+    // and the seam itself reflects almost nothing. That is what breaks a
+    // highlight at every grout line instead of running it straight through.
+    // All three fade out with distance — past twenty metres a 300 mm tile is
+    // under a pixel and holding this would only alias.
+    vec2 tg = Pw.xz / uTile;
+    vec2 tid = floor( tg );
+    float tj = chopHash( tid );
+    float tj2 = chopHash( tid + 19.0 );
+    vec2 tf = abs( fract( tg ) - 0.5 );
+    float near = 1.0 - smoothstep( 5.0, 21.0, camD );
+    float seam = max( smoothstep( 0.435, 0.497, tf.x ), smoothstep( 0.442, 0.497, tf.y ) );
+
+    vec3 R = normalize( vec3(
+      Vd.x + ( burn - 0.5 ) * 0.055 + ( tj - 0.5 ) * uTileTilt * near,
+      ny,
+      Vd.z + ( tj2 - 0.5 ) * uTileTilt * near ) );
     // sealed VCT: F0 about 0.04, and grazing incidence takes it to a mirror.
     float fres = 0.040 + 0.960 * pow( 1.0 - ny, 5.0 );
     // wax is not uniform; a burnished floor is glossier where the machine ran
     float gloss = uGloss * ( 0.62 + 0.66 * burn );
+    gloss *= 1.0 - near * ( uTileVar * ( 0.5 - tj ) * 0.5 + seam * uSeam );
 
-    vec3 refl;
+    // --- the ceiling, which is what the ray sees when nothing blocks it ----
+    float tC = ( uCeilH - Pw.y ) / R.y;
+    vec2 QC = ( Pw + R * tC ).xz;
+    float bx = min( uBlurA.x + uBlurB.x * tC, uBlurMax.x );
+    float bz = min( uBlurA.y + uBlurB.y * tC, uBlurMax.y );
+    vec3 refl = uCeilCol * chopCeilTile( QC, bz ) + uLightCol * chopLight( QC, bx, bz );
+
     // --- is a gondola in the way before the ray clears the shelf tops? -----
+    // Continuous occupancy, not a hit test: a reflection lobe has width, so
+    // the edge of a reflected object is a gradient the width of the lobe. The
+    // binary version is what put the hard straight terminations at the
+    // cross-aisle that made the whole floor read as a decal.
     float tTop = ( uShelfH - Pw.y ) / R.y;
-    float hitT = 1.0e9;
+    float occ = 0.0, hitT = tTop;
     for ( int i = 0; i < 6; i ++ ) {
       float t = tTop * ( float( i ) + 0.5 ) / 6.0;
       vec3 Q = Pw + R * t;
-      vec3 rr = chopRun( Q.x );
-      float gate = max( rr.z, chopRunZ( Q.z ) );
-      if ( abs( rr.x ) < uRunHalf && rr.y > 0.5 && gate > 0.5 ) hitT = min( hitT, t );
+      vec3 rn = chopRun( Q.x );
+      float ox = 1.0 - smoothstep( uRunHalf - 0.16, uRunHalf + 0.16, abs( rn.x ) );
+      float o = ox * rn.y * max( rn.z, chopRunZ( Q.z ) );
+      if ( o > occ ) { occ = o; hitT = t; }
     }
-    if ( hitT < 1.0e8 ) {
+    if ( occ > 0.004 ) {
       vec3 Q = Pw + R * hitT;
       // v runs 0 at the floor to 1 at the top rail; the LUT is drawn that way
       // up and CanvasTexture's flipY already puts row 0 at v = 1.
       vec2 wuv = vec2( ( Q.x - uWallMap.y ) * uWallMap.x,
                        clamp( Q.y / uWallTop, 0.0, 1.0 ) );
-      refl = texture2D( uWall, wuv ).rgb;
+      vec3 w = texture2D( uWall, wuv ).rgb * uWallGain;
+      // the END of a run is a wood panel under a red promo header, not shelf
+      w = mix( w, chopCapCol( Q.y ), chopEnd( Q.z ) * 0.85 );
       // vertical streaking: the reflection of a shelf on a buffed floor is a
       // set of ragged bands, never a clean image of the shelf
       float n = chopHash( vec2( floor( Q.z * 2.6 ), floor( Q.x * 1.7 ) ) );
-      refl *= 0.66 + 0.72 * n;
+      w *= 0.76 + 0.52 * n;
+      refl = mix( refl, w, occ );
       // and the run's own occlusion darkens the wax right at its foot
-      gloss *= 0.85;
-    } else {
-      float t = ( uCeilH - Pw.y ) / R.y;
-      vec2 Q = ( Pw + R * t ).xz;
-      float bx = min( uBlurA.x + uBlurB.x * t, uBlurMax.x );
-      float bz = min( uBlurA.y + uBlurB.y * t, uBlurMax.y );
-      refl = uCeilCol + uLightCol * chopLight( Q, bx, bz );
+      gloss *= 1.0 - 0.15 * occ;
     }
     gl_FragColor.rgb = mix( gl_FragColor.rgb, refl, clamp( fres * gloss, 0.0, 1.0 ) );
   }
 }
 `);
   };
-  mat.customProgramCacheKey = () => 'chopFloorR5';
+  mat.customProgramCacheKey = () => 'chopFloorR6';
   return mat;
 }
 

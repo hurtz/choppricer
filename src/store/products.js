@@ -188,7 +188,23 @@ const STACKABLE = new Set([K.can, K.bigCan, K.jar, K.tallJar, K.tinyBox,
   K.smallBox, K.wideBox, K.case12, K.pouch]);
 
 function fits(kinds, headroom) {
-  const ok = kinds.filter((k) => k.h[0] <= headroom - 0.02 && k.h[1] <= headroom + 0.06);
+  let ok = kinds.filter((k) => k.h[0] <= headroom - 0.02 && k.h[1] <= headroom + 0.06);
+  // ROUND 6 — STARVATION. On a shallow deck this filter could admit as few as
+  // TWO of a department's eight kinds, and the run then drew ten decks of the
+  // same two box shapes at nearly the same width: the "identical, gapless,
+  // flush" perimeter facings the critic reported. A real store does not merchandise
+  // a 5 in deck with two SKUs; it puts short versions of everything on it —
+  // half-litre bottles, squat jars, single-serve pouches — and the caller
+  // already clamps anything over the clear height. So when the pool is starved,
+  // admit the next-shortest kinds and let them be clamped. The deck plan still
+  // drives SKU size, it just stops driving it to a single answer.
+  if (ok.length < 4) {
+    const extra = kinds
+      .filter((k) => !ok.includes(k) && k.h[0] <= headroom + 0.10)
+      .sort((a, b) => a.h[0] - b.h[0])
+      .slice(0, 4 - ok.length);
+    ok = ok.concat(extra);
+  }
   // ROUND 3: prefer kinds that actually USE the cavity. A 5in jar merchandised
   // under a 15in deck leaves a 10in band of empty air above every facing, and
   // that band — repeated the length of the run — is why round-2 aisles read as
