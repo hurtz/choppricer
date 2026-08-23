@@ -68,13 +68,53 @@ export function createTracker(THREE, scene, opts = {}) {
   // Measured once, on first detection, and kept. A rig's box breathes as its
   // arms swing; re-measuring every frame costs a full subtree walk per subject
   // per frame and buys a box that jitters. One measurement, held.
+  //
+  // THIS IS NOT Box3.setFromObject, AND THE DIFFERENCE COST ME AN HOUR.
+  // setFromObject walks INVISIBLE children too. Every shopper rig carries a
+  // hidden anger sprite parked at y=2.05 with a 0.42 scale, so every person in
+  // the store measured 2.38 m tall instead of 1.75, and that one number was
+  // wrong in three places at once:
+  //   * the analytics box stood 35% too tall, so it floated off the head;
+  //   * the PTZ framed a 2.38 m man, so every push-in under-zoomed;
+  //   * worst, the occlusion test asked "can the camera see his head at 0.93 h"
+  //     = 2.21 m, which clears a 2.05 m gondola — so subjects standing behind
+  //     shelving were ruled VISIBLE and got bright boxes drawn over empty shelf
+  //     tops. See shots/cctv_r4_desk_occlusion.png. A box with nothing in it is
+  //     worse than no box: it teaches the player the boxes are decoration.
+  // So: walk it by hand, prune at anything invisible, and ignore sprites — a
+  // billboard is not a body and a detector would never see one anyway.
+  const _b = { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0, any: false };
+  function walk(o) {
+    if (!o.visible) return;
+    if (!o.isSprite && !o.isPoints && !o.isLine && o.geometry) {
+      const g = o.geometry;
+      if (!g.boundingBox) g.computeBoundingBox();
+      const bb = g.boundingBox;
+      if (bb) {
+        box.copy(bb).applyMatrix4(o.matrixWorld);
+        if (!_b.any) {
+          _b.any = true;
+          _b.minX = box.min.x; _b.maxX = box.max.x;
+          _b.minY = box.min.y; _b.maxY = box.max.y;
+          _b.minZ = box.min.z; _b.maxZ = box.max.z;
+        } else {
+          _b.minX = Math.min(_b.minX, box.min.x); _b.maxX = Math.max(_b.maxX, box.max.x);
+          _b.minY = Math.min(_b.minY, box.min.y); _b.maxY = Math.max(_b.maxY, box.max.y);
+          _b.minZ = Math.min(_b.minZ, box.min.z); _b.maxZ = Math.max(_b.maxZ, box.max.z);
+        }
+      }
+    }
+    for (let i = 0; i < o.children.length; i++) walk(o.children[i]);
+  }
   function measure(o) {
     try {
-      box.setFromObject(o);
-      if (!isFinite(box.min.y) || box.isEmpty()) return { h: 1.75, r: 0.36 };
-      const h = Math.max(0.2, box.max.y - box.min.y);
-      const r = Math.max(0.12, Math.max(box.max.x - box.min.x, box.max.z - box.min.z) * 0.5);
-      return { h: Math.min(2.6, h), r: Math.min(1.2, r) };
+      o.updateWorldMatrix(true, true);
+      _b.any = false;
+      walk(o);
+      if (!_b.any || !isFinite(_b.maxY)) return { h: 1.75, r: 0.36 };
+      const h = Math.max(0.2, _b.maxY - Math.min(0, _b.minY));
+      const r = Math.max(0.12, Math.max(_b.maxX - _b.minX, _b.maxZ - _b.minZ) * 0.5);
+      return { h: Math.min(2.4, h), r: Math.min(1.2, r) };
     } catch (e) {
       return { h: 1.75, r: 0.36 };
     }
@@ -123,12 +163,18 @@ export function createTracker(THREE, scene, opts = {}) {
       if (stopped) {
         tr.stillT += step; tr.moveT = 0;
         if (tr.moving && tr.stillT > STOP_ARM) {
-          tr.moving = false; tr.stoppedAt = t; tr.flag = 1;   // fresh STOPPED event
+          // Fresh STOPPED event. It DECAYS rather than being cleared by the
+          // renderer: the detector runs at 15 Hz and a mosaic thumbnail only
+          // repaints five to nine times a second, so a one-frame flag was being
+          // missed by almost every panel it was meant to light up.
+          tr.moving = false; tr.stoppedAt = t; tr.flag = 1;
         }
       } else {
         tr.moveT += step; tr.stillT = 0;
         if (!tr.moving && tr.moveT > 0.30) { tr.moving = true; tr.stoppedAt = -1; }
       }
+
+      if (tr.flag > 0) tr.flag = Math.max(0, tr.flag - step * 0.8);
 
       // rolling window of stationary-ness, for LOITER
       tr.stillHist.push([t, stopped ? 1 : 0]);
@@ -185,6 +231,90 @@ export function createTracker(THREE, scene, opts = {}) {
     return s;
   }
 
+  // ---- line of sight -------------------------------------------------------
+  // A detector works on PIXELS, so it cannot see a man standing behind a
+  // gondola — and the first build of this file could, which put bright green
+  // boxes around empty shelf tops on every aisle camera (shots/
+  // cctv_r4_desk_occlusion.png). That is not a cosmetic problem: a box with
+  // nothing in it teaches the player to stop believing the boxes, and then the
+  // whole instrument is dead.
+  //
+  // The occluders are the store's own collider set — the same boxes agents.js
+  // navigates around, so the shelf runs, their real lengths, and the cross-aisle
+  // the store builder cut through the middle of them all come for free and stay
+  // correct if the store is rebuilt.
+  //
+  // Slab test, camera to CHEST, and only the chest. The first version also
+  // allowed a clear line to the head and called that a sighting, on the theory
+  // that seeing someone's head over a gondola one aisle over is a real thing. It
+  // is, and it is still wrong here, for two reasons that a screenshot settles
+  // faster than an argument (shots/cctv_r4_desk_occlusion.png): the aisle domes
+  // sit at 4.4 m and graze the 2.05 m shelf tops, so "the head clears it" came
+  // out true by FOURTEEN CENTIMETRES for a man who is completely hidden behind a
+  // wall of product; and the tell this whole screen exists to show — a hand
+  // going from a shelf to a coat — happens at chest height. A subject whose
+  // chest you cannot see is not evidence, so he does not get a box.
+  //
+  // LIFT is the product, the price rails and the shelf-talkers standing above
+  // the collider box. The collider stops at the steel; the picture does not.
+  const LIFT = 0.25;
+  let occ = [];
+  function setOccluders(boxes) {
+    occ = (boxes || []).filter((b) => b && b.min && b.max
+      && b.max.y > 0.5 && b.min.y < 2.6 && b.max.y < 6)
+      .map((b) => ({
+        min: { x: b.min.x, y: b.min.y, z: b.min.z },
+        max: { x: b.max.x, y: b.max.y + LIFT, z: b.max.z },
+      }));
+  }
+  const losCache = new Map();
+  let losTick = -1;
+
+  function segClear(ox, oy, oz, tx, ty, tz) {
+    const dx = tx - ox, dy = ty - oy, dz = tz - oz;
+    for (let i = 0; i < occ.length; i++) {
+      const b = occ[i], mn = b.min, mx = b.max;
+      let t0 = 0, t1 = 1;
+      // x slab
+      if (Math.abs(dx) < 1e-9) { if (ox < mn.x || ox > mx.x) continue; }
+      else {
+        let a = (mn.x - ox) / dx, bb = (mx.x - ox) / dx;
+        if (a > bb) { const s = a; a = bb; bb = s; }
+        if (a > t0) t0 = a; if (bb < t1) t1 = bb;
+        if (t0 > t1) continue;
+      }
+      if (Math.abs(dy) < 1e-9) { if (oy < mn.y || oy > mx.y) continue; }
+      else {
+        let a = (mn.y - oy) / dy, bb = (mx.y - oy) / dy;
+        if (a > bb) { const s = a; a = bb; bb = s; }
+        if (a > t0) t0 = a; if (bb < t1) t1 = bb;
+        if (t0 > t1) continue;
+      }
+      if (Math.abs(dz) < 1e-9) { if (oz < mn.z || oz > mx.z) continue; }
+      else {
+        let a = (mn.z - oz) / dz, bb = (mx.z - oz) / dz;
+        if (a > bb) { const s = a; a = bb; bb = s; }
+        if (a > t0) t0 = a; if (bb < t1) t1 = bb;
+        if (t0 > t1) continue;
+      }
+      // hit inside the segment, with a little slack at the subject end so a man
+      // pressed against a shelf face is not occluded by the shelf he is at
+      if (t1 > 0.02 && t0 < 0.94) return false;
+    }
+    return true;
+  }
+
+  function sees(ci, camPos, tr) {
+    if (!occ.length) return true;
+    if (losTick !== nextSample) { losCache.clear(); losTick = nextSample; }
+    const key = ci + '|' + tr.key;
+    const hit = losCache.get(key);
+    if (hit !== undefined) return hit;
+    const ok = segClear(camPos[0], camPos[1], camPos[2], tr.x, tr.h * 0.55, tr.z);
+    losCache.set(key, ok);
+    return ok;
+  }
+
   function setLabels(list) { labels = Array.isArray(list) ? list : []; }
   function labelFor(tr) {
     if (!labels.length) return null;
@@ -199,6 +329,13 @@ export function createTracker(THREE, scene, opts = {}) {
 
   return {
     update, tokensFor, score, setLabels, labelFor, loiterFrac,
+    setOccluders, sees,
+    // Uncached line of sight to an arbitrary point. Used by cctv.channelsFor,
+    // which is how builder-game can ask "which monitor is this man ACTUALLY on"
+    // instead of deciding it from a zone table.
+    clear: (camPos, x, y, z) => (!occ.length
+      || segClear(camPos[0], camPos[1], camPos[2], x, y, z)),
+    get occluders() { return occ.length; },
     get now() { return t; },
     get tracks() { return [...tracks.values()]; },
     clearFlags() { for (const tr of tracks.values()) tr.flag = 0; },

@@ -60,7 +60,7 @@ function inPanel(ctx, p, fn) {
 // ---------------------------------------------------------------------------
 // Static furniture
 // ---------------------------------------------------------------------------
-export function paintFurniture(cv, W, H, panels, wall, deck) {
+export function paintFurniture(cv, W, H, panels, wall, deck, pocket) {
   const ctx = cv.getContext('2d');
   const rnd = rng(0x5eed17);
   ctx.clearRect(0, 0, W, H);
@@ -129,7 +129,7 @@ export function paintFurniture(cv, W, H, panels, wall, deck) {
   }
 
   paintCables(ctx, panels, wall, rnd);
-  paintFixtures(ctx, panels, wall, rnd, deck);
+  paintFixtures(ctx, panels, wall, rnd, deck, pocket);
 
   // --- the monitors --------------------------------------------------------
   for (const p of panels) inPanel(ctx, p, () => paintHousing(ctx, p, rnd));
@@ -270,7 +270,7 @@ function paintCables(ctx, panels, wall, rnd) {
 // underneath the spot monitor. It is placed off `deck` — the strip of bare wall
 // layout.js hands back — so the gear follows the composition instead of being
 // re-found by hand every time a panel moves.
-function paintFixtures(ctx, panels, wall, rnd, deck) {
+function paintFixtures(ctx, panels, wall, rnd, deck, pocket) {
   // steel shelf under whichever panel is standing on one
   for (const p of panels) {
     if (!p.shelf) continue;
@@ -322,19 +322,34 @@ function paintFixtures(ctx, panels, wall, rnd, deck) {
   paperNote(ctx, D.x + 396, D.y + 6, 92, 42, 0.022, rnd, 'MAP');
   paperNote(ctx, D.x + 500, D.y + 4, 96, 44, 0.008, rnd, 'EXT');
 
-  // a hank of unused coax, coiled and hung on a nail at the end of the deck
-  for (let i = 0; i < 5; i++) {
+  // --- the pocket under the thumbnail bank --------------------------------
+  // A hank of unused coax on a nail, a spare bracket, and the clipboard. This
+  // corner exists because nine 16:9 thumbnails do not fill a 526px column, and
+  // a rectangle of empty wall is the one thing no photograph of a real LP office
+  // has in it — there is always a hank of cable and somebody's paperwork.
+  const K = pocket || { x: 806, y: 470, w: 318, h: 132 };
+  ctx.lineCap = 'round';
+  for (let i = 0; i < 6; i++) {
     ctx.strokeStyle = `rgba(${20 + rnd() * 8 | 0},22,28,${0.78 + rnd() * 0.18})`;
-    ctx.lineWidth = 2.0 + rnd() * 0.8;
+    ctx.lineWidth = 2.2 + rnd() * 0.9;
     ctx.beginPath();
-    ctx.ellipse(D.x + 690 + i * 1.5 + (rnd() - 0.5) * 4, D.y + 26 + i * 2.6 + (rnd() - 0.5) * 4,
-      22 - i * 1.3 + (rnd() - 0.5) * 3, 21 - i * 1.6 + (rnd() - 0.5) * 3,
-      0.18 + (rnd() - 0.5) * 0.16, 0, 7);
+    ctx.ellipse(K.x + 56 + i * 1.6 + (rnd() - 0.5) * 5, K.y + 62 + i * 3.0 + (rnd() - 0.5) * 5,
+      30 - i * 1.6 + (rnd() - 0.5) * 4, 27 - i * 2.0 + (rnd() - 0.5) * 4,
+      0.20 + (rnd() - 0.5) * 0.16, 0, 7);
     ctx.stroke();
   }
+  ctx.strokeStyle = 'rgba(126,140,164,0.10)'; ctx.lineWidth = 0.9;
+  ctx.beginPath(); ctx.ellipse(K.x + 56, K.y + 62, 30, 27, 0.24, 0, 7); ctx.stroke();
+  // the nail it is hung on, and a spare VESA bracket leaning under it
+  ctx.fillStyle = '#3d434e'; ctx.fillRect(K.x + 54, K.y + 28, 4, 4);
+  ctx.fillStyle = '#15171c';
+  ctx.fillRect(K.x + 108, K.y + 78, 46, 30);
+  ctx.fillStyle = 'rgba(150,164,186,0.10)'; ctx.fillRect(K.x + 108, K.y + 78, 46, 1.4);
+  ctx.fillStyle = '#0a0b0e';
+  ctx.fillRect(K.x + 118, K.y + 86, 8, 8); ctx.fillRect(K.x + 136, K.y + 86, 8, 8);
 
-  // --- clipboard hanging on a nail, right of the bank ---------------------
-  const cbx = 1032, cby = 500;
+  // --- clipboard hanging on a nail, in the pocket -------------------------
+  const cbx = K.x + 176, cby = K.y + 26;
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(cbx + 3, cby + 4, 66, 78);
   ctx.fillStyle = '#3b2f22'; ctx.fillRect(cbx, cby, 66, 78);          // masonite
   ctx.fillStyle = 'rgba(180,181,172,0.70)'; ctx.fillRect(cbx + 4, cby + 9, 58, 65);
@@ -716,6 +731,7 @@ export function paintSpotOsd(cv, o) {
     }
     // the label goes ABOVE the head, never over the body — the body is the
     // evidence and the recorder is not allowed to print on it
+    if (!b.token) continue;
     const s = b.tracked ? 2 : 1;
     const txt = `${b.code} ${b.token}`;
     const tw = textW(txt, s), th = s * 7;
@@ -751,7 +767,7 @@ export function paintSpotOsd(cv, o) {
   const ptz = o.zoom > 1.06 ? `PTZ  ${o.zoom.toFixed(1)}X` : 'WIDE  1.0X';
   drawTextR(ctx, ptz, rx, PAD + 20, 2, o.zoom > 1.06 ? VMD_A(0.92) : DIM, SHA);
   if (o.trackN) {
-    drawTextR(ctx, `TRACK ${o.trackI + 1}/${o.trackN}`, rx, PAD + 38, 1, DIM, SHA);
+    drawTextR(ctx, `TRACK ${o.trackI + 1} OF ${o.trackN}`, rx, PAD + 41, 1, DIM, SHA);
   }
 
   // bottom-left: the stream the spot monitor is actually being fed. A DVR shows

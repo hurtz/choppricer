@@ -126,18 +126,24 @@ const SLOTS = [
   { x: 1126, y: 358, w: 138, h: 104, bx: 7, bt: 7, chin: 18,
     s: 'putty', brand: 'SENTRELL 400', white: [1.014, 0.978, 0.922], sheen: 0.052 },
 
-  // 9 — the installer's 5" test monitor, standing on the shelf under the bank,
-  //     screwed to nothing and levelled by nobody. Analogue input, no source.
+  // 9 — the installer's 5" test monitor, screwed to the wall crooked in 2014 and
+  //     never levelled. Analogue input, nothing on the other end of it.
   //     A tenth camera lands here and the rotation is dropped.
-  { x: 1148, y: 502, w: 98, h: 74, bx: 13, bt: 13, chin: 26,
+  { x: 1148, y: 500, w: 98, h: 74, bx: 13, bt: 13, chin: 26,
     s: 'putty', brand: 'SENTRELL 5T', white: [1.020, 0.972, 0.902], sheen: 0.060,
-    rot: -0.05, deadMode: 0, stand: 14, shelf: [1108, 616, 156] },
+    rot: -0.05, deadMode: 0 },
 ];
 
-// The strip of bare wall left under the spot monitor. The recorder, the paper
-// and the coax hank live here now — see paintFixtures. Exported through the plan
-// so overlay.js never has to know a slot number to find the free wall.
+// Two pieces of bare wall the composition leaves behind, handed to overlay.js so
+// the gear can be placed against them instead of at coordinates somebody has to
+// re-find by hand every time a panel moves.
+//   DECK   the strip under the spot monitor — the recorder and the paperwork.
+//   POCKET the corner under the bank, beside the dead test monitor — the hank of
+//          coax and the clipboard. It exists because 3x3 of 16:9 thumbnails does
+//          not fill a 526px column, and an empty rectangle of wall is the one
+//          thing a photograph of this room never has in it.
 const DECK = { x: 6, y: 553, w: 790, h: 51 };
+const POCKET = { x: 806, y: 470, w: 318, h: 132 };
 
 // Which camera each slot WANTS, by label. First match by camera index wins, so
 // EXIT DOORS takes the first door slot and DOOR 2 the second rather than the
@@ -251,7 +257,7 @@ function genericBank(cams) {
 export function layoutWall(cams) {
   const spot = panelFrom(SPOT, -2, -1);
   const n = cams.length;
-  if (!n) return { panels: [spot], tiles: [], live: [], dead: [], spot, deck: DECK };
+  if (!n) return { panels: [spot], tiles: [], live: [], dead: [], spot, deck: DECK, pocket: POCKET };
 
   let panels, tiles;
   if (n > SLOTS.length) {
@@ -279,6 +285,6 @@ export function layoutWall(cams) {
     tiles,
     live: panels.filter((p) => p.cam >= 0),
     dead: panels.filter((p) => p.cam < 0),
-    spot, deck: DECK,
+    spot, deck: DECK, pocket: POCKET,
   };
 }

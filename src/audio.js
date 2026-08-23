@@ -106,7 +106,16 @@ export function createAudio(THREE, camera) {
   // full scale for two per cent of every clip, i.e. the limiter was the loudest
   // thing in the building. A supermarket bed belongs about 30 dB down, with the
   // things that happen in it poking out of that.
-  const CAL = { ambience: 0.42, pa: 0.29, foley: 0.30, ui: 0.34 };
+  //
+  // ROUND 2 MOVED `pa`. The client listened to round 1 and said "there needs to
+  // be music". There WAS music; it measured -38.8 dBFS RMS against an ambience
+  // bed at -34.1, i.e. five decibels UNDER the air conditioning, with no bass
+  // and no top. Now the tape sits about four and a half decibels over the bed
+  // broadband and fifteen over it in the 500-2000 Hz band where the tune lives,
+  // which is roughly where a real store runs it: plainly the most identifiable
+  // single sound in the building, and still not loud enough to enjoy properly.
+  // The error to make this round is loud, not polite.
+  const CAL = { ambience: 0.42, pa: 0.23, foley: 0.30, ui: 0.34 };
   const mix = { ambience: 1, pa: 1, foley: 1, ui: 1 };
   const buses = {};
   const wetB = {};

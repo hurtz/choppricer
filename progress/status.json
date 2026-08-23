@@ -244,9 +244,40 @@
    "note": "THE FINDING: with the sprint key held, desk separation collapses from +20.1pp to +3.8pp. A player who cannot hold his wind loses the chases he earned at the desk, so reading the roster stops paying at all - the desk read is worth nothing without the lungs to cash it. Independently measured rationing at +28.3pp against the chase builder's 28.7 from a completely different instrument. Eval driver rewritten to plan THEN ration (35.4% sprint duty cycle) because rationing needs something to ration against. WIND panel: 3 fat bursts sized off burstMax, READY/RECOVERING/WINDED/SPRINTING, and 'LET GO' flashing when the key is held because windIn is Infinity - a stalled countdown teaches it faster than any tooltip. Nothing in the HUD points at a powerup, deliberately: in hand it is +13, fetching it is worth nothing, so a locator would sell a losing plan.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
    "verdict": "PASS. Observer 56.7% catch / 1002 pts / 0.00 demotions vs random 36.6% / 239 / 1.20. Separation +20.1pp and 4.2x points, intact after the chase got much harder (median 3.03s -> 5.83s). Observer spread across 3 seeds is 1.1pp."
+  },
+  "cop": {
+   "round": 1,
+   "state": "passed",
+   "shots": [
+    {
+     "round": 1,
+     "path": "../shots/cop_r1_chase.png",
+     "t": 1787498932.7217238
+    }
+   ],
+   "gaps": [],
+   "updated": 1787499089.461258,
+   "note": "ROOT CAUSE: the neck sat at hips-local 0.60 while the torso capsule's top cap was at 0.71, with a head sphere of radius 0.135 - so 96% of every head in the game was INSIDE its own torso. What poked out was a 25mm skullcap, the hair hemisphere covered that, and on the cop the cap covered the hair. 'He's just kinda black, he doesn't have a face' was literally true: there was no head above the shoulders to put a face on. Feet also ended 85mm above the floor, so everyone was hovering. Three more bugs: every taper() in the file was inverted (thighs flaring at the knee, forearms fattest at the wrist), an atlas material without a UV cell gave him a white apron reading CHOP across his stomach, and flat plates on a curved chest needed pitch and yaw not just z.",
+   "verdict": "PASS. Reads at both scales: verified at the game's own rig (7m) and rendered at 214x120, one monitor feed's real budget, where the light-torso-over-dark-legs three-band silhouette still reads as a person at ~8px tall. Chase bench byte-identical: competent 74.7% / med 5.83s / <1s 14.3%, naive 35.3%, camper 21.3%. lungCheck passes."
   }
  },
  "log": [
+  {
+   "t": 1787499089.46126,
+   "piece": "cop",
+   "role": "builder",
+   "round": 1,
+   "state": "passed",
+   "text": "ROOT CAUSE: the neck sat at hips-local 0.60 while the torso capsule's top cap was at 0.71, with a head sphere of radius 0.135 - so 96% of every head in the game was INSIDE its own torso. What poked out was a 25mm skullcap, the hair hemisphere covered that, and on the cop the cap covered the hair. 'He's just kinda black, he doesn't have a face' was literally true: there was no head above the shoulders to put a face on. Feet also ended 85mm above the floor, so everyone was hovering. Three more bugs: every taper() in the file was inverted (thighs flaring at the knee, forearms fattest at the wrist), an atlas material without a UV cell gave him a white apron reading CHOP across his stomach, and flat plates on a curved chest needed pitch and yaw not just z."
+  },
+  {
+   "t": 1787498932.721725,
+   "piece": "cop",
+   "role": "builder",
+   "round": 1,
+   "state": "building",
+   "text": "Rebuilt him as a person. ROOT CAUSE: the head sphere (r 0.135 at hips-local 0.60) sat inside the torso capsule (top at 0.71) \u2014 96% buried \u2014 so EVERY figure in the game was headless and the cop's cap sat on his chest; feet also floated 85mm. New skeleton in src/agents/figures.js: sole at 0, crown 1.65, cop 1.72m. Lofted torso with a real gut hanging over a low-slung duty belt (11 items, basketweave leather), face with jaw/jowls/ears/nose/brow/moustache, cap with brim and gold strap, shoulder patches, CHOP nameplate, gold shield on his LEFT chest (was on the wrong side), trousers with outseam stripe, oxfords. Light French blue shirt over near-black trousers gives a three-band silhouette that survives the CCTV feed. New chest joint drives waddle + counter-rotation; bob sign fixed (was highest at heel strike). Winded heave driven by fatigue (rate 0.34-1.34Hz, amplitude near-linear in F) with a hands-to-knees brace, and it visibly eases off over ~3s. Shoppers: 4 builds x 3 ages x 6 hairstyles x 2 sleeve lengths, real shoes and hands. BENCH IDENTICAL: competent 74.7/med 5.83/u1 14.3, naive 35.3, camper 21.3, always-sprint 46.0, pickup 75.3; lungCheck ok."
+  },
   {
    "t": 1787434185.3392022,
    "piece": "game",
@@ -696,5 +727,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787434185.339204
+ "updated": 1787499089.461261
 }

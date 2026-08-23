@@ -1,0 +1,172 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CHOP PRICER — audio bench</title>
+<!--
+  OWNER: builder-audio.
+
+  The audio graph on its own, with a fake cop and a fake camera and no store,
+  no CCTV and no agents. Two reasons it exists:
+
+   1. Nine cameras render the scene ten times a frame. If a recording has to go
+      through the real game, every measurement is also a measurement of whatever
+      three other builders happened to be saving at the time — and twice this
+      round a syntax error in a file I do not own has stopped me testing a file
+      I do.
+   2. It can put the listener anywhere, instantly, and hold him there. Walking
+      the cop to the dairy to record the dairy takes twenty seconds of sim; here
+      it is one assignment.
+
+  It is a BENCH, not a second implementation. It imports src/audio.js and drives
+  the same update(dt, state) the game does, so anything true here is true there.
+
+    http://127.0.0.1:8171/src/audio/bench.html
+
+    B.at(x, z)                 put the listener somewhere
+    B.place('chilled')         ...or somewhere named
+    B.wind(0.9)                fatigue 0..1, and gassed above 0.75
+    B.chase(true)              a shopper is bolting 6 m away
+    B.rec(12, 'name')          -> audio/name.wav
+    B.solo('pa')               'pa' | 'ambience' | 'foley' | 'ui' | null
+-->
+<style>
+  body { background: #111; color: #cfc; font: 13px ui-monospace, monospace; padding: 20px; }
+  pre { line-height: 1.5; }
+</style>
+<pre id="log">booting…</pre>
+<script type="importmap">
+{ "imports": { "three": "/vendor/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { createAudio } from '../audio.js';
+import { STORE, AISLE_LEN, BACK_WALK_Z, FRONT_WALK_Z, SERVICE_DESK, aisleX } from '../config.js';
+
+const log = document.getElementById('log');
+const BODY = AISLE_LEN / 2 - 0.62;
+
+// A camera that only exists to give the listener a facing.
+const cam = new THREE.PerspectiveCamera(58, 16 / 9, 0.1, 160);
+cam.position.set(0, 6.4, -7.6);
+cam.lookAt(0, 1.6, 0);
+
+// A cop with no body. audio.js reads position and userData and nothing else.
+const cop = { position: new THREE.Vector3(0, 0, 0), userData: {
+  stamina: 1.4, gassed: false, speed: 0, phase: 0, boost: 0, stagger: 0, fatigue: 0,
+} };
+
+const audio = createAudio(THREE, cam);
+
+// Named places, so a clip called `chilled` is provably the chilled run and not
+// wherever the cop happened to stop.
+const PLACES = {
+  // NOT z=0 — config.js puts a mid-store cross-aisle at z=-0.7 and standing in
+  // it measures `open 1`, i.e. the front end. Deep in a slot means well clear
+  // of all three cross-aisles.
+  aisle:   [aisleX(3), 7.0],
+  aisle7:  [aisleX(6), -7.0],
+  mouth:   [aisleX(3), -BODY - 1.2],
+  front:   [0, STORE.minZ + 4.0],
+  door:    [STORE.minX + 3.0, STORE.minZ + 1.5],
+  chilled: [STORE.minX + 2.4, STORE.maxZ - 3.0],
+  dairy:   [STORE.minX + 2.0, 2.0],
+  back:    [12, BACK_WALK_Z + 0.5],
+  mid:     [0, -0.7],
+  desk:    [SERVICE_DESK.x, SERVICE_DESK.z],
+};
+
+const st = { mode: 'floor', cop, shoppers: [], chasing: false, report: null };
+let running = false, lastT = 0, acc = 0;
+
+// The game's own loop, minus the game. setInterval and not rAF: this page is
+// usually in a hidden tab and rAF does not fire in one, which is the same
+// reason main.js's snap()/run() never depend on it.
+function tick() {
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastT) / 1000); lastT = now;
+  // gait phase, so foley fires footfalls
+  cop.userData.phase += dt * (cop.userData.speed > 0.35 ? cop.userData.speed * 2.1 : 0);
+  audio.update(dt, st);
+  acc += dt;
+  if (acc > 0.5) {
+    acc = 0;
+    const s = audio.stats();
+    log.textContent =
+      `pos      ${cop.position.x.toFixed(1)}, ${cop.position.z.toFixed(1)}   mode ${st.mode}\n` +
+      `zone     open ${s.zone.open}  aisle ${s.zone.aisle}  chill ${s.zone.chill}  front ${s.zone.front}\n` +
+      `wind     fatigue ${cop.userData.fatigue.toFixed(2)}  gassed ${cop.userData.gassed}  duck ${s.gassed}\n` +
+      `chase    ${s.chase}\n` +
+      `tape     ${s.nowPlaying ? `${s.nowPlaying.tune} · ${s.nowPlaying.lead} · ${s.nowPlaying.groove} · ` +
+        `${s.nowPlaying.bpm}bpm · bar ${s.nowPlaying.bar}/${s.nowPlaying.of}` : '(tape gap)'}\n` +
+      `cost     update ${s.updateMs}ms  peak ${s.peakMs}ms  nodes ${s.persistentNodes}` +
+      `  one-shots/s ${s.oneShotNodesPerSec} (music ${s.musicNodesPerSec})  conv ${s.convolvers}\n`;
+  }
+  if (running) setTimeout(tick, 16);
+}
+
+const B = {
+  audio, cop, st, THREE,
+  start() { if (running) return 'already'; audio.resume(); running = true; lastT = performance.now(); tick(); return 'on'; },
+  stop() { running = false; return 'off'; },
+  at(x, z) { cop.position.x = x; cop.position.z = z; st.mode = 'floor'; return [x, z]; },
+  place(n) {
+    if (n === 'desk') { st.mode = 'desk'; return 'desk'; }
+    const p = PLACES[n]; if (!p) return Object.keys(PLACES);
+    st.mode = 'floor'; return B.at(p[0], p[1]);
+  },
+  places: PLACES,
+  // fatigue 0..1. Above 0.75 he is also actually winded, which is the acute
+  // state on top of the accumulated one — same shape as the real thing.
+  wind(f, speed) {
+    cop.userData.fatigue = f;
+    cop.userData.gassed = f > 0.75;
+    cop.userData.stamina = (1 - f) * 1.4;
+    cop.userData.speed = speed == null ? (f > 0.2 ? 4.6 : 0) : speed;
+    return { fatigue: f, gassed: cop.userData.gassed, speed: cop.userData.speed };
+  },
+  // a bolted shopper, so audio.js's chase derivation fires
+  chase(on, dist = 6) {
+    st.shoppers = on ? [{
+      id: 1, bolted: true, escaped: false, caught: false, speed: 5.2, phase: 0, hasCart: false,
+      position: new THREE.Vector3(cop.position.x + dist, 0, cop.position.z),
+    }] : [];
+    return st.shoppers.length;
+  },
+  // a normal shopper with a cart, for cart foley
+  shoppers(n = 3) {
+    st.shoppers = [];
+    for (let i = 0; i < n; i++) {
+      const p = new THREE.Vector3(cop.position.x + (i - 1) * 5, 0, cop.position.z + 3 + i * 4);
+      st.shoppers.push({ id: 10 + i, bolted: false, escaped: false, caught: false,
+        speed: 1.1, phase: i, hasCart: true, position: p,
+        cart: { visible: true, position: p.clone() } });
+    }
+    return n;
+  },
+  solo(name) {
+    for (const k of ['ambience', 'pa', 'foley', 'ui']) audio.setMix(k, !name || k === name ? 1 : 0);
+    return name || 'all';
+  },
+  async rec(secs, name) {
+    if (!running) B.start();
+    await new Promise((r) => setTimeout(r, 300));
+    const res = await audio.recordWav(secs, name);
+    return { res, stats: audio.stats() };
+  },
+  // walk from A to B over `secs`, so a clip can prove the room CHANGES
+  walk(a, b, secs) {
+    const p0 = PLACES[a], p1 = PLACES[b];
+    const t0 = performance.now();
+    const id = setInterval(() => {
+      const u = Math.min(1, (performance.now() - t0) / (secs * 1000));
+      cop.position.x = p0[0] + (p1[0] - p0[0]) * u;
+      cop.position.z = p0[1] + (p1[1] - p0[1]) * u;
+      cop.userData.speed = u < 1 ? 2.3 : 0;
+      if (u >= 1) clearInterval(id);
+    }, 16);
+    return `${a} -> ${b} over ${secs}s`;
+  },
+};
+window.__AB = B;
+B.place('aisle');
+B.start();
+</script>

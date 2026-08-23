@@ -232,7 +232,7 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
     // Always the same pitch. Every scanner in every store is the same scanner.
     const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = 2730;
     const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = 5460;
-    const g = gain(ctx, 0), g2 = gain(ctx, 0.12);
+    const g = gain(ctx, 0), g2 = gain(ctx, 0.22);   // the second harmonic is most of what carries across a store
     o.connect(g); o2.connect(g2); g2.connect(g); g.connect(dest);
     g.gain.setValueAtTime(0, t);
     g.gain.linearRampToValueAtTime(0.105, t + 0.003);
@@ -548,56 +548,77 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
   const heartLP = N(filt(ctx, 'lowpass', 120, 0.9));
   heartG.connect(heartLP); heartLP.connect(playerOut); heart.start();
 
-  const breath = { next: 0, effort: 0, fat: 0, acute: 0, hb: 0, relief: -9, wasHard: false };
+  const breath = { next: 0, effort: 0, fat: 0, acute: 0, hb: 0, relief: -9, wasHard: false, log: [] };
 
   // ---- one breath ---------------------------------------------------------
   // inh/exh in seconds, lvl the exhale's peak, k the severity 0..1. Everything
   // about the shape of it changes with k, not just the volume — a shallow fast
   // huff and a deep slow breath are different EVENTS, and cross-fading between
   // two amplitudes would only ever produce a loud version of the calm one.
+  //
+  // EVERY EDGE HERE IS AN EXPLICIT RAMP, not setTargetAtTime. The first pass
+  // used exponential approaches with tau ~0.05 s, which sounds like a detail
+  // and is not: a 0.05 s time constant takes 0.2 s to actually reach silence,
+  // so a 0.28 s huff was still audible when the next one started 0.36 s later
+  // and the pair fused into one continuous 0.9-second rasp. Measured on the
+  // envelope: nine unbroken seconds with no gap you could hear. "Huff-huff" is
+  // a RHYTHM. If the two events touch, there is no rhythm, and the client's own
+  // word for the thing stops being true.
   function oneBreath(t, inh, exh, lvl, k, sigh) {
     const F = brBP.frequency, G = brG.gain;
     // --- inhale. Filter sweeps UP and narrows: air being pulled in through a
     // gap that is too small for how much of it he wants.
     F.cancelScheduledValues(t);
     F.setValueAtTime(Math.max(80, F.value), t);
-    F.exponentialRampToValueAtTime(lerp(700, 1500, k) * (0.9 + rnd() * 0.2), t + inh * 0.78);
-    brBP.Q.setTargetAtTime(lerp(0.9, 2.8, k), t, inh * 0.5);
+    F.exponentialRampToValueAtTime(lerp(700, 1550, k) * (0.9 + rnd() * 0.2), t + inh * 0.78);
+    brBP.Q.setTargetAtTime(lerp(0.9, 3.0, k), t, inh * 0.5);
     G.cancelScheduledValues(t);
     G.setValueAtTime(Math.max(0.0001, G.value), t);
     // the inhale is the quieter half of a pant and the sharper one
-    G.linearRampToValueAtTime(lvl * lerp(0.55, 0.86, k), t + inh * lerp(0.45, 0.14, k));
+    const iL = lvl * lerp(0.52, 0.88, k);
+    G.linearRampToValueAtTime(iL, t + inh * lerp(0.45, 0.16, k));
     // THE CATCH. When he is finished the inhale is not smooth — it stops and
     // restarts, because the top of his chest has run out of room.
     if (k > 0.5 && !sigh && rnd() < 0.6) {
-      G.setTargetAtTime(lvl * 0.28, t + inh * 0.36, 0.018);
-      G.setTargetAtTime(lvl * 0.80, t + inh * 0.50, 0.024);
+      G.linearRampToValueAtTime(iL * 0.26, t + inh * 0.40);
+      G.linearRampToValueAtTime(iL * 0.95, t + inh * 0.56);
     }
-    G.setTargetAtTime(lvl * 0.10, t + inh * 0.88, 0.035);
+    G.linearRampToValueAtTime(lvl * 0.05, t + inh * 0.95);
 
     // --- the wheeze rides the inhale and only exists when he is in trouble.
     // Two high-Q peaks a fifth apart, which is what a narrowed airway does.
     const wz = sigh ? 0 : clamp((k - 0.18) / 0.82, 0, 1);
-    for (const [pk, amt, fq] of [[brWheeze, 15, 1020 + rnd() * 430], [brWheeze2, 8, 2240 + rnd() * 320]]) {
+    for (const [pk, amt, fq] of [[brWheeze, 16, 1020 + rnd() * 430], [brWheeze2, 9, 2240 + rnd() * 320]]) {
       pk.gain.cancelScheduledValues(t);
       pk.gain.setValueAtTime(0, t);
       pk.gain.linearRampToValueAtTime(wz * (amt * (0.7 + rnd() * 0.6)), t + inh * 0.55);
-      pk.gain.setTargetAtTime(0, t + inh * 0.9, 0.07);
+      pk.gain.linearRampToValueAtTime(0, t + inh * 1.02);
       pk.frequency.setValueAtTime(fq, t);
     }
 
-    // --- exhale. Down and out, and it is the LOUD half — this is the huff.
+    // --- exhale. Down and out, and it is the LOUD half. This is the huff, and
+    // it has to STOP: hard in, short hold, dead inside a tenth of a second.
     const ex = t + inh;
-    F.exponentialRampToValueAtTime(lerp(500, 340, k) * (0.9 + rnd() * 0.2), ex + exh * 0.7);
-    G.setTargetAtTime(lvl * (sigh ? 0.8 : 1.0), ex + 0.012, sigh ? 0.09 : 0.022);
-    G.setTargetAtTime(0.0006, ex + exh * (sigh ? 0.62 : 0.55), sigh ? 0.10 : 0.05);
+    F.exponentialRampToValueAtTime(lerp(500, 330, k) * (0.9 + rnd() * 0.2), ex + exh * 0.75);
+    if (sigh) {
+      G.linearRampToValueAtTime(lvl * 0.85, ex + exh * 0.22);
+      G.linearRampToValueAtTime(lvl * 0.55, ex + exh * 0.62);
+      G.exponentialRampToValueAtTime(0.0004, ex + exh);
+    } else {
+      G.linearRampToValueAtTime(lvl, ex + 0.016);
+      G.linearRampToValueAtTime(lvl * 0.72, ex + exh * 0.42);
+      G.exponentialRampToValueAtTime(0.0004, ex + exh * 0.92);
+      // and it stays dead. Nothing else touches brG until the next breath, so
+      // the silence between the two huffs of a pair is real silence.
+      G.setValueAtTime(0.0004, ex + exh);
+    }
 
-    // --- the grunt in it
+    // --- the grunt in it. Same rule: it ends when the huff ends.
     raspOsc.frequency.setValueAtTime((64 + rnd() * 24) * lerp(1, 1.22, k), ex);
     raspG.gain.cancelScheduledValues(ex);
     raspG.gain.setValueAtTime(0, ex);
-    raspG.gain.linearRampToValueAtTime((sigh ? wz * 0.03 : wz * 0.085) * (0.6 + rnd() * 0.8), ex + 0.04);
-    raspG.gain.setTargetAtTime(0, ex + exh * 0.45, 0.07);
+    raspG.gain.linearRampToValueAtTime((sigh ? wz * 0.03 : wz * 0.095) * (0.6 + rnd() * 0.8), ex + 0.03);
+    raspG.gain.linearRampToValueAtTime(0, ex + exh * (sigh ? 0.9 : 0.75));
   }
 
   // ---- what he is doing right now ----------------------------------------
@@ -609,22 +630,36 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
     // colour change and it is what "he is not coping" sounds like
     to(brMouth.gain, lerp(-4, 9, k), t, 0.35);
     to(brChest.gain, lerp(0, 7, k), t, 0.35);
+    // a ring buffer of what he actually did, so `audio.foley.breathLog` can be
+    // read back and the rhythm verified rather than described
+    breath.log.push([+t.toFixed(2), +k.toFixed(2), k > 0.42 ? 'huff' : (breath.wasHard ? 'RELIEF' : 'rest')]);
+    if (breath.log.length > 60) breath.log.shift();
 
     if (k > 0.42) {
       // ---- HUFF-HUFF -----------------------------------------------------
-      // Two shallow mouth breaths tight together, then a beat. The pair period
-      // runs from 2.5 s (labouring) down to 1.12 s (gone), i.e. about 105
-      // breaths a minute at the bottom, which for a man in his fifties who has
-      // just sprinted 30 metres is roughly right and sounds worse than that.
-      const per = lerp(2.50, 1.12, k) * (0.90 + rnd() * 0.22);
-      const gap = per * lerp(0.44, 0.34, k);
-      const inh = lerp(0.20, 0.115, k), exh = lerp(0.30, 0.165, k);
-      const lvl = lerp(0.20, 0.66, k) * (1 + 0.14 * acute);
+      // Two shallow mouth breaths tight together, then a beat. The timing is
+      // the whole thing, so it is written out:
+      //
+      //   k = 1        HUFF 0.23s | 0.13s | HUFF 0.23s |  0.66s  |  repeat
+      //                 (1.25 s a pair, i.e. 96 breaths a minute)
+      //   k = 0.45     HUFF 0.50s |  0.6s | HUFF 0.50s |  1.0s   |  repeat
+      //
+      // Two things have to be true or it is not a pant: the two huffs must not
+      // touch, and the gap AFTER the pair must be clearly longer than the gap
+      // inside it. That ratio is what the ear reads as "two", and it is why the
+      // gap inside the pair shrinks faster than the period does.
+      const per = lerp(2.50, 1.25, k) * (0.92 + rnd() * 0.17);
+      const inh = lerp(0.21, 0.100, k), exh = lerp(0.30, 0.130, k);
+      const one = inh + exh;
+      const gap = one + lerp(0.55, 0.13, k) * (0.85 + rnd() * 0.3);
+      const lvl = lerp(0.20, 0.68, k) * (1 + 0.14 * acute);
       oneBreath(t, inh, exh, lvl * (0.92 + rnd() * 0.16), k);
-      oneBreath(t + gap, inh * 0.94, exh * 0.92, lvl * (0.78 + rnd() * 0.20), k);
-      if (rnd() < 0.13) smack(t + gap + inh + exh + 0.06);
+      oneBreath(t + gap, inh * 0.94, exh * 0.92, lvl * (0.80 + rnd() * 0.20), k);
+      if (rnd() < 0.13) smack(t + gap + one + 0.08);
       breath.wasHard = true;
-      return per;
+      // never let the pair overrun the period, or the next pair starts inside
+      // this one and the whole rhythm collapses back into a rasp
+      return Math.max(per, gap + one + 0.28);
     }
 
     // ---- and it lets up --------------------------------------------------
@@ -634,9 +669,14 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
     // key. Everything after it is quiet.
     if (breath.wasHard && t - breath.relief > 3.0) {
       breath.wasHard = false; breath.relief = t;
-      oneBreath(t, 0.62, 0.95, lerp(0.16, 0.34, k), Math.min(k, 0.3), true);
-      if (rnd() < 0.5) smack(t + 1.7 + rnd() * 0.4);
-      return 1.85 + rnd() * 0.5;
+      // One long unobstructed breath, at the level the huffing was at rather
+      // than the level resting is, so it lands as the END of something instead
+      // of as the start of the quiet bit. No wheeze on it — that absence is
+      // most of what "he got his breath back" actually sounds like.
+      oneBreath(t, 0.68, 1.15, lerp(0.24, 0.44, k), Math.min(k, 0.3), true);
+      // and then he swallows
+      smack(t + 2.0 + rnd() * 0.5);
+      return 2.4 + rnd() * 0.5;
     }
     // ---- at rest ---------------------------------------------------------
     // A big man at rest still breathes audibly and it is barely there.
@@ -720,7 +760,7 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
         // it slows as he comes back down, and that is a second, quieter copy of
         // the same "it lets up" cue sitting underneath the breathing
         breath.hb = lerp(0.62, 0.40, sev) + rnd() * 0.05;
-        const tt = t + 0.01, v = (sev - 0.5) * 2 * 0.11;
+        const tt = t + 0.01, v = (sev - 0.5) * 2 * 0.075;
         heartG.gain.cancelScheduledValues(tt);
         heartG.gain.setValueAtTime(0, tt);
         heartG.gain.linearRampToValueAtTime(v, tt + 0.012);
@@ -890,5 +930,6 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
     created += 8;
   }
 
-  return { update, nodes, step, beep, doorCycle, easAlarm, grab, barge, carts, agents, lanes };
+  return { update, nodes, step, beep, doorCycle, easAlarm, grab, barge, carts, agents, lanes,
+    breath, get breathLog() { return breath.log; } };
 }

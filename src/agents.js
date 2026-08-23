@@ -1848,7 +1848,7 @@ export function createAgents(THREE, scene, world) {
     // gut rather than past it.
     const alag = Math.sin(u.phase - 0.55);
     r.armL.rotation.x = -alag * amp * 0.62; r.armR.rotation.x = alag * amp * 0.62;
-    const out = 0.34 + 0.06 * spd + 0.05 * F;                 // elbows off the belly
+    const out = 0.24 + 0.06 * spd + 0.05 * F;                 // elbows off the belly
     r.armL.rotation.z = out; r.armR.rotation.z = -out;
 
     // ---- mass ---------------------------------------------------------------
@@ -1872,7 +1872,12 @@ export function createAgents(THREE, scene, world) {
     const rate = TAU * (0.34 + 1.00 * F);
     u.breath += dt * rate;
     const w = breathWave(u.breath);                            // 0 empty, 1 full
-    const heave = w * (0.22 + 0.78 * F) * F;                   // squared-ish in F
+    // Amplitude, near-linear in F rather than squared. The first version was
+    // `w * (0.22 + 0.78F) * F`, and at F = 0.3 that is fourteen percent of the
+    // full heave — so the pant did not ease off, it SWITCHED off about a second
+    // after he let go, which is precisely the thing the note asked to be able
+    // to watch. This keeps a visible tail all the way down.
+    const heave = w * (0.30 + 0.70 * F) * (0.24 + 0.76 * F);
     u.heave = heave;
 
     // Chest and shoulders. From 7 m you are looking at his BACK, so the heave

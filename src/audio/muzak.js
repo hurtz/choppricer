@@ -785,7 +785,13 @@ export function createMuzak(ctx, dest, noiseBuf, seed = 4711) {
 
     // ---- bass
     if (!P.tag || T.bar === T.total - 2) {
-      const bt = T.key + chord[0] - 12;
+      // Fold the root into ONE register before anything else uses it. Without
+      // this, a track in the top key with a bVII chord puts the "bass" at MIDI
+      // 61 and its octave at 73 — 554 Hz, which is not a bass, it is the comp
+      // an octave down. A bass player picks the note near his hand; so does he.
+      let bt = T.key + chord[0] - 12;
+      while (bt > 52) bt -= 12;
+      while (bt < 38) bt += 12;
       const fifth = bt + 7, oct = bt + 12;
       if (T.beats === 3) {
         if (beat === 0) bass(mtof(bt), t, spb * 0.9, 0.85);

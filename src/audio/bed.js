@@ -38,8 +38,22 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
   // Three long pink beds at coprime-ish durations, read at slightly different
   // rates. Anything that wants noise taps one of these instead of owning a
   // source, so the whole building costs three BufferSourceNodes.
-  const pinkA = pinkBuffer(ctx, 9.1, 11);
-  const pinkB = pinkBuffer(ctx, 7.3, 29);
+  //
+  // ROUND 2 MADE THEM LONGER AND MADE THEM DRIFT. tools/loopcheck.py on a 50 s
+  // bed found the strongest timbral autocorrelation in the whole clip sitting at
+  // 9.10 s — pinkA's exact length, read at exactly 1.0. r was only 0.14, but a
+  // correlation peak at a known buffer period is not a coincidence, it is the
+  // seam, and "nothing perfectly looped" is the one rule in the brief a listener
+  // enforces for free.
+  //
+  // The fix is not a longer buffer (that moves the seam, it does not remove it)
+  // — it is that the read rate never stops changing. A looping buffer read at a
+  // constant rate has a period. Read at a rate that is always drifting, it has
+  // none: the phase never returns to where it was, so there is no lag at which
+  // the material lines up with itself. See update(). Costs three
+  // setTargetAtTime calls a frame.
+  const pinkA = pinkBuffer(ctx, 13.7, 11);
+  const pinkB = pinkBuffer(ctx, 11.9, 29);
   const white = whiteBuffer(ctx, 3.7, 71);
   const srcA = N(loopNoise(ctx, pinkA, 1.0, rnd));
   const srcB = N(loopNoise(ctx, pinkB, 0.937, rnd));
@@ -133,18 +147,24 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
   // the store. Quiet, wide, and it is most of what makes a big room sound big
   // when nothing else is happening.
   const diff = tap(srcB, 1);
-  const dfBP = N(filt(ctx, 'bandpass', 620, 0.55));
-  const dfHS = N(filt(ctx, 'highshelf', 2400, 0.7, -8));
+  const dfBP = N(filt(ctx, 'bandpass', 470, 0.42));
+  const dfHS = N(filt(ctx, 'highshelf', 2400, 0.7, -5));
   const dfGain = N(gain(ctx, 0.115));
   diff.connect(dfBP); dfBP.connect(dfHS); dfHS.connect(dfGain);
   place(dfGain, 0.35, 1.05);
 
   // ROOM AIR. A very quiet broadband top end. Without it the store sounds like a
   // synthesiser between events; with it the silence has a floor.
+  // ROUND 2: this used to start at 900 Hz. The aisle bed measured 44 dB at
+  // 125 Hz and 31 dB at 250 — a thirteen-decibel notch, because HVAC stopped at
+  // 210 and nothing in the building started again until 900. A real store is
+  // continuous through there: it is cart frames, chests, cardboard, and forty
+  // metres of air. A hole that deep is most of what a spectral-flatness number
+  // is actually reporting, and it is also why round 1 read as "synthesised".
   const air = tap(srcC, 1);
-  const airHP = N(filt(ctx, 'highpass', 900, 0.6));
+  const airHP = N(filt(ctx, 'highpass', 430, 0.6));
   const airLP = N(filt(ctx, 'lowpass', 7200, 0.6));
-  const airG = N(gain(ctx, 0.155));
+  const airG = N(gain(ctx, 0.19));
   air.connect(airHP); airHP.connect(airLP); airLP.connect(airG);
   place(airG, 0.25, 1.0);
 
@@ -156,11 +176,12 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
   const airTop = tap(srcB, 1);
   const atHP = N(filt(ctx, 'highpass', 3400, 0.5));
   const atHP2 = N(filt(ctx, 'highpass', 4200, 0.6));
-  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, 9));
-  const atLP = N(filt(ctx, 'lowpass', 21500, 0.5));
-  const atG = N(gain(ctx, 0.265));
-  airTop.connect(atHP); atHP.connect(atHP2); atHP2.connect(atSh); atSh.connect(atLP);
-  atLP.connect(atG);
+  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, 6));
+  const atG = N(gain(ctx, 0.21));
+  // No lowpass on the end of this. Round 2 briefly had one at 17-20 kHz and it
+  // was doing nothing except making a brick wall out of a band that pink noise
+  // has already rolled off by 25 dB on its own.
+  airTop.connect(atHP); atHP.connect(atHP2); atHP2.connect(atSh); atSh.connect(atG);
   place(atG, 0.30, 0.95);
 
   // =========================================================================
@@ -280,6 +301,10 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
     const lowBP = N(filt(ctx, 'bandpass', 165 + i * 22, 0.8));
     const lg = N(gain(ctx, 0.30));
     low.connect(lowBP); lowBP.connect(lg); lg.connect(lvl);
+    // and the frame, which is the band nothing else in this building occupies
+    const midBP = N(filt(ctx, 'bandpass', 340 + i * 55, 0.5));
+    const mg = N(gain(ctx, 0.42));
+    mod.connect(midBP); midBP.connect(mg); mg.connect(lvl);
     placeAt(lvl, p, 0.85, 0.62);
     traffic.push({
       p, lvl, modSrc, t: rnd() * 14, dur: 14 + rnd() * 22, on: rnd() < 0.6,
@@ -367,6 +392,14 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
   // the whole left wall. Each gets its own level from its own distance, so the
   // dairy is on your LEFT and the frozen food is BEHIND you.
   const coolX0 = STORE.minX + 1.2, coolX1 = STORE.minX + (STORE.maxX - STORE.minX) * 0.56;
+  //
+  // Both are LINE SOURCES, and that matters more than it sounds like it does.
+  // A twenty-six metre run of cases is not a point six metres away; it is the
+  // nearest two metres of itself, right there. First pass here put one panner
+  // at each run's MIDPOINT and standing at the left-hand end of the dairy
+  // measured the curtain 11.7 m away and 30 dB down — a wall of cold air you
+  // could not hear while leaning on it. The panner now tracks the nearest point
+  // on the run, which is also where the sound is coming from.
   const curtains = [
     { x: (coolX0 + coolX1) * 0.5, z: STORE.maxZ - 1.0, run: 'back' },
     { x: STORE.minX + 0.9, z: 0, run: 'left' },
@@ -428,7 +461,11 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
   // moved, a baler. All of it heard THROUGH A DOOR, which means lowpassed to
   // death and mono, and the fact that you can only hear it from the back wall
   // is what makes the back wall a place.
-  const backP = N(panner(ctx, 4, 1.6, STORE.maxZ - 0.4, 5.0, 1.1));
+  // x = 12 and not 4: the back-wall case line covers the left 56% of the store
+  // (see fridgeSpots), so a door at x=4 is standing in the dairy and the back
+  // room measures as the chilled run with extra steps. Past the cases, it is a
+  // fourth place.
+  const backP = N(panner(ctx, 12, 1.6, STORE.maxZ - 0.4, 5.0, 1.1));
   const backIn = N(gain(ctx, 1));
   const backLP = N(filt(ctx, 'lowpass', 900, 0.7));
   const backLP2 = N(filt(ctx, 'lowpass', 1500, 0.6));
@@ -541,6 +578,14 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
   function update(dt, t, zn, cop) {
     clock += dt;
     const c = clock;
+
+    // --- THE BEDS NEVER READ AT THE SAME SPEED TWICE. Three drifts at mutually
+    // irrational rates, about a per cent peak to peak, which is inaudible as
+    // pitch and fatal to periodicity. This is the line that makes the store
+    // un-loopable; see the note where the buffers are built.
+    to(srcA.playbackRate, 1.000 + 0.011 * Math.sin(c * 0.0193) + 0.005 * Math.sin(c * 0.0071 + 2.2), t, 2.5);
+    to(srcB.playbackRate, 0.937 + 0.010 * Math.sin(c * 0.0137 + 1.1) + 0.006 * Math.sin(c * 0.0049 + 4.0), t, 2.5);
+    to(srcC.playbackRate, 1.061 + 0.012 * Math.sin(c * 0.0163 + 3.4) + 0.005 * Math.sin(c * 0.0059 + 0.7), t, 2.5);
 
     // --- HVAC never quite steady
     const hvm = 1 + 0.20 * Math.sin(c * 0.0389) + 0.11 * Math.sin(c * 0.1237 + 1.7)
@@ -668,24 +713,29 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
     let nearChill = 99;
     for (let i = 0; i < curtains.length; i++) {
       const cu = curtains[i];
-      // the reach-in bank runs the length of the left wall, so measure to the
-      // RUN and not to its midpoint
-      const dx = cop.x - cu.x;
-      const dz = cu.run === 'left' ? Math.max(0, Math.abs(cop.z) - BODY * 0.9) : cop.z - cu.z;
-      const d = Math.hypot(dx, dz);
+      // nearest point ON THE RUN, not the run's midpoint
+      const px = cu.run === 'back' ? clamp(cop.x, coolX0, coolX1) : cu.x;
+      const pz = cu.run === 'back' ? cu.z : clamp(cop.z, -BODY * 0.95, BODY * 0.95);
+      const d = Math.hypot(cop.x - px, cop.z - pz);
       nearChill = Math.min(nearChill, d);
-      // The curtain is a NEARFIELD sound and it has to fall off hard: audible
-      // from six metres, dominant from one and a half, and gone by twelve.
-      const near = 1 - smooth(1.2, 13.0, d);
-      to(cu.g.gain, 0.30 * near * near * (0.85 + 0.2 * Math.sin(c * 0.14 + i * 2.1)), t, 0.4);
+      if (cu.p.positionX) {
+        cu.p.positionX.setTargetAtTime(px, t, 0.25);
+        cu.p.positionZ.setTargetAtTime(pz, t, 0.25);
+      } else if (cu.p.setPosition) cu.p.setPosition(px, 1.3, pz);
+      // The curtain is a NEARFIELD sound and it falls off hard: dominant at two
+      // metres, plainly there at six, gone by fifteen.
+      const near = 1 - smooth(1.6, 15.0, d);
+      to(cu.g.gain, 0.46 * near * near * (0.85 + 0.2 * Math.sin(c * 0.14 + i * 2.1)), t, 0.4);
     }
     // the glass ticking as it warms. Only near it, and never on a clock.
     chillTick -= dt;
     if (chillTick <= 0) {
       chillTick = 2.0 + rnd() * 9.0;
       if (nearChill < 14) {
-        const cu = curtains[nearChill < 99 && Math.abs(cop.x - curtains[1].x) < Math.abs(cop.z - curtains[0].z) ? 1 : 0];
-        const jx = cu.x + (rnd() - 0.5) * 9, jz = cu.run === 'left' ? cop.z + (rnd() - 0.5) * 9 : cu.z;
+        const left = Math.abs(cop.x - curtains[1].x) < Math.abs(cop.z - curtains[0].z);
+        const cu = curtains[left ? 1 : 0];
+        const jx = left ? cu.x : clamp(cop.x, coolX0, coolX1) + (rnd() - 0.5) * 9;
+        const jz = left ? clamp(cop.z, -BODY, BODY) + (rnd() - 0.5) * 9 : cu.z;
         if (tickP.positionX) { tickP.positionX.value = jx; tickP.positionZ.value = jz; }
         else if (tickP.setPosition) tickP.setPosition(jx, 1.4, jz);
         tick(t + 0.02, 0.05 + rnd() * 0.09);
@@ -708,7 +758,7 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
     // --- THE BACK ROOM, through a swing door. The level is the distance to
     // the doors, not zn.back, so walking along the rear cross-aisle sweeps past
     // it instead of stepping into it.
-    const dBack = Math.hypot(cop.x - 4, Math.max(0, (STORE.maxZ - 0.4) - cop.z));
+    const dBack = Math.hypot(cop.x - 12, Math.max(0, (STORE.maxZ - 0.4) - cop.z));
     const backNear = 1 - smooth(2.0, 20.0, dBack);
     to(backLvl.gain, 0.30 * backNear * backNear, t, 0.5);
     backEv.door -= dt; backEv.clatter -= dt;

@@ -66,7 +66,7 @@ export function mergeParts(THREE, parts) {
   for (const p of parts) {
     vTot += p.g.attributes.position.count;
     iTot += p.g.index ? p.g.index.count : p.g.attributes.position.count;
-    if (p.c != null) wantCol = true;
+    if (p.c != null || p.g.attributes.color) wantCol = true;
   }
   const pos = new Float32Array(vTot * 3);
   const nrm = new Float32Array(vTot * 3);
@@ -81,6 +81,9 @@ export function mergeParts(THREE, parts) {
     if (p.c != null) c.set(p.c);
     const uv = p.uv;
     const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv;
+    // A part may bring its OWN per-vertex colours (a loft does, so a torso can
+    // shade from chest to hem inside a single surface). p.c still wins if given.
+    const CA = p.c == null ? g.attributes.color : null;
     for (let i = 0; i < P.count; i++) {
       v.fromBufferAttribute(P, i); if (m) v.applyMatrix4(m); v.toArray(pos, (vo + i) * 3);
       if (N) {
@@ -92,7 +95,12 @@ export function mergeParts(THREE, parts) {
         uvs[(vo + i) * 2] = uv ? uv[0] + u0 * uv[2] : u0;
         uvs[(vo + i) * 2 + 1] = uv ? uv[1] + v0 * uv[3] : v0;
       }
-      if (col) { col[(vo + i) * 3] = c.r; col[(vo + i) * 3 + 1] = c.g; col[(vo + i) * 3 + 2] = c.b; }
+      if (col) {
+        const o = (vo + i) * 3;
+        if (CA) { col[o] = CA.getX(i); col[o + 1] = CA.getY(i); col[o + 2] = CA.getZ(i); }
+        else if (p.c != null) { col[o] = c.r; col[o + 1] = c.g; col[o + 2] = c.b; }
+        else { col[o] = col[o + 1] = col[o + 2] = 1; }
+      }
     }
     const gi = g.index, n = gi ? gi.count : P.count;
     for (let i = 0; i < n; i++) idx[io + i] = (gi ? gi.getX(i) : i) + vo;
@@ -130,6 +138,52 @@ function shapes(THREE) {
     half: (s = 14) => get('half' + s,
       () => new THREE.CylinderGeometry(0.5, 0.5, 1, s, 1, false, -Math.PI / 2, Math.PI)),
   };
+}
+
+// A LOFT: rings of ellipses stacked up Y and skinned into one closed surface.
+// Each ring carries its own half-width, half-depth, forward offset and colour,
+// so a torso can have a chest, a waist, a gut that pushes FORWARD and not
+// sideways, and a seat — as ONE smooth surface.
+//
+// The first build of the cop stacked ellipsoids instead, and you could count
+// them: every place a wider ball met a narrower one left a hard horizontal step
+// round the shirt, so a heavy man read as a stack of tyres. A loft has no seams
+// because there are no separate surfaces to seam.
+//   rings: [{ y, rx, rz, cz, c }] bottom to top, first and last collapsed to a
+//   point to cap it. `seg` is the ring resolution — 16 is plenty at 7 m and it
+//   is what the CCTV feed can resolve at any distance whatsoever.
+function loft(THREE, rings, seg = 16, uv) {
+  const n = rings.length, W = seg + 1;
+  const pos = new Float32Array(n * W * 3);
+  const uvs = new Float32Array(n * W * 2);
+  const col = new Float32Array(n * W * 3);
+  const idx = [];
+  const c = new THREE.Color();
+  for (let i = 0; i < n; i++) {
+    const r = rings[i];
+    c.set(r.c == null ? 0xffffff : r.c);
+    for (let j = 0; j <= seg; j++) {
+      const a = (j / seg) * Math.PI * 2, k = i * W + j;
+      pos[k * 3] = Math.sin(a) * r.rx;
+      pos[k * 3 + 1] = r.y;
+      pos[k * 3 + 2] = Math.cos(a) * r.rz + (r.cz || 0);
+      const u = j / seg, v = i / (n - 1);
+      uvs[k * 2] = uv ? uv[0] + u * uv[2] : u;
+      uvs[k * 2 + 1] = uv ? uv[1] + v * uv[3] : v;
+      col[k * 3] = c.r; col[k * 3 + 1] = c.g; col[k * 3 + 2] = c.b;
+    }
+  }
+  for (let i = 0; i < n - 1; i++) for (let j = 0; j < seg; j++) {
+    const a = i * W + j, b = a + 1, d = a + W, e = d + 1;
+    idx.push(a, b, d, b, e, d);       // outward winding; check it, do not guess
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
 }
 
 // The builder. Every call is (size, position, colour, opts) and opts carries
@@ -202,7 +256,7 @@ function copAtlas(THREE) {
     for (let i = 0; i < 128; i += 4) { g.beginPath(); g.moveTo(0, i); g.lineTo(128, i); g.stroke(); }
     g.globalAlpha = 1;
     // strain creases radiating off the button line
-    g.strokeStyle = 'rgba(0,0,0,0.11)'; g.lineWidth = 2.4;
+    g.strokeStyle = 'rgba(0,0,0,0.055)'; g.lineWidth = 2.0;
     for (let i = 0; i < 7; i++) {
       const y = 34 + i * 11;
       g.beginPath(); g.moveTo(52, y); g.quadraticCurveTo(84, y + 5 - (i % 2) * 9, 122, y + 2); g.stroke();
@@ -422,13 +476,25 @@ function shopperBelly(THREE, S) {
   return mergeParts(THREE, P.L);
 }
 
+// The cop's gut is its own bake and not the shopper sphere, for a reason worth
+// writing down: the shopper belly carries native 0..1 UVs, and on a material
+// whose map is a SIXTEEN-CELL ATLAS that means it samples the whole sheet. The
+// first build of this shipped a man with a white apron over his stomach with
+// the word CHOP across it, because the nameplate cell landed on his abdomen.
+// Every part on an atlas material needs a cell. Every one.
+function copBelly(THREE, S) {
+  const P = partList(THREE, S);
+  P.ball(0.5, 0.5, 0.5, [0, 0, 0], C.shirt, { seg: 14, rseg: 10, uv: uvOf('shirt') });
+  return mergeParts(THREE, P.L);
+}
+
 // Two heads: a rounder one and a longer one. Both have a jaw, a nose, ears, a
 // brow and eyes, because those five things are the entire difference between
 // "a person seen from 7 m" and "a ball".
 function shopperHead(THREE, S, long) {
   const P = partList(THREE, S);
   const h = FIG.headY, ln = long ? 1.0 : 0.90, wd = long ? 0.94 : 1.03;
-  P.tube(0.048, 0.10, [0, h - 0.155, -0.004], 0xe8e8e8, { seg: 8 });            // neck
+  P.tube(0.042, 0.10, [0, h - 0.155, -0.006], 0xe0e0e0, { seg: 8 });            // neck
   P.ball(0.100 * wd, 0.108 * ln, 0.104, [0, h + 0.010, -0.004], 0xffffff, { seg: 10, rseg: 7 });
   P.ball(0.089 * wd, 0.070 * ln, 0.093, [0, h - 0.058, 0.008], 0xfbfbfb, { seg: 10, rseg: 6 }); // jaw
   P.ball(0.060, 0.036, 0.055, [0, h - 0.098, 0.014], 0xf4f4f4, { seg: 8, rseg: 5 });            // chin
@@ -477,9 +543,9 @@ function shopperHair(THREE, S, k) {
 function shopperLeg(THREE, S, b, side) {
   const P = partList(THREE, S);
   const t = b.th;
-  P.taper(0.082 * t, 0.092 * t, 0.40, [side * 0.006, -0.20, 0], 0xffffff, { seg: 8 });
+  P.taper(0.094 * t, 0.078 * t, 0.40, [side * 0.006, -0.20, 0], 0xffffff, { seg: 8 });
   P.ball(0.070 * t, 0.060, 0.072, [0, -0.415, 0.004], 0xf6f6f6, { seg: 8, rseg: 5 });
-  P.taper(0.060 * t, 0.072 * t, 0.34, [0, -0.595, 0.002], 0xfafafa, { seg: 8 });
+  P.taper(0.074 * t, 0.058 * t, 0.34, [0, -0.595, 0.002], 0xfafafa, { seg: 8 });
   P.tube(0.064 * t, 0.040, [0, -0.775, 0.004], 0xe6e6e6, { seg: 8 });         // cuff
   return mergeParts(THREE, P.L);
 }
@@ -501,11 +567,11 @@ function shopperSleeve(THREE, S, long, side) {
   const P = partList(THREE, S);
   P.ball(0.082, 0.078, 0.080, [0, -0.020, 0], 0xffffff, { seg: 8, rseg: 6 });
   if (long) {
-    P.taper(0.062, 0.076, 0.26, [side * 0.004, -0.155, 0], 0xffffff, { seg: 8 });
-    P.taper(0.055, 0.062, 0.26, [side * 0.006, -0.400, 0.004], 0xf8f8f8, { seg: 8 });
+    P.taper(0.078, 0.060, 0.26, [side * 0.004, -0.155, 0], 0xffffff, { seg: 8 });
+    P.taper(0.062, 0.052, 0.26, [side * 0.006, -0.400, 0.004], 0xf8f8f8, { seg: 8 });
     P.tube(0.058, 0.030, [side * 0.006, -0.522, 0.004], 0xdcdcdc, { seg: 8 });   // cuff
   } else {
-    P.taper(0.066, 0.078, 0.17, [side * 0.004, -0.105, 0], 0xffffff, { seg: 8 });
+    P.taper(0.080, 0.066, 0.17, [side * 0.004, -0.105, 0], 0xffffff, { seg: 8 });
     P.tube(0.070, 0.020, [side * 0.004, -0.196, 0], 0xe0e0e0, { seg: 8 });       // rolled hem
   }
   return mergeParts(THREE, P.L);
@@ -515,7 +581,7 @@ function shopperForearm(THREE, S, long, side) {
   const P = partList(THREE, S);
   if (!long) {
     P.ball(0.060, 0.058, 0.058, [0, -0.235, 0], 0xffffff, { seg: 8, rseg: 5 });   // elbow
-    P.taper(0.048, 0.058, 0.24, [side * 0.006, -0.375, 0.004], 0xffffff, { seg: 8 });
+    P.taper(0.060, 0.046, 0.24, [side * 0.006, -0.375, 0.004], 0xffffff, { seg: 8 });
   }
   P.ball(0.044, 0.040, 0.044, [side * 0.008, -0.512, 0.004], 0xffffff, { seg: 6, rseg: 5 });
   P.ball(0.038, 0.056, 0.052, [side * 0.008, -0.570, 0.010], 0xffffff, { seg: 8, rseg: 6 }); // palm
@@ -542,9 +608,9 @@ function shopperForearm(THREE, S, long, side) {
 const C = {
   shirt: 0x93a9c6, shirtSh: 0x7c92b0, shirtDk: 0x63779a, shirtHem: 0x53668a,
   navy: 0x232c40, navyDk: 0x161d2c, brim: 0x0e1320,
-  trouser: 0x1f2532, stripe: 0x0d1017,
+  trouser: 0x2a3145, stripe: 0x0c0f18,
   skin: 0xd9a481, skinSh: 0xb17d5c, skinDk: 0x8f5f45, lip: 0xb87765,
-  hair: 0x8b8279, hairDk: 0x6e675f, eye: 0x33291f,
+  hair: 0x8b8279, hairDk: 0x6e675f, tache: 0x6f6459, eye: 0x33291f,
   leather: 0x1a1a1f, leatherHi: 0x2b2b32,
   gold: 0xd8be6e, chrome: 0xc6cbd2, steel: 0x8d939b,
   white: 0xffffff, glove: 0x9fd0e0, radio: 0x2a2d33, red: 0xa8352c,
@@ -565,18 +631,18 @@ function copHead(THREE, S) {
 
   // neck: a thick one, and a roll at the back where a size-17 collar bites
   P.taper(0.066, 0.078, 0.115, [0, h - 0.155, -0.004], C.skin, { seg: 10, ...X });
-  P.ball(0.072, 0.030, 0.040, [0, h - 0.108, -0.058], C.skinSh, { seg: 8, rseg: 4, ...X });
-  P.ball(0.066, 0.026, 0.036, [0, h - 0.148, -0.060], C.skinSh, { seg: 8, rseg: 4, ...X });
+  P.ball(0.074, 0.030, 0.042, [0, h - 0.106, -0.058], C.skinDk, { seg: 8, rseg: 4, ...X });
+  P.ball(0.068, 0.026, 0.038, [0, h - 0.146, -0.060], C.skinDk, { seg: 8, rseg: 4, ...X });
 
   // skull, jaw, jowls, chin. The jaw is wide and the chin is soft: he is a
   // heavy man in his fifties, not a superhero with a mandible.
   P.ball(0.104, 0.110, 0.108, [0, h + 0.012, -0.006], C.skin, { seg: 12, rseg: 8, ...F });
-  P.ball(0.078, 0.062, 0.070, [0, h + 0.030, -0.078], C.skin, { seg: 8, rseg: 6, ...X });
+  P.ball(0.082, 0.070, 0.062, [0, h + 0.020, -0.062], C.skin, { seg: 10, rseg: 6, ...X });
   P.ball(0.096, 0.074, 0.098, [0, h - 0.052, 0.006], C.skin, { seg: 12, rseg: 7, ...F });
-  P.ball(0.042, 0.038, 0.038, [0.070, h - 0.062, 0.040], C.skin, { seg: 8, rseg: 5, ...X });
-  P.ball(0.042, 0.038, 0.038, [-0.070, h - 0.062, 0.040], C.skin, { seg: 8, rseg: 5, ...X });
-  P.ball(0.062, 0.038, 0.058, [0, h - 0.098, 0.028], C.skin, { seg: 10, rseg: 5, ...X });
-  P.ball(0.074, 0.040, 0.070, [0, h - 0.128, 0.006], C.skinSh, { seg: 10, rseg: 5, ...X });
+  P.ball(0.038, 0.034, 0.034, [0.068, h - 0.066, 0.038], C.skin, { seg: 8, rseg: 5, ...X });
+  P.ball(0.038, 0.034, 0.034, [-0.068, h - 0.066, 0.038], C.skin, { seg: 8, rseg: 5, ...X });
+  P.ball(0.070, 0.036, 0.062, [0, h - 0.096, 0.022], C.skin, { seg: 10, rseg: 5, ...X });
+  P.ball(0.078, 0.036, 0.070, [0, h - 0.124, 0.000], C.skinSh, { seg: 10, rseg: 5, ...X });
 
   // ears, with a darker inner bowl so they are not two lumps
   for (const s of [1, -1]) {
@@ -586,11 +652,11 @@ function copHead(THREE, S) {
 
   // brow, sockets, eyes. A brow that overhangs is what stops a face reading as
   // a mask: it puts the eyes in shadow at every light angle in the store.
-  P.box(0.152, 0.024, 0.034, [0, h + 0.042, 0.070], C.skin, { r: [-0.16, 0, 0], ...X });
+  P.box(0.146, 0.020, 0.030, [0, h + 0.040, 0.072], C.skin, { r: [-0.20, 0, 0], ...X });
   for (const s of [1, -1]) {
-    P.ball(0.030, 0.019, 0.014, [s * 0.043, h + 0.017, 0.083], C.skinSh, { seg: 8, rseg: 4, ...X });
-    P.ball(0.020, 0.012, 0.009, [s * 0.043, h + 0.016, 0.090], C.eye, { seg: 6, rseg: 4, ...X });
-    P.box(0.052, 0.015, 0.017, [s * 0.045, h + 0.045, 0.086], C.hair, { r: [0, 0, s * 0.12], ...X });
+    P.ball(0.026, 0.014, 0.012, [s * 0.042, h + 0.014, 0.086], C.skinSh, { seg: 8, rseg: 4, ...X });
+    P.ball(0.015, 0.009, 0.008, [s * 0.042, h + 0.013, 0.093], C.eye, { seg: 6, rseg: 4, ...X });
+    P.box(0.048, 0.012, 0.014, [s * 0.044, h + 0.049, 0.088], C.tache, { r: [0, 0, s * 0.16], ...X });
   }
 
   // nose: bridge, tip, nostrils. Slightly bulbous, slightly red.
@@ -601,9 +667,9 @@ function copHead(THREE, S) {
   }
 
   // moustache and mouth. Salt and pepper, and it droops.
-  P.box(0.086, 0.021, 0.026, [0, h - 0.048, 0.093], C.hair, { ...X });
+  P.box(0.084, 0.020, 0.022, [0, h - 0.048, 0.090], C.tache, { ...X });
   for (const s of [1, -1]) {
-    P.box(0.022, 0.028, 0.024, [s * 0.042, h - 0.055, 0.089], C.hair, { r: [0, 0, s * 0.42], ...X });
+    P.box(0.021, 0.027, 0.020, [s * 0.041, h - 0.055, 0.087], C.tache, { r: [0, 0, s * 0.42], ...X });
   }
   P.box(0.046, 0.009, 0.014, [0, h - 0.072, 0.086], C.lip, { ...X });
 
@@ -615,18 +681,18 @@ function copHead(THREE, S) {
 
   // ---- the cap ----------------------------------------------------------
   const K = { uv: uvOf('capcloth') };
-  P.taper(0.108, 0.124, 0.080, [0, h + 0.140, -0.004], C.navy, { seg: 14, ...K });
-  P.ball(0.108, 0.036, 0.104, [0, h + 0.178, -0.004], C.navy, { seg: 14, rseg: 5, ...K });
-  P.tube(0.128, 0.040, [0, h + 0.098, -0.004], C.navyDk, { seg: 14, ...K });
-  P.half(0.168, 0.015, [0, h + 0.082, 0.020], C.brim, { r: [0.30, 0, 0], seg: 16, uv: uvOf('shoe') });
-  P.half(0.168, 0.008, [0, h + 0.074, 0.020], C.navyDk, { r: [0.30, 0, 0], seg: 16, ...K });
+  P.taper(0.116, 0.132, 0.084, [0, h + 0.142, -0.004], C.navy, { seg: 14, ...K });
+  P.ball(0.116, 0.038, 0.112, [0, h + 0.182, -0.004], C.navy, { seg: 14, rseg: 5, ...K });
+  P.tube(0.135, 0.042, [0, h + 0.098, -0.004], C.navyDk, { seg: 14, ...K });
+  P.half(0.156, 0.015, [0, h + 0.082, 0.022], C.brim, { r: [0.24, 0, 0], seg: 16, uv: uvOf('shoe') });
+  P.half(0.156, 0.008, [0, h + 0.074, 0.022], C.navyDk, { r: [0.24, 0, 0], seg: 16, ...K });
   return mergeParts(THREE, P.L);
 }
 
 // The metal on his head: cap shield and the gold chinstrap he never uses.
 function copHeadKit(THREE, S) {
   const P = partList(THREE, S), h = FIG.headY, X = { uv: uvOf('flat') };
-  P.box(0.150, 0.009, 0.011, [0, h + 0.086, 0.111], C.gold, { r: [0.30, 0, 0], ...X });
+  P.box(0.150, 0.009, 0.011, [0, h + 0.088, 0.113], C.gold, { r: [0.24, 0, 0], ...X });
   for (const s of [1, -1]) {
     P.tube(0.010, 0.007, [s * 0.088, h + 0.096, 0.086], C.gold, { r: [Math.PI / 2, 0, 0], seg: 6, ...X });
   }
@@ -637,62 +703,154 @@ function copHeadKit(THREE, S) {
 }
 
 // --- torso: the uniform shirt, and what is pinned to it ---------------------
+// The shirt's ring table, hoisted out of copTorso so that everything PINNED to
+// the shirt — placket, buttons, pockets, flaps, badge, epaulettes, collar, the
+// mic cord — can ask the surface where it is instead of guessing. The first
+// build guessed, and a pocket flap two centimetres proud of a chest reads, at
+// any distance at all, as a slab hanging in mid-air next to a man.
+const SHIRT_RINGS = [
+  { y: -0.040, rx: 0.030, rz: 0.026, cz: 0.012, c: 'shirtHem' },
+  { y: -0.015, rx: 0.196, rz: 0.166, cz: 0.012, c: 'shirtHem' },
+  { y: 0.020, rx: 0.220, rz: 0.186, cz: 0.014, c: 'shirtHem' },
+  // The tuck. Everything below is under the belt, everything above hangs over
+  // it, and this pinch IS the silhouette. Without it he is a barrel with a
+  // black band painted round the widest part.
+  { y: 0.062, rx: 0.230, rz: 0.196, cz: 0.024, c: 'shirtDk' },
+  { y: 0.100, rx: 0.248, rz: 0.212, cz: 0.036, c: 'shirt' },
+  { y: 0.145, rx: 0.258, rz: 0.224, cz: 0.048, c: 'shirt' },
+  { y: 0.195, rx: 0.258, rz: 0.224, cz: 0.048, c: 'shirt' },
+  { y: 0.245, rx: 0.250, rz: 0.212, cz: 0.040, c: 'shirt' },
+  { y: 0.300, rx: 0.238, rz: 0.196, cz: 0.028, c: 'shirt' },
+  { y: 0.355, rx: 0.228, rz: 0.186, cz: 0.012, c: 'shirt' },
+  { y: 0.410, rx: 0.224, rz: 0.180, cz: -0.002, c: 'shirt' },
+  { y: 0.455, rx: 0.218, rz: 0.172, cz: -0.012, c: 'shirt' },
+  { y: 0.487, rx: 0.188, rz: 0.152, cz: -0.016, c: 'shirtSh' },
+  { y: 0.510, rx: 0.132, rz: 0.116, cz: -0.014, c: 'shirtSh' },
+  { y: 0.528, rx: 0.088, rz: 0.082, cz: -0.010, c: 'shirtSh' },
+  { y: 0.538, rx: 0.032, rz: 0.030, cz: -0.008, c: 'shirtSh' },
+];
+// The ring at height y, linearly blended.
+function ringAt(y) {
+  const R = SHIRT_RINGS;
+  if (y <= R[0].y) return R[0];
+  for (let i = 1; i < R.length; i++) {
+    if (y <= R[i].y) {
+      const a = R[i - 1], b = R[i], t = (y - a.y) / (b.y - a.y);
+      return { rx: a.rx + (b.rx - a.rx) * t, rz: a.rz + (b.rz - a.rz) * t,
+               cz: a.cz + (b.cz - a.cz) * t };
+    }
+  }
+  return R[R.length - 1];
+}
+// Where the front of the shirt is at (x, y). THE function this file needed.
+function surf(x, y) {
+  const r = ringAt(y);
+  const k = Math.min(1, Math.abs(x) / r.rx);
+  return r.cz + r.rz * Math.sqrt(Math.max(0, 1 - k * k));
+}
+// The full surface FRAME at (x, y): where to put a flat plate and which way to
+// point it. Placing plates at surf() alone was only half the fix — a pocket
+// flap 90 mm wide and 15 mm deep, laid flat on a chest whose surface recedes
+// 34 mm over the flap's own height, has its bottom edge buried and its top edge
+// sticking out. From any angle that is a fin, not a pocket. Pitch follows the
+// vertical slope, yaw follows the ellipse normal.
+function onShirt(x, y, h) {
+  const dy = (h || 0.05) * 0.5;
+  const zc = surf(x, y);
+  const pitch = Math.atan2(surf(x, y + dy) - surf(x, y - dy), dy * 2);
+  const r = ringAt(y);
+  const yaw = Math.atan2(x / (r.rx * r.rx), Math.max(1e-4, (zc - r.cz)) / (r.rz * r.rz));
+  return { p: [x, y, zc], r: [pitch, yaw, 0], z: zc };
+}
+const SHIRT_MAXY = SHIRT_RINGS[SHIRT_RINGS.length - 1].y;
+
 function copTorso(THREE, S) {
   const P = partList(THREE, S);
   const F = { uv: uvOf('shirt') }, X = { uv: uvOf('flat') };
-  // Barrel chest tapering to a wide, soft waist, then the seat. Four stacked
-  // ellipsoids, not one capsule — a capsule is why the old rig was an egg.
-  P.ball(0.222, 0.112, 0.176, [0, FIG.shoulderY + 0.012, -0.006], C.shirt, { seg: 12, rseg: 6, ...F });
-  P.ball(0.212, 0.150, 0.176, [0, 0.352, 0.004], C.shirt, { seg: 12, rseg: 7, ...F });
-  P.ball(0.222, 0.150, 0.186, [0, 0.196, 0.014], C.shirt, { seg: 12, rseg: 7, ...F });
-  P.ball(0.240, 0.130, 0.202, [0, 0.062, 0.010], C.shirt, { seg: 12, rseg: 6, ...F });
-  P.ball(0.250, 0.110, 0.212, [0, -0.020, 0.004], C.shirtDk, { seg: 12, rseg: 5, ...F });   // seat
+  // ---- the man, as one surface -------------------------------------------
+  // Chest -> soft waist -> the gut, which pushes FORWARD (cz) rather than
+  // sideways, because that is what a gut does and it is the difference between
+  // a heavy man and a wide one. The hem runs on down under the belt so the
+  // shirt is tucked; the belt is worn low, under the overhang.
+  P.L.push({
+    g: loft(THREE, SHIRT_RINGS.map((r) => ({ ...r, c: C[r.c] })), 18, uvOf('shirt')),
+    m: new THREE.Matrix4(),
+  });
+
   // Round shoulders and a bit of upper back. The brief asks for a man who is
   // recognisable from behind at 7 m and this is most of that read.
-  P.ball(0.150, 0.086, 0.086, [0, FIG.shoulderY + 0.004, -0.118], C.shirtSh, { seg: 10, rseg: 5, ...F });
-  P.ball(0.086, 0.070, 0.058, [0, FIG.shoulderY + 0.052, -0.052], C.shirtSh, { seg: 8, rseg: 5, ...F });
+  P.ball(0.164, 0.080, 0.068, [0, FIG.shoulderY - 0.004, -0.104], C.shirtSh, { seg: 12, rseg: 6, ...F });
+  P.ball(0.094, 0.062, 0.050, [0, FIG.shoulderY + 0.042, -0.044], C.shirtSh, { seg: 8, rseg: 5, ...F });
 
-  // collar: a stand plus two points, open at the throat
-  P.tube(0.084, 0.052, [0, FIG.neckY + 0.014, -0.002], C.shirtSh, { seg: 12, ...F });
+  // The collar. A stand round the throat and two points lying ON the chest.
+  P.tube(0.088, 0.070, [0, FIG.neckY + 0.020, -0.006], C.shirtSh, { seg: 12, ...F });
   for (const s of [1, -1]) {
-    P.box(0.078, 0.016, 0.062, [s * 0.058, FIG.neckY + 0.002, 0.070],
-      C.shirtSh, { r: [0.42, s * 0.30, s * -0.34], ...F });
+    const f = onShirt(s * 0.052, 0.501, 0.058);
+    P.box(0.070, 0.014, 0.058, [f.p[0], f.p[1], f.p[2] - 0.010],
+      C.shirtSh, { r: [f.r[0] + 0.34, f.r[1], s * -0.28], ...F });
   }
-  // placket down the front, following the curve out over the gut
-  const front = (y) => 0.150 + 0.052 * Math.max(0, 1 - Math.abs((y - 0.24) / 0.30));
+  // Placket and buttons. Sunk 4 mm so only the proud face shows.
   for (let i = 0; i < 6; i++) {
-    const y = 0.50 - i * 0.075;
-    P.box(0.050, 0.082, 0.016, [0, y, front(y) + 0.006], C.shirtSh, { ...F });
-    P.tube(0.012, 0.008, [0, y - 0.030, front(y) + 0.017], C.shirtHem,
-      { r: [Math.PI / 2, 0, 0], seg: 6, ...X });
+    const y = 0.432 - i * 0.074;
+    const f = onShirt(0, y, 0.078);
+    P.box(0.048, 0.078, 0.016, [f.p[0], f.p[1], f.p[2] - 0.005], C.shirtSh, { r: f.r, ...F });
+    const b = onShirt(0, y - 0.030, 0.02);
+    P.tube(0.011, 0.007, [b.p[0], b.p[1], b.p[2] + 0.005], C.shirtHem,
+      { r: [Math.PI / 2 + b.r[0], 0, 0], seg: 6, ...X });
   }
   // breast pockets with flaps and a pen
   for (const s of [1, -1]) {
-    P.box(0.104, 0.098, 0.014, [s * 0.108, 0.352, front(0.352) + 0.006], C.shirtSh, { ...F });
-    P.box(0.110, 0.032, 0.018, [s * 0.108, 0.404, front(0.400) + 0.008], C.shirtDk, { ...F });
+    const f = onShirt(s * 0.104, 0.348, 0.090);
+    P.box(0.098, 0.090, 0.014, [f.p[0], f.p[1], f.p[2] - 0.006], C.shirtSh, { r: f.r, ...F });
+    const g = onShirt(s * 0.104, 0.398, 0.030);
+    P.box(0.104, 0.028, 0.017, [g.p[0], g.p[1], g.p[2] - 0.006], C.shirtDk, { r: g.r, ...F });
   }
-  P.box(0.012, 0.055, 0.012, [-0.078, 0.430, front(0.430) + 0.012], C.red, { ...X });
-  // epaulettes
+  const pen = onShirt(-0.076, 0.418, 0.048);
+  P.box(0.011, 0.048, 0.011, [pen.p[0], pen.p[1], pen.p[2] + 0.003], C.red, { r: pen.r, ...X });
+  // Epaulettes, lying along the shoulder slope. At the old x=0.176, y=0.512 the
+  // torso is only 0.13 wide, so both of them hung in the air beside his neck.
   for (const s of [1, -1]) {
-    P.box(0.090, 0.018, 0.078, [s * 0.176, FIG.shoulderY + 0.052, -0.008],
-      C.shirtSh, { r: [0, 0, s * -0.20], ...F });
+    P.box(0.086, 0.016, 0.072, [s * 0.148, 0.466, -0.012],
+      C.shirtSh, { r: [0, 0, s * -0.42], ...F });
   }
+  const front = (y) => surf(0, y);
   // shoulder-mic cord: down off the left epaulette, across the chest, to the
   // radio on the belt. It is the detail that says "on duty" from behind.
   const cord = [];
-  for (let i = 0; i <= 22; i++) {
-    const t = i / 22;
-    const yy = 0.50 - t * 0.44;
-    const rr = 0.055 + t * 0.030;
-    const a = t * 9.2;
-    cord.push(new THREE.Vector3(
-      0.150 - t * 0.055 + Math.cos(a) * rr * 0.5,
-      yy + Math.sin(a) * 0.012,
-      front(yy) + 0.020 + Math.sin(a) * rr * 0.22));
+  for (let i = 0; i <= 20; i++) {
+    const t = i / 20;
+    const yy = 0.432 - t * 0.37;
+    const rr = 0.030 + t * 0.014;
+    const a = t * 8.4;
+    const xx = 0.132 - t * 0.050 + Math.cos(a) * rr;
+    cord.push(new THREE.Vector3(xx, yy + Math.sin(a) * 0.008,
+      surf(xx, yy) + 0.006 + Math.sin(a) * rr * 0.55));
   }
   P.L.push({
-    g: new THREE.TubeGeometry(new THREE.CatmullRomCurve3(cord), 26, 0.0085, 5, false),
-    c: C.leather, m: new THREE.Matrix4(), uv: uvOf('flat'),
+    g: new THREE.TubeGeometry(new THREE.CatmullRomCurve3(cord), 24, 0.0060, 4, false),
+    c: 0x3d4048, m: new THREE.Matrix4(), uv: uvOf('flat'),
+  });
+  return mergeParts(THREE, P.L);
+}
+
+// The seat and the crotch, on `hips` rather than on `chest`, because the
+// trousers belong to the pelvis and the pelvis is what the legs hang off. The
+// first build left this out and his thighs started in mid-air under the shirt:
+// a gap you could see the floor through, right where a man is widest.
+function copSeat(THREE, S) {
+  const P = partList(THREE, S);
+  P.L.push({
+    g: loft(THREE, [
+      { y: -0.170, rx: 0.040, rz: 0.048, cz: 0.010, c: C.trouser },
+      { y: -0.145, rx: 0.150, rz: 0.128, cz: 0.008, c: C.trouser },
+      { y: -0.090, rx: 0.204, rz: 0.176, cz: 0.006, c: C.trouser },
+      { y: -0.030, rx: 0.232, rz: 0.196, cz: 0.008, c: C.trouser },
+      { y: 0.030, rx: 0.238, rz: 0.200, cz: 0.010, c: C.trouser },
+      { y: 0.080, rx: 0.230, rz: 0.192, cz: 0.012, c: C.trouser },
+      { y: 0.110, rx: 0.190, rz: 0.160, cz: 0.012, c: C.trouser },
+      { y: 0.128, rx: 0.060, rz: 0.055, cz: 0.010, c: C.trouser },
+    ], 16, uvOf('twill')),
+    m: new THREE.Matrix4(),
   });
   return mergeParts(THREE, P.L);
 }
@@ -702,20 +860,28 @@ function copTorso(THREE, S) {
 // nameplate over the right pocket, collar brass on both points.
 function copTorsoKit(THREE, S) {
   const P = partList(THREE, S), X = { uv: uvOf('flat') };
-  const zf = 0.212;
-  // shield: a hex plate with a point under it and a raised centre
-  P.tube(0.048, 0.010, [0.108, 0.452, zf], C.gold, { r: [Math.PI / 2, 0, 0], seg: 6, ...X });
-  P.cone(0.048, 0.044, [0.108, 0.410, zf], C.gold, { r: [Math.PI, 0, 0], seg: 6, ...X });
-  P.tube(0.026, 0.013, [0.108, 0.452, zf + 0.004], C.chrome, { r: [Math.PI / 2, 0, 0], seg: 6, ...X });
-  // nameplate, engraved
-  P.box(0.086, 0.020, 0.009, [-0.108, 0.452, zf], C.gold, { uv: uvOf('name') });
-  // collar brass
+  // Shield on his LEFT chest, above the pocket flap, lying on the surface with
+  // the surface's own pitch and yaw. A badge that catches the light has to face
+  // the same way the chest does or the highlight lands nowhere.
+  const b = onShirt(0.104, 0.448, 0.070);
+  const bp = [b.p[0], b.p[1], b.p[2] - 0.002];
+  P.tube(0.039, 0.012, bp, C.gold, { r: [Math.PI / 2 + b.r[0], b.r[1], 0], seg: 6, ...X });
+  P.cone(0.039, 0.036, [bp[0], bp[1] - 0.034, bp[2] + 0.034 * Math.tan(b.r[0])],
+    C.gold, { r: [Math.PI - b.r[0], b.r[1], 0], seg: 6, ...X });
+  P.tube(0.020, 0.015, bp, C.chrome, { r: [Math.PI / 2 + b.r[0], b.r[1], 0], seg: 6, ...X });
+  // nameplate, engraved, over the right pocket
+  const n = onShirt(-0.104, 0.450, 0.020);
+  P.box(0.084, 0.019, 0.012, n.p, C.gold, { r: n.r, uv: uvOf('name') });
+  // collar brass, on the collar points
   for (const s of [1, -1]) {
-    P.box(0.020, 0.016, 0.007, [s * 0.062, FIG.neckY - 0.012, 0.104], C.gold, { r: [0.42, 0, 0], ...X });
+    const f = onShirt(s * 0.056, 0.490, 0.020);
+    P.box(0.016, 0.013, 0.007, [f.p[0], f.p[1], f.p[2] + 0.005],
+      C.gold, { r: [f.r[0] + 0.30, f.r[1], 0], ...X });
   }
   // shoulder mic clipped to the left epaulette
-  P.box(0.038, 0.062, 0.030, [0.150, 0.470, 0.140], C.radio, { r: [0.16, 0, 0], uv: uvOf('grip') });
-  P.box(0.026, 0.026, 0.008, [0.150, 0.492, 0.156], C.steel, { r: [0.16, 0, 0], uv: uvOf('radio') });
+  const mc = onShirt(0.132, 0.428, 0.052);
+  P.box(0.032, 0.052, 0.024, [mc.p[0], mc.p[1], mc.p[2] + 0.008], C.radio, { r: [mc.r[0] + 0.10, mc.r[1], 0], uv: uvOf('grip') });
+  P.box(0.022, 0.022, 0.007, [mc.p[0], mc.p[1] + 0.018, mc.p[2] + 0.020], C.steel, { r: [mc.r[0] + 0.10, mc.r[1], 0], uv: uvOf('radio') });
   return mergeParts(THREE, P.L);
 }
 
@@ -723,7 +889,7 @@ function copTorsoKit(THREE, S) {
 // Worn LOW, under the gut, which is both correct and the whole silhouette gag.
 // Items are clocked by angle from the front; his left is +X. The order is the
 // order a duty belt is actually loaded, strong side first.
-const BELT_RX = 0.268, BELT_RZ = 0.226, BELT_Y = 0.048;
+const BELT_RX = 0.238, BELT_RZ = 0.202, BELT_CZ = 0.016, BELT_Y = 0.044;
 
 // Place a thing on the belt: `th` radians from dead front, `out` metres proud of
 // the strap. Yaw follows the true ellipse normal, so nothing sits crooked.
@@ -732,7 +898,8 @@ function onBelt(th, out, dy) {
   const nx = sx / BELT_RX, nz = cz / BELT_RZ;
   const nl = Math.hypot(nx, nz) || 1;
   return {
-    p: [sx * BELT_RX + (nx / nl) * out, BELT_Y + (dy || 0), cz * BELT_RZ + (nz / nl) * out],
+    p: [sx * BELT_RX + (nx / nl) * out, BELT_Y + (dy || 0),
+        cz * BELT_RZ + BELT_CZ + (nz / nl) * out],
     y: Math.atan2(nx / nl, nz / nl),
   };
 }
@@ -757,50 +924,50 @@ function copBelt(THREE, S) {
 
   // holster, right hip, flap CLOSED — the shape says officer, and nothing in a
   // grocery store needs to see what is under the flap
-  put(-1.62, 0.052, -0.052, (p, y) => {
+  put(-1.62, 0.030, -0.052, (p, y) => {
     P.box(0.086, 0.180, 0.128, p, C.leather, { r: [0, y, 0], ...W });
     P.box(0.092, 0.030, 0.134, [p[0], p[1] + 0.098, p[2]], C.leatherHi, { r: [0, y, 0], ...W });
     P.box(0.026, 0.086, 0.020, [p[0], p[1] + 0.100, p[2] + 0.062], C.leatherHi, { r: [0, y, 0], ...W });
     P.box(0.072, 0.052, 0.040, [p[0], p[1] + 0.130, p[2] - 0.020], C.leather, { r: [0, y, 0], ...W });
   });
   // cuff cases, one each side
-  for (const th of [1.02, -1.02]) put(th, 0.034, -0.006, (p, y) => {
+  for (const th of [1.02, -1.02]) put(th, 0.018, -0.006, (p, y) => {
     P.box(0.076, 0.070, 0.058, p, C.leather, { r: [0, y, 0], ...W });
     P.box(0.080, 0.020, 0.062, [p[0], p[1] + 0.040, p[2]], C.leatherHi, { r: [0, y, 0], ...W });
   });
   // OC spray in an open-top carrier
-  put(1.62, 0.036, -0.020, (p, y) => {
+  put(1.62, 0.020, -0.020, (p, y) => {
     P.box(0.052, 0.062, 0.050, p, C.leather, { r: [0, y, 0], ...W });
     P.tube(0.020, 0.104, [p[0], p[1] + 0.052, p[2]], C.red, { seg: 8, ...X });
     P.tube(0.014, 0.020, [p[0], p[1] + 0.112, p[2]], 0x1c1c1c, { seg: 6, ...X });
   });
   // radio, left rear, antenna up
-  put(2.42, 0.044, -0.030, (p, y) => {
+  put(2.42, 0.020, -0.030, (p, y) => {
     P.box(0.064, 0.140, 0.044, p, C.radio, { r: [0, y, 0], uv: uvOf('radio') });
     P.box(0.070, 0.026, 0.050, [p[0], p[1] - 0.076, p[2]], C.leather, { r: [0, y, 0], ...W });
     P.taper(0.005, 0.009, 0.150, [p[0] - 0.012, p[1] + 0.140, p[2] - 0.012],
       0x101014, { r: [-0.16, 0, 0.10], seg: 6, ...X });
   });
   // glove pouch, with a glove sticking out of it because it always is
-  put(2.02, 0.032, -0.004, (p, y) => {
+  put(2.02, 0.018, -0.004, (p, y) => {
     P.box(0.092, 0.058, 0.042, p, C.leather, { r: [0, y, 0], ...W });
     P.box(0.062, 0.028, 0.034, [p[0], p[1] + 0.036, p[2]], C.glove, { r: [0, y, 0.22], uv: uvOf('glove') });
     P.box(0.096, 0.018, 0.046, [p[0], p[1] + 0.024, p[2]], C.leatherHi, { r: [0, y, 0], ...W });
   });
   // citation book — an officer doing loss prevention writes it up
-  put(-0.56, 0.030, 0.004, (p, y) => {
+  put(-0.56, 0.016, 0.004, (p, y) => {
     P.box(0.098, 0.086, 0.028, p, C.leather, { r: [0, y, 0], ...W });
     P.box(0.084, 0.070, 0.010, [p[0], p[1] + 0.006, p[2] + 0.016], 0xe8e4d8, { r: [0, y, 0], ...X });
   });
   // torch on a ring, right rear, hanging
-  put(-2.34, 0.030, -0.020, (p, y) => {
+  put(-2.34, 0.016, -0.020, (p, y) => {
     P.ring(0.026, 0.008, [p[0], p[1] - 0.016, p[2]], C.leather, { r: [0, y, 0], seg: 10, ...X });
-    P.taper(0.021, 0.026, 0.170, [p[0], p[1] - 0.108, p[2]], 0x17171b, { r: [0, y, 0.10], seg: 8, uv: uvOf('grip') });
+    P.taper(0.021, 0.026, 0.116, [p[0], p[1] - 0.080, p[2]], 0x17171b, { r: [0, y, 0.10], seg: 8, uv: uvOf('grip') });
   });
   // baton loop, left rear
-  put(2.88, 0.026, -0.014, (p, y) => {
+  put(2.88, 0.014, -0.014, (p, y) => {
     P.ring(0.028, 0.009, [p[0], p[1] - 0.012, p[2]], C.leather, { r: [0, y, 0], seg: 10, ...X });
-    P.taper(0.016, 0.021, 0.230, [p[0] + 0.004, p[1] - 0.130, p[2]], 0x15151a, { r: [0, y, -0.09], seg: 8, ...X });
+    P.taper(0.016, 0.021, 0.150, [p[0] + 0.004, p[1] - 0.092, p[2]], 0x15151a, { r: [0, y, -0.09], seg: 8, ...X });
   });
   return mergeParts(THREE, P.L);
 }
@@ -814,26 +981,26 @@ function copBeltKit(THREE, S) {
     P.box(0.058, 0.036, 0.020, [p[0], p[1], p[2] + 0.004], C.steel, { r: [0, y, 0], ...X });
   });
   // cuff-case snaps
-  for (const th of [1.02, -1.02]) put(th, 0.066, 0.034, (p, y) => {
+  for (const th of [1.02, -1.02]) put(th, 0.048, 0.034, (p, y) => {
     P.tube(0.009, 0.008, [p[0], p[1], p[2]], C.chrome, { r: [Math.PI / 2, y, 0], seg: 6, ...X });
   });
   // a cuff bow peeking out of the strong-side case, which is what a loaded case
   // looks like from behind
-  put(-1.02, 0.052, 0.044, (p, y) => {
+  put(-1.02, 0.036, 0.044, (p, y) => {
     P.ring(0.026, 0.007, [p[0], p[1], p[2]], C.chrome, { r: [0.35, y, 0], seg: 10, ...X });
   });
   // holster thumb break + belt shank hardware
-  put(-1.62, 0.108, 0.048, (p, y) => {
+  put(-1.62, 0.084, 0.048, (p, y) => {
     P.tube(0.011, 0.009, [p[0], p[1], p[2]], C.chrome, { r: [Math.PI / 2, y, 0], seg: 6, ...X });
   });
   // torch bezel and tail cap
-  put(-2.34, 0.030, 0, (p, y) => {
-    P.taper(0.027, 0.023, 0.026, [p[0], p[1] - 0.200, p[2]], C.chrome, { r: [0, y, 0.10], seg: 8, ...X });
+  put(-2.34, 0.016, 0, (p, y) => {
+    P.taper(0.027, 0.023, 0.024, [p[0], p[1] - 0.142, p[2]], C.chrome, { r: [0, y, 0.10], seg: 8, ...X });
     P.tube(0.023, 0.016, [p[0], p[1] - 0.030, p[2]], C.steel, { r: [0, y, 0.10], seg: 8, ...X });
   });
   // keys, right rear, on a D-ring. Nine of them. He has keys to things that are
   // not his.
-  put(-2.86, 0.026, -0.014, (p, y) => {
+  put(-2.86, 0.014, -0.014, (p, y) => {
     P.ring(0.024, 0.006, [p[0], p[1] - 0.010, p[2]], C.steel, { r: [0.25, y, 0], seg: 10, ...X });
     for (let i = 0; i < 5; i++) {
       P.box(0.010, 0.056, 0.003, [p[0] + (i - 2) * 0.009, p[1] - 0.058, p[2] + (i % 2) * 0.006],
@@ -850,13 +1017,19 @@ function copBeltKit(THREE, S) {
 function copLeg(THREE, S, side) {
   const P = partList(THREE, S);
   const T = { uv: uvOf('twill') }, X = { uv: uvOf('flat') };
-  P.taper(0.098, 0.116, 0.42, [side * 0.006, -0.205, 0], C.trouser, { seg: 10, ...T });
+  P.taper(0.118, 0.094, 0.42, [side * 0.006, -0.205, 0], C.trouser, { seg: 10, ...T });
   P.ball(0.086, 0.062, 0.090, [0, -0.428, 0.008], C.trouser, { seg: 8, rseg: 5, ...T });
-  P.taper(0.072, 0.088, 0.34, [0, -0.600, 0.004], C.trouser, { seg: 10, ...T });
+  P.taper(0.090, 0.076, 0.34, [0, -0.600, 0.004], C.trouser, { seg: 10, ...T });
   P.tube(0.078, 0.052, [0, -0.782, 0.010], C.trouser, { seg: 10, ...T });      // break
   // outseam stripe, on the outside of each leg
-  P.box(0.014, 0.60, 0.024, [side * 0.104, -0.34, 0.004], C.stripe, { ...X });
-  P.box(0.012, 0.18, 0.020, [side * 0.084, -0.715, 0.006], C.stripe, { ...X });
+  // Four short segments, each set at the leg's own radius at that height, so
+  // the stripe stays ON the trouser instead of hanging beside it.
+  const OUT = [[-0.06, 0.113], [-0.24, 0.100], [-0.44, 0.088], [-0.62, 0.081], [-0.77, 0.077]];
+  for (let i = 0; i < OUT.length - 1; i++) {
+    const a = OUT[i], b = OUT[i + 1];
+    P.box(0.013, a[0] - b[0] + 0.006, 0.030,
+      [side * (a[1] + b[1]) * 0.5, (a[0] + b[0]) * 0.5, 0.004], C.stripe, { ...X });
+  }
   // the oxford
   const y = -0.826;
   P.ball(0.052, 0.036, 0.086, [0, y + 0.010, 0.020], 0x232326, { seg: 10, rseg: 6, uv: uvOf('shoe') });
@@ -875,11 +1048,11 @@ function copLeg(THREE, S, side) {
 function copSleeve(THREE, S, side) {
   const P = partList(THREE, S);
   const F = { uv: uvOf('shirt') };
-  P.ball(0.092, 0.086, 0.090, [0, -0.022, 0], C.shirt, { seg: 10, rseg: 6, ...F });
-  P.taper(0.078, 0.092, 0.20, [side * 0.004, -0.126, 0], C.shirt, { seg: 10, ...F });
-  P.tube(0.082, 0.024, [side * 0.004, -0.236, 0], C.shirtDk, { seg: 10, ...F });   // rolled hem
+  P.ball(0.097, 0.076, 0.093, [0, -0.032, 0], C.shirt, { seg: 10, rseg: 7, ...F });
+  P.taper(0.093, 0.081, 0.24, [side * 0.004, -0.142, 0], C.shirt, { seg: 10, ...F });
+  P.tube(0.083, 0.026, [side * 0.004, -0.274, 0], C.shirtDk, { seg: 10, ...F });   // rolled hem
   // shoulder patch, proud of the sleeve, facing outboard
-  P.box(0.006, 0.086, 0.070, [side * 0.088, -0.072, -0.002], C.white,
+  P.box(0.006, 0.090, 0.074, [side * 0.094, -0.080, -0.002], C.white,
     { r: [0, 0, side * -0.06], uv: uvOf('patch') });
   return mergeParts(THREE, P.L);
 }
@@ -887,15 +1060,15 @@ function copSleeve(THREE, S, side) {
 function copForearm(THREE, S, side) {
   const P = partList(THREE, S);
   const X = { uv: uvOf('flat') };
-  P.ball(0.070, 0.066, 0.068, [0, -0.268, 0], C.skin, { seg: 8, rseg: 6, ...X });
-  P.taper(0.056, 0.070, 0.26, [side * 0.008, -0.402, 0.004], C.skin, { seg: 10, ...X });
-  P.ball(0.048, 0.044, 0.048, [side * 0.010, -0.540, 0.004], C.skin, { seg: 8, rseg: 5, ...X });
-  P.ball(0.042, 0.058, 0.056, [side * 0.010, -0.598, 0.012], C.skin, { seg: 8, rseg: 6, ...X });
-  P.box(0.058, 0.082, 0.048, [side * 0.010, -0.652, 0.016], C.skin, { ...X });
-  P.ball(0.022, 0.032, 0.026, [side * -0.030, -0.594, 0.028], C.skin, { seg: 6, rseg: 5, ...X });
+  P.ball(0.076, 0.070, 0.074, [0, -0.292, 0], C.skin, { seg: 8, rseg: 6, ...X });
+  P.taper(0.074, 0.054, 0.22, [side * 0.008, -0.412, 0.004], C.skin, { seg: 10, ...X });
+  P.ball(0.050, 0.046, 0.050, [side * 0.010, -0.530, 0.004], C.skin, { seg: 8, rseg: 5, ...X });
+  P.ball(0.044, 0.056, 0.056, [side * 0.010, -0.586, 0.012], C.skin, { seg: 8, rseg: 6, ...X });
+  P.box(0.058, 0.076, 0.050, [side * 0.010, -0.636, 0.016], C.skin, { ...X });
+  P.ball(0.023, 0.032, 0.027, [side * -0.031, -0.582, 0.028], C.skin, { seg: 6, rseg: 5, ...X });
   if (side < 0) {                                    // watch, right wrist
-    P.tube(0.050, 0.020, [side * 0.010, -0.532, 0.004], 0x22222a, { seg: 8, ...X });
-    P.tube(0.020, 0.026, [side * 0.010, -0.532, 0.036], C.steel, { r: [Math.PI / 2, 0, 0], seg: 8, ...X });
+    P.tube(0.052, 0.020, [side * 0.010, -0.522, 0.004], 0x22222a, { seg: 8, ...X });
+    P.tube(0.020, 0.026, [side * 0.010, -0.522, 0.038], C.steel, { r: [Math.PI / 2, 0, 0], seg: 8, ...X });
   }
   return mergeParts(THREE, P.L);
 }
@@ -925,11 +1098,12 @@ export function buildFigureGeo(THREE) {
     cop: {
       head: copHead(THREE, S), headKit: copHeadKit(THREE, S),
       torso: copTorso(THREE, S), torsoKit: copTorsoKit(THREE, S),
+      seat: copSeat(THREE, S),
       belt: copBelt(THREE, S), beltKit: copBeltKit(THREE, S),
       leg: [copLeg(THREE, S, 1), copLeg(THREE, S, -1)],
       sleeve: [copSleeve(THREE, S, 1), copSleeve(THREE, S, -1)],
       fore: [copForearm(THREE, S, 1), copForearm(THREE, S, -1)],
-      belly: shopperBelly(THREE, S),
+      belly: copBelly(THREE, S),
     },
     BUILDS,
   };
@@ -952,13 +1126,21 @@ export function rollPerson(rng) {
   const long = rnd() < 0.45;
   let hair = ri(0, 5);
   if (age === 'old' && rnd() < 0.55) hair = 3;
+  // CLOTH carries two beiges (0xbfa89b, 0xd9b8a0) that are within a few points
+  // of two of the skin tones, and when a person rolls both plus `plain` they
+  // come out looking naked from the waist up. Re-roll the shirt off the skin.
+  const skin = pick(SKIN);
+  const near = (a, b) => Math.abs((a >> 16 & 255) - (b >> 16 & 255))
+    + Math.abs((a >> 8 & 255) - (b >> 8 & 255)) + Math.abs((a & 255) - (b & 255));
+  let shirt = pick(CLOTH);
+  for (let k = 0; k < 6 && near(shirt, skin) < 90; k++) shirt = pick(CLOTH);
   return {
     build: bi,
     height: age === 'old' ? tall * 0.965 : tall,
     girth: rr(0.92, 1.08) * (age === 'old' ? 0.95 : 1),
-    skin: pick(SKIN),
+    skin,
     hair: age === 'old' ? pick(GREY) : pick(HAIR),
-    shirt: pick(CLOTH),
+    shirt,
     pants: pick(PANTS),
     shoe: pick(SHOE),
     headLong: rnd() < 0.5,
@@ -1058,8 +1240,13 @@ export function makeCop(THREE, F) {
   const leather = new THREE.MeshStandardMaterial({
     vertexColors: true, map: F.tex, roughness: 0.44, metalness: 0.08,
   });
+  // Metalness with no environment map renders BLACK — the cart bakery already
+  // learned this and the badge relearned it: at 0.72 the chrome centre of the
+  // shield came out as a hole. This is metalness that keeps most of its
+  // diffuse, so brass takes a specular off the ceiling troffers and still reads
+  // as a bright object rather than a silhouette.
   const kit = new THREE.MeshStandardMaterial({
-    vertexColors: true, map: F.tex, roughness: 0.26, metalness: 0.72,
+    vertexColors: true, map: F.tex, roughness: 0.30, metalness: 0.38,
   });
 
   const hips = new THREE.Group(); hips.position.y = FIG.hipY; g.add(hips);
@@ -1069,13 +1256,12 @@ export function makeCop(THREE, F) {
   torso.castShadow = true; chest.add(torso);
   chest.add(new THREE.Mesh(F.cop.torsoKit, kit));
 
-  // The gut. Its own mesh because the breath drives its scale, and because it
-  // has to sit PROUD of the belt: the belt is worn under it, which is the whole
-  // silhouette.
-  const belly = new THREE.Mesh(F.cop.belly, uni);
-  belly.position.set(0, 0.196, 0.086);
-  belly.scale.set(0.560, 0.400, 0.470);
-  chest.add(belly);
+  // No separate belly mesh. The gut is IN the torso loft, which is the only way
+  // it can have no seam where it meets the shirt, and the heave is carried by
+  // `chest.scale` instead — see animateCop(). One draw call back, and one
+  // fewer surface to go wrong.
+  const belly = null;
+  hips.add(new THREE.Mesh(F.cop.seat, uni));
 
   const beltGrp = new THREE.Group(); hips.add(beltGrp);
   beltGrp.add(new THREE.Mesh(F.cop.belt, leather));
@@ -1096,8 +1282,8 @@ export function makeCop(THREE, F) {
   };
   const legL = limb(F.cop.leg[0], null, null, 0.112, 0);
   const legR = limb(F.cop.leg[1], null, null, -0.112, 0);
-  const armL = limb(F.cop.sleeve[0], F.cop.fore[0], uni, 0.224, FIG.shoulderY);
-  const armR = limb(F.cop.sleeve[1], F.cop.fore[1], uni, -0.224, FIG.shoulderY);
+  const armL = limb(F.cop.sleeve[0], F.cop.fore[0], uni, 0.206, FIG.shoulderY + 0.012);
+  const armR = limb(F.cop.sleeve[1], F.cop.fore[1], uni, -0.206, FIG.shoulderY + 0.012);
   hips.add(legL); hips.add(legR); chest.add(armL); chest.add(armR);
 
   g.scale.setScalar(1.04);

@@ -145,6 +145,12 @@ const T = {
   chaseHeight: +0.26, chaseLook: +0.05,
   gapHeight: +0.85, gapDist: +1.60, gapFov: +5.0, gapLook: +0.16,
   gapNear: 4.0, gapFar: 16.0,
+  // YOUR chase, not any chase. Without this the rig read a man who had bolted
+  // forty metres away in another department as a pursuit and sat in the high
+  // wide floor-plan shot permanently — the exact frame this whole file exists
+  // to stop being the default. Past 26 m no camera height finds him anyway;
+  // that is what the pursuit panel's DOOR / HIM / YOU readout is for.
+  chaseRange: 26.0,
 
   // --- boost ---------------------------------------------------------------
   bstFov: +5.0, bstHeight: -0.08,
@@ -169,7 +175,8 @@ const T = {
   axisRatio: 1.35,     // and it has to dominate by this much. Stops a strafe
                        // from spinning the camera at an aisle junction.
   axisSpeed: 0.90,
-  signDwell: 0.30, signHyst: 0.45, flipLock: 1.10,
+  signDwell: 0.55, signHyst: 0.45, flipLock: 1.60,
+  reArm: 1.00, reArmStill: 0.25,
 
   // --- corner behaviour ----------------------------------------------------
   // Mid-swing the lens is on a diagonal, which in a grid of gondolas means it
@@ -193,6 +200,29 @@ const T = {
   shoulder: 0.90,
   shoulderSide: 1,     // +1 puts the cop left of centre
 
+  // --- sign clearance: SLIDE OUT, DO NOT DUCK ------------------------------
+  // The gap rise pushes the lens through 2.50 m, and 2.50 m is the bottom edge
+  // of the hanging aisle signs. Measured, not predicted: shots/cam_r1_gassed.png
+  // caught it — a full-screen CRACKERS / NUTS banner across the middle of the
+  // frame with the man being chased somewhere behind it.
+  //
+  // The obvious fix is to duck under the sign as it comes up. It is the wrong
+  // one: a 0.9 m vertical dip inside a 1.3 m window at 6 m/s is a 4 m/s lurch,
+  // four times per aisle, which is precisely the motion-sickness case the brief
+  // rules out. And it needs the sign's z planes, i.e. a fourth private copy of
+  // store.js's floor plan.
+  //
+  // Slide instead. A sign is only 1.86 m wide on a 4 m aisle, so 1.20 m off the
+  // centreline clears the panel, its rail and its two hangers with room to
+  // spare, and needs NO z knowledge at all — only that a sign hangs over the
+  // middle of an aisle, which is what makes it a sign. It rides `height`, so the
+  // camera cranes out sideways as it rises and back in as it settles: one
+  // horizontal move instead of four vertical ones. It also widens the shoulder
+  // parallax exactly when the gap is widest, which is when you most need to see
+  // past the man's back.
+  signLo: 2.46,        // sign panels start at 2.50 (SIGN_Y 3.32 - SIGN_H/2)
+  signClear: 1.20,     // half of SIGN_W 1.86 is 0.93; the rail takes it to 1.01
+
   // --- lane framing --------------------------------------------------------
   // The lens rides the AISLE centreline, not the cop's x. He is 4 m of walkable
   // width to move around in and the shot should not wander with him — pinning
@@ -209,16 +239,22 @@ const T = {
   bob: 0.016, heave: 0.032, shake: 0.20,
 };
 
-// The three cross-store corridors. Preferably derived from agents.js's own nav
-// grid via its exported crossBands(), which measures where the floor is actually
-// open rather than asserting it; the fallback is the three walkways config
-// declares. Either way this file holds no copy of the floor plan. (MID_WALK_Z is
-// new in config as of this round — it had been private to store.js as CROSS_Z,
-// which is the duplication hazard in CLAUDE.md one file away from happening.)
-const FALLBACK_BANDS = [
-  { z: FRONT_WALK_Z, half: 2.8, kind: 'front' },
-  { z: MID_WALK_Z, half: 2.6, kind: 'mid' },
-  { z: BACK_WALK_Z, half: 2.8, kind: 'back' },
+// The three cross-store corridors, straight from config. (MID_WALK_Z is new in
+// config as of this round — it had been private to store.js as CROSS_Z, one file
+// away from the duplication hazard in CLAUDE.md.)
+//
+// agents.js exports crossBands(), which finds the corridors by measuring the nav
+// grid, and it was the first thing tried here because a measured answer beats an
+// asserted one. It is the wrong tool for THIS job: it scans only the shelved span
+// and thresholds on how open a row is, so it returns the mid walkway correctly
+// and then MISSES BOTH ENDS — it reported [front z=-13.75, mid z=-0.63] and no
+// back band at all, because the checkout lanes make the real front walkway at
+// -16.5 read as blocked and the aisle-end gap at -13.75 read as the front
+// corridor. Its answers are right for pathfinding and wrong for framing.
+const BANDS = [
+  { z: FRONT_WALK_Z, half: 3.4, kind: 'front' },
+  { z: MID_WALK_Z, half: 2.4, kind: 'mid' },
+  { z: BACK_WALK_Z, half: 3.0, kind: 'back' },
 ];
 
 let LIVE_CAM = null;                 // for projectFromCop, set by createCamera
@@ -228,20 +264,6 @@ export function createCamera(THREE, cam) {
   const V = new THREE.Vector3();
   const AIM = new THREE.Vector3();
 
-  let bands = null;
-  function crossBands() {
-    if (bands) return bands;
-    // Read-only peek at the handle main.js already publishes. agents.js derives
-    // these from the nav grid, which is the authoritative answer; anything else
-    // is this file guessing where the walkways are.
-    try {
-      const a = typeof window !== 'undefined' && window.__CHOP && window.__CHOP.agents;
-      const b = a && a.crossBands && a.crossBands();
-      if (b && b.length) return (bands = b.map((x) => ({ ...x, half: x.half + 0.5 })));
-    } catch (e) { /* not up yet — try again next frame */ }
-    return FALLBACK_BANDS;
-  }
-
   // --- persistent rig state ------------------------------------------------
   let fx = 0, fz = 0;                 // smoothed focus point (world XZ)
   let started = false;
@@ -249,10 +271,12 @@ export function createCamera(THREE, cam) {
   let axisX = false;                  // false = reads along Z (down an aisle)
   let sign = 1;                       // +1 / -1 along that axis
   let axisT = 0, signT = 0, lockT = 0;
+  let armed = true, agreeT = 0, stillT = 0;   // see WHICH END OF IT
   let vAlong = 0, vCross = 0;         // low-passed velocity in axis frame
   let h = T.height, d = T.dist, fov = T.fov, look = T.look;
   let sprint01 = 0, gas01 = 0, chase01 = 0, gap01 = 0, boost01 = 0, swing01 = 0;
   let bobP = 0, shake = 0, prevStagger = 0;
+  const dbg = {};                      // last frame's corridor read, for debug()
 
   // Nearest aisle centreline to an x, and how far off it we are.
   function lane(x) {
@@ -262,7 +286,7 @@ export function createCamera(THREE, cam) {
     return { i, cx, off: x - cx };
   }
   function nearestBand(z) {
-    const bs = crossBands();
+    const bs = BANDS;
     let best = bs[0], bd = Infinity;
     for (const b of bs) {
       const dd = Math.abs(z - b.z);
@@ -292,7 +316,7 @@ export function createCamera(THREE, cam) {
       const dd = Math.hypot(s.position.x - c.x, s.position.z - c.z);
       if (dd < bd) { bd = dd; best = s; }
     }
-    if (!best) return { on: !!state.chasing, dist: 0, x: null, z: null, live: r };
+    if (!best || bd > T.chaseRange) return { on: !!state.chasing, dist: 0, x: null, z: null, live: r };
     return { on: true, dist: bd, x: best.position.x, z: best.position.z, live: r };
   }
 
@@ -346,29 +370,67 @@ export function createCamera(THREE, cam) {
       const L = lane(c.x);
       const nb = nearestBand(c.z);
       const inAisle = Math.abs(L.off) < AISLE_GAP / 2 + 0.15 && Math.abs(c.z) < BODY_Z;
-      const inCross = nb.d < nb.b.half;
+      // Past the ends of the shelf runs the whole floor is a cross corridor —
+      // the front end and the back wall are where the run to the doors happens,
+      // and a band centred on a single z does not describe 7 m of open floor.
+      const inCross = Math.abs(c.z) > BODY_Z - 0.4 || nb.d < nb.b.half;
       // ...and it takes a committed move ALONG the other corridor to turn. At a
       // junction both are true, so without the dominance test a strafe across an
       // intersection would spin the camera 90 degrees at a time.
       const wantX = inCross && Math.abs(vx) > Math.abs(vz) * T.axisRatio && Math.abs(vx) > T.axisSpeed;
       const wantZ = inAisle && Math.abs(vz) > Math.abs(vx) * T.axisRatio && Math.abs(vz) > T.axisSpeed;
+      dbg.off = +L.off.toFixed(2); dbg.bandZ = +nb.b.z.toFixed(2); dbg.bandD = +nb.d.toFixed(2);
+      dbg.half = +nb.b.half.toFixed(2); dbg.inAisle = inAisle; dbg.inCross = inCross;
+      dbg.vx = +vx.toFixed(2); dbg.vz = +vz.toFixed(2); dbg.lock = +lockT.toFixed(2);
+      dbg.armed = armed;
       const flip = axisX ? wantZ : wantX;
       axisT = flip ? axisT + dt : 0;
       lockT = Math.max(0, lockT - dt);
       if (axisT >= T.axisDwell && lockT <= 0) {
         axisX = !axisX; axisT = 0; lockT = T.flipLock;
-        vAlong = 0; vCross = 0;
+        // THE ONE THAT COST AN HOUR. The sign used to be left alone here and
+        // re-decided by the latch below, which the same lockout then gagged for
+        // 1.1 s — so turning left into the cross-aisle swung the camera to face
+        // RIGHT down it and held it there. Instrumented: at the flip vx was
+        // -2.21 and the rig picked sign +1 anyway, put the corridor behind the
+        // player, and because input is camera-relative he then curved back out
+        // of the corridor he had just entered.
+        // The flip already proved which way he is going — it required a
+        // dominant, sustained velocity along the NEW axis. Read the sign off
+        // that, then start the lockout.
+        const nv = axisX ? vx : vz;
+        sign = nv >= 0 ? 1 : -1;
+        signT = 0; vAlong = nv; vCross = 0; armed = true; agreeT = 0;
       }
 
       // ---- WHICH END OF IT ------------------------------------------------
-      // Two votes, both camera-independent so neither can feed back through the
-      // input rotation: a low-passed travel direction, and — while a man is
-      // running — which side of you he is on. The chase vote is the important
-      // one: overrun him and the camera comes round to keep him in frame, which
-      // is the difference between losing a thief and watching him juke.
+      // Two votes. The chase vote — which side of you the running man is on — is
+      // the one that matters: overrun him and the camera comes round to keep him
+      // in frame, which is the difference between losing a thief and watching
+      // him juke. It is also camera-INDEPENDENT, so it cannot feed back.
+      //
+      // The travel vote is not independent, and that is a trap I walked into.
+      // A 180 inverts what the held key means, so a player holding S is moving
+      // backwards, the camera swings to face him the other way, and now the same
+      // held key drives him backwards AGAIN. Instrumented, holding S in the front
+      // end flipped the camera at t=2.0, 3.5 and 5.0 s while the cop wandered 4.7
+      // m sideways: a genuine oscillator, and the nausea case the brief calls out.
+      // No timer fixes it — a longer lockout only lengthens the period, because
+      // every quantity the latch reads is inverted by its own output.
+      //
+      // ARM IT ONCE PER COMMITMENT. A travel flip disarms the travel vote, and
+      // only the player re-arms it: either by stopping, or by travelling the way
+      // the camera now faces for a second, i.e. by agreeing that the turn was
+      // right. Hold S forever and the camera turns round exactly once and then
+      // lets you walk backwards, which is stable, honest, and what you asked for.
       const aV = axisX ? vx : vz;
       vAlong = sm(vAlong, aV, 1.6, dt);
-      let vote = clamp(vAlong / 1.8, -1, 1) * 0.6;
+      const agrees = vAlong * sign > 1.0;
+      agreeT = agrees ? agreeT + dt : 0;
+      stillT = spd < 0.6 ? stillT + dt : 0;
+      if (!armed && (agreeT >= T.reArm || stillT >= T.reArmStill)) armed = true;
+
+      let vote = armed ? clamp(vAlong / 1.8, -1, 1) * 0.6 : 0;
       if (ch.on && ch.x != null) {
         const along = axisX ? ch.x - c.x : ch.z - c.z;
         vote += clamp(along / 5.0, -1, 1) * 0.85;
@@ -377,6 +439,7 @@ export function createCamera(THREE, cam) {
       signT = against < -T.signHyst ? signT + dt : 0;
       if (signT >= T.signDwell && lockT <= 0) {
         sign = -sign; signT = 0; lockT = T.flipLock; vAlong = 0;
+        armed = false; agreeT = 0;
       }
 
       // ---- yaw: critically damped, rate limited ----------------------------
@@ -452,9 +515,11 @@ export function createCamera(THREE, cam) {
       const sk = shake * shake * T.shake;
 
       // ---- place it ---------------------------------------------------------
-      // Shoulder dolly. Same offset on the lens and on the aim, so the forward
-      // vector — and therefore `yaw` — is untouched by it.
-      const sh = T.shoulder * T.shoulderSide;
+      // Shoulder dolly, widened to clear the hanging signs once the gap rise
+      // takes the lens over their bottom edge. Same offset on the lens and on
+      // the aim, so the forward vector — and therefore `yaw` — is untouched.
+      const over = axisX ? 0 : clamp((h - T.signLo) / 0.30, 0, 1);
+      const sh = lerp(T.shoulder, Math.max(T.shoulder, T.signClear), over) * T.shoulderSide;
       aimX += rx * sh; aimZ += rz * sh;
       const jx = sk * Math.sin(shake * 41) + sh;
       let px = eyeX - bx * d + rx * jx;
@@ -500,8 +565,10 @@ export function createCamera(THREE, cam) {
         h: +h.toFixed(2), d: +d.toFixed(2), fov: +fov.toFixed(1),
         sprint: +sprint01.toFixed(2), gas: +gas01.toFixed(2),
         chase: +chase01.toFixed(2), gap: +gap01.toFixed(2), swing: +swing01.toFixed(2),
+        dbg,
       };
     },
+    bands: () => crossBands(),
   };
   return api;
 }
