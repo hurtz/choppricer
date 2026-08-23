@@ -17,6 +17,21 @@
 //     the one-exit design: camping the door is punished by there being no
 //     crime, and if the HUD never says so, a shift with no income reads as a
 //     broken game rather than as a consequence. See agents.posted.
+// ROUND 7 adds ONE more optional callback and ONE entry point:
+//   agents.announceAt(subject, kind, opts) -> { ok, why, id, kind, heard, aisle, at }
+//     "HEY, PUT THAT BACK", fired over the PA at whatever the spot monitor is
+//     locked on. `kind` is 'putback' (rolls compliance) or 'hold' (pins him
+//     where he stands, rolls nothing — this is the price-check line game.js
+//     already had, now driven from here instead of by poking s.state). It ends
+//     in abortTheft()/dumpGoods(), i.e. round 6's own two functions, so a
+//     deterred thief is worth ZERO on exactly the path a ditched one is.
+//   api.onAnnounce(shopper, kind, outcome)  — outcome 'heed' | 'shrug' | 'hold'.
+//     Fires 0.35-0.95 s after the call, at the instant the clip starts, so a
+//     ticker line cannot get ahead of the picture. It is what he VISIBLY did
+//     and never whether he was guilty: 63.3% of guilty subjects put it back and
+//     so do 32.5% of innocent ones. A subject who heeds ALSO fires the existing
+//     onAbort(s, 'announce'), so a game.js that already scores balks scores
+//     this correctly with no change at all.
 // All movement constants come from TUNING in ./config.js.
 //
 // Also (additive, all optional — nothing breaks if the other side is absent):

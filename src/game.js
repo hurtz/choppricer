@@ -157,7 +157,45 @@ function postSpawn(p) {
 // long as you are on the air plus the usual nine. Capped, because a player who
 // discovers he can hold a man in place by reading the phone book at him has
 // found a bug rather than a joke.
-const HOLD = { dur: 9.0, cool: 21.0, talkMax: 8.0 };
+//
+// ---- ROUND 8: THE COOLDOWN THAT MADE THE WHOLE FEATURE LOOK BROKEN --------
+// Client: "The voice thing doesn't work. It looks like it's recording, but it
+// doesn't do anything." FOUR mechanisms across three files produced that one
+// sentence. Two were audio's (echoCancellation subtracting the player's own
+// voice off the ceiling; the voice arriving at parity with the store bed, so
+// opening the channel took the mix 4.3 dBA DOWN). The other two are mine, and
+// mine are the ones that make it look DEAD rather than merely quiet:
+//
+//   1. `cool` was charged TWICE per use. callHold() set 21 s on the keydown and
+//      talkClose() set another 21 s on the release, so a nine-second stall was
+//      followed by ~12 s in which [F] did nothing at all — no click, no
+//      channel, no readout change — while audio's talk.js still held the
+//      capture device for HOLD_MS = 20 s and the tab's recording dot stayed
+//      lit. That window is a literal description of the client's sentence.
+//   2. The microphone was gated on the ANNOUNCEMENT'S recharge. It should
+//      never have been: the announcement is a resource (it pins a man where he
+//      stands, and that has to be rationed) and the microphone is a SKIN on the
+//      handset. Talking into a PA costs the store nothing.
+//
+// So they are two clocks now and only one of them is a cooldown. See micReady()
+// and annReady(). `cool` is charged ONCE, on the keydown, which is also what
+// makes the number legible: the stall is 9 s and the recharge is 12, so the
+// button reads HOLDING for nine seconds and then counts 3, 2, 1. Three seconds
+// of dead key instead of twelve, and it is a dead key the player watched arrive.
+//
+// A ramble now costs nothing extra, which is the property I wanted and did not
+// have: talk the full talkMax and the stall runs to 17 s, by which time the
+// 12 s recharge has long since expired, so the handset is free the instant he
+// lets the man go. The old code charged him another 21 s for the joke.
+//
+// Not cut all the way to agents' K.annCool of 6 s, and the reason is that these
+// are different mechanics with the same name. Their 6 s gates the round-8
+// deterrence line, which rolls a compliance check and can END a case. Mine gates
+// a price check that PINS A MAN IN PLACE for nine seconds; at 6 s that is a 60%
+// duty cycle and a player who never leaves the desk can park a thief on a shelf
+// indefinitely. 12 s puts it at 43% and keeps the sentence honest — one
+// announcement every twelve seconds.
+const HOLD = { dur: 9.0, cool: 12.0, talkMax: 8.0 };
 // Seconds stood on the way out before the store remarks on it. See updateFloor.
 const QUIET_AT = 6.0;
 // ---- ROUND 7: THE BEAT BEFORE A COMPLAINT ---------------------------------
@@ -402,6 +440,7 @@ export function createGame(hudEl, deps = {}) {
     st, tel, now: 0, log: [], alarm: null, cams: CAMERAS,
     desk: { cam: 0, sel: null, subjects: [], scroll: 0, rows: 0 },
     get hold() {
+      const a = agentsOf();
       return {
         live: held, cool: holdCool, max: HOLD.cool, on: FIX.hold,
         // The microphone half. `can` is "is this worth advertising", and it is
@@ -411,7 +450,44 @@ export function createGame(hudEl, deps = {}) {
         // do, and promising a key that does nothing is the second rudest.
         talk: talk.live, talkLevel: talk.level, talkFor: talk.held,
         talkState: talk.state, can: talkAvailable(),
+        // ROUND 8. Everything below is here so the HUD never has to guess what
+        // [F] would do if it were pressed right now — which is the whole of the
+        // round-8 complaint. `mic` is whether the key opens a channel at all;
+        // `ann` is whether an ANNOUNCEMENT would ride out on it, and `annIn` is
+        // the seconds until one would. Two clocks, both published, neither
+        // inferred from the other.
+        mic: micReady(), mode: st.mode,
+        // The desk half: an announcement needs the recharge AND a row.
+        ann: annReady() && G.desk.subjects.some((s) => s.id === G.desk.sel),
+        // The floor half answers to agents' cooldown, not mine, so the readout
+        // and the behaviour cannot drift apart. If they ever disagree the
+        // button is lying again and that is the bug this round is about.
+        pbReady: !a || a.announceReady !== false,
+        pbIn: (a && a.announceIn) || 0,
+        pbAt: G.floor && G.floor.annAt,
       };
+    },
+    // ROUND 8 — WHERE THE PLAYER IS LOOKING, which is now a thing that can be
+    // different from where he is going. camera.js owns 110 degrees of mouse
+    // look and main.js steers by `moveYaw`, so the head and the course have come
+    // apart on purpose. hud.js already tracks the glance for free — it projects
+    // through the LIVE camera — but the player has no way to know HOW FAR off
+    // the corridor he is looking, and with a thief invisible ~89% of the time
+    // the moment he leaves your aisle, a lost glance is disorienting rather
+    // than difficult.
+    //
+    // Read off the rig rather than duplicated: `lookYaw` is the applied offset
+    // in radians, `T.lookMax` the budget it is clamped to. main.js publishes
+    // chaseCam on window.__CHOP; deps.camera is preferred if a bootstrap ever
+    // passes one. Returns null when there is no camera to ask, and every
+    // consumer treats null as "no glance", so a console that builds this file
+    // without a camera renders round 7's HUD exactly.
+    get look() {
+      const c = deps.camera || ext().chaseCam;
+      const r = c && c.rig;
+      if (!r || typeof r.lookYaw !== 'number') return null;
+      const max = (c.T && c.T.lookMax) || (110 * Math.PI / 180);
+      return { yaw: r.lookYaw, pitch: r.lookPitch || 0, max };
     },
     floor: null, wu: null, hr: null,
     // Is the round 1 wedge watchdog still earning its keep? agents.js rebuilt
@@ -691,16 +767,33 @@ export function createGame(hudEl, deps = {}) {
     }
     held = null;
   }
-  // Is the handset free. The ANNOUNCEMENT additionally needs somebody selected
-  // to stall, but the microphone does not — a PA is a microphone, and being
-  // able to talk into it with nobody highlighted is both correct and funnier.
-  // Both halves read this, so the key and the button can never disagree about
-  // whether the channel is available.
-  function paReady() {
+  // ---- TWO CLOCKS, AND ONLY ONE OF THEM IS A COOLDOWN ----------------------
+  // Round 7 had one predicate called paReady() and used it for both halves of
+  // the handset. That is the round-8 bug in one line: it made the MICROPHONE
+  // unavailable for twelve seconds after every ANNOUNCEMENT, with no readout
+  // saying so, which is exactly "it looks like it's recording but it doesn't do
+  // anything". They are different questions and they get different answers.
+  //
+  // annReady() — can I make an ANNOUNCEMENT. That is a resource: it pins a man
+  // where he stands, so it recharges, and it is a desk action because reading a
+  // roster row is what tells you what to announce. See the floor's own verb in
+  // announce(), which is agents' deterrence line and answers to THEIR cooldown.
+  function annReady() {
     return !!FIX.hold && st.mode === 'desk' && holdCool <= 0 && !held;
   }
+  // micReady() — can I TALK. A PA is a microphone. There is no resource here to
+  // spend and never was: no cooldown, no selection required, and it works on
+  // the floor, because a man who has walked out onto the floor and spotted
+  // something is exactly the man who has something to say. Being able to talk
+  // into it with nobody highlighted is both correct and funnier.
+  //
+  // The one thing it will not do is open during a write-up or a demotion, where
+  // there is no store to talk to and the HUD is a form.
+  function micReady() {
+    return st.mode === 'desk' || st.mode === 'floor';
+  }
   function callHold() {
-    if (!paReady()) return false;
+    if (!annReady()) return false;
     const sel = G.desk.subjects.find((s) => s.id === G.desk.sel);
     const s = sel && shopperById(sel.id);
     if (!s || s.caught || s.escaped || s.bolted || s.state === 'react') return false;
@@ -709,6 +802,80 @@ export function createGame(hudEl, deps = {}) {
     holdCool = HOLD.cool;
     const r = recOf(s);
     logLine(`PA — PRICE CHECK, ${(r.aisle == null ? 'FRONT END' : `AISLE ${r.aisle + 1}`)}`);
+    return true;
+  }
+
+  // =========================================================================
+  // ROUND 8 — "HEY, PUT THAT BACK."
+  // =========================================================================
+  // Client: "If I see them doing something suspicious, I can go, 'Hey, put that
+  // back,' and then they look around, like, 'What the fuck?' ... But if it's a
+  // criminal doing it, they might reconsider, they might put it back, and then
+  // just leave the store peacefully."
+  //
+  // The behaviour is entirely agents.js's — announceAt() ends in the same
+  // abortTheft()/dumpGoods() a posted guard drives, so a deterred thief is
+  // worth zero on exactly the same path and there is no new economics here. My
+  // half is three things: which man it goes to, what the HUD says about it, and
+  // what it costs.
+  //
+  // WHY IT IS THE SAME KEY, AND WHY THE MODE PICKS THE LINE. There is one
+  // handset in this game and it has one button. What you SAY into it is decided
+  // by where you are standing, because that is what you know:
+  //
+  //   at the desk   you have a roster row and a channel and no eyes on him, so
+  //                 the thing you can honestly say is a price check. callHold()
+  //                 is unchanged, measured and neutral, and it stays that way.
+  //   on the floor  you are in the aisle with him. You can see what his hands
+  //                 are doing. THAT is the man you can tell to put it back.
+  //
+  // AND IT IS THE SAFE ALTERNATIVE TO WALKING UP TO SOMEBODY, which is the
+  // whole reason it earns a place next to round 7's HARASS_GRACE. Nothing on
+  // this path can reach onHarass — agents says so and it is true by
+  // construction, because the announcement never closes the distance. A player
+  // who is 60% sure now has something to do about it other than crowd a guest
+  // and hope. What it costs when he is wrong is not a complaint, it is the
+  // thing an innocent does next: agents cuts his remaining shop, so he is at
+  // the door sooner and the shift has one fewer subject to arm.
+  //
+  // THE ANTI-ORACLE RULE, AND I NEARLY BROKE IT IN THIS FILE. Both populations
+  // produce both visible outcomes on purpose, and a PA is a loudspeaker rather
+  // than a laser, so every body inside annSpill looks up too. That guarantee
+  // lives in agents.js and it is trivially undone at the HUD layer — see
+  // onAnnounce and onAbort below for the one place it nearly was.
+  function announceSubject() {
+    if (st.mode !== 'floor' || !G.floor) return null;
+    // Whatever the brackets are on. On the floor there is no spot monitor, and
+    // the reticle is the lock: it is the one subject the game has already
+    // committed to pointing at, and aiming the PA anywhere else would mean the
+    // player shouting at somebody the HUD is not drawing.
+    const s = targetShopper();
+    if (!s || s.caught || s.escaped || !s.mesh.visible) return null;
+    if (s.bolted || s.state === 'react' || s.state === 'shove') return null;
+    return s;
+  }
+  function announce() {
+    const a = agentsOf();
+    if (!a || typeof a.announceAt !== 'function') return false;   // pre-round-8 agents
+    const s = announceSubject();
+    if (!s) return false;
+    const res = a.announceAt(s, 'putback');
+    if (!res || !res.ok) return false;
+    const r = recOf(s);
+    const f = G.floor;
+    // WHAT THE TICKER SAYS NOW, AND WHAT IT DOES NOT SAY. It records that an
+    // announcement went out and who it was aimed at. It does not say what he
+    // did, because he has not done it yet — agents rolls the reaction 0.35-0.95 s
+    // later precisely so that no HUD line can get ahead of the picture. See
+    // onAnnounce.
+    logLine(L.fillS(L.pick(L.PA_PUTBACK), r.code));
+    if (f) {
+      // The chip on the floor HUD holds the aim for a beat so the player can see
+      // WHO it went to, and `heard` is the honest footnote: a loudspeaker is not
+      // a laser and three other people in that aisle just looked up too. Saying
+      // so out loud is what stops "somebody looked around" being worth anything.
+      f.annAt = { code: r.code, id: s.id, t: G.now, heard: res.heard | 0, out: null };
+    }
     return true;
   }
   // ---- hold to talk --------------------------------------------------------
@@ -728,9 +895,12 @@ export function createGame(hudEl, deps = {}) {
   function talkOpen() {
     const a = audioOf();
     if (!talkAvailable() || talk.live) return;
-    // Not while the handset is recovering. The button is visibly on a cooldown;
-    // opening a channel it says is unavailable would make the readout a liar.
-    if (!paReady() && !held) return;
+    // ROUND 8: this used to read `if (!paReady() && !held) return;`, on the
+    // reasoning that opening a channel the button says is unavailable would
+    // make the readout a liar. The reasoning was right and the fix was backwards
+    // — the readout was describing the wrong thing. The button is the
+    // ANNOUNCEMENT'S recharge; the microphone was never on it.
+    if (!micReady()) return;
     talk.offered = true;
     talk.state = 'requesting';
     Promise.resolve(a.talkStart()).then((ok) => {
@@ -750,7 +920,15 @@ export function createGame(hudEl, deps = {}) {
   function talkClose() {
     const a = audioOf();
     if (a && a.talkStop) { try { a.talkStop(); } catch { /* already shut */ } }
-    if (talk.live && FIX.hold) holdCool = HOLD.cool;   // the clock starts at release
+    // ROUND 8 — THE SECOND CHARGE, DELETED. This line was
+    //   if (talk.live && FIX.hold) holdCool = HOLD.cool;   // clock starts at release
+    // and it is half of why the feature read as broken. callHold() had already
+    // charged the recharge on the keydown, so every use cost two of them; and
+    // it fired even when NO ANNOUNCEMENT HAD GONE OUT — talk into the handset
+    // with nobody selected, which the file explicitly calls correct and
+    // funnier, and callHold() returns false while this still billed you the
+    // full recharge for it. The clock belongs to the announcement and is
+    // charged where the announcement happens.
     talk.live = false; talk.level = 0;
     if (talk.state === 'live' || talk.state === 'requesting') talk.state = 'off';
   }
@@ -1387,6 +1565,27 @@ export function createGame(hudEl, deps = {}) {
       // a man holding nothing is the round-6 bug wearing a different hat.
       r.announced = false;
       newLine(s, r);
+      // ---- ROUND 8: THE GUILT ORACLE I ALMOST SHIPPED --------------------
+      // agents fires onAbort(s,'announce') when a subject HEEDS the PA — but
+      // only for a GUILTY one. An innocent who heeds plays the identical
+      // `putback` clip and arrives here not at all; he arrives at onAnnounce
+      // with outcome 'heed' and nothing else. So every line below this point,
+      // left as it was, would have fired for exactly one of the two
+      // populations: a ticker line, a full-screen HE PUT IT BACK stamp and a
+      // stand-down for the guilty man, and silence for the innocent one.
+      //
+      // That is a perfect guilt oracle bolted onto a mechanic whose entire
+      // design is that both populations produce both visible outcomes. Announce
+      // at everybody, read the ticker, and the roll agents.js spent a round
+      // balancing is a lookup table. Same species as reading `s.doorPref` on
+      // the pursuit panel, and it would have been much harder to spot, because
+      // every individual line here is correct for the case that reaches it.
+      //
+      // So the announcement's presentation is NOT here. It is in onAnnounce,
+      // which both populations reach, and this path keeps only the bookkeeping
+      // above — which is guilt-blind because it can only change a row that was
+      // already red, and a row being red is a thing the player watched happen.
+      if (why === 'announce') return;
       logLine(L.fillS(L.pick(why === 'dump' ? L.ABORT_DUMP : L.ABORT_BALK), r.code));
       const f = G.floor;
       if (st.mode === 'floor' && f) {
@@ -1395,6 +1594,34 @@ export function createGame(hudEl, deps = {}) {
           closeCase(L.STAND_DOWN);
         }
       }
+    },
+    // ROUND 8 — WHAT HE VISIBLY DID, one latency after you keyed the handset.
+    // `outcome` is 'heed' | 'shrug' | 'hold' and it is never his guilt; agents
+    // is explicit that both populations produce both, and this file must stay
+    // explicit about it too. One pool of lines per outcome, no branch on
+    // s.guilty, no branch on whether onAbort also fired.
+    //
+    // AND ONLY FOR THE MAN YOU AIMED AT. Every body inside annSpill reacts and
+    // fires this, which is the point of the feature — four people look up, so
+    // "somebody looked around" is worth nothing. A ticker that printed a row
+    // per reaction would name all four and hand back the very thing the spill
+    // exists to hide, on top of flooding an eight-line log. The bystanders are
+    // in the picture, where they belong.
+    onAnnounce(s, kind, outcome) {
+      const f = G.floor;
+      if (!f || !f.annAt || f.annAt.id !== s.id) return;
+      f.annAt.out = outcome;
+      f.annAt.t = G.now;
+      const r = recOf(s);
+      const pool = outcome === 'heed' ? L.PA_HEED : L.PA_SHRUG;
+      logLine(L.fillS(L.pick(pool), r.code));
+      // No stamp and no stand-down, either way. A stamp is for a resolution,
+      // and neither of these is one: the guilty man who put it back is walking
+      // out on his own and onLeave will say so in his own time, and the
+      // innocent is still stood in the aisle being looked at. Round 7 already
+      // owns both of those endings and they are both guilt-blind. What the
+      // player gets here is the same thing he would get stood in a real shop —
+      // he said something, and he has to watch what happens next.
     },
     onHarass(s) {
       if (st.mode !== 'floor' || !G.floor || G.floor.t < 0.8) return;

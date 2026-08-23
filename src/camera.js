@@ -659,6 +659,8 @@ export function createCamera(THREE, cam) {
     rate: 0,                  // last frame's return rate, for debug()
     ramp: 0, rampA: 0,        // glance dolly, wanted and rate-limited
     dragging: false, locked: false, decoupled: false, reduced: false,
+    pinReduced: null, mq: null,
+    setAt: -1e9,              // when the console last posed the look, see below
   };
   function zeroGlance() {
     GL.tgtY = GL.tgtP = GL.curY = GL.curP = 0;
@@ -756,8 +758,9 @@ export function createCamera(THREE, cam) {
     try {
       const mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
       if (mq) {
+        GL.mq = mq;
         GL.reduced = !!mq.matches;
-        const onMQ = () => { GL.reduced = !!mq.matches; };
+        const onMQ = () => { if (GL.pinReduced == null) GL.reduced = !!mq.matches; };
         if (mq.addEventListener) mq.addEventListener('change', onMQ);
         else if (mq.addListener) mq.addListener(onMQ);
       }
@@ -896,12 +899,26 @@ export function createCamera(THREE, cam) {
       if (moveReads !== lastReads) { lastReads = moveReads; GL.decoupled = true; }
       // ---- floor entry -------------------------------------------------------
       // A look held when the player walked back to the desk must not still be
-      // held when he is dispatched again. Keyed off the mode transition rather
-      // than off a time gap, so pausing the loop for a screenshot does not
-      // silently wipe a look that was set from the console.
-      lastUpdateMs = now();
+      // held when he is dispatched again.
+      //
+      // The obvious test is a mode transition, and on its own it DOES NOT WORK,
+      // which a full play-loop soak caught: main.js does not call update() at
+      // all while the mode is 'desk', so this code never observes 'desk' and
+      // prevMode goes 'floor' -> 'floor'. Traced: glance at -59.6 deg, walk
+      // back to the desk, get dispatched again, and the look was still on.
+      //
+      // So the transition test covers the modes update() DOES see (writeup and
+      // demoted both run this camera), and a gap in updates covers the desk.
+      // The gap test has to not fight the harness: snap() poses a single frame
+      // with the loop paused, so a look set from the console can sit minutes
+      // away from the previous update and must survive. It does, because a
+      // programmatic set() during the gap is what the second clause checks for.
+      const nowT = now();
+      const gap = nowT - lastUpdateMs;
+      lastUpdateMs = nowT;
       const md = gameMode();
-      if (md !== prevMode) { if (md === 'floor') zeroGlance(); prevMode = md; }
+      if (md !== prevMode) { if (md === 'floor' && prevMode !== null) zeroGlance(); prevMode = md; }
+      else if (gap > 350 && GL.setAt <= nowT - gap) zeroGlance();
 
       if (!started) { fx = c.x; fz = c.z; started = true; }
 
@@ -1276,14 +1293,14 @@ export function createCamera(THREE, cam) {
         const rm = GL.reduced ? 0.6 : 1;
         if (y != null) GL.curY = GL.tgtY = clamp(y, -maxY, maxY);
         if (p != null) GL.curP = GL.tgtP = clamp(p, -T.lookDown * rm, T.lookUp * rm);
-        GL.idle = 0; GL.forcing = false;
+        GL.idle = 0; GL.forcing = false; GL.setAt = now();
         GL.ramp = GL.rampA = GL.reduced ? 0
           : smoothstep((Math.abs(GL.curY) - T.lookDollyAt) / (T.lookDollyFull - T.lookDollyAt));
         return api.glance.state();
       },
       // Degrees, for hands. glance.deg(-60) reads down the aisle on the left.
       deg(y, p) { return api.glance.set(y == null ? null : y * RAD, p == null ? null : p * RAD); },
-      nudge(dy, dp) { GL.pendX += dy || 0; GL.pendY += dp || 0; GL.idle = 0; },
+      nudge(dy, dp) { GL.pendX += dy || 0; GL.pendY += dp || 0; GL.idle = 0; GL.setAt = now(); },
       recentre() { GL.forcing = true; GL.idle = 9; },
       state() {
         return {
@@ -1299,6 +1316,15 @@ export function createCamera(THREE, cam) {
       enabled(v) { if (v != null) { GL.on = !!v; if (!GL.on) { zeroGlance(); releaseLock(); } } return GL.on; },
       pointerLock(v) { if (v != null) { GL.pointerLock = !!v; if (!GL.pointerLock) releaseLock(); } return GL.pointerLock; },
       invertY(v) { if (v != null) GL.invertY = !!v; return GL.invertY; },
+      // Reduced motion. Follows prefers-reduced-motion live; passing a value
+      // pins it, which is both how it gets tested and what a player-facing
+      // "reduce camera motion" toggle would drive. Pass null to hand it back
+      // to the media query.
+      reducedMotion(v) {
+        if (v === null) { GL.pinReduced = null; GL.reduced = !!(GL.mq && GL.mq.matches); }
+        else if (v != null) { GL.pinReduced = !!v; GL.reduced = !!v; }
+        return GL.reduced;
+      },
       release: releaseLock,
     },
 
