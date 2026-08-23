@@ -960,6 +960,66 @@ const K = {
   get decoyHi()       { return t('decoyHi', 22.0); },
 
   // =========================================================================
+  // ROUND 7 — "HEY, PUT THAT BACK." DETERRENCE AT RANGE, AT A CHOSEN SUBJECT.
+  //
+  // Client, verbatim: "If I see them doing something suspicious, I can go, 'Hey,
+  // put that back,' and then they look around, like, 'What the fuck?' ... But if
+  // it's a criminal doing it, they might actually reconsider ... they might put
+  // it back, and then just leave the store peacefully."
+  //
+  // Round 6 built the whole behavioural half of this and fired it on PROXIMITY:
+  // a uniform posted on the only door made everybody in the building balk. This
+  // is the SAME machinery on a second trigger — the PA, at range, at one named
+  // subject — so `announceAt()` ends in abortTheft()/dumpGoods() and pays what
+  // they pay, which is nothing. A player who announces at everybody earns
+  // exactly what a door-camper earns. See benchIncome's `pa` policy.
+  //
+  // ---- WHY THIS IS NOT A GUILT ORACLE, IN FOUR NUMBERS -------------------
+  // If the guilty comply and the innocent do not, the button is a free scanner
+  // and the whole desk phase dies with it — the same failure the decoy library
+  // exists to prevent. So the two populations OVERLAP on both observable
+  // outcomes, and the overlap is these constants:
+  //   guilty, pre-conceal   annHeed     put it back
+  //   guilty, already has it annHeedHot  ditch it (lower: he is committed)
+  //   innocent              annSpook    sheepishly puts back whatever is in his
+  //                                     hand — THE SAME `putback` CLIP
+  // ...and everybody else — including the guilty who brazen it out — plays a
+  // react clip, which is also what every bystander inside annSpill plays,
+  // because the PA is a loudspeaker and not a laser. So "somebody looked
+  // around" is worth nothing and "somebody put something back" is worth a
+  // likelihood ratio, not a verdict. The arithmetic is in this round's report.
+  // The heed roll is tilted by the subject's `nerve` — the same hidden roll
+  // that already decides whether he will chance your shoulder — so two
+  // identical-looking subjects do not answer the same way.
+  get annHeed()       { return t('annHeed', 0.62); },
+  get annHeedHot()    { return t('annHeedHot', 0.34); },
+  get annSpook()      { return t('annSpook', 0.30); },
+  get annNerve()      { return t('annNerve', 0.45); },  // nerve tilt on the roll
+  get annSpill()      { return t('annSpill', 7.0); },   // m: bystanders who also look up
+  get annLagLo()      { return t('annLagLo', 0.35); },  // s before he reacts at all
+  get annLagHi()      { return t('annLagHi', 0.95); },
+  get annCool()       { return t('annCool', 6.0); },    // s between PA calls
+  get annHold()       { return t('annHold', 4.5); },    // s a 'hold' call pins him
+  // Shouting at the same man twice is worth less than shouting at him once, and
+  // this is the constant that stops the button being a slot machine you pull
+  // until it pays. Heed probability is multiplied by annFade per PREVIOUS call
+  // at that body: 0.62, 0.28, 0.13... which converges at about 0.78 rather than
+  // at 1.0, so a determined spammer gets 16 points of compliance for eight
+  // calls and every one of them spooks the aisle.
+  get annFade()       { return t('annFade', 0.45); },
+  // A bystander is being shouted at by implication, so he takes it less
+  // personally — but a GUILTY bystander still might put it back, which is how
+  // you deter a man you never saw.
+  get annSpillMul()   { return t('annSpillMul', 0.45); },
+  // AND WHAT IT COSTS TO SHOUT AT A CUSTOMER. Not a harassment complaint —
+  // the entire point of the announcement is that it is the safe alternative to
+  // walking up to somebody, so nothing on this path can reach onHarass(). What
+  // it does is finish his shop early: he has been spoken to in public and he
+  // would like to pay and go. That is a body at the door sooner and one fewer
+  // subject the shift can arm, which is a real cost, paid in income.
+  get annHuff()       { return t('annHuff', 0.55); },   // x remaining shopT
+
+  // =========================================================================
   // ROUND 6 — THE DIFFICULTY RAMP. Six numbers, one dial.
   //
   // Client: "especially in the beginning of the game when we want it to be
@@ -2629,27 +2689,193 @@ export function createAgents(THREE, scene, world) {
   // deadlock flatters the design by hiding it behind a spawn cap. Let them
   // leave and let the shift keep arming people; every one of them balks, and
   // the zero is an honest zero.
-  function abortTheft(s, api) {
+  //
+  // ROUND 7 — WIDENED, NOT FORKED. `why` names the trigger ('balk' is the
+  // round-6 posted-guard one and stays the default so nothing that reads it
+  // changes) and `quit` makes this his last try in this store. The PA passes
+  // quit:true, because the client's sentence ends "...and then just leave the
+  // store peacefully" — a man told to put it back by a voice that clearly
+  // already saw him does not stand around for thirty seconds and have another
+  // go. It is also what stops the announcement being a TEMPO tool: without it,
+  // announcing at a subject buys you a 14-30 s delay and then the same 100
+  // points, and the deterrence would be worth more than the deterrence.
+  function abortTheft(s, api, why, quit) {
     s.balk = 0; s.aborts++;
     s.chill = rr(K.chillLo, K.chillHi);
     s.stole = false;
     s.state = 'putback'; s.timer = 0; s.path = []; s.target = null;
     s.concealT = Math.max(s.concealT, s.chill + rr(1.5, 5.0));
     startGesture(s, 'putback');
-    if (s.aborts >= 2) { s.guilty = false; s.leaving = true; s.shopT = 0; }
-    api && api.onAbort && api.onAbort(s, 'balk');
+    if (quit || s.aborts >= 2) { s.guilty = false; s.leaving = true; s.shopT = 0; }
+    api && api.onAbort && api.onAbort(s, why || 'balk');
   }
 
   // He already had it. He waited you out for `dumpT`, you did not move off the
   // door, so it goes back on a shelf and he walks out a customer. No arrest, no
   // merchandise loss, no points — the most expensive possible outcome for a
   // player whose whole plan was to stand on the exit.
-  function dumpGoods(s, api) {
+  function dumpGoods(s, api, why) {
     s.stall = 0; s.aborts++;
     s.stole = false; s.guilty = false; s.leaving = true; s.shopT = 0;
     s.state = 'putback'; s.timer = 0; s.path = []; s.target = null; s.aim = null;
     startGesture(s, 'putback');
-    api && api.onAbort && api.onAbort(s, 'dump');
+    api && api.onAbort && api.onAbort(s, why || 'dump');
+  }
+
+  // =========================================================================
+  // ROUND 7 — THE ANNOUNCEMENT. "HEY, PUT THAT BACK."
+  //
+  //   agents.announceAt(subject, kind, opts) -> { ok, why, id, kind, heard }
+  //
+  // Fired by game.js at whatever the spot monitor is locked on. It does not do
+  // anything round 6 did not already do — a heeding subject ends in
+  // abortTheft()/dumpGoods(), the same two functions a posted guard drives, so
+  // a deterred thief is worth zero points on exactly the same path and there is
+  // no new economics to get wrong. What is new is the TRIGGER (at range, at a
+  // chosen man) and the second reaction: the one where he has no idea what you
+  // are talking about.
+  //
+  // THE RETURN VALUE DELIBERATELY DOES NOT CONTAIN THE OUTCOME. It is rolled
+  // when he reacts, ~0.6 s later, and delivered through the optional
+  // api.onAnnounce(subject, kind, outcome) callback at the instant the clip
+  // starts, so a HUD line cannot get ahead of the picture. `outcome` is
+  // 'heed' | 'shrug' | 'hold' — what he visibly did, which is all the player
+  // can see anyway. It is never his guilt.
+  const REACT_IDS = ['whoMe', 'whoMeAffront', 'whoMeGlance'];
+  let annCool = 0;
+
+  // He heard it and he is not doing anything about it: head up off the shelf, a
+  // shoulder check, a look at the ceiling for the speaker, and back to work.
+  // Guilty and innocent alike, and every bystander in earshot — see announceAt.
+  function lookAround(s) {
+    startGesture(s, 'react', REACT_IDS[Math.floor(rnd() * REACT_IDS.length)]);
+    if (!s.gest) return false;
+    // A man who is walking somewhere keeps walking; a man at a shelf stops.
+    // `drift`, `leave` and `bolt` keep their own legs — animateShopper runs the
+    // clip on the upper body over whatever the legs are doing.
+    if (s.state === 'walk' || s.state === 'browse') {
+      if (s.state === 'walk') { s.target = null; s.path = []; }
+      s.state = 'browse';
+      s.timer = Math.max(s.timer, s.gestD + rr(0.25, 0.90));
+    }
+    return true;
+  }
+
+  // The reaction, one latency later. Everything is rolled HERE rather than at
+  // the moment the PA keys, so the answer is to the situation he is in when he
+  // actually hears it — he may have finished concealing in the meantime.
+  function reactToPA(s, api) {
+    const kind = s.annKind || 'putback';
+    s.annKind = null;
+    if (s.caught || s.escaped || !s.mesh.visible) return;
+    // You cannot talk down a man who is already running, and by the time he is
+    // in the doorway he is not listening either.
+    if (s.bolted || s.state === 'react' || s.state === 'shove') return;
+
+    if (kind === 'hold') {
+      // The other PA line game.js already had — a price check that pins him
+      // where he stands. No compliance roll: nobody is being accused of
+      // anything, he is just waiting to see if it is about him.
+      lookAround(s);
+      s.state = 'browse';
+      s.timer = Math.max(s.timer, K.annHold);
+      s.concealT = Math.max(s.concealT, K.annHold + 1.2);
+      s.annOut = 'hold';
+      api && api.onAnnounce && api.onAnnounce(s, kind, 'hold');
+      return;
+    }
+
+    // ---- the roll ---------------------------------------------------------
+    // Three populations, and the whole anti-oracle argument is that all three
+    // can produce BOTH observable outcomes. `nerve` tilts it (bold men brazen it
+    // out), and annFade makes the second and third shout at the same body worth
+    // steadily less — otherwise the button is a slot machine you pull until it
+    // pays and the rate stops meaning anything.
+    const base = !s.guilty ? K.annSpook : s.stole ? K.annHeedHot : K.annHeed;
+    const tilt = 1 - K.annNerve + K.annNerve * clamp(s.nerve || 1, 0.4, 1.8);
+    const fade = Math.pow(K.annFade, Math.max(0, (s.annN || 1) - 1));
+    const spill = s.annSpill ? K.annSpillMul : 1;
+    const p = clamp(base * tilt * fade * spill, 0, 0.95);
+    const heed = rnd() < p;
+
+    if (heed && s.guilty && s.stole) {
+      // He has it in his coat already. Same ending as waiting him out at the
+      // door: it goes back on a shelf and he walks out clean. Zero points.
+      dumpGoods(s, api, 'announce');
+      s.annOut = 'heed';
+    } else if (heed && s.guilty) {
+      // He had not committed yet, and now he is not going to. Puts it back,
+      // shops honestly, and leaves the store peacefully. Also zero points.
+      abortTheft(s, api, 'announce', true);
+      s.annOut = 'heed';
+    } else if (heed) {
+      // AND THE ONE THAT MAKES IT A READ INSTEAD OF A TEST. An innocent, told
+      // off in public, sheepishly puts back whatever is in his hand — the SAME
+      // `putback` clip, so the picture is identical and "he put it back" is
+      // evidence rather than proof. He is not guilty of anything and nothing is
+      // scored.
+      startGesture(s, 'putback');
+      if (s.state === 'walk') { s.target = null; s.path = []; }
+      s.state = 'browse';
+      s.timer = Math.max(s.timer, s.gestD + rr(0.3, 1.1));
+      s.annOut = 'heed';
+    } else {
+      lookAround(s);
+      s.annOut = 'shrug';
+    }
+
+    // WHAT IT COSTS TO SHOUT AT A CUSTOMER, and it is not a complaint: the
+    // announcement is the safe alternative to walking up to somebody and
+    // nothing on this path can reach onHarass(). He finishes his shop early
+    // instead — a body at the door sooner and one fewer subject the shift can
+    // arm. Guilty men who shrugged are untouched; they have other plans.
+    if (!s.guilty && s.shopT > 0) s.shopT = Math.max(4.0, s.shopT * K.annHuff);
+    api && api.onAnnounce && api.onAnnounce(s, kind, s.annOut);
+  }
+
+  // THE ENTRY POINT game.js CALLS. `subject` is a shopper object or its id.
+  //   kind 'putback'  the deterrence line. Rolls compliance.  (default)
+  //   kind 'hold'     the price-check line. Pins him, rolls nothing.
+  //   opts.force      skip the PA cooldown (the bench uses it; the game should
+  //                   not, and game.js's own button cooldown is the real gate).
+  function announceAt(subject, kind, opts) {
+    const o = opts || {};
+    const k = kind === 'hold' ? 'hold' : 'putback';
+    if (annCool > 0 && !o.force) return { ok: false, why: 'cooldown', in: +annCool.toFixed(2) };
+    const s = (subject && subject.position) ? subject
+      : shoppers.find((x) => x.id === subject);
+    if (!s) return { ok: false, why: 'no-subject' };
+    if (s.caught || s.escaped || !s.mesh.visible) return { ok: false, why: 'gone' };
+    if (s.bolted || s.state === 'react' || s.state === 'shove') return { ok: false, why: 'running' };
+
+    annCool = K.annCool;
+    s.annT = rr(K.annLagLo, K.annLagHi);
+    s.annKind = k; s.annOut = null; s.annSpill = false;
+    s.annN = (s.annN || 0) + 1;
+    s.concealT = Math.max(s.concealT, s.annT + 0.7);   // hold the fuse while he listens
+
+    // ...AND EVERYBODY ELSE IN THAT AISLE. A PA is a loudspeaker, not a laser:
+    // the four people who can hear it all look up, so "somebody looked around"
+    // is worth nothing at all. It also means you can deter a man you never saw,
+    // which is funny and which is the door-camp lesson restated — a shift where
+    // nothing happens is a shift that pays nothing.
+    let heard = 0;
+    if (k !== 'hold') {
+      for (const b of shoppers) {
+        if (b === s || b.caught || b.escaped || !b.mesh.visible) continue;
+        if (b.bolted || b.annT > 0 || b.state === 'shove') continue;
+        if (dist2d(b.position.x, b.position.z, s.position.x, s.position.z) > K.annSpill) continue;
+        b.annT = rr(K.annLagLo, K.annLagHi + 0.55);
+        b.annKind = 'putback'; b.annOut = null; b.annSpill = true;
+        b.annN = (b.annN || 0) + 1;
+        heard++;
+      }
+    }
+    return {
+      ok: true, id: s.id, kind: k, heard,
+      aisle: aisleOf(s.position.x),
+      at: { x: s.position.x, z: s.position.z },
+    };
   }
 
   function updateShopper(s, dt, api, frozen) {
@@ -2661,6 +2887,14 @@ export function createAgents(THREE, scene, world) {
     if (s.state !== 'bolt') {
       s.wind = clamp(s.wind + dt * K.thiefSecond, 0, 1);
       s.adren = clamp(s.adren + dt * K.thiefAdrenBack, 0, 1);
+    }
+
+    // ---- ROUND 7: the PA landed on him a moment ago. One compare per body
+    // per frame in the overwhelmingly common case where nobody has said
+    // anything; the reaction itself is rolled in reactToPA().
+    if (s.annT > 0) {
+      s.annT -= dt;
+      if (s.annT <= 0) { s.annT = 0; reactToPA(s, api); }
     }
 
     // ---- ROUND 6: clips run first, so a state can ask "am I still doing it".
@@ -3408,6 +3642,7 @@ export function createAgents(THREE, scene, world) {
       buildPowerups();
     }
     const frozen = !!api.frozen;
+    if (!frozen && annCool > 0) annCool = Math.max(0, annCool - dt);
     updateCop(dt, input, frozen);
     if (!frozen) { updatePost(dt); updateFlee(dt); }
     updatePowerups(dt);

@@ -2,9 +2,32 @@
 // store, guilty and innocent, drawn by ONE function.
 //
 //   GESTURES              the table. Each entry is a keyframed clip.
-//   pickGesture(rng, k)   roll one of a kind: 'steal' | 'decoy' | 'putback'
+//   pickGesture(rng, k)   roll one of a kind: 'steal' | 'decoy' | 'putback' | 'react'
 //   applyGesture(o, g, u) sample clip `g` at u in 0..1 -> a pose object
 //   POSE                  the neutral pose, for reference
+//
+// ---------------------------------------------------------------------------
+// ROUND 7 — THE REACT POOL. "HEY, PUT THAT BACK."
+//
+// The client wants to say it over the PA at somebody he is watching: "they look
+// around, like, 'what the fuck?' ... they might reconsider, they might put it
+// back, and then just leave the store peacefully."
+//
+// That is TWO reactions and they must not be two code paths, for the same
+// reason the steal is entry zero of this table rather than a special case. So:
+//   - a subject who HEEDS the call plays `putback` — the existing clip, the one
+//     already used by a thief balking at a posted guard. An innocent who is
+//     embarrassed into putting a box back plays THE SAME ONE. A put-back is
+//     therefore not a confession; see K.annSpook in agents.js.
+//   - a subject who does NOT plays one of the three `react` clips below: heads
+//     up, shoulder check, a look at the ceiling for the speaker, a shrug, and
+//     back to the shelf. A guilty man who decides to brazen it out plays these
+//     too, and so does every bystander in earshot.
+// `tell: 'react'` keeps them out of the DECOY pool ON PURPOSE — pickGesture's
+// modulo over seven decoys is what round 6's whole distribution was measured
+// on, and quietly making it eight would have moved every number in the file.
+// They are only ever started by id, which costs no rng at all.
+// ---------------------------------------------------------------------------
 //
 // ---------------------------------------------------------------------------
 // WHY THIS FILE EXISTS, AND WHY IT IS NOT IN agents.js
@@ -47,8 +70,10 @@
 // reach a material, a scale, a duration or a colour. If a decoy is 2.0 s and
 // every steal is 1.9 s, the durations ARE the tell and a player with a
 // stopwatch beats the game. So the durations overlap on purpose: steals run
-// 1.75-2.60 s, decoys 1.60-2.70 s, and the shortest clip in the file is a
-// decoy while the longest is also a decoy.
+// 1.75-2.60 s, decoys 1.60-2.70 s, and the shortest SPONTANEOUS clip in the
+// file is a decoy while the longest is also a decoy. (Round 7's react clips
+// are 1.55-2.75 s and bracket both pools, but nothing rolls one by accident —
+// they only ever play in answer to the PA, so they are not in that contest.)
 // ---------------------------------------------------------------------------
 
 // Neutral. Anything a clip does not mention returns to this.
@@ -266,15 +291,78 @@ export const GESTURES = [
       kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16 }),
     ],
   },
+
+  // =========================================================================
+  // ROUND 7 — WHAT SOMEBODY DOES WHEN A VOICE SAYS THEIR NAME OVER THE PA AND
+  // THEY CANNOT SEE WHO SAID IT. Three of them, because one look-around played
+  // by every body in the store is a silhouette to learn rather than a reaction
+  // to read. NONE of them contains an object, a reach or a concealment: the
+  // information a player is allowed to take off a react clip is "he heard it",
+  // never "he did it". The clip a HEEDING subject plays is `putback` above, and
+  // innocents play that one too.
+  // =========================================================================
+  {
+    // THE CEILING CHECK. Head comes up off the shelf, one shoulder check, then
+    // he looks straight up for the speaker — which is the single most human
+    // beat in this whole file and it is worth the two keyframes it costs. Then
+    // back down and on with the shopping.
+    id: 'whoMe', tell: 'react', dur: 2.30, item: SMALL,
+    keys: [
+      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.20 }),
+      kf(0.14, { vis: 0, armR: -0.90, armL: -0.92, neck: -0.14, look: 0.62 }),
+      kf(0.34, { vis: 0, armR: -0.88, armL: -0.90, neck: -0.10, look: -0.70, turn: -0.28 }),
+      kf(0.56, { vis: 0, armR: -0.86, armL: -0.88, neck: -0.52, look: 0.16, turn: -0.10 }),
+      kf(0.74, { vis: 0, armR: -1.02, armL: -1.00, neck: -0.30, look: 0.44, chest: -0.06 }),
+      kf(0.90, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.06, look: -0.20 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
+    ],
+  },
+  {
+    // "ME?" Hand off the bar and onto his own chest, a half turn to see who is
+    // behind him, and a headshake. Mildly affronted, which is the note: he is
+    // not frightened, he is a man who has just been spoken to in public.
+    id: 'whoMeAffront', tell: 'react', dur: 2.75, item: SMALL,
+    keys: [
+      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.16 }),
+      kf(0.12, { vis: 0, armR: -1.10, armL: -0.94, neck: -0.16, look: -0.66 }),
+      kf(0.30, { vis: 0, armR: -1.62, armRz: 0.62, armL: -0.92, look: -0.30, turn: -0.62, chest: -0.04 }),
+      kf(0.48, { vis: 0, armR: -1.58, armRz: 0.66, armL: -1.05, look: 0.58, turn: -0.86 }),
+      kf(0.62, { vis: 0, armR: -1.50, armRz: 0.58, armL: -1.10, look: -0.34, turn: -0.70, neck: -0.08 }),
+      kf(0.78, { vis: 0, armR: -1.24, armRz: 0.30, armL: -1.00, look: 0.30, turn: -0.30, neck: 0.04 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+    ],
+  },
+  {
+    // THE QUICK DOUBLE-CHECK. Shortest react in the file: two shoulder checks
+    // and straight back to the shelf. This is what a man who is not going to do
+    // anything about it does, and it is deliberately almost nothing to look at
+    // — a player who announces and watches for a big reaction gets this and
+    // learns that the absence of one means nothing either.
+    id: 'whoMeGlance', tell: 'react', dur: 1.55, item: SMALL,
+    keys: [
+      kf(0.00, { vis: 0, armR: -1.05, armRz: -0.22, neck: 0.24 }),
+      kf(0.20, { vis: 0, armR: -1.00, armRz: -0.18, neck: 0.02, look: -0.72 }),
+      kf(0.44, { vis: 0, armR: -0.98, armRz: -0.16, neck: -0.04, look: 0.68, turn: -0.16 }),
+      kf(0.66, { vis: 0, armR: -1.02, armRz: -0.20, neck: 0.14, look: 0.10 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, turn: 0.0 }),
+    ],
+  },
 ];
 
 export const BY_ID = new Map(GESTURES.map((g) => [g.id, g]));
 const OF = (tell) => GESTURES.filter((g) => g.tell === tell);
 const STEAL = OF('steal'), DECOY = OF('decoy'), PUTBACK = OF('putback');
+const REACT = OF('react');
 
 // `rng` is agents.js's seeded rnd(), so a bench trial is reproducible.
+// 'react' is spelled out rather than falling through to DECOY: the fallthrough
+// would have handed a look-around caller a phone-out-of-a-pocket clip, i.e. a
+// reach-with-an-object fired by an announcement, which is the one thing the
+// react pool exists NOT to do.
 export function pickGesture(rng, kind) {
-  const pool = kind === 'steal' ? STEAL : kind === 'putback' ? PUTBACK : DECOY;
+  const pool = kind === 'steal' ? STEAL
+    : kind === 'putback' ? PUTBACK
+      : kind === 'react' ? REACT : DECOY;
   return pool[Math.min(pool.length - 1, Math.floor(rng() * pool.length))];
 }
 

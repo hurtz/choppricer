@@ -53,7 +53,14 @@ function readInput() {
   // Rotate into world by the camera's own yaw, so WASD always means what the player
   // SEES no matter where the camera builder puts it. The base camera looks down +Z,
   // whose screen-right is world -X — the sign below is that, generalised.
-  const y = chaseCam.yaw || 0;
+  // Steer by moveYaw, NOT yaw: moveYaw is the corridor bearing with the player's
+  // mouse-look taken out. Reading `yaw` here re-opens the feedback loop round 1
+  // closed, by a longer path — mouse turns camera, camera-relative W drives the cop
+  // diagonally, the camera's axis latch sees the cross-axis dominate, and the
+  // corridor bearing flips 90 degrees on its own. A glance would whip the view.
+  // Decoupling also matches what was actually asked for: "turn and look down those
+  // aisles as I'm walking" is a head turn, not a change of course.
+  const y = (chaseCam.moveYaw ?? chaseCam.yaw) || 0;
   const cs = Math.cos(y), sn = Math.sin(y);
   // World basis for what the player sees. At yaw 0 the camera sits behind the cop
   // looking down +Z, so screen-forward is world +Z and screen-right is world -X.

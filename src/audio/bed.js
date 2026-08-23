@@ -164,25 +164,66 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
   const air = tap(srcC, 1);
   const airHP = N(filt(ctx, 'highpass', 430, 0.6));
   const airLP = N(filt(ctx, 'lowpass', 7200, 0.6));
-  const airG = N(gain(ctx, 0.19));
-  air.connect(airHP); airHP.connect(airLP); airLP.connect(airG);
+  // ROUND 4: a second pole on the top. One lowpass at 7200 falls at 12 dB/oct,
+  // which still has this layer 10 dB up at 12 kHz where a room has nothing.
+  // Two poles make it fall like a room instead of like a shelf. It costs
+  // nothing below 4 kHz, which is the half of this layer that does the work.
+  const airLP2 = N(filt(ctx, 'lowpass', 6400, 0.55));
+  const AIR_BASE = 0.19;
+  const airG = N(gain(ctx, AIR_BASE));
+  air.connect(airHP); airHP.connect(airLP); airLP.connect(airLP2); airLP2.connect(airG);
   place(airG, 0.25, 1.0);
 
-  // The top two octaves. Pink noise has already fallen 15 dB by the time it
-  // gets here, so this branch takes it back: a shelved-up, high-passed hiss
-  // that is the diffusers, the lights, and forty metres of hard air. Without it
-  // the store measured 0.000 of its energy above 5 kHz and read as a boiler
-  // room. It is quiet and it is doing more work than anything else in the file.
+  // THE TOP OF THE ROOM.
+  //
+  // ROUND 4 — THIS WAS THE HISS, AND IT IS THE WHOLE OF BUG 1. The client, on
+  // speakers: "there's this bad hiss in the background, just constantly going
+  // ... it sounds like there's music in the background, it actually sounds
+  // good, but the hissing is bad." It was this branch. Bed alone, aisle 4,
+  // muting this one gain node and nothing else:
+  //
+  //                        5-8 kHz    8-12 kHz   12-20 kHz
+  //     round 3, shipped   -56.0 dB   -57.7 dB    -58.7 dB
+  //     this node muted    -60.1 dB   -66.2 dB    -76.5 dB
+  //     so it owned          4.1 dB     8.5 dB      17.8 dB
+  //
+  // Read the shipped row again. The 12-20 kHz octave came back as loud as the
+  // 5-8 kHz one, and the reason is the +6 dB shelf that used to sit at 5200:
+  // pink noise falls 3 dB an octave, so a +6 dB shelf spanning two octaves
+  // flattens it EXACTLY. What was being generated here was not room air, it was
+  // white noise from 5 kHz up — which is the textbook definition of tape hiss,
+  // and it is what he heard sitting on top of a tape he otherwise liked.
+  //
+  // The 0.95 reverb send finished the job. Fed through a 2.35 s tail, the layer
+  // loses even the pink bed's own slow movement and becomes perfectly
+  // stationary. Every other layer in this file drifts — that is the first thing
+  // the top of the file promises. This was the only one that did not, and it is
+  // the only one anybody complained about. "Constantly going" is a literal
+  // description of a fixed gain on an unmodulated broadband source.
+  //
+  // What is here now is air absorption, which is what should have been modelled
+  // in the first place. 10 kHz loses on the order of 20 dB over the ~680 m of
+  // path length inside a 2 s tail, so the top end of a big room falls away hard
+  // and is gone by 12 k. A supermarket is bright in the MIDS because nothing in
+  // it is soft; that is not the same claim as flat to 20 kHz.
+  //
+  // Kept, because it is still true: without SOME energy up here the store
+  // measured 0.000 above 5 kHz and read as a boiler room. The layer stays. It
+  // stops being a hiss generator.
   const airTop = tap(srcB, 1);
   const atHP = N(filt(ctx, 'highpass', 3400, 0.5));
   const atHP2 = N(filt(ctx, 'highpass', 4200, 0.6));
-  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, 6));
-  const atG = N(gain(ctx, 0.21));
-  // No lowpass on the end of this. Round 2 briefly had one at 17-20 kHz and it
-  // was doing nothing except making a brick wall out of a band that pink noise
-  // has already rolled off by 25 dB on its own.
-  airTop.connect(atHP); atHP.connect(atHP2); atHP2.connect(atSh); atSh.connect(atG);
-  place(atG, 0.30, 0.95);
+  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, -1));   // was +6. That was the bug.
+  const atLP = N(filt(ctx, 'lowpass', 7600, 0.55));        // air absorption
+  const atLP2 = N(filt(ctx, 'lowpass', 12000, 0.6));       // and the rest of it
+  const AT_BASE = 0.150;                                   // was 0.21
+  const atG = N(gain(ctx, AT_BASE));
+  airTop.connect(atHP); atHP.connect(atHP2); atHP2.connect(atSh);
+  atSh.connect(atLP); atLP.connect(atLP2); atLP2.connect(atG);
+  // Wet was 0.95 — nearly all of this layer arrived as reverb, which is what
+  // made it stationary. HF does not survive forty metres of air; the top of the
+  // room is a local sound, not a reverberant one.
+  place(atG, 0.30, 0.30);
 
   // =========================================================================
   // REFRIGERATION — cycling over minutes, not seconds.
@@ -593,6 +634,17 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
     to(hvGain.gain, hvBase * hvm, t, 0.9);
     to(hvRes.frequency, 56 + 2.4 * Math.sin(c * 0.0271), t, 1.2);
     to(dfGain.gain, 0.115 * (1 + 0.22 * Math.sin(c * 0.0733 + 2.2)), t, 0.8);
+
+    // --- ROUND 4: THE AIR MOVES TOO. These two were the only always-on layers
+    // in the file with a fixed gain, and the top one was the hiss the client
+    // heard. A constant broadband source is a noise generator; the same source
+    // breathing on the same irrational sums as the air handling is a building.
+    // Four Math.sin calls and two setTargetAtTime a frame.
+    to(airG.gain, AIR_BASE * (1 + 0.13 * Math.sin(c * 0.0357 + 1.4)
+                                + 0.07 * Math.sin(c * 0.0091 + 5.1)), t, 1.3);
+    to(atG.gain, AT_BASE * (1 + 0.17 * Math.sin(c * 0.0421 + 0.9)
+                              + 0.09 * Math.sin(c * 0.0107 + 3.3)), t, 1.4);
+    to(atLP.frequency, 7600 * (1 + 0.09 * Math.sin(c * 0.0313 + 2.4)), t, 1.6);
 
     // --- ballast: a slow random walk of a few hundredths of a hertz, which is
     // exactly what the grid does. The three voices drift past each other and the
