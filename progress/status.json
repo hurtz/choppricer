@@ -222,7 +222,7 @@
    "verdict": "PASS. One exit shipped and the camper is dead by INCOME, not catch rate: 0 pts/shift in every shift sampled, 4.17 thefts started and 4.83 balked, 91% of his time on the door. The desk player earns 250. Rationing still beats always-sprint 77.0 vs 53.0. Median chase 6.22s, catchUnder1s 11.7%, lungCheck passes."
   },
   "game": {
-   "round": 7,
+   "round": 8,
    "state": "passed",
    "shots": [
     {
@@ -264,6 +264,11 @@
      "round": 7,
      "path": "../shots/game_r7_backoff.png",
      "t": 1787505637.882664
+    },
+    {
+     "round": 8,
+     "path": "../shots/game_r8.png",
+     "t": 1787523514.5434391
     }
    ],
    "gaps": [
@@ -280,10 +285,10 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787505751.060597,
-   "note": "Round-2's gate was already refusing 265-448 onHarass calls per run, so approach-firing was NOT the cause. Every complaint that landed came from the subject the player deliberately dispatched to. Two real causes: a single confrontation was billed 1.73 times because harassCool is a global 5s while agents re-arms a shopper after 1.6m of backing off - one sidestep in a 4m aisle; and there was no beat before the form. HARASS_GRACE 1.6s now lets you get out of his face, which ADDS a skill rather than removing a punishment. Three strikes stays because the fiction is good. Also proved the camper loop end to end: 0.08 incidents/min against a normal 1.5, 3.67 aborts/shift, zero points.",
+   "updated": 1787523687.246092,
+   "note": "THE GUILT ORACLE IT NEARLY SHIPPED: agents fires onAbort(s,'announce') only for a GUILTY heed - an innocent who heeds plays the identical clip and arrives only at onAnnounce. Left alone, its round-7 handler would have given the guilty man a ticker line, a HE PUT IT BACK stamp and a stand-down, and given the innocent silence. So onAbort early-returns on 'announce' and ALL presentation lives in onAnnounce, which both populations reach. FOURTH PA MECHANISM, invisible from the audio side: hud.js only drew the PA button inside if(can), so pressing [F] with nothing selected opened the channel, lit the recording dot, and put no pixels anywhere. Also deleted a second cooldown charge in talkClose() that billed a full recharge even when no announcement had gone out.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
-   "verdict": "PASS. The 7.0 complaints figure was a GUESSER's rate, not a reader's - the observer takes 0.00 by construction because it only dispatches on a GUILTY line, so it could never be the instrument for that question. Built the missing bot ('reader': full scan-switch-read loop plus 35% impatience once per read). Reader goes 3.25 -> 0.00 complaints, 0.75 -> 0.00 demotions, 240 -> 386 pts."
+   "verdict": "PASS on all three jobs. PA cooldown split into two clocks: micReady() has none (the mic is a skin on the handset, not a resource) and annReady() charges once on keydown, cut 21->12. Dead-key window 11.9s -> 2.9s, mic dead 11.9s -> 0s. Proved 21s was never load-bearing: observer takes ZERO holds at either value (exact identity, 32.3 -> 32.1% catch) and random makes the same 30-31 holds, because its rate is set by its own dispatch cadence."
   },
   "cop": {
    "round": 1,
@@ -347,6 +352,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787523687.246093,
+   "piece": "game",
+   "role": "builder",
+   "round": 8,
+   "state": "passed",
+   "text": "THE GUILT ORACLE IT NEARLY SHIPPED: agents fires onAbort(s,'announce') only for a GUILTY heed - an innocent who heeds plays the identical clip and arrives only at onAnnounce. Left alone, its round-7 handler would have given the guilty man a ticker line, a HE PUT IT BACK stamp and a stand-down, and given the innocent silence. So onAbort early-returns on 'announce' and ALL presentation lives in onAnnounce, which both populations reach. FOURTH PA MECHANISM, invisible from the audio side: hud.js only drew the PA button inside if(can), so pressing [F] with nothing selected opened the channel, lit the recording dot, and put no pixels anywhere. Also deleted a second cooldown charge in talkClose() that billed a full recharge even when no announcement had gone out."
+  },
+  {
+   "t": 1787523514.5434391,
+   "piece": "game",
+   "role": "builder",
+   "round": 8,
+   "state": "building",
+   "text": "PA cooldown was charged TWICE per use (callHold 21s on keydown + talkClose 21s on release) and the MICROPHONE was gated on the ANNOUNCEMENT's recharge - so [F] was inert for a measured 11.9s after every use while talk.js held the capture device 20s and the recording dot stayed lit. Split into two clocks: micReady() (no cooldown, no selection needed, works on the FLOOR now) and annReady() (the resource, charged once, 21->12). Dead key 11.9s -> 2.9s, mic dead 0s. Ablation says 21 was never load-bearing: observer takes ZERO holds in both runs (exact identity, 32.3->32.1% catch) and random makes the SAME 30-31 holds at either value, so the recharge never bound. FOURTH mechanism the audio builder could not see: hud.js only drew the PA button inside if(can), so pressing [F] with no row selected opened a live mic with NOTHING on screen. Button now always drawn, 4 states incl MIC ONLY + RECHARGING count. JOB 2 announceAt wired to the reticle subject on the floor, guilt-blind by construction - onAbort('announce') early-returns so the heed presentation lives only in onAnnounce, which both populations reach; verified a guilty heed and an innocent heed produce the same pool, no stamp, no stand-down. JOB 3 PAN gauge off chaseCam.rig.lookYaw + off-screen chevron w/ HEAD n deg. AND THE BIG ONE: brackets were drawn on the raw pinhole while the floor is graded through a barrel lens - measured -2.3px dead centre but +29.0px at a 26 deg glance, i.e. invisible until camera.js shipped mouse look this round. Now via cctv warpFloor() at both projection sites, off-test on the warped x, size via floorMagAt."
+  },
   {
    "t": 1787523434.8918242,
    "piece": "cctv",
@@ -1036,5 +1057,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787523434.891825
+ "updated": 1787523687.2460952
 }

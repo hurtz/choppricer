@@ -3831,6 +3831,15 @@ export function createAgents(THREE, scene, world) {
   //   C.agents.bench({ n: 200, mode: 'none' })    // NO POWERUP EXISTS
   //   C.agents.bench({ n: 200, mode: 'pickup' })  // one is reachable, bot detours
   //   C.agents.bench({ n: 200, mode: 'boost' })   // already boosted
+  //
+  // ROUND 7 TRAP, and it cost me a re-run: BENCH DOES NOT PIN THE DIFFICULTY.
+  // Every trial reseeds, so bench() is deterministic in the RNG — but DIFF.level
+  // is global and game.js drives it off the shift clock every frame. Touch the
+  // live game first (C.run, enterFloor, anything) and the ramp will have pulled
+  // it down; I measured always-sprint at 38.0% instead of 53.0% that way and
+  // briefly thought I had broken the lung. `bench` takes no difficulty option:
+  // call `agents.setDifficulty(1)` before quoting anything against this file's
+  // tables, or reload the page, which is what makes level 1 the default.
   //   C.agents.bench({ n: 200, mode: 'ignore' })  // cans on the shelves, bot
   //                                               // ignores them: boostFrac is
   //                                               // then the free-boost leak

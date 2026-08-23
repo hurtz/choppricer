@@ -176,10 +176,15 @@ export function unwarpFloor(p, maybeY) {
   return out;
 }
 
-// Local magnification at a pinhole pixel — see barrelMagUv. `tangential` is the
-// factor to scale a marker's WIDTH by and `radial` its HEIGHT, near the
-// horizontal and vertical axes respectively; at the centre both are 1.1248 and
-// at the corners both fall to 1.
-export function floorMagAt(x, y) {
-  return barrelMagUv(x / lens.w, 1 - y / lens.h, lens.aspect, lens.k);
+// Local magnification at a PINHOLE pixel — i.e. the point BEFORE warpFloor, not
+// after. `tangential` scales a marker's WIDTH and `radial` its HEIGHT, near the
+// horizontal and vertical axes respectively; at the centre both are 1.1248 and at
+// the corners both fall to 1.
+//
+// The parameters are named for what they must be because a comment four lines above
+// a function does not travel with a copy-pasted call: a handoff snippet passed the
+// WARPED point here and it took a second builder reading this file to catch it.
+// Passing the warped point silently double-applies the forward map.
+export function floorMagAt(pinholeX, pinholeY) {
+  return barrelMagUv(pinholeX / lens.w, 1 - pinholeY / lens.h, lens.aspect, lens.k);
 }
