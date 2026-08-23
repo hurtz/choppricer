@@ -237,6 +237,12 @@ const uvOf = (k) => {
 function copAtlas(THREE) {
   const cv = document.createElement('canvas'); cv.width = cv.height = 512;
   const x = cv.getContext('2d');
+  // Deterministic scatter for the stubble and the capillaries. Math.random()
+  // would have worked — the atlas is baked once at startup and never touches
+  // the sim's seeded stream — but it would make two screenshots of the same
+  // build differ, and screenshots are how this file is reviewed.
+  let _s = 0x2f6f2b19;
+  const rnd = () => (((_s = (_s * 1664525 + 1013904223) >>> 0) >>> 8) / 16777216);
   const cell = (k, f) => {
     const c = CELLS[k]; x.save();
     x.translate(c[0] * 128, c[1] * 128);
@@ -346,11 +352,29 @@ function copAtlas(THREE) {
     g.fillStyle = '#e0d06a'; g.fillRect(36, 94, 46, 6);
   });
 
-  cell('shoe', (g) => {                                   // polished toe cap
-    g.fillStyle = '#c8c8c8'; g.fillRect(0, 0, 128, 128);
-    const gr = g.createRadialGradient(52, 44, 4, 64, 64, 78);
-    gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.35, '#d8d8d8'); gr.addColorStop(1, '#8e8e8e');
+  // ROUND 7 — SCUFFED, NOT POLISHED. This cell used to be a clean radial
+  // highlight, i.e. a shoe somebody had shined that morning. Now the highlight
+  // is weak and broken, there are two vamp creases across it (a shoe creases
+  // where the foot bends, always in the same place), and the toe has been
+  // kicked pale. Shared with the cap brim on purpose — the same man neglected
+  // both — and it is the cheapest wear in the file because it is one cell.
+  cell('shoe', (g) => {
+    g.fillStyle = '#a5a29d'; g.fillRect(0, 0, 128, 128);
+    const gr = g.createRadialGradient(54, 40, 6, 64, 64, 86);
+    gr.addColorStop(0, '#d9d6d0'); gr.addColorStop(0.30, '#b4b0aa'); gr.addColorStop(1, '#77746f');
     g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    // vamp creases
+    g.strokeStyle = 'rgba(40,36,32,0.34)'; g.lineWidth = 2.6;
+    for (const [y0, y1] of [[54, 62], [70, 76]]) {
+      g.beginPath(); g.moveTo(2, y0); g.quadraticCurveTo(64, y1 + 7, 126, y0 + 2); g.stroke();
+    }
+    // scuffs: pale where the leather has been taken off it
+    g.fillStyle = 'rgba(226,222,214,0.42)';
+    for (const [sx, sy, w, hh] of [[18, 92, 30, 7], [86, 100, 22, 5], [40, 22, 18, 5], [102, 58, 12, 9]]) {
+      g.beginPath(); g.ellipse(sx, sy, w * 0.5, hh * 0.5, 0.3, 0, 7); g.fill();
+    }
+    g.fillStyle = 'rgba(30,27,24,0.30)';
+    g.beginPath(); g.ellipse(64, 118, 46, 9, 0, 0, 7); g.fill();     // dirt at the welt
   });
 
   cell('grip', (g) => {                                   // checkered polymer
@@ -363,16 +387,46 @@ function copAtlas(THREE) {
 
   cell('glove', (g) => { g.fillStyle = '#e8f2f6'; g.fillRect(0, 0, 128, 128); });
 
-  // Face detail — stubble on the jaw, a bit of colour in the cheeks. Applied to
-  // the skull ball only; sphere UVs put u=0.25 dead centre on the face.
+  // Face detail — stubble on the jaw, colour in the cheeks, and (round 7) the
+  // broken capillaries. Applied to the skull and jaw balls; sphere UVs put
+  // u=0.25 dead centre on the face and v runs from crown to chin, so the
+  // stubble gradient lands on the jaw on its own.
   cell('face', (g) => {
     g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
-    const gr = g.createLinearGradient(0, 62, 0, 128);
-    gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(96,80,72,0.42)');
-    g.fillStyle = gr; g.fillRect(0, 62, 128, 66);            // five o'clock shadow
-    g.fillStyle = 'rgba(214,120,96,0.30)';
-    g.beginPath(); g.ellipse(20, 52, 12, 9, 0, 0, 7); g.fill();
-    g.beginPath(); g.ellipse(44, 52, 12, 9, 0, 0, 7); g.fill();
+    // Stubble: deeper than round 6's and it starts higher up the cheek, because
+    // three days is a different face from five o'clock.
+    const gr = g.createLinearGradient(0, 52, 0, 128);
+    gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.45, 'rgba(104,88,78,0.30)');
+    gr.addColorStop(1, 'rgba(84,70,62,0.58)');
+    g.fillStyle = gr; g.fillRect(0, 52, 128, 76);
+    // ...and it is not a smooth wash. Speckle, so it reads as hair rather than
+    // as a tan. SIZE IS THE WHOLE PROBLEM HERE and the first cut got it wrong:
+    // this cell is 128 px and it is stretched over a head that fills a
+    // 1280-wide portrait, so a 1.4 px dot at 0.30 alpha arrives as a 12 px mud
+    // splash. 0.8 px at 0.16, and starting at y=74 so it stays on the jaw
+    // instead of climbing the cheekbones.
+    g.fillStyle = 'rgba(74,62,54,0.16)';
+    for (let i = 0; i < 560; i++) {
+      const yy = 74 + Math.pow(rnd(), 0.8) * 52;
+      g.fillRect(rnd() * 128, yy, 0.8, 0.8);
+    }
+    // Cheeks, ruddier than they were.
+    g.fillStyle = 'rgba(206,104,80,0.26)';
+    g.beginPath(); g.ellipse(20, 50, 13, 10, 0, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(44, 50, 13, 10, 0, 0, 7); g.fill();
+    // BROKEN CAPILLARIES. Short forked threads over the cheeks — the thing that
+    // separates a red face from a weathered one. Same magnification trap as the
+    // stubble: at 0.9 px and 0.42 alpha these arrived as two red slashes beside
+    // his nose. Hairline width, quarter alpha, and half the length.
+    g.strokeStyle = 'rgba(172,74,62,0.20)'; g.lineWidth = 0.5;
+    for (let i = 0; i < 34; i++) {
+      const cx = (i % 2 ? 20 : 44) + (rnd() - 0.5) * 20;
+      const cy = 50 + (rnd() - 0.5) * 15;
+      g.beginPath(); g.moveTo(cx, cy);
+      g.lineTo(cx + (rnd() - 0.5) * 4.5, cy + (rnd() - 0.5) * 4.5);
+      g.lineTo(cx + (rnd() - 0.5) * 7, cy + (rnd() - 0.5) * 6);
+      g.stroke();
+    }
   });
 
   const t = new THREE.CanvasTexture(cv);
@@ -605,15 +659,27 @@ function shopperForearm(THREE, S, long, side) {
 // values, and one value is a smudge. Light French blue shirt over near-black
 // trousers gives him three bands — dark cap, light torso, dark legs — and that
 // silhouette survives all the way down to the CCTV feed.
+// ROUND 7 — the wear is mostly in this table, and it is the cheapest half of
+// "beaten up". THE UNIFORM IS NOT ONE UNIFORM: the cap is the newest thing on
+// him and is still properly navy; the trousers were replaced separately, years
+// ago, and have gone grey-brown in the wash; the shirt has faded at the yoke
+// where it sees the light and gone dingy under the arms and over the gut. Three
+// fabrics that no longer match is what a uniform looks like after a decade, and
+// it costs nothing but three hex values.
 const C = {
   shirt: 0x93a9c6, shirtSh: 0x7c92b0, shirtDk: 0x63779a, shirtHem: 0x53668a,
+  shirtFade: 0xa6b8cd,             // the yoke, sun-bleached a shade lighter
+  vest: 0xd6d3ca,                  // the undershirt, seen through the gaps
   navy: 0x232c40, navyDk: 0x161d2c, brim: 0x0e1320,
-  trouser: 0x2a3145, stripe: 0x0c0f18,
+  salt: 0x3e465c,                  // the sweat ring dried into the cap serge
+  trouser: 0x343648, stripe: 0x0c0f18,
   skin: 0xd9a481, skinSh: 0xb17d5c, skinDk: 0x8f5f45, lip: 0xb87765,
-  hair: 0x8b8279, hairDk: 0x6e675f, tache: 0x6f6459, eye: 0x33291f,
-  leather: 0x1a1a1f, leatherHi: 0x2b2b32,
+  nose: 0xcf8d70, noseDk: 0xa96450, bag: 0xba8a72, bagDk: 0x9a6a58,
+  hair: 0x8b8279, hairDk: 0x6e675f, tache: 0x7d736a, eye: 0x33291f,
+  leather: 0x1a1a1f, leatherHi: 0x2b2b32, leatherWorn: 0x3c3c45,
   gold: 0xd8be6e, chrome: 0xc6cbd2, steel: 0x8d939b,
   white: 0xffffff, glove: 0x9fd0e0, radio: 0x2a2d33, red: 0xa8352c,
+  stain: 0x8b7a55, stainDk: 0x746343,
 };
 
 // Metal on the cop is not a material, it is a vertex colour on the SAME merged
@@ -656,45 +722,78 @@ function copHead(THREE, S) {
   for (const s of [1, -1]) {
     P.ball(0.026, 0.014, 0.012, [s * 0.042, h + 0.014, 0.086], C.skinSh, { seg: 8, rseg: 4, ...X });
     P.ball(0.015, 0.009, 0.008, [s * 0.042, h + 0.013, 0.093], C.eye, { seg: 6, rseg: 4, ...X });
-    P.box(0.048, 0.012, 0.014, [s * 0.044, h + 0.049, 0.088], C.tache, { r: [0, 0, s * 0.16], ...X });
+    // ROUND 7 — THE BAGS. A puffy ridge under each eye and a soft crease
+    // beneath it. This is the cheapest way to age a face by fifteen years: it
+    // is not wrinkles, it is that the shadow under the eye has VOLUME casting
+    // it. Both are ELLIPSOIDS — the first cut used a box for the crease and at
+    // portrait range it read as a bar of eyeliner, because a hard edge on a
+    // face is always a graphic and never a fold.
+    P.ball(0.028, 0.010, 0.011, [s * 0.043, h - 0.001, 0.087], C.bag, { seg: 8, rseg: 4, ...X });
+    P.ball(0.023, 0.005, 0.007, [s * 0.043, h - 0.011, 0.086], C.bagDk, { seg: 8, rseg: 4, ...X });
+    P.box(0.048, 0.013, 0.014, [s * 0.044, h + 0.049, 0.088], C.tache, { r: [0, 0, s * 0.20], ...X });
   }
 
-  // nose: bridge, tip, nostrils. Slightly bulbous, slightly red.
+  // nose: bridge, tip, nostrils. Bulbous, and it has been red for years — the
+  // colour is the detail, not the geometry.
   P.box(0.026, 0.058, 0.038, [0, h + 0.012, 0.083], C.skin, { r: [0.20, 0, 0], ...X });
-  P.ball(0.026, 0.022, 0.026, [0, h - 0.020, 0.098], C.skin, { seg: 8, rseg: 6, ...X });
+  P.ball(0.029, 0.024, 0.028, [0, h - 0.021, 0.098], C.nose, { seg: 8, rseg: 6, ...X });
   for (const s of [1, -1]) {
-    P.ball(0.011, 0.010, 0.010, [s * 0.021, h - 0.024, 0.090], C.skinSh, { seg: 6, rseg: 4, ...X });
+    P.ball(0.012, 0.011, 0.011, [s * 0.022, h - 0.025, 0.090], C.noseDk, { seg: 6, rseg: 4, ...X });
   }
 
-  // moustache and mouth. Salt and pepper, and it droops.
-  P.box(0.084, 0.020, 0.022, [0, h - 0.048, 0.090], C.tache, { ...X });
+  // Moustache and mouth. Grey, and it needs a trim: wider than his lip, thicker
+  // than it should be, and the ends straggle down past the corners.
+  P.box(0.086, 0.018, 0.023, [0, h - 0.048, 0.090], C.tache, { ...X });
   for (const s of [1, -1]) {
-    P.box(0.021, 0.027, 0.020, [s * 0.041, h - 0.055, 0.087], C.tache, { r: [0, 0, s * 0.42], ...X });
+    P.box(0.021, 0.028, 0.020, [s * 0.041, h - 0.057, 0.087], C.tache, { r: [0, 0, s * 0.52], ...X });
+    P.box(0.011, 0.017, 0.013, [s * 0.049, h - 0.069, 0.083], C.tache, { r: [0, 0, s * 0.66], ...X });
   }
-  P.box(0.046, 0.009, 0.014, [0, h - 0.072, 0.086], C.lip, { ...X });
+  P.box(0.046, 0.009, 0.014, [0, h - 0.074, 0.086], C.lip, { ...X });
 
-  // what hair is left: a grey horseshoe under the cap band, plus sideburns
-  P.ball(0.109, 0.062, 0.112, [0, h + 0.006, -0.008], C.hair, { seg: 12, rseg: 5, ...X });
+  // ---- WHAT HAIR IS LEFT, AND WHERE IT STOPS -----------------------------
+  // Round 6 put a dome over the whole skull, which under a cap is indis-
+  // tinguishable from a full head of hair. The horseshoe is pushed BACK now so
+  // the temples are bare skin, with a heavier mass at the nape spilling over
+  // the collar and a thin wisp at each temple that is doing its best. A
+  // HAIRLINE is the difference between a bald man in a hat and a man whose hair
+  // is going, and only one of those is fifty-five.
+  P.ball(0.107, 0.056, 0.100, [0, h + 0.002, -0.030], C.hair, { seg: 12, rseg: 5, ...X });
+  P.ball(0.090, 0.042, 0.054, [0, h - 0.040, -0.070], C.hairDk, { seg: 10, rseg: 5, ...X });
   for (const s of [1, -1]) {
-    P.box(0.016, 0.052, 0.032, [s * 0.098, h + 0.006, 0.006], C.hairDk, { ...X });
+    P.box(0.013, 0.040, 0.038, [s * 0.101, h + 0.010, -0.008], C.hair, { r: [0, 0, s * 0.10], ...X });
+    P.box(0.016, 0.056, 0.030, [s * 0.098, h - 0.020, 0.004], C.hairDk, { ...X });
   }
 
   // ---- the cap ----------------------------------------------------------
+  // It is the newest thing he owns and it is still ruined: a salt ring dried
+  // into the serge above the band, and a brim he has bent down and slightly
+  // sideways over about four thousand shifts. The bend is worth the two numbers
+  // it costs — a level brim is a brand-new cap, and nothing else on him is.
   const K = { uv: uvOf('capcloth') };
   P.taper(0.116, 0.132, 0.084, [0, h + 0.142, -0.004], C.navy, { seg: 14, ...K });
   P.ball(0.116, 0.038, 0.112, [0, h + 0.182, -0.004], C.navy, { seg: 14, rseg: 5, ...K });
+  P.tube(0.129, 0.026, [0, h + 0.127, -0.004], C.salt, { seg: 14, ...K });
   P.tube(0.135, 0.042, [0, h + 0.098, -0.004], C.navyDk, { seg: 14, ...K });
-  P.half(0.156, 0.015, [0, h + 0.082, 0.022], C.brim, { r: [0.24, 0, 0], seg: 16, uv: uvOf('shoe') });
-  P.half(0.156, 0.008, [0, h + 0.074, 0.022], C.navyDk, { r: [0.24, 0, 0], seg: 16, ...K });
+  // THE BRIM PITCH IS SET AGAINST `stoop`, NOT IN ISOLATION — a lesson this
+  // cost a render to learn. Round 6 used 0.24 with the head carried at 0.09; at
+  // round 7's 0.19 slump the head is already tipped 6 degrees further forward,
+  // so 0.32 put the brim across his eye line and he had no face at all. 0.19
+  // plus a 3-degree ROLL is the same read (a cap bent down and slightly
+  // sideways over four thousand shifts) with the eyes still in it, and the eyes
+  // are what round 1 was fought over.
+  P.half(0.157, 0.015, [0, h + 0.081, 0.022], C.brim, { r: [0.19, 0, 0.055], seg: 16, uv: uvOf('shoe') });
+  P.half(0.157, 0.008, [0, h + 0.073, 0.022], C.navyDk, { r: [0.19, 0, 0.055], seg: 16, ...K });
   return mergeParts(THREE, P.L);
 }
 
 // The metal on his head: cap shield and the gold chinstrap he never uses.
 function copHeadKit(THREE, S) {
   const P = partList(THREE, S), h = FIG.headY, X = { uv: uvOf('flat') };
-  P.box(0.150, 0.009, 0.011, [0, h + 0.088, 0.113], C.gold, { r: [0.24, 0, 0], ...X });
+  // The chinstrap follows the brim, so its pitch has to move with the bend or
+  // it floats off the front of a cap that is now steeper than it was.
+  P.box(0.150, 0.009, 0.011, [0, h + 0.086, 0.113], C.gold, { r: [0.19, 0, 0.055], ...X });
   for (const s of [1, -1]) {
-    P.tube(0.010, 0.007, [s * 0.088, h + 0.096, 0.086], C.gold, { r: [Math.PI / 2, 0, 0], seg: 6, ...X });
+    P.tube(0.010, 0.007, [s * 0.088, h + 0.094, 0.086], C.gold, { r: [Math.PI / 2, 0, 0], seg: 6, ...X });
   }
   P.box(0.052, 0.046, 0.012, [0, h + 0.108, 0.120], C.gold, { r: [0.06, 0, 0], ...X });
   P.cone(0.026, 0.030, [0, h + 0.077, 0.120], C.gold, { r: [Math.PI, 0, 0], seg: 6, ...X });
@@ -708,25 +807,45 @@ function copHeadKit(THREE, S) {
 // mic cord — can ask the surface where it is instead of guessing. The first
 // build guessed, and a pocket flap two centimetres proud of a chest reads, at
 // any distance at all, as a slab hanging in mid-air next to a man.
+//
+// ROUND 7 — A GUT THAT HANGS, WHICH IS A DIFFERENT SHAPE FROM A BIG ONE.
+// The note was "he should really look fat and beaten up", and the first thing
+// that means is that the widest part of him is not a sphere centred on his
+// navel. On a heavy man in a duty belt the strap goes UNDER the overhang, so
+// the profile from the side is: narrow at the belt, wide 60 mm above it, and
+// the 40 mm between them is nearly vertical because that is fabric hanging over
+// leather. Round 6 had the apex 100 mm above the belt and 10 mm proud of it,
+// which reads as a barrel with a band round it. Now the apex is 88 mm proud in
+// cz and the ring the belt actually sits on is NARROWER than the belt itself,
+// so the strap disappears under him. That trade is worth having at both scales:
+// at 214 px what survives is that the dark waist notch is BELOW the widest part
+// of the light band instead of through the middle of it.
 const SHIRT_RINGS = [
   { y: -0.040, rx: 0.030, rz: 0.026, cz: 0.012, c: 'shirtHem' },
-  { y: -0.015, rx: 0.196, rz: 0.166, cz: 0.012, c: 'shirtHem' },
-  { y: 0.020, rx: 0.220, rz: 0.186, cz: 0.014, c: 'shirtHem' },
-  // The tuck. Everything below is under the belt, everything above hangs over
-  // it, and this pinch IS the silhouette. Without it he is a barrel with a
-  // black band painted round the widest part.
-  { y: 0.062, rx: 0.230, rz: 0.196, cz: 0.024, c: 'shirtDk' },
-  { y: 0.100, rx: 0.248, rz: 0.212, cz: 0.036, c: 'shirt' },
-  { y: 0.145, rx: 0.258, rz: 0.224, cz: 0.048, c: 'shirt' },
-  { y: 0.195, rx: 0.258, rz: 0.224, cz: 0.048, c: 'shirt' },
-  { y: 0.245, rx: 0.250, rz: 0.212, cz: 0.040, c: 'shirt' },
-  { y: 0.300, rx: 0.238, rz: 0.196, cz: 0.028, c: 'shirt' },
-  { y: 0.355, rx: 0.228, rz: 0.186, cz: 0.012, c: 'shirt' },
-  { y: 0.410, rx: 0.224, rz: 0.180, cz: -0.002, c: 'shirt' },
-  { y: 0.455, rx: 0.218, rz: 0.172, cz: -0.012, c: 'shirt' },
-  { y: 0.487, rx: 0.188, rz: 0.152, cz: -0.016, c: 'shirtSh' },
-  { y: 0.510, rx: 0.132, rz: 0.116, cz: -0.014, c: 'shirtSh' },
-  { y: 0.528, rx: 0.088, rz: 0.082, cz: -0.010, c: 'shirtSh' },
+  { y: -0.015, rx: 0.196, rz: 0.166, cz: 0.014, c: 'shirtHem' },
+  { y: 0.014, rx: 0.214, rz: 0.182, cz: 0.018, c: 'shirtHem' },
+  // THE BITE. The belt (BELT_RX 0.238) is WIDER than the shirt here, so the
+  // strap sits under the overhang and not on top of it.
+  { y: 0.048, rx: 0.220, rz: 0.188, cz: 0.028, c: 'shirtHem' },
+  // ...and this is the hang: 60 mm of near-vertical fabric coming back out
+  // over the top of the strap.
+  // Only the LOWEST hang ring is darkened. Two dark rings put a ruled
+  // horizontal line the full width of him under the gut, and from the front
+  // that reads as the hem of an apron rather than as the shadow under an
+  // overhang. One ring, and the rest of the shading is the light's job.
+  { y: 0.076, rx: 0.254, rz: 0.226, cz: 0.058, c: 'shirtDk' },
+  { y: 0.104, rx: 0.273, rz: 0.245, cz: 0.076, c: 'shirt' },
+  { y: 0.134, rx: 0.281, rz: 0.253, cz: 0.086, c: 'shirt' },   // apex, and it is LOW
+  { y: 0.172, rx: 0.278, rz: 0.246, cz: 0.080, c: 'shirt' },
+  { y: 0.212, rx: 0.268, rz: 0.231, cz: 0.066, c: 'shirt' },
+  { y: 0.256, rx: 0.255, rz: 0.213, cz: 0.050, c: 'shirt' },
+  { y: 0.300, rx: 0.242, rz: 0.198, cz: 0.032, c: 'shirt' },
+  { y: 0.355, rx: 0.230, rz: 0.187, cz: 0.013, c: 'shirt' },
+  { y: 0.410, rx: 0.226, rz: 0.181, cz: -0.002, c: 'shirtFade' },
+  { y: 0.455, rx: 0.222, rz: 0.174, cz: -0.014, c: 'shirtFade' },
+  { y: 0.487, rx: 0.192, rz: 0.154, cz: -0.018, c: 'shirtFade' },
+  { y: 0.510, rx: 0.134, rz: 0.117, cz: -0.016, c: 'shirtSh' },
+  { y: 0.528, rx: 0.089, rz: 0.083, cz: -0.011, c: 'shirtSh' },
   { y: 0.538, rx: 0.032, rz: 0.030, cz: -0.008, c: 'shirtSh' },
 ];
 // The ring at height y, linearly blended.
@@ -777,27 +896,59 @@ function copTorso(THREE, S) {
     m: new THREE.Matrix4(),
   });
 
-  // Round shoulders and a bit of upper back. The brief asks for a man who is
-  // recognisable from behind at 7 m and this is most of that read.
-  P.ball(0.164, 0.080, 0.068, [0, FIG.shoulderY - 0.004, -0.104], C.shirtSh, { seg: 12, rseg: 6, ...F });
-  P.ball(0.094, 0.062, 0.050, [0, FIG.shoulderY + 0.042, -0.044], C.shirtSh, { seg: 8, rseg: 5, ...F });
+  // Round shoulders, upper back, and — round 7 — the roll at the base of the
+  // neck. The brief asks for a man who is recognisable from behind at 7 m, and
+  // a rounded upper back plus a chin sunk into the collar is most of that read.
+  // It is also the half of "beaten up" that survives the monitor feed, because
+  // it changes the TOP of the light band from a square shelf into a slump.
+  P.ball(0.178, 0.094, 0.084, [0, FIG.shoulderY - 0.008, -0.112], C.shirtSh, { seg: 12, rseg: 6, ...F });
+  P.ball(0.110, 0.078, 0.064, [0, FIG.shoulderY + 0.046, -0.062], C.shirtSh, { seg: 10, rseg: 5, ...F });
+  P.ball(0.074, 0.050, 0.046, [0, FIG.shoulderY + 0.064, -0.046], C.shirtSh, { seg: 8, rseg: 5, ...F });
 
-  // The collar. A stand round the throat and two points lying ON the chest.
-  P.tube(0.088, 0.070, [0, FIG.neckY + 0.020, -0.006], C.shirtSh, { seg: 12, ...F });
+  // The collar. A stand round the throat and two points lying ON the chest —
+  // and the stand has GIVEN UP: it is shorter than it was, it does not sit
+  // level, and the two points curl by different amounts because one of them has
+  // been ironed flat more times than the other. Asymmetry is the whole trick
+  // with worn clothing; a symmetrically ruined collar reads as a design.
+  P.tube(0.090, 0.062, [0, FIG.neckY + 0.014, -0.008], C.shirtSh, { seg: 12, r: [0.06, 0, 0.03], ...F });
   for (const s of [1, -1]) {
-    const f = onShirt(s * 0.052, 0.501, 0.058);
-    P.box(0.070, 0.014, 0.058, [f.p[0], f.p[1], f.p[2] - 0.010],
-      C.shirtSh, { r: [f.r[0] + 0.34, f.r[1], s * -0.28], ...F });
+    const f = onShirt(s * 0.052, 0.499, 0.058);
+    P.box(0.072, 0.013, 0.060, [f.p[0], f.p[1] - (s > 0 ? 0.004 : 0), f.p[2] - 0.010],
+      C.shirtSh, { r: [f.r[0] + (s > 0 ? 0.48 : 0.28), f.r[1], s * -0.28 - 0.06], ...F });
   }
-  // Placket and buttons. Sunk 4 mm so only the proud face shows.
+  // Placket and buttons. Sunk 4 mm so only the proud face shows. Six of them,
+  // and the bottom one now lands just above the belt rather than behind the
+  // buckle, because the gut moved.
   for (let i = 0; i < 6; i++) {
-    const y = 0.432 - i * 0.074;
-    const f = onShirt(0, y, 0.078);
-    P.box(0.048, 0.078, 0.016, [f.p[0], f.p[1], f.p[2] - 0.005], C.shirtSh, { r: f.r, ...F });
-    const b = onShirt(0, y - 0.030, 0.02);
+    const y = 0.454 - i * 0.070;
+    const f = onShirt(0, y, 0.074);
+    P.box(0.048, 0.074, 0.016, [f.p[0], f.p[1], f.p[2] - 0.005], C.shirtSh, { r: f.r, ...F });
+    const b = onShirt(0, y - 0.028, 0.02);
     P.tube(0.011, 0.007, [b.p[0], b.p[1], b.p[2] + 0.005], C.shirtHem,
       { r: [Math.PI / 2 + b.r[0], 0, 0], seg: 6, ...X });
   }
+  // ---- IT DOES NOT FIT AND IT HAS NOT FOR YEARS --------------------------
+  // The three gaps the placket makes when a shirt is worn a size and a half too
+  // small: the fabric pulls apart between the buttons over the widest part of
+  // him and you can see the vest through it. Two parts each — the shadow of the
+  // gap, and the sliver of undershirt at its edge — because a dark slot on its
+  // own reads as a stripe and a light one reads as a stripe the other way. Only
+  // legible in the spot monitor's push-in; it costs six primitives and it is
+  // the single most specific thing on him.
+  for (const gy of [0.139, 0.209, 0.279]) {
+    const g = onShirt(0, gy, 0.038);
+    P.box(0.030, 0.036, 0.012, [g.p[0], g.p[1], g.p[2] - 0.010], C.shirtHem, { r: g.r, ...F });
+    P.box(0.020, 0.030, 0.010, [g.p[0] + 0.004, g.p[1], g.p[2] - 0.011], C.vest, { r: g.r, ...X });
+  }
+  // A stain he has not noticed, low and to one side where a gut catches
+  // everything. Desaturated on purpose: a bright one is a joke and he is not a
+  // joke, he is sincere, which is what makes him funny.
+  const sa = onShirt(0.078, 0.158, 0.05);
+  P.ball(0.026, 0.020, 0.006, [sa.p[0], sa.p[1], sa.p[2] + 0.001], C.stain,
+    { seg: 8, rseg: 5, r: sa.r, ...F });
+  const sb = onShirt(0.050, 0.126, 0.03);
+  P.ball(0.013, 0.011, 0.005, [sb.p[0], sb.p[1], sb.p[2] + 0.001], C.stainDk,
+    { seg: 6, rseg: 4, r: sb.r, ...F });
   // breast pockets with flaps and a pen
   for (const s of [1, -1]) {
     const f = onShirt(s * 0.104, 0.348, 0.090);
@@ -839,6 +990,30 @@ function copTorso(THREE, S) {
 // a gap you could see the floor through, right where a man is widest.
 function copSeat(THREE, S) {
   const P = partList(THREE, S);
+  // ---- ROUND 7: THE TAIL CAME OUT AT THE BACK AND HE HAS NOT NOTICED ------
+  // Three panels of shirt hanging below the belt line behind him, at three
+  // different lengths and three different angles because that is what an
+  // untucked tail does. It lives HERE, on `hips`, and not on `chest` with the
+  // rest of the shirt — deliberately. A tail parented to the chest swings up
+  // 100 mm every time he stoops to get his breath back, and a shirt tail does
+  // not do that; it hangs off the waistband, so it belongs to the pelvis.
+  // This is also the one wear detail that pays at CCTV resolution: it puts a
+  // light spur down into the dark leg band, so the three-band silhouette gets
+  // a ragged join at the back instead of a ruled line.
+  //
+  // IT HANGS OVER THE BACK OF THE HIPS AND NOT DOWN THE SPINE. The first cut
+  // put three panels across the centre back and they covered the radio, the
+  // baton and the keys — the funniest objects on him — and read as sheets of
+  // paper taped to a belt. Two panels, set out at +-2.05 rad so they fall
+  // between the kit, wrapped onto the seat's own curve so they are not flat,
+  // and in the darkest shirt tone so they sit BEHIND everything in value.
+  for (const [th, yc, hh, w, rz, col] of [
+    [2.05, -0.046, 0.128, 0.126, 0.13, C.shirtDk],
+    [-2.28, -0.020, 0.090, 0.104, -0.10, C.shirtHem]]) {
+    const sx = Math.sin(th), cz = Math.cos(th);
+    P.box(w, hh, 0.016, [sx * 0.228, yc, cz * 0.198 + 0.010], col,
+      { r: [0.10, Math.atan2(sx, cz), rz], uv: uvOf('shirt') });
+  }
   P.L.push({
     g: loft(THREE, [
       { y: -0.170, rx: 0.040, rz: 0.048, cz: 0.010, c: C.trouser },
@@ -907,13 +1082,21 @@ function onBelt(th, out, dy) {
 function copBelt(THREE, S) {
   const P = partList(THREE, S);
   const W = { uv: uvOf('weave') }, X = { uv: uvOf('flat') };
-  // the strap itself: 26 flat segments round the ellipse, basketweave-mapped
+  // The strap itself: 26 flat segments round the ellipse, basketweave-mapped.
+  // ROUND 7 — SHINY AT THE WEAR POINTS. Duty leather does not age evenly: it
+  // burnishes where things rub it, which on a fat man is the run either side of
+  // the buckle where his forearms rest and the two spots at the hips where the
+  // holster and the cuff case swing against it. The basketweave cell is tiled
+  // identically across all 26 segments, so wear cannot come from the texture —
+  // it is a vertex colour on seven of them, which costs nothing at all.
   const N = 26;
+  const WORN = new Set([0, 1, 25, 6, 7, 19, 20]);
   for (let i = 0; i < N; i++) {
     const th = (i / N) * Math.PI * 2;
     const b = onBelt(th, 0.004, 0);
     const seg = (Math.PI * 2 / N) * Math.hypot(BELT_RX * Math.cos(th), BELT_RZ * Math.sin(th));
-    P.box(seg * 1.35, 0.062, 0.026, b.p, C.leather, { r: [0, b.y, 0], ...W });
+    P.box(seg * 1.35, 0.062, 0.026, b.p, WORN.has(i) ? C.leatherWorn : C.leather,
+      { r: [0, b.y, 0], ...W });
   }
   // keepers, holding the duty belt to the trouser belt
   for (const th of [0.7, 2.4, -0.7, -2.4]) {
@@ -1030,14 +1213,18 @@ function copLeg(THREE, S, side) {
     P.box(0.013, a[0] - b[0] + 0.006, 0.030,
       [side * (a[1] + b[1]) * 0.5, (a[0] + b[0]) * 0.5, 0.004], C.stripe, { ...X });
   }
-  // the oxford
+  // The oxford, unpolished. The colour is off-black and slightly brown now —
+  // black leather that has not seen a brush in a year goes grey-brown, not
+  // black — and the shine is gone from the atlas cell rather than from here,
+  // so the cap brim (which shares that cell) goes dull with it, which is
+  // correct: they have been neglected by the same man.
   const y = -0.826;
-  P.ball(0.052, 0.036, 0.086, [0, y + 0.010, 0.020], 0x232326, { seg: 10, rseg: 6, uv: uvOf('shoe') });
-  P.ball(0.046, 0.028, 0.056, [0, y + 0.002, 0.078], 0x2b2b2f, { seg: 10, rseg: 6, uv: uvOf('shoe') });
-  P.box(0.100, 0.016, 0.208, [0, y - 0.022, 0.020], 0x1a1a1c, { ...X });        // sole
-  P.box(0.104, 0.008, 0.212, [0, y - 0.012, 0.020], 0x3a3a3e, { ...X });        // welt
-  P.box(0.090, 0.026, 0.062, [0, y - 0.020, -0.056], 0x141416, { ...X });       // heel
-  P.box(0.050, 0.014, 0.052, [0, y + 0.030, 0.016], 0x1c1c1f, { ...X });        // laces
+  P.ball(0.052, 0.036, 0.086, [0, y + 0.010, 0.020], 0x2b2721, { seg: 10, rseg: 6, uv: uvOf('shoe') });
+  P.ball(0.046, 0.028, 0.056, [0, y + 0.002, 0.078], 0x362f28, { seg: 10, rseg: 6, uv: uvOf('shoe') });
+  P.box(0.100, 0.016, 0.208, [0, y - 0.022, 0.020], 0x201d1a, { ...X });        // sole
+  P.box(0.104, 0.008, 0.212, [0, y - 0.012, 0.020], 0x453f38, { ...X });        // welt, gone grey
+  P.box(0.090, 0.026, 0.062, [0, y - 0.020, -0.056], 0x171514, { ...X });       // heel, worn down
+  P.box(0.050, 0.014, 0.052, [0, y + 0.030, 0.016], 0x241f1b, { ...X });        // laces
   return mergeParts(THREE, P.L);
 }
 
@@ -1048,11 +1235,19 @@ function copLeg(THREE, S, side) {
 function copSleeve(THREE, S, side) {
   const P = partList(THREE, S);
   const F = { uv: uvOf('shirt') };
-  P.ball(0.097, 0.076, 0.093, [0, -0.032, 0], C.shirt, { seg: 10, rseg: 7, ...F });
-  P.taper(0.093, 0.081, 0.24, [side * 0.004, -0.142, 0], C.shirt, { seg: 10, ...F });
-  P.tube(0.083, 0.026, [side * 0.004, -0.274, 0], C.shirtDk, { seg: 10, ...F });   // rolled hem
+  // ROUND 7 — THE SLEEVE IS TIGHT ON THE UPPER ARM. The cap of the sleeve is
+  // fuller and the hem is 9 mm narrower than it was, so the band BITES: there
+  // is a bulge of arm above the cuff and another one below it. A short sleeve
+  // that hangs loose belongs to a thin man, and none of the rest of him is.
+  // The cap of the sleeve has to MEET the taper under it or the shoulder grows
+  // a ledge and he is wearing a doublet. 0.096 into a 0.094 top is a seam you
+  // cannot find; the tightness lives at the other end, in the hem.
+  P.ball(0.096, 0.077, 0.094, [0, -0.032, 0], C.shirt, { seg: 10, rseg: 7, ...F });
+  P.taper(0.088, 0.094, 0.235, [side * 0.004, -0.140, 0], C.shirt, { seg: 10, ...F });
+  P.ball(0.083, 0.022, 0.080, [side * 0.004, -0.252, 0], C.shirt, { seg: 10, rseg: 4, ...F });
+  P.tube(0.075, 0.030, [side * 0.004, -0.274, 0], C.shirtDk, { seg: 10, ...F });   // rolled hem
   // shoulder patch, proud of the sleeve, facing outboard
-  P.box(0.006, 0.090, 0.074, [side * 0.094, -0.080, -0.002], C.white,
+  P.box(0.006, 0.090, 0.074, [side * 0.096, -0.080, -0.002], C.white,
     { r: [0, 0, side * -0.06], uv: uvOf('patch') });
   return mergeParts(THREE, P.L);
 }
@@ -1060,7 +1255,8 @@ function copSleeve(THREE, S, side) {
 function copForearm(THREE, S, side) {
   const P = partList(THREE, S);
   const X = { uv: uvOf('flat') };
-  P.ball(0.076, 0.070, 0.074, [0, -0.292, 0], C.skin, { seg: 8, rseg: 6, ...X });
+  // Wider than the cuff above it, so the arm reads as squeezed out of it.
+  P.ball(0.080, 0.072, 0.078, [0, -0.290, 0], C.skin, { seg: 8, rseg: 6, ...X });
   P.taper(0.074, 0.054, 0.22, [side * 0.008, -0.412, 0.004], C.skin, { seg: 10, ...X });
   P.ball(0.050, 0.046, 0.050, [side * 0.010, -0.530, 0.004], C.skin, { seg: 8, rseg: 5, ...X });
   P.ball(0.044, 0.056, 0.056, [side * 0.010, -0.586, 0.012], C.skin, { seg: 8, rseg: 6, ...X });
@@ -1268,7 +1464,10 @@ export function makeCop(THREE, F) {
   beltGrp.add(new THREE.Mesh(F.cop.beltKit, kit));
 
   const neck = new THREE.Group();
-  neck.position.set(0, FIG.neckY, 0.026);        // head carried slightly forward
+  // ROUND 7 — carried further forward and 12 mm lower. A head that sits on top
+  // of the shoulders belongs to somebody with a posture; his is down in the
+  // collar, which is also what makes the jowls and the neck roll do any work.
+  neck.position.set(0, FIG.neckY - 0.012, 0.040);
   chest.add(neck);
   const head = new THREE.Mesh(F.cop.head, uni);
   head.castShadow = true; neck.add(head);
@@ -1290,7 +1489,14 @@ export function makeCop(THREE, F) {
   return {
     root: g, hips, chest, torso, belly, neck, head, legL, legR, armL, armR,
     beltGrp, shirt: uni, pants: uni, kit, leather,
-    hipY: FIG.hipY, stoop: 0.09, cop: true,
+    // `stoop` is BOTH the chest's resting slump and the neck's resting pitch —
+    // see animateCop. 0.09 -> 0.19 is chin-into-the-neck, which round 6 could
+    // not afford because the head was still half inside the torso and dropping
+    // it any further would have buried it again.
+    hipY: FIG.hipY, stoop: 0.19, cop: true,
+    // Where the arms hang from at rest. animateCop rolls them forward off this
+    // as `fatigue` rises, which is the "shoulders round further" note.
+    armZ: 0.010,
   };
 }
 

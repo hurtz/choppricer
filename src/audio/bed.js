@@ -213,8 +213,14 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
   const airTop = tap(srcB, 1);
   const atHP = N(filt(ctx, 'highpass', 3400, 0.5));
   const atHP2 = N(filt(ctx, 'highpass', 4200, 0.6));
-  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, -1));   // was +6. That was the bug.
-  const atLP = N(filt(ctx, 'lowpass', 7600, 0.55));        // air absorption
+  // The first pass at this fix overshot: -1 dB of shelf with the corner at 7600
+  // took 5.6-11.2 kHz down 12.8 dB and everything above 11.2 kHz down 36.8, and
+  // a store with NOTHING above 11 kHz is the round-1 boiler room again from the
+  // other side. The corner went to 9000 and the shelf back to +1, which lands
+  // the audible part of the cut at about 7 dB and leaves the ultrasonic part —
+  // the half that was pure hiss and no room — down where it belongs.
+  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, 1));    // was +6. That was the bug.
+  const atLP = N(filt(ctx, 'lowpass', 9000, 0.55));        // air absorption
   const atLP2 = N(filt(ctx, 'lowpass', 12000, 0.6));       // and the rest of it
   const AT_BASE = 0.150;                                   // was 0.21
   const atG = N(gain(ctx, AT_BASE));
@@ -644,7 +650,7 @@ export function createBed(ctx, room, out, wetOut, rattleBuf) {
                                 + 0.07 * Math.sin(c * 0.0091 + 5.1)), t, 1.3);
     to(atG.gain, AT_BASE * (1 + 0.17 * Math.sin(c * 0.0421 + 0.9)
                               + 0.09 * Math.sin(c * 0.0107 + 3.3)), t, 1.4);
-    to(atLP.frequency, 7600 * (1 + 0.09 * Math.sin(c * 0.0313 + 2.4)), t, 1.6);
+    to(atLP.frequency, 9000 * (1 + 0.09 * Math.sin(c * 0.0313 + 2.4)), t, 1.6);
 
     // --- ballast: a slow random walk of a few hundredths of a hertz, which is
     // exactly what the grid does. The three voices drift past each other and the

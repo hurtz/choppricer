@@ -64743,6 +64743,12 @@ const uvOf = (k) => {
 function copAtlas(THREE) {
   const cv = document.createElement('canvas'); cv.width = cv.height = 512;
   const x = cv.getContext('2d');
+  // Deterministic scatter for the stubble and the capillaries. Math.random()
+  // would have worked — the atlas is baked once at startup and never touches
+  // the sim's seeded stream — but it would make two screenshots of the same
+  // build differ, and screenshots are how this file is reviewed.
+  let _s = 0x2f6f2b19;
+  const rnd = () => (((_s = (_s * 1664525 + 1013904223) >>> 0) >>> 8) / 16777216);
   const cell = (k, f) => {
     const c = CELLS[k]; x.save();
     x.translate(c[0] * 128, c[1] * 128);
@@ -64852,11 +64858,29 @@ function copAtlas(THREE) {
     g.fillStyle = '#e0d06a'; g.fillRect(36, 94, 46, 6);
   });
 
-  cell('shoe', (g) => {                                   // polished toe cap
-    g.fillStyle = '#c8c8c8'; g.fillRect(0, 0, 128, 128);
-    const gr = g.createRadialGradient(52, 44, 4, 64, 64, 78);
-    gr.addColorStop(0, '#ffffff'); gr.addColorStop(0.35, '#d8d8d8'); gr.addColorStop(1, '#8e8e8e');
+  // ROUND 7 — SCUFFED, NOT POLISHED. This cell used to be a clean radial
+  // highlight, i.e. a shoe somebody had shined that morning. Now the highlight
+  // is weak and broken, there are two vamp creases across it (a shoe creases
+  // where the foot bends, always in the same place), and the toe has been
+  // kicked pale. Shared with the cap brim on purpose — the same man neglected
+  // both — and it is the cheapest wear in the file because it is one cell.
+  cell('shoe', (g) => {
+    g.fillStyle = '#a5a29d'; g.fillRect(0, 0, 128, 128);
+    const gr = g.createRadialGradient(54, 40, 6, 64, 64, 86);
+    gr.addColorStop(0, '#d9d6d0'); gr.addColorStop(0.30, '#b4b0aa'); gr.addColorStop(1, '#77746f');
     g.fillStyle = gr; g.fillRect(0, 0, 128, 128);
+    // vamp creases
+    g.strokeStyle = 'rgba(40,36,32,0.34)'; g.lineWidth = 2.6;
+    for (const [y0, y1] of [[54, 62], [70, 76]]) {
+      g.beginPath(); g.moveTo(2, y0); g.quadraticCurveTo(64, y1 + 7, 126, y0 + 2); g.stroke();
+    }
+    // scuffs: pale where the leather has been taken off it
+    g.fillStyle = 'rgba(226,222,214,0.42)';
+    for (const [sx, sy, w, hh] of [[18, 92, 30, 7], [86, 100, 22, 5], [40, 22, 18, 5], [102, 58, 12, 9]]) {
+      g.beginPath(); g.ellipse(sx, sy, w * 0.5, hh * 0.5, 0.3, 0, 7); g.fill();
+    }
+    g.fillStyle = 'rgba(30,27,24,0.30)';
+    g.beginPath(); g.ellipse(64, 118, 46, 9, 0, 0, 7); g.fill();     // dirt at the welt
   });
 
   cell('grip', (g) => {                                   // checkered polymer
@@ -64869,16 +64893,46 @@ function copAtlas(THREE) {
 
   cell('glove', (g) => { g.fillStyle = '#e8f2f6'; g.fillRect(0, 0, 128, 128); });
 
-  // Face detail — stubble on the jaw, a bit of colour in the cheeks. Applied to
-  // the skull ball only; sphere UVs put u=0.25 dead centre on the face.
+  // Face detail — stubble on the jaw, colour in the cheeks, and (round 7) the
+  // broken capillaries. Applied to the skull and jaw balls; sphere UVs put
+  // u=0.25 dead centre on the face and v runs from crown to chin, so the
+  // stubble gradient lands on the jaw on its own.
   cell('face', (g) => {
     g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
-    const gr = g.createLinearGradient(0, 62, 0, 128);
-    gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(1, 'rgba(96,80,72,0.42)');
-    g.fillStyle = gr; g.fillRect(0, 62, 128, 66);            // five o'clock shadow
-    g.fillStyle = 'rgba(214,120,96,0.30)';
-    g.beginPath(); g.ellipse(20, 52, 12, 9, 0, 0, 7); g.fill();
-    g.beginPath(); g.ellipse(44, 52, 12, 9, 0, 0, 7); g.fill();
+    // Stubble: deeper than round 6's and it starts higher up the cheek, because
+    // three days is a different face from five o'clock.
+    const gr = g.createLinearGradient(0, 52, 0, 128);
+    gr.addColorStop(0, 'rgba(255,255,255,0)'); gr.addColorStop(0.45, 'rgba(104,88,78,0.30)');
+    gr.addColorStop(1, 'rgba(84,70,62,0.58)');
+    g.fillStyle = gr; g.fillRect(0, 52, 128, 76);
+    // ...and it is not a smooth wash. Speckle, so it reads as hair rather than
+    // as a tan. SIZE IS THE WHOLE PROBLEM HERE and the first cut got it wrong:
+    // this cell is 128 px and it is stretched over a head that fills a
+    // 1280-wide portrait, so a 1.4 px dot at 0.30 alpha arrives as a 12 px mud
+    // splash. 0.8 px at 0.16, and starting at y=74 so it stays on the jaw
+    // instead of climbing the cheekbones.
+    g.fillStyle = 'rgba(74,62,54,0.16)';
+    for (let i = 0; i < 560; i++) {
+      const yy = 74 + Math.pow(rnd(), 0.8) * 52;
+      g.fillRect(rnd() * 128, yy, 0.8, 0.8);
+    }
+    // Cheeks, ruddier than they were.
+    g.fillStyle = 'rgba(206,104,80,0.26)';
+    g.beginPath(); g.ellipse(20, 50, 13, 10, 0, 0, 7); g.fill();
+    g.beginPath(); g.ellipse(44, 50, 13, 10, 0, 0, 7); g.fill();
+    // BROKEN CAPILLARIES. Short forked threads over the cheeks — the thing that
+    // separates a red face from a weathered one. Same magnification trap as the
+    // stubble: at 0.9 px and 0.42 alpha these arrived as two red slashes beside
+    // his nose. Hairline width, quarter alpha, and half the length.
+    g.strokeStyle = 'rgba(172,74,62,0.20)'; g.lineWidth = 0.5;
+    for (let i = 0; i < 34; i++) {
+      const cx = (i % 2 ? 20 : 44) + (rnd() - 0.5) * 20;
+      const cy = 50 + (rnd() - 0.5) * 15;
+      g.beginPath(); g.moveTo(cx, cy);
+      g.lineTo(cx + (rnd() - 0.5) * 4.5, cy + (rnd() - 0.5) * 4.5);
+      g.lineTo(cx + (rnd() - 0.5) * 7, cy + (rnd() - 0.5) * 6);
+      g.stroke();
+    }
   });
 
   const t = new THREE.CanvasTexture(cv);
@@ -65111,15 +65165,27 @@ function shopperForearm(THREE, S, long, side) {
 // values, and one value is a smudge. Light French blue shirt over near-black
 // trousers gives him three bands — dark cap, light torso, dark legs — and that
 // silhouette survives all the way down to the CCTV feed.
+// ROUND 7 — the wear is mostly in this table, and it is the cheapest half of
+// "beaten up". THE UNIFORM IS NOT ONE UNIFORM: the cap is the newest thing on
+// him and is still properly navy; the trousers were replaced separately, years
+// ago, and have gone grey-brown in the wash; the shirt has faded at the yoke
+// where it sees the light and gone dingy under the arms and over the gut. Three
+// fabrics that no longer match is what a uniform looks like after a decade, and
+// it costs nothing but three hex values.
 const C = {
   shirt: 0x93a9c6, shirtSh: 0x7c92b0, shirtDk: 0x63779a, shirtHem: 0x53668a,
+  shirtFade: 0xa6b8cd,             // the yoke, sun-bleached a shade lighter
+  vest: 0xd6d3ca,                  // the undershirt, seen through the gaps
   navy: 0x232c40, navyDk: 0x161d2c, brim: 0x0e1320,
-  trouser: 0x2a3145, stripe: 0x0c0f18,
+  salt: 0x3e465c,                  // the sweat ring dried into the cap serge
+  trouser: 0x343648, stripe: 0x0c0f18,
   skin: 0xd9a481, skinSh: 0xb17d5c, skinDk: 0x8f5f45, lip: 0xb87765,
-  hair: 0x8b8279, hairDk: 0x6e675f, tache: 0x6f6459, eye: 0x33291f,
-  leather: 0x1a1a1f, leatherHi: 0x2b2b32,
+  nose: 0xcf8d70, noseDk: 0xa96450, bag: 0xba8a72, bagDk: 0x9a6a58,
+  hair: 0x8b8279, hairDk: 0x6e675f, tache: 0x7d736a, eye: 0x33291f,
+  leather: 0x1a1a1f, leatherHi: 0x2b2b32, leatherWorn: 0x3c3c45,
   gold: 0xd8be6e, chrome: 0xc6cbd2, steel: 0x8d939b,
   white: 0xffffff, glove: 0x9fd0e0, radio: 0x2a2d33, red: 0xa8352c,
+  stain: 0x8b7a55, stainDk: 0x746343,
 };
 
 // Metal on the cop is not a material, it is a vertex colour on the SAME merged
@@ -65162,45 +65228,78 @@ function copHead(THREE, S) {
   for (const s of [1, -1]) {
     P.ball(0.026, 0.014, 0.012, [s * 0.042, h + 0.014, 0.086], C.skinSh, { seg: 8, rseg: 4, ...X });
     P.ball(0.015, 0.009, 0.008, [s * 0.042, h + 0.013, 0.093], C.eye, { seg: 6, rseg: 4, ...X });
-    P.box(0.048, 0.012, 0.014, [s * 0.044, h + 0.049, 0.088], C.tache, { r: [0, 0, s * 0.16], ...X });
+    // ROUND 7 — THE BAGS. A puffy ridge under each eye and a soft crease
+    // beneath it. This is the cheapest way to age a face by fifteen years: it
+    // is not wrinkles, it is that the shadow under the eye has VOLUME casting
+    // it. Both are ELLIPSOIDS — the first cut used a box for the crease and at
+    // portrait range it read as a bar of eyeliner, because a hard edge on a
+    // face is always a graphic and never a fold.
+    P.ball(0.028, 0.010, 0.011, [s * 0.043, h - 0.001, 0.087], C.bag, { seg: 8, rseg: 4, ...X });
+    P.ball(0.023, 0.005, 0.007, [s * 0.043, h - 0.011, 0.086], C.bagDk, { seg: 8, rseg: 4, ...X });
+    P.box(0.048, 0.013, 0.014, [s * 0.044, h + 0.049, 0.088], C.tache, { r: [0, 0, s * 0.20], ...X });
   }
 
-  // nose: bridge, tip, nostrils. Slightly bulbous, slightly red.
+  // nose: bridge, tip, nostrils. Bulbous, and it has been red for years — the
+  // colour is the detail, not the geometry.
   P.box(0.026, 0.058, 0.038, [0, h + 0.012, 0.083], C.skin, { r: [0.20, 0, 0], ...X });
-  P.ball(0.026, 0.022, 0.026, [0, h - 0.020, 0.098], C.skin, { seg: 8, rseg: 6, ...X });
+  P.ball(0.029, 0.024, 0.028, [0, h - 0.021, 0.098], C.nose, { seg: 8, rseg: 6, ...X });
   for (const s of [1, -1]) {
-    P.ball(0.011, 0.010, 0.010, [s * 0.021, h - 0.024, 0.090], C.skinSh, { seg: 6, rseg: 4, ...X });
+    P.ball(0.012, 0.011, 0.011, [s * 0.022, h - 0.025, 0.090], C.noseDk, { seg: 6, rseg: 4, ...X });
   }
 
-  // moustache and mouth. Salt and pepper, and it droops.
-  P.box(0.084, 0.020, 0.022, [0, h - 0.048, 0.090], C.tache, { ...X });
+  // Moustache and mouth. Grey, and it needs a trim: wider than his lip, thicker
+  // than it should be, and the ends straggle down past the corners.
+  P.box(0.086, 0.018, 0.023, [0, h - 0.048, 0.090], C.tache, { ...X });
   for (const s of [1, -1]) {
-    P.box(0.021, 0.027, 0.020, [s * 0.041, h - 0.055, 0.087], C.tache, { r: [0, 0, s * 0.42], ...X });
+    P.box(0.021, 0.028, 0.020, [s * 0.041, h - 0.057, 0.087], C.tache, { r: [0, 0, s * 0.52], ...X });
+    P.box(0.011, 0.017, 0.013, [s * 0.049, h - 0.069, 0.083], C.tache, { r: [0, 0, s * 0.66], ...X });
   }
-  P.box(0.046, 0.009, 0.014, [0, h - 0.072, 0.086], C.lip, { ...X });
+  P.box(0.046, 0.009, 0.014, [0, h - 0.074, 0.086], C.lip, { ...X });
 
-  // what hair is left: a grey horseshoe under the cap band, plus sideburns
-  P.ball(0.109, 0.062, 0.112, [0, h + 0.006, -0.008], C.hair, { seg: 12, rseg: 5, ...X });
+  // ---- WHAT HAIR IS LEFT, AND WHERE IT STOPS -----------------------------
+  // Round 6 put a dome over the whole skull, which under a cap is indis-
+  // tinguishable from a full head of hair. The horseshoe is pushed BACK now so
+  // the temples are bare skin, with a heavier mass at the nape spilling over
+  // the collar and a thin wisp at each temple that is doing its best. A
+  // HAIRLINE is the difference between a bald man in a hat and a man whose hair
+  // is going, and only one of those is fifty-five.
+  P.ball(0.107, 0.056, 0.100, [0, h + 0.002, -0.030], C.hair, { seg: 12, rseg: 5, ...X });
+  P.ball(0.090, 0.042, 0.054, [0, h - 0.040, -0.070], C.hairDk, { seg: 10, rseg: 5, ...X });
   for (const s of [1, -1]) {
-    P.box(0.016, 0.052, 0.032, [s * 0.098, h + 0.006, 0.006], C.hairDk, { ...X });
+    P.box(0.013, 0.040, 0.038, [s * 0.101, h + 0.010, -0.008], C.hair, { r: [0, 0, s * 0.10], ...X });
+    P.box(0.016, 0.056, 0.030, [s * 0.098, h - 0.020, 0.004], C.hairDk, { ...X });
   }
 
   // ---- the cap ----------------------------------------------------------
+  // It is the newest thing he owns and it is still ruined: a salt ring dried
+  // into the serge above the band, and a brim he has bent down and slightly
+  // sideways over about four thousand shifts. The bend is worth the two numbers
+  // it costs — a level brim is a brand-new cap, and nothing else on him is.
   const K = { uv: uvOf('capcloth') };
   P.taper(0.116, 0.132, 0.084, [0, h + 0.142, -0.004], C.navy, { seg: 14, ...K });
   P.ball(0.116, 0.038, 0.112, [0, h + 0.182, -0.004], C.navy, { seg: 14, rseg: 5, ...K });
+  P.tube(0.129, 0.026, [0, h + 0.127, -0.004], C.salt, { seg: 14, ...K });
   P.tube(0.135, 0.042, [0, h + 0.098, -0.004], C.navyDk, { seg: 14, ...K });
-  P.half(0.156, 0.015, [0, h + 0.082, 0.022], C.brim, { r: [0.24, 0, 0], seg: 16, uv: uvOf('shoe') });
-  P.half(0.156, 0.008, [0, h + 0.074, 0.022], C.navyDk, { r: [0.24, 0, 0], seg: 16, ...K });
+  // THE BRIM PITCH IS SET AGAINST `stoop`, NOT IN ISOLATION — a lesson this
+  // cost a render to learn. Round 6 used 0.24 with the head carried at 0.09; at
+  // round 7's 0.19 slump the head is already tipped 6 degrees further forward,
+  // so 0.32 put the brim across his eye line and he had no face at all. 0.19
+  // plus a 3-degree ROLL is the same read (a cap bent down and slightly
+  // sideways over four thousand shifts) with the eyes still in it, and the eyes
+  // are what round 1 was fought over.
+  P.half(0.157, 0.015, [0, h + 0.081, 0.022], C.brim, { r: [0.19, 0, 0.055], seg: 16, uv: uvOf('shoe') });
+  P.half(0.157, 0.008, [0, h + 0.073, 0.022], C.navyDk, { r: [0.19, 0, 0.055], seg: 16, ...K });
   return mergeParts(THREE, P.L);
 }
 
 // The metal on his head: cap shield and the gold chinstrap he never uses.
 function copHeadKit(THREE, S) {
   const P = partList(THREE, S), h = FIG.headY, X = { uv: uvOf('flat') };
-  P.box(0.150, 0.009, 0.011, [0, h + 0.088, 0.113], C.gold, { r: [0.24, 0, 0], ...X });
+  // The chinstrap follows the brim, so its pitch has to move with the bend or
+  // it floats off the front of a cap that is now steeper than it was.
+  P.box(0.150, 0.009, 0.011, [0, h + 0.086, 0.113], C.gold, { r: [0.19, 0, 0.055], ...X });
   for (const s of [1, -1]) {
-    P.tube(0.010, 0.007, [s * 0.088, h + 0.096, 0.086], C.gold, { r: [Math.PI / 2, 0, 0], seg: 6, ...X });
+    P.tube(0.010, 0.007, [s * 0.088, h + 0.094, 0.086], C.gold, { r: [Math.PI / 2, 0, 0], seg: 6, ...X });
   }
   P.box(0.052, 0.046, 0.012, [0, h + 0.108, 0.120], C.gold, { r: [0.06, 0, 0], ...X });
   P.cone(0.026, 0.030, [0, h + 0.077, 0.120], C.gold, { r: [Math.PI, 0, 0], seg: 6, ...X });
@@ -65214,25 +65313,45 @@ function copHeadKit(THREE, S) {
 // mic cord — can ask the surface where it is instead of guessing. The first
 // build guessed, and a pocket flap two centimetres proud of a chest reads, at
 // any distance at all, as a slab hanging in mid-air next to a man.
+//
+// ROUND 7 — A GUT THAT HANGS, WHICH IS A DIFFERENT SHAPE FROM A BIG ONE.
+// The note was "he should really look fat and beaten up", and the first thing
+// that means is that the widest part of him is not a sphere centred on his
+// navel. On a heavy man in a duty belt the strap goes UNDER the overhang, so
+// the profile from the side is: narrow at the belt, wide 60 mm above it, and
+// the 40 mm between them is nearly vertical because that is fabric hanging over
+// leather. Round 6 had the apex 100 mm above the belt and 10 mm proud of it,
+// which reads as a barrel with a band round it. Now the apex is 88 mm proud in
+// cz and the ring the belt actually sits on is NARROWER than the belt itself,
+// so the strap disappears under him. That trade is worth having at both scales:
+// at 214 px what survives is that the dark waist notch is BELOW the widest part
+// of the light band instead of through the middle of it.
 const SHIRT_RINGS = [
   { y: -0.040, rx: 0.030, rz: 0.026, cz: 0.012, c: 'shirtHem' },
-  { y: -0.015, rx: 0.196, rz: 0.166, cz: 0.012, c: 'shirtHem' },
-  { y: 0.020, rx: 0.220, rz: 0.186, cz: 0.014, c: 'shirtHem' },
-  // The tuck. Everything below is under the belt, everything above hangs over
-  // it, and this pinch IS the silhouette. Without it he is a barrel with a
-  // black band painted round the widest part.
-  { y: 0.062, rx: 0.230, rz: 0.196, cz: 0.024, c: 'shirtDk' },
-  { y: 0.100, rx: 0.248, rz: 0.212, cz: 0.036, c: 'shirt' },
-  { y: 0.145, rx: 0.258, rz: 0.224, cz: 0.048, c: 'shirt' },
-  { y: 0.195, rx: 0.258, rz: 0.224, cz: 0.048, c: 'shirt' },
-  { y: 0.245, rx: 0.250, rz: 0.212, cz: 0.040, c: 'shirt' },
-  { y: 0.300, rx: 0.238, rz: 0.196, cz: 0.028, c: 'shirt' },
-  { y: 0.355, rx: 0.228, rz: 0.186, cz: 0.012, c: 'shirt' },
-  { y: 0.410, rx: 0.224, rz: 0.180, cz: -0.002, c: 'shirt' },
-  { y: 0.455, rx: 0.218, rz: 0.172, cz: -0.012, c: 'shirt' },
-  { y: 0.487, rx: 0.188, rz: 0.152, cz: -0.016, c: 'shirtSh' },
-  { y: 0.510, rx: 0.132, rz: 0.116, cz: -0.014, c: 'shirtSh' },
-  { y: 0.528, rx: 0.088, rz: 0.082, cz: -0.010, c: 'shirtSh' },
+  { y: -0.015, rx: 0.196, rz: 0.166, cz: 0.014, c: 'shirtHem' },
+  { y: 0.014, rx: 0.214, rz: 0.182, cz: 0.018, c: 'shirtHem' },
+  // THE BITE. The belt (BELT_RX 0.238) is WIDER than the shirt here, so the
+  // strap sits under the overhang and not on top of it.
+  { y: 0.048, rx: 0.220, rz: 0.188, cz: 0.028, c: 'shirtHem' },
+  // ...and this is the hang: 60 mm of near-vertical fabric coming back out
+  // over the top of the strap.
+  // Only the LOWEST hang ring is darkened. Two dark rings put a ruled
+  // horizontal line the full width of him under the gut, and from the front
+  // that reads as the hem of an apron rather than as the shadow under an
+  // overhang. One ring, and the rest of the shading is the light's job.
+  { y: 0.076, rx: 0.254, rz: 0.226, cz: 0.058, c: 'shirtDk' },
+  { y: 0.104, rx: 0.273, rz: 0.245, cz: 0.076, c: 'shirt' },
+  { y: 0.134, rx: 0.281, rz: 0.253, cz: 0.086, c: 'shirt' },   // apex, and it is LOW
+  { y: 0.172, rx: 0.278, rz: 0.246, cz: 0.080, c: 'shirt' },
+  { y: 0.212, rx: 0.268, rz: 0.231, cz: 0.066, c: 'shirt' },
+  { y: 0.256, rx: 0.255, rz: 0.213, cz: 0.050, c: 'shirt' },
+  { y: 0.300, rx: 0.242, rz: 0.198, cz: 0.032, c: 'shirt' },
+  { y: 0.355, rx: 0.230, rz: 0.187, cz: 0.013, c: 'shirt' },
+  { y: 0.410, rx: 0.226, rz: 0.181, cz: -0.002, c: 'shirtFade' },
+  { y: 0.455, rx: 0.222, rz: 0.174, cz: -0.014, c: 'shirtFade' },
+  { y: 0.487, rx: 0.192, rz: 0.154, cz: -0.018, c: 'shirtFade' },
+  { y: 0.510, rx: 0.134, rz: 0.117, cz: -0.016, c: 'shirtSh' },
+  { y: 0.528, rx: 0.089, rz: 0.083, cz: -0.011, c: 'shirtSh' },
   { y: 0.538, rx: 0.032, rz: 0.030, cz: -0.008, c: 'shirtSh' },
 ];
 // The ring at height y, linearly blended.
@@ -65283,27 +65402,59 @@ function copTorso(THREE, S) {
     m: new THREE.Matrix4(),
   });
 
-  // Round shoulders and a bit of upper back. The brief asks for a man who is
-  // recognisable from behind at 7 m and this is most of that read.
-  P.ball(0.164, 0.080, 0.068, [0, FIG.shoulderY - 0.004, -0.104], C.shirtSh, { seg: 12, rseg: 6, ...F });
-  P.ball(0.094, 0.062, 0.050, [0, FIG.shoulderY + 0.042, -0.044], C.shirtSh, { seg: 8, rseg: 5, ...F });
+  // Round shoulders, upper back, and — round 7 — the roll at the base of the
+  // neck. The brief asks for a man who is recognisable from behind at 7 m, and
+  // a rounded upper back plus a chin sunk into the collar is most of that read.
+  // It is also the half of "beaten up" that survives the monitor feed, because
+  // it changes the TOP of the light band from a square shelf into a slump.
+  P.ball(0.178, 0.094, 0.084, [0, FIG.shoulderY - 0.008, -0.112], C.shirtSh, { seg: 12, rseg: 6, ...F });
+  P.ball(0.110, 0.078, 0.064, [0, FIG.shoulderY + 0.046, -0.062], C.shirtSh, { seg: 10, rseg: 5, ...F });
+  P.ball(0.074, 0.050, 0.046, [0, FIG.shoulderY + 0.064, -0.046], C.shirtSh, { seg: 8, rseg: 5, ...F });
 
-  // The collar. A stand round the throat and two points lying ON the chest.
-  P.tube(0.088, 0.070, [0, FIG.neckY + 0.020, -0.006], C.shirtSh, { seg: 12, ...F });
+  // The collar. A stand round the throat and two points lying ON the chest —
+  // and the stand has GIVEN UP: it is shorter than it was, it does not sit
+  // level, and the two points curl by different amounts because one of them has
+  // been ironed flat more times than the other. Asymmetry is the whole trick
+  // with worn clothing; a symmetrically ruined collar reads as a design.
+  P.tube(0.090, 0.062, [0, FIG.neckY + 0.014, -0.008], C.shirtSh, { seg: 12, r: [0.06, 0, 0.03], ...F });
   for (const s of [1, -1]) {
-    const f = onShirt(s * 0.052, 0.501, 0.058);
-    P.box(0.070, 0.014, 0.058, [f.p[0], f.p[1], f.p[2] - 0.010],
-      C.shirtSh, { r: [f.r[0] + 0.34, f.r[1], s * -0.28], ...F });
+    const f = onShirt(s * 0.052, 0.499, 0.058);
+    P.box(0.072, 0.013, 0.060, [f.p[0], f.p[1] - (s > 0 ? 0.004 : 0), f.p[2] - 0.010],
+      C.shirtSh, { r: [f.r[0] + (s > 0 ? 0.48 : 0.28), f.r[1], s * -0.28 - 0.06], ...F });
   }
-  // Placket and buttons. Sunk 4 mm so only the proud face shows.
+  // Placket and buttons. Sunk 4 mm so only the proud face shows. Six of them,
+  // and the bottom one now lands just above the belt rather than behind the
+  // buckle, because the gut moved.
   for (let i = 0; i < 6; i++) {
-    const y = 0.432 - i * 0.074;
-    const f = onShirt(0, y, 0.078);
-    P.box(0.048, 0.078, 0.016, [f.p[0], f.p[1], f.p[2] - 0.005], C.shirtSh, { r: f.r, ...F });
-    const b = onShirt(0, y - 0.030, 0.02);
+    const y = 0.454 - i * 0.070;
+    const f = onShirt(0, y, 0.074);
+    P.box(0.048, 0.074, 0.016, [f.p[0], f.p[1], f.p[2] - 0.005], C.shirtSh, { r: f.r, ...F });
+    const b = onShirt(0, y - 0.028, 0.02);
     P.tube(0.011, 0.007, [b.p[0], b.p[1], b.p[2] + 0.005], C.shirtHem,
       { r: [Math.PI / 2 + b.r[0], 0, 0], seg: 6, ...X });
   }
+  // ---- IT DOES NOT FIT AND IT HAS NOT FOR YEARS --------------------------
+  // The three gaps the placket makes when a shirt is worn a size and a half too
+  // small: the fabric pulls apart between the buttons over the widest part of
+  // him and you can see the vest through it. Two parts each — the shadow of the
+  // gap, and the sliver of undershirt at its edge — because a dark slot on its
+  // own reads as a stripe and a light one reads as a stripe the other way. Only
+  // legible in the spot monitor's push-in; it costs six primitives and it is
+  // the single most specific thing on him.
+  for (const gy of [0.139, 0.209, 0.279]) {
+    const g = onShirt(0, gy, 0.038);
+    P.box(0.030, 0.036, 0.012, [g.p[0], g.p[1], g.p[2] - 0.010], C.shirtHem, { r: g.r, ...F });
+    P.box(0.020, 0.030, 0.010, [g.p[0] + 0.004, g.p[1], g.p[2] - 0.011], C.vest, { r: g.r, ...X });
+  }
+  // A stain he has not noticed, low and to one side where a gut catches
+  // everything. Desaturated on purpose: a bright one is a joke and he is not a
+  // joke, he is sincere, which is what makes him funny.
+  const sa = onShirt(0.078, 0.158, 0.05);
+  P.ball(0.026, 0.020, 0.006, [sa.p[0], sa.p[1], sa.p[2] + 0.001], C.stain,
+    { seg: 8, rseg: 5, r: sa.r, ...F });
+  const sb = onShirt(0.050, 0.126, 0.03);
+  P.ball(0.013, 0.011, 0.005, [sb.p[0], sb.p[1], sb.p[2] + 0.001], C.stainDk,
+    { seg: 6, rseg: 4, r: sb.r, ...F });
   // breast pockets with flaps and a pen
   for (const s of [1, -1]) {
     const f = onShirt(s * 0.104, 0.348, 0.090);
@@ -65345,6 +65496,30 @@ function copTorso(THREE, S) {
 // a gap you could see the floor through, right where a man is widest.
 function copSeat(THREE, S) {
   const P = partList(THREE, S);
+  // ---- ROUND 7: THE TAIL CAME OUT AT THE BACK AND HE HAS NOT NOTICED ------
+  // Three panels of shirt hanging below the belt line behind him, at three
+  // different lengths and three different angles because that is what an
+  // untucked tail does. It lives HERE, on `hips`, and not on `chest` with the
+  // rest of the shirt — deliberately. A tail parented to the chest swings up
+  // 100 mm every time he stoops to get his breath back, and a shirt tail does
+  // not do that; it hangs off the waistband, so it belongs to the pelvis.
+  // This is also the one wear detail that pays at CCTV resolution: it puts a
+  // light spur down into the dark leg band, so the three-band silhouette gets
+  // a ragged join at the back instead of a ruled line.
+  //
+  // IT HANGS OVER THE BACK OF THE HIPS AND NOT DOWN THE SPINE. The first cut
+  // put three panels across the centre back and they covered the radio, the
+  // baton and the keys — the funniest objects on him — and read as sheets of
+  // paper taped to a belt. Two panels, set out at +-2.05 rad so they fall
+  // between the kit, wrapped onto the seat's own curve so they are not flat,
+  // and in the darkest shirt tone so they sit BEHIND everything in value.
+  for (const [th, yc, hh, w, rz, col] of [
+    [2.05, -0.046, 0.128, 0.126, 0.13, C.shirtDk],
+    [-2.28, -0.020, 0.090, 0.104, -0.10, C.shirtHem]]) {
+    const sx = Math.sin(th), cz = Math.cos(th);
+    P.box(w, hh, 0.016, [sx * 0.228, yc, cz * 0.198 + 0.010], col,
+      { r: [0.10, Math.atan2(sx, cz), rz], uv: uvOf('shirt') });
+  }
   P.L.push({
     g: loft(THREE, [
       { y: -0.170, rx: 0.040, rz: 0.048, cz: 0.010, c: C.trouser },
@@ -65413,13 +65588,21 @@ function onBelt(th, out, dy) {
 function copBelt(THREE, S) {
   const P = partList(THREE, S);
   const W = { uv: uvOf('weave') }, X = { uv: uvOf('flat') };
-  // the strap itself: 26 flat segments round the ellipse, basketweave-mapped
+  // The strap itself: 26 flat segments round the ellipse, basketweave-mapped.
+  // ROUND 7 — SHINY AT THE WEAR POINTS. Duty leather does not age evenly: it
+  // burnishes where things rub it, which on a fat man is the run either side of
+  // the buckle where his forearms rest and the two spots at the hips where the
+  // holster and the cuff case swing against it. The basketweave cell is tiled
+  // identically across all 26 segments, so wear cannot come from the texture —
+  // it is a vertex colour on seven of them, which costs nothing at all.
   const N = 26;
+  const WORN = new Set([0, 1, 25, 6, 7, 19, 20]);
   for (let i = 0; i < N; i++) {
     const th = (i / N) * Math.PI * 2;
     const b = onBelt(th, 0.004, 0);
     const seg = (Math.PI * 2 / N) * Math.hypot(BELT_RX * Math.cos(th), BELT_RZ * Math.sin(th));
-    P.box(seg * 1.35, 0.062, 0.026, b.p, C.leather, { r: [0, b.y, 0], ...W });
+    P.box(seg * 1.35, 0.062, 0.026, b.p, WORN.has(i) ? C.leatherWorn : C.leather,
+      { r: [0, b.y, 0], ...W });
   }
   // keepers, holding the duty belt to the trouser belt
   for (const th of [0.7, 2.4, -0.7, -2.4]) {
@@ -65536,14 +65719,18 @@ function copLeg(THREE, S, side) {
     P.box(0.013, a[0] - b[0] + 0.006, 0.030,
       [side * (a[1] + b[1]) * 0.5, (a[0] + b[0]) * 0.5, 0.004], C.stripe, { ...X });
   }
-  // the oxford
+  // The oxford, unpolished. The colour is off-black and slightly brown now —
+  // black leather that has not seen a brush in a year goes grey-brown, not
+  // black — and the shine is gone from the atlas cell rather than from here,
+  // so the cap brim (which shares that cell) goes dull with it, which is
+  // correct: they have been neglected by the same man.
   const y = -0.826;
-  P.ball(0.052, 0.036, 0.086, [0, y + 0.010, 0.020], 0x232326, { seg: 10, rseg: 6, uv: uvOf('shoe') });
-  P.ball(0.046, 0.028, 0.056, [0, y + 0.002, 0.078], 0x2b2b2f, { seg: 10, rseg: 6, uv: uvOf('shoe') });
-  P.box(0.100, 0.016, 0.208, [0, y - 0.022, 0.020], 0x1a1a1c, { ...X });        // sole
-  P.box(0.104, 0.008, 0.212, [0, y - 0.012, 0.020], 0x3a3a3e, { ...X });        // welt
-  P.box(0.090, 0.026, 0.062, [0, y - 0.020, -0.056], 0x141416, { ...X });       // heel
-  P.box(0.050, 0.014, 0.052, [0, y + 0.030, 0.016], 0x1c1c1f, { ...X });        // laces
+  P.ball(0.052, 0.036, 0.086, [0, y + 0.010, 0.020], 0x2b2721, { seg: 10, rseg: 6, uv: uvOf('shoe') });
+  P.ball(0.046, 0.028, 0.056, [0, y + 0.002, 0.078], 0x362f28, { seg: 10, rseg: 6, uv: uvOf('shoe') });
+  P.box(0.100, 0.016, 0.208, [0, y - 0.022, 0.020], 0x201d1a, { ...X });        // sole
+  P.box(0.104, 0.008, 0.212, [0, y - 0.012, 0.020], 0x453f38, { ...X });        // welt, gone grey
+  P.box(0.090, 0.026, 0.062, [0, y - 0.020, -0.056], 0x171514, { ...X });       // heel, worn down
+  P.box(0.050, 0.014, 0.052, [0, y + 0.030, 0.016], 0x241f1b, { ...X });        // laces
   return mergeParts(THREE, P.L);
 }
 
@@ -65554,11 +65741,19 @@ function copLeg(THREE, S, side) {
 function copSleeve(THREE, S, side) {
   const P = partList(THREE, S);
   const F = { uv: uvOf('shirt') };
-  P.ball(0.097, 0.076, 0.093, [0, -0.032, 0], C.shirt, { seg: 10, rseg: 7, ...F });
-  P.taper(0.093, 0.081, 0.24, [side * 0.004, -0.142, 0], C.shirt, { seg: 10, ...F });
-  P.tube(0.083, 0.026, [side * 0.004, -0.274, 0], C.shirtDk, { seg: 10, ...F });   // rolled hem
+  // ROUND 7 — THE SLEEVE IS TIGHT ON THE UPPER ARM. The cap of the sleeve is
+  // fuller and the hem is 9 mm narrower than it was, so the band BITES: there
+  // is a bulge of arm above the cuff and another one below it. A short sleeve
+  // that hangs loose belongs to a thin man, and none of the rest of him is.
+  // The cap of the sleeve has to MEET the taper under it or the shoulder grows
+  // a ledge and he is wearing a doublet. 0.096 into a 0.094 top is a seam you
+  // cannot find; the tightness lives at the other end, in the hem.
+  P.ball(0.096, 0.077, 0.094, [0, -0.032, 0], C.shirt, { seg: 10, rseg: 7, ...F });
+  P.taper(0.088, 0.094, 0.235, [side * 0.004, -0.140, 0], C.shirt, { seg: 10, ...F });
+  P.ball(0.083, 0.022, 0.080, [side * 0.004, -0.252, 0], C.shirt, { seg: 10, rseg: 4, ...F });
+  P.tube(0.075, 0.030, [side * 0.004, -0.274, 0], C.shirtDk, { seg: 10, ...F });   // rolled hem
   // shoulder patch, proud of the sleeve, facing outboard
-  P.box(0.006, 0.090, 0.074, [side * 0.094, -0.080, -0.002], C.white,
+  P.box(0.006, 0.090, 0.074, [side * 0.096, -0.080, -0.002], C.white,
     { r: [0, 0, side * -0.06], uv: uvOf('patch') });
   return mergeParts(THREE, P.L);
 }
@@ -65566,7 +65761,8 @@ function copSleeve(THREE, S, side) {
 function copForearm(THREE, S, side) {
   const P = partList(THREE, S);
   const X = { uv: uvOf('flat') };
-  P.ball(0.076, 0.070, 0.074, [0, -0.292, 0], C.skin, { seg: 8, rseg: 6, ...X });
+  // Wider than the cuff above it, so the arm reads as squeezed out of it.
+  P.ball(0.080, 0.072, 0.078, [0, -0.290, 0], C.skin, { seg: 8, rseg: 6, ...X });
   P.taper(0.074, 0.054, 0.22, [side * 0.008, -0.412, 0.004], C.skin, { seg: 10, ...X });
   P.ball(0.050, 0.046, 0.050, [side * 0.010, -0.530, 0.004], C.skin, { seg: 8, rseg: 5, ...X });
   P.ball(0.044, 0.056, 0.056, [side * 0.010, -0.586, 0.012], C.skin, { seg: 8, rseg: 6, ...X });
@@ -65774,7 +65970,10 @@ function makeCop(THREE, F) {
   beltGrp.add(new THREE.Mesh(F.cop.beltKit, kit));
 
   const neck = new THREE.Group();
-  neck.position.set(0, FIG.neckY, 0.026);        // head carried slightly forward
+  // ROUND 7 — carried further forward and 12 mm lower. A head that sits on top
+  // of the shoulders belongs to somebody with a posture; his is down in the
+  // collar, which is also what makes the jowls and the neck roll do any work.
+  neck.position.set(0, FIG.neckY - 0.012, 0.040);
   chest.add(neck);
   const head = new THREE.Mesh(F.cop.head, uni);
   head.castShadow = true; neck.add(head);
@@ -65796,7 +65995,14 @@ function makeCop(THREE, F) {
   return {
     root: g, hips, chest, torso, belly, neck, head, legL, legR, armL, armR,
     beltGrp, shirt: uni, pants: uni, kit, leather,
-    hipY: FIG.hipY, stoop: 0.09, cop: true,
+    // `stoop` is BOTH the chest's resting slump and the neck's resting pitch —
+    // see animateCop. 0.09 -> 0.19 is chin-into-the-neck, which round 6 could
+    // not afford because the head was still half inside the torso and dropping
+    // it any further would have buried it again.
+    hipY: FIG.hipY, stoop: 0.19, cop: true,
+    // Where the arms hang from at rest. animateCop rolls them forward off this
+    // as `fatigue` rises, which is the "shoulders round further" note.
+    armZ: 0.010,
   };
 }
 
@@ -65810,9 +66016,32 @@ const M_src_agents_decoy_js = (() => {
 // store, guilty and innocent, drawn by ONE function.
 //
 //   GESTURES              the table. Each entry is a keyframed clip.
-//   pickGesture(rng, k)   roll one of a kind: 'steal' | 'decoy' | 'putback'
+//   pickGesture(rng, k)   roll one of a kind: 'steal' | 'decoy' | 'putback' | 'react'
 //   applyGesture(o, g, u) sample clip `g` at u in 0..1 -> a pose object
 //   POSE                  the neutral pose, for reference
+//
+// ---------------------------------------------------------------------------
+// ROUND 7 — THE REACT POOL. "HEY, PUT THAT BACK."
+//
+// The client wants to say it over the PA at somebody he is watching: "they look
+// around, like, 'what the fuck?' ... they might reconsider, they might put it
+// back, and then just leave the store peacefully."
+//
+// That is TWO reactions and they must not be two code paths, for the same
+// reason the steal is entry zero of this table rather than a special case. So:
+//   - a subject who HEEDS the call plays `putback` — the existing clip, the one
+//     already used by a thief balking at a posted guard. An innocent who is
+//     embarrassed into putting a box back plays THE SAME ONE. A put-back is
+//     therefore not a confession; see K.annSpook in agents.js.
+//   - a subject who does NOT plays one of the three `react` clips below: heads
+//     up, shoulder check, a look at the ceiling for the speaker, a shrug, and
+//     back to the shelf. A guilty man who decides to brazen it out plays these
+//     too, and so does every bystander in earshot.
+// `tell: 'react'` keeps them out of the DECOY pool ON PURPOSE — pickGesture's
+// modulo over seven decoys is what round 6's whole distribution was measured
+// on, and quietly making it eight would have moved every number in the file.
+// They are only ever started by id, which costs no rng at all.
+// ---------------------------------------------------------------------------
 //
 // ---------------------------------------------------------------------------
 // WHY THIS FILE EXISTS, AND WHY IT IS NOT IN agents.js
@@ -65855,8 +66084,10 @@ const M_src_agents_decoy_js = (() => {
 // reach a material, a scale, a duration or a colour. If a decoy is 2.0 s and
 // every steal is 1.9 s, the durations ARE the tell and a player with a
 // stopwatch beats the game. So the durations overlap on purpose: steals run
-// 1.75-2.60 s, decoys 1.60-2.70 s, and the shortest clip in the file is a
-// decoy while the longest is also a decoy.
+// 1.75-2.60 s, decoys 1.60-2.70 s, and the shortest SPONTANEOUS clip in the
+// file is a decoy while the longest is also a decoy. (Round 7's react clips
+// are 1.55-2.75 s and bracket both pools, but nothing rolls one by accident —
+// they only ever play in answer to the PA, so they are not in that contest.)
 // ---------------------------------------------------------------------------
 
 // Neutral. Anything a clip does not mention returns to this.
@@ -66074,15 +66305,78 @@ const GESTURES = [
       kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16 }),
     ],
   },
+
+  // =========================================================================
+  // ROUND 7 — WHAT SOMEBODY DOES WHEN A VOICE SAYS THEIR NAME OVER THE PA AND
+  // THEY CANNOT SEE WHO SAID IT. Three of them, because one look-around played
+  // by every body in the store is a silhouette to learn rather than a reaction
+  // to read. NONE of them contains an object, a reach or a concealment: the
+  // information a player is allowed to take off a react clip is "he heard it",
+  // never "he did it". The clip a HEEDING subject plays is `putback` above, and
+  // innocents play that one too.
+  // =========================================================================
+  {
+    // THE CEILING CHECK. Head comes up off the shelf, one shoulder check, then
+    // he looks straight up for the speaker — which is the single most human
+    // beat in this whole file and it is worth the two keyframes it costs. Then
+    // back down and on with the shopping.
+    id: 'whoMe', tell: 'react', dur: 2.30, item: SMALL,
+    keys: [
+      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.20 }),
+      kf(0.14, { vis: 0, armR: -0.90, armL: -0.92, neck: -0.14, look: 0.62 }),
+      kf(0.34, { vis: 0, armR: -0.88, armL: -0.90, neck: -0.10, look: -0.70, turn: -0.28 }),
+      kf(0.56, { vis: 0, armR: -0.86, armL: -0.88, neck: -0.52, look: 0.16, turn: -0.10 }),
+      kf(0.74, { vis: 0, armR: -1.02, armL: -1.00, neck: -0.30, look: 0.44, chest: -0.06 }),
+      kf(0.90, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.06, look: -0.20 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
+    ],
+  },
+  {
+    // "ME?" Hand off the bar and onto his own chest, a half turn to see who is
+    // behind him, and a headshake. Mildly affronted, which is the note: he is
+    // not frightened, he is a man who has just been spoken to in public.
+    id: 'whoMeAffront', tell: 'react', dur: 2.75, item: SMALL,
+    keys: [
+      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.16 }),
+      kf(0.12, { vis: 0, armR: -1.10, armL: -0.94, neck: -0.16, look: -0.66 }),
+      kf(0.30, { vis: 0, armR: -1.62, armRz: 0.62, armL: -0.92, look: -0.30, turn: -0.62, chest: -0.04 }),
+      kf(0.48, { vis: 0, armR: -1.58, armRz: 0.66, armL: -1.05, look: 0.58, turn: -0.86 }),
+      kf(0.62, { vis: 0, armR: -1.50, armRz: 0.58, armL: -1.10, look: -0.34, turn: -0.70, neck: -0.08 }),
+      kf(0.78, { vis: 0, armR: -1.24, armRz: 0.30, armL: -1.00, look: 0.30, turn: -0.30, neck: 0.04 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+    ],
+  },
+  {
+    // THE QUICK DOUBLE-CHECK. Shortest react in the file: two shoulder checks
+    // and straight back to the shelf. This is what a man who is not going to do
+    // anything about it does, and it is deliberately almost nothing to look at
+    // — a player who announces and watches for a big reaction gets this and
+    // learns that the absence of one means nothing either.
+    id: 'whoMeGlance', tell: 'react', dur: 1.55, item: SMALL,
+    keys: [
+      kf(0.00, { vis: 0, armR: -1.05, armRz: -0.22, neck: 0.24 }),
+      kf(0.20, { vis: 0, armR: -1.00, armRz: -0.18, neck: 0.02, look: -0.72 }),
+      kf(0.44, { vis: 0, armR: -0.98, armRz: -0.16, neck: -0.04, look: 0.68, turn: -0.16 }),
+      kf(0.66, { vis: 0, armR: -1.02, armRz: -0.20, neck: 0.14, look: 0.10 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, turn: 0.0 }),
+    ],
+  },
 ];
 
 const BY_ID = new Map(GESTURES.map((g) => [g.id, g]));
 const OF = (tell) => GESTURES.filter((g) => g.tell === tell);
 const STEAL = OF('steal'), DECOY = OF('decoy'), PUTBACK = OF('putback');
+const REACT = OF('react');
 
 // `rng` is agents.js's seeded rnd(), so a bench trial is reproducible.
+// 'react' is spelled out rather than falling through to DECOY: the fallthrough
+// would have handed a look-around caller a phone-out-of-a-pocket clip, i.e. a
+// reach-with-an-object fired by an announcement, which is the one thing the
+// react pool exists NOT to do.
 function pickGesture(rng, kind) {
-  const pool = kind === 'steal' ? STEAL : kind === 'putback' ? PUTBACK : DECOY;
+  const pool = kind === 'steal' ? STEAL
+    : kind === 'putback' ? PUTBACK
+      : kind === 'react' ? REACT : DECOY;
   return pool[Math.min(pool.length - 1, Math.floor(rng() * pool.length))];
 }
 
@@ -67089,6 +67383,66 @@ const K = {
   get decoyHi()       { return t('decoyHi', 22.0); },
 
   // =========================================================================
+  // ROUND 7 — "HEY, PUT THAT BACK." DETERRENCE AT RANGE, AT A CHOSEN SUBJECT.
+  //
+  // Client, verbatim: "If I see them doing something suspicious, I can go, 'Hey,
+  // put that back,' and then they look around, like, 'What the fuck?' ... But if
+  // it's a criminal doing it, they might actually reconsider ... they might put
+  // it back, and then just leave the store peacefully."
+  //
+  // Round 6 built the whole behavioural half of this and fired it on PROXIMITY:
+  // a uniform posted on the only door made everybody in the building balk. This
+  // is the SAME machinery on a second trigger — the PA, at range, at one named
+  // subject — so `announceAt()` ends in abortTheft()/dumpGoods() and pays what
+  // they pay, which is nothing. A player who announces at everybody earns
+  // exactly what a door-camper earns. See benchIncome's `pa` policy.
+  //
+  // ---- WHY THIS IS NOT A GUILT ORACLE, IN FOUR NUMBERS -------------------
+  // If the guilty comply and the innocent do not, the button is a free scanner
+  // and the whole desk phase dies with it — the same failure the decoy library
+  // exists to prevent. So the two populations OVERLAP on both observable
+  // outcomes, and the overlap is these constants:
+  //   guilty, pre-conceal   annHeed     put it back
+  //   guilty, already has it annHeedHot  ditch it (lower: he is committed)
+  //   innocent              annSpook    sheepishly puts back whatever is in his
+  //                                     hand — THE SAME `putback` CLIP
+  // ...and everybody else — including the guilty who brazen it out — plays a
+  // react clip, which is also what every bystander inside annSpill plays,
+  // because the PA is a loudspeaker and not a laser. So "somebody looked
+  // around" is worth nothing and "somebody put something back" is worth a
+  // likelihood ratio, not a verdict. The arithmetic is in this round's report.
+  // The heed roll is tilted by the subject's `nerve` — the same hidden roll
+  // that already decides whether he will chance your shoulder — so two
+  // identical-looking subjects do not answer the same way.
+  get annHeed()       { return t('annHeed', 0.62); },
+  get annHeedHot()    { return t('annHeedHot', 0.34); },
+  get annSpook()      { return t('annSpook', 0.30); },
+  get annNerve()      { return t('annNerve', 0.45); },  // nerve tilt on the roll
+  get annSpill()      { return t('annSpill', 7.0); },   // m: bystanders who also look up
+  get annLagLo()      { return t('annLagLo', 0.35); },  // s before he reacts at all
+  get annLagHi()      { return t('annLagHi', 0.95); },
+  get annCool()       { return t('annCool', 6.0); },    // s between PA calls
+  get annHold()       { return t('annHold', 4.5); },    // s a 'hold' call pins him
+  // Shouting at the same man twice is worth less than shouting at him once, and
+  // this is the constant that stops the button being a slot machine you pull
+  // until it pays. Heed probability is multiplied by annFade per PREVIOUS call
+  // at that body: 0.62, 0.28, 0.13... which converges at about 0.78 rather than
+  // at 1.0, so a determined spammer gets 16 points of compliance for eight
+  // calls and every one of them spooks the aisle.
+  get annFade()       { return t('annFade', 0.45); },
+  // A bystander is being shouted at by implication, so he takes it less
+  // personally — but a GUILTY bystander still might put it back, which is how
+  // you deter a man you never saw.
+  get annSpillMul()   { return t('annSpillMul', 0.45); },
+  // AND WHAT IT COSTS TO SHOUT AT A CUSTOMER. Not a harassment complaint —
+  // the entire point of the announcement is that it is the safe alternative to
+  // walking up to somebody, so nothing on this path can reach onHarass(). What
+  // it does is finish his shop early: he has been spoken to in public and he
+  // would like to pay and go. That is a body at the door sooner and one fewer
+  // subject the shift can arm, which is a real cost, paid in income.
+  get annHuff()       { return t('annHuff', 0.55); },   // x remaining shopT
+
+  // =========================================================================
   // ROUND 6 — THE DIFFICULTY RAMP. Six numbers, one dial.
   //
   // Client: "especially in the beginning of the game when we want it to be
@@ -67981,6 +68335,10 @@ function createAgents(THREE, scene, world) {
   // reached, and a `let` in the temporal dead zone is a ReferenceError rather
   // than an undefined.
   let postT = 0;          // seconds the cop has been loitering on the way out
+  // ROUND 7 — the PA's own cooldown. Declared up here rather than next to
+  // announceAt() because reset() runs at module init and a `let` in the
+  // temporal dead zone is a boot-time crash, not a lint warning.
+  let annCool = 0;
   let grabGate = null;    // bench-only: the identity model, see bench({ident})
 
   function makeShopper() {
@@ -68014,6 +68372,12 @@ function createAgents(THREE, scene, world) {
       // stood on the only way out, `shopT` is how much shopping an innocent has
       // left before he checks out and leaves through that same door.
       chill: 0, balk: 0, stall: 0, aborts: 0, shopT: 0, leaving: false, made: 0,
+      // ROUND 7 — the PA. `annT` counts down to the moment he reacts (0 the
+      // rest of the time, which is the only cost this feature has in the update
+      // loop), `annN` is how many times he has been shouted at, `annOut` is
+      // what he visibly did last time and `annSpill` says he was in earshot
+      // rather than the man being addressed.
+      annT: 0, annKind: null, annOut: null, annN: 0, annSpill: false, annClip: null,
     };
     shoppers.push(s);
     return s;
@@ -68128,6 +68492,8 @@ function createAgents(THREE, scene, world) {
     s.gest = null; s.gestT = 0; s.gestD = 1; s.turnY = 0;
     s.gestIn = rr(1.5, K.decoyHi);
     s.chill = 0; s.balk = 0; s.stall = 0; s.aborts = 0; s.leaving = false; s.made = 0;
+    s.annT = 0; s.annKind = null; s.annOut = null; s.annN = 0; s.annSpill = false;
+    s.annClip = null;
     s.shopT = rr(K.shopLo, K.shopHi);
     s.held.scale.set(1, 1, 1);
   }
@@ -68141,7 +68507,7 @@ function createAgents(THREE, scene, world) {
     const cu = cop.userData;
     cu.vel.set(0, 0, 0); cu.speed = 0; cu.stamina = K.staminaMax; cu.fatigue = 0;
     cu.gassed = false; cu.boost = 0; cu.heading = 0; cu.skid = 0; cu.stagger = 0;
-    postT = 0;
+    postT = 0; annCool = 0;
     for (const p of powerups) { p.live = true; p.respawn = 0; p.mesh.visible = true; }
   }
   setSeed(20240822);
@@ -68464,12 +68830,23 @@ function createAgents(THREE, scene, world) {
     // the knee-less leg fakes that with a kick in the last quarter of the swing.
     const heel = Math.max(0, -Math.cos(u.phase)) * amp * 0.22;
     r.legL.rotation.x -= heel; r.legR.rotation.x += heel;
+    // WEIGHT ON THE HEELS. Both legs raked 2.6 degrees forward of the pelvis,
+    // so his feet lead and the gut is out over them. It is a constant on both
+    // legs, so the gait is untouched — the whole body just sits back on itself.
+    r.legL.rotation.x += 0.046; r.legR.rotation.x += 0.046;
     // Arms lag the legs — a big man's arms are late and they swing across the
     // gut rather than past it.
     const alag = Math.sin(u.phase - 0.55);
     r.armL.rotation.x = -alag * amp * 0.62; r.armR.rotation.x = alag * amp * 0.62;
-    const out = 0.24 + 0.06 * spd + 0.05 * F;                 // elbows off the belly
+    const out = 0.26 + 0.06 * spd + 0.06 * F;                 // elbows off the belly
     r.armL.rotation.z = out; r.armR.rotation.z = -out;
+    // ROUND 7 — THE SHOULDERS ROUND FURTHER AS HE FATIGUES, which was asked for
+    // by name. Not a rotation: the shoulder JOINTS travel forward, which is
+    // what actually happens to a blown man and what makes him narrower from the
+    // front at the same time. 30 mm at F=1, plus the chest drawing in 3.5%.
+    // Both are on the pivot, so it costs two assignments a frame.
+    const roll = (r.armZ ?? 0) + F * 0.030;
+    r.armL.position.z = roll; r.armR.position.z = roll;
 
     // ---- mass ---------------------------------------------------------------
     // Pelvic drop on the swing side plus a counter-rotating chest: that pairing
@@ -68503,13 +68880,23 @@ function createAgents(THREE, scene, world) {
     // Chest and shoulders. From 7 m you are looking at his BACK, so the heave
     // has to be in the shoulder line and the upper back or it does not exist:
     // the chest group lifts and the whole torso swells forward.
-    r.chest.position.y = heave * 0.040;
-    r.chest.scale.set(1 + heave * 0.030, 1 + heave * 0.045, 1 + heave * 0.075);
+    // ROUND 7 — deeper, and the x term now goes the OTHER WAY with fatigue.
+    // The heave swelled him uniformly before; a man dragging air in narrows
+    // across the shoulders as he rounds them and swells front-to-back, so x
+    // carries the round-6 breath swell MINUS the 3.5% draw-in that pairs with
+    // the shoulder roll above. Front-to-back is up 0.075 -> 0.092 because the
+    // gut it is inflating is bigger now and the same fraction read as less.
+    r.chest.position.y = heave * 0.044;
+    r.chest.scale.set((1 + heave * 0.030) * (1 - 0.035 * F),
+      1 + heave * 0.052, 1 + heave * 0.092);
     if (r.belly) r.belly.scale.z = 0.470 * (1 + heave * 0.16 + w * 0.03);
 
     // Posture. Forward lean rises with fatigue and rises again on the exhale —
-    // a blown man folds a little every time he empties his lungs.
-    const stoopT = (boosted ? 0.14 : 0.08 + 0.06 * spd) + F * 0.30 + (1 - w) * F * 0.13;
+    // a blown man folds a little every time he empties his lungs. Round 7 adds
+    // a permanent slump underneath it: he is bent 0.14 rad before anything has
+    // happened at all, which is the difference between a fat man standing up
+    // straight and a fat man who has been on his feet since six.
+    const stoopT = (boosted ? 0.19 : 0.14 + 0.06 * spd) + F * 0.34 + (1 - w) * F * 0.14;
     r.chest.rotation.x = lerp(r.chest.rotation.x, stoopT, ed(7));
     // Head: up and back on the gasp, dropping forward as he blows out. That
     // alternation is the read, not the raw amplitude.
@@ -68758,27 +69145,198 @@ function createAgents(THREE, scene, world) {
   // deadlock flatters the design by hiding it behind a spawn cap. Let them
   // leave and let the shift keep arming people; every one of them balks, and
   // the zero is an honest zero.
-  function abortTheft(s, api) {
+  //
+  // ROUND 7 — WIDENED, NOT FORKED. `why` names the trigger ('balk' is the
+  // round-6 posted-guard one and stays the default so nothing that reads it
+  // changes) and `quit` makes this his last try in this store. The PA passes
+  // quit:true, because the client's sentence ends "...and then just leave the
+  // store peacefully" — a man told to put it back by a voice that clearly
+  // already saw him does not stand around for thirty seconds and have another
+  // go. It is also what stops the announcement being a TEMPO tool: without it,
+  // announcing at a subject buys you a 14-30 s delay and then the same 100
+  // points, and the deterrence would be worth more than the deterrence.
+  function abortTheft(s, api, why, quit) {
     s.balk = 0; s.aborts++;
     s.chill = rr(K.chillLo, K.chillHi);
     s.stole = false;
     s.state = 'putback'; s.timer = 0; s.path = []; s.target = null;
     s.concealT = Math.max(s.concealT, s.chill + rr(1.5, 5.0));
     startGesture(s, 'putback');
-    if (s.aborts >= 2) { s.guilty = false; s.leaving = true; s.shopT = 0; }
-    api && api.onAbort && api.onAbort(s, 'balk');
+    if (quit || s.aborts >= 2) { s.guilty = false; s.leaving = true; s.shopT = 0; }
+    api && api.onAbort && api.onAbort(s, why || 'balk');
   }
 
   // He already had it. He waited you out for `dumpT`, you did not move off the
   // door, so it goes back on a shelf and he walks out a customer. No arrest, no
   // merchandise loss, no points — the most expensive possible outcome for a
   // player whose whole plan was to stand on the exit.
-  function dumpGoods(s, api) {
+  function dumpGoods(s, api, why) {
     s.stall = 0; s.aborts++;
     s.stole = false; s.guilty = false; s.leaving = true; s.shopT = 0;
     s.state = 'putback'; s.timer = 0; s.path = []; s.target = null; s.aim = null;
     startGesture(s, 'putback');
-    api && api.onAbort && api.onAbort(s, 'dump');
+    api && api.onAbort && api.onAbort(s, why || 'dump');
+  }
+
+  // =========================================================================
+  // ROUND 7 — THE ANNOUNCEMENT. "HEY, PUT THAT BACK."
+  //
+  //   agents.announceAt(subject, kind, opts) -> { ok, why, id, kind, heard }
+  //
+  // Fired by game.js at whatever the spot monitor is locked on. It does not do
+  // anything round 6 did not already do — a heeding subject ends in
+  // abortTheft()/dumpGoods(), the same two functions a posted guard drives, so
+  // a deterred thief is worth zero points on exactly the same path and there is
+  // no new economics to get wrong. What is new is the TRIGGER (at range, at a
+  // chosen man) and the second reaction: the one where he has no idea what you
+  // are talking about.
+  //
+  // THE RETURN VALUE DELIBERATELY DOES NOT CONTAIN THE OUTCOME. It is rolled
+  // when he reacts, ~0.6 s later, and delivered through the optional
+  // api.onAnnounce(subject, kind, outcome) callback at the instant the clip
+  // starts, so a HUD line cannot get ahead of the picture. `outcome` is
+  // 'heed' | 'shrug' | 'hold' — what he visibly did, which is all the player
+  // can see anyway. It is never his guilt.
+  const REACT_IDS = ['whoMe', 'whoMeAffront', 'whoMeGlance'];
+
+  // He heard it and he is not doing anything about it: head up off the shelf, a
+  // shoulder check, a look at the ceiling for the speaker, and back to work.
+  // Guilty and innocent alike, and every bystander in earshot — see announceAt.
+  function lookAround(s) {
+    // `s.annClip` is an EVIDENCE HOOK, set by announceAt({clip}) and nothing
+    // else. The round-7 sheet has to fire the same react clip at a guilty and
+    // an innocent subject to show that the two pictures are identical, and it
+    // cannot do that if the clip is rolled independently in each strip. It is
+    // null in every code path the game takes.
+    startGesture(s, 'react', s.annClip || REACT_IDS[Math.floor(rnd() * REACT_IDS.length)]);
+    if (!s.gest) return false;
+    // A man who is walking somewhere keeps walking; a man at a shelf stops.
+    // `drift`, `leave` and `bolt` keep their own legs — animateShopper runs the
+    // clip on the upper body over whatever the legs are doing.
+    if (s.state === 'walk' || s.state === 'browse') {
+      if (s.state === 'walk') { s.target = null; s.path = []; }
+      s.state = 'browse';
+      s.timer = Math.max(s.timer, s.gestD + rr(0.25, 0.90));
+    }
+    return true;
+  }
+
+  // The reaction, one latency later. Everything is rolled HERE rather than at
+  // the moment the PA keys, so the answer is to the situation he is in when he
+  // actually hears it — he may have finished concealing in the meantime.
+  function reactToPA(s, api) {
+    const kind = s.annKind || 'putback';
+    s.annKind = null;
+    if (s.caught || s.escaped || !s.mesh.visible) return;
+    // You cannot talk down a man who is already running, and by the time he is
+    // in the doorway he is not listening either.
+    if (s.bolted || s.state === 'react' || s.state === 'shove') return;
+
+    if (kind === 'hold') {
+      // The other PA line game.js already had — a price check that pins him
+      // where he stands. No compliance roll: nobody is being accused of
+      // anything, he is just waiting to see if it is about him.
+      lookAround(s);
+      s.state = 'browse';
+      s.timer = Math.max(s.timer, K.annHold);
+      s.concealT = Math.max(s.concealT, K.annHold + 1.2);
+      s.annOut = 'hold';
+      api && api.onAnnounce && api.onAnnounce(s, kind, 'hold');
+      return;
+    }
+
+    // ---- the roll ---------------------------------------------------------
+    // Three populations, and the whole anti-oracle argument is that all three
+    // can produce BOTH observable outcomes. `nerve` tilts it (bold men brazen it
+    // out), and annFade makes the second and third shout at the same body worth
+    // steadily less — otherwise the button is a slot machine you pull until it
+    // pays and the rate stops meaning anything.
+    const base = !s.guilty ? K.annSpook : s.stole ? K.annHeedHot : K.annHeed;
+    const tilt = 1 - K.annNerve + K.annNerve * clamp(s.nerve || 1, 0.4, 1.8);
+    const fade = Math.pow(K.annFade, Math.max(0, (s.annN || 1) - 1));
+    const spill = s.annSpill ? K.annSpillMul : 1;
+    const p = clamp(base * tilt * fade * spill, 0, 0.95);
+    const heed = rnd() < p;
+
+    if (heed && s.guilty && s.stole) {
+      // He has it in his coat already. Same ending as waiting him out at the
+      // door: it goes back on a shelf and he walks out clean. Zero points.
+      dumpGoods(s, api, 'announce');
+      s.annOut = 'heed';
+    } else if (heed && s.guilty) {
+      // He had not committed yet, and now he is not going to. Puts it back,
+      // shops honestly, and leaves the store peacefully. Also zero points.
+      abortTheft(s, api, 'announce', true);
+      s.annOut = 'heed';
+    } else if (heed) {
+      // AND THE ONE THAT MAKES IT A READ INSTEAD OF A TEST. An innocent, told
+      // off in public, sheepishly puts back whatever is in his hand — the SAME
+      // `putback` clip, so the picture is identical and "he put it back" is
+      // evidence rather than proof. He is not guilty of anything and nothing is
+      // scored.
+      startGesture(s, 'putback');
+      if (s.state === 'walk') { s.target = null; s.path = []; }
+      s.state = 'browse';
+      s.timer = Math.max(s.timer, s.gestD + rr(0.3, 1.1));
+      s.annOut = 'heed';
+    } else {
+      lookAround(s);
+      s.annOut = 'shrug';
+    }
+
+    // WHAT IT COSTS TO SHOUT AT A CUSTOMER, and it is not a complaint: the
+    // announcement is the safe alternative to walking up to somebody and
+    // nothing on this path can reach onHarass(). He finishes his shop early
+    // instead — a body at the door sooner and one fewer subject the shift can
+    // arm. Guilty men who shrugged are untouched; they have other plans.
+    if (!s.guilty && s.shopT > 0) s.shopT = Math.max(4.0, s.shopT * K.annHuff);
+    api && api.onAnnounce && api.onAnnounce(s, kind, s.annOut);
+  }
+
+  // THE ENTRY POINT game.js CALLS. `subject` is a shopper object or its id.
+  //   kind 'putback'  the deterrence line. Rolls compliance.  (default)
+  //   kind 'hold'     the price-check line. Pins him, rolls nothing.
+  //   opts.force      skip the PA cooldown (the bench uses it; the game should
+  //                   not, and game.js's own button cooldown is the real gate).
+  function announceAt(subject, kind, opts) {
+    const o = opts || {};
+    const k = kind === 'hold' ? 'hold' : 'putback';
+    if (annCool > 0 && !o.force) return { ok: false, why: 'cooldown', in: +annCool.toFixed(2) };
+    const s = (subject && subject.position) ? subject
+      : shoppers.find((x) => x.id === subject);
+    if (!s) return { ok: false, why: 'no-subject' };
+    if (s.caught || s.escaped || !s.mesh.visible) return { ok: false, why: 'gone' };
+    if (s.bolted || s.state === 'react' || s.state === 'shove') return { ok: false, why: 'running' };
+
+    annCool = K.annCool;
+    s.annT = rr(K.annLagLo, K.annLagHi);
+    s.annKind = k; s.annOut = null; s.annSpill = false;
+    s.annClip = o.clip || null;                  // evidence hook, see lookAround
+    s.annN = (s.annN || 0) + 1;
+    s.concealT = Math.max(s.concealT, s.annT + 0.7);   // hold the fuse while he listens
+
+    // ...AND EVERYBODY ELSE IN THAT AISLE. A PA is a loudspeaker, not a laser:
+    // the four people who can hear it all look up, so "somebody looked around"
+    // is worth nothing at all. It also means you can deter a man you never saw,
+    // which is funny and which is the door-camp lesson restated — a shift where
+    // nothing happens is a shift that pays nothing.
+    let heard = 0;
+    if (k !== 'hold') {
+      for (const b of shoppers) {
+        if (b === s || b.caught || b.escaped || !b.mesh.visible) continue;
+        if (b.bolted || b.annT > 0 || b.state === 'shove') continue;
+        if (dist2d(b.position.x, b.position.z, s.position.x, s.position.z) > K.annSpill) continue;
+        b.annT = rr(K.annLagLo, K.annLagHi + 0.55);
+        b.annKind = 'putback'; b.annOut = null; b.annSpill = true;
+        b.annN = (b.annN || 0) + 1;
+        heard++;
+      }
+    }
+    return {
+      ok: true, id: s.id, kind: k, heard,
+      aisle: aisleOf(s.position.x),
+      at: { x: s.position.x, z: s.position.z },
+    };
   }
 
   function updateShopper(s, dt, api, frozen) {
@@ -68790,6 +69348,14 @@ function createAgents(THREE, scene, world) {
     if (s.state !== 'bolt') {
       s.wind = clamp(s.wind + dt * K.thiefSecond, 0, 1);
       s.adren = clamp(s.adren + dt * K.thiefAdrenBack, 0, 1);
+    }
+
+    // ---- ROUND 7: the PA landed on him a moment ago. One compare per body
+    // per frame in the overwhelmingly common case where nobody has said
+    // anything; the reaction itself is rolled in reactToPA().
+    if (s.annT > 0) {
+      s.annT -= dt;
+      if (s.annT <= 0) { s.annT = 0; reactToPA(s, api); }
     }
 
     // ---- ROUND 6: clips run first, so a state can ask "am I still doing it".
@@ -69537,6 +70103,7 @@ function createAgents(THREE, scene, world) {
       buildPowerups();
     }
     const frozen = !!api.frozen;
+    if (!frozen && annCool > 0) annCool = Math.max(0, annCool - dt);
     updateCop(dt, input, frozen);
     if (!frozen) { updatePost(dt); updateFlee(dt); }
     updatePowerups(dt);
@@ -70458,6 +71025,9 @@ function createAgents(THREE, scene, world) {
       let incidents = 0, catches = 0, escapes = 0, aborts = 0, complaints = 0;
       let bolts = 0, thefts = 0, decoys = 0;
       let postedT = 0;
+      // ROUND 7 — what the PA did this shift. `calls` counts announcements the
+      // player actually got out, `heeds`/`shrugs` what came back.
+      let calls = 0, heeds = 0, shrugs = 0;
       // The cop's own little state machine. `job` is the subject he has been
       // dispatched onto, null when he is at the desk.
       let job = null, dispatchIn = 0;
@@ -70476,6 +71046,7 @@ function createAgents(THREE, scene, world) {
         onHarass() { complaints++; },
         onAbort() { aborts++; },
         onLeave() {},
+        onAnnounce(s, kind, out) { if (out === 'heed') heeds++; else if (out === 'shrug') shrugs++; },
       };
       // The camper walks to the door once and stays. Everyone else starts at
       // the desk, which is 40 m from the only exit and is NOT a post on it —
@@ -70510,6 +71081,22 @@ function createAgents(THREE, scene, world) {
           if (armOne()) rearm = rr(g[0], g[1]); else rearm = 2.0;
         }
 
+        // ---- ROUND 7: DOES SHOUTING AT EVERYBODY PAY? --------------------
+        // The `pa` player never leaves the desk and never dispatches. Every
+        // time the handset comes off cooldown he picks whoever is doing
+        // something with their hands right now — which is the honest maximal
+        // read, because a player CANNOT tell a steal clip from a decoy clip and
+        // this bot does not get to either — and says the line. This is the
+        // camper's experiment with a microphone instead of a doorway, and it
+        // has to come out the same way or the announcement is a free win
+        // button.
+        if (policy === 'pa' && annCool <= 0) {
+          const tgt = shoppers.find((s) => s.gest && !s.annT && !s.bolted
+            && !s.caught && !s.escaped && s.mesh.visible
+            && (s.gest.tell === 'steal' || s.gest.tell === 'decoy'));
+          if (tgt && announceAt(tgt, 'putback').ok) calls++;
+        }
+
         // ---- what the cop is doing ---------------------------------------
         let input;
         if (policy === 'camp') {
@@ -70531,7 +71118,7 @@ function createAgents(THREE, scene, world) {
           // finishes concealing, and he presses DISPATCH `deskLag` later —
           // which is a teleport to the mouth of that man's aisle, exactly what
           // game.js's postSpawn('aisle') does.
-          if (!job) {
+          if (!job && policy !== 'pa') {
             const tell = shoppers.find((s) => s.guilty && s.stole && !s.escaped && !s.caught && s.mesh.visible);
             if (tell && dispatchIn <= 0) { dispatchIn = opts.deskLag ?? 4.0; }
             if (tell && dispatchIn > 0) {
@@ -70583,6 +71170,7 @@ function createAgents(THREE, scene, world) {
         thefts, catches, escapes, aborts, complaints, bolts,
         points: catches * 100, decoys,
         postedFrac: postedT / maxT,
+        calls, heeds, shrugs,
       });
     }
 
@@ -70609,8 +71197,154 @@ function createAgents(THREE, scene, world) {
       decoysPerShift: mean((r) => r.decoys),
       // Fraction of the shift the cop spent posted on the way out.
       postedFrac: mean((r) => r.postedFrac),
+      // ROUND 7 — the PA. `callsPerShift` counts announcements that actually
+      // went out; `heedsPerShift` counts the ones that came back with somebody
+      // putting something on a shelf, GUILTY OR NOT, because that is the only
+      // thing the player can see.
+      callsPerShift: mean((r) => r.calls),
+      heedsPerShift: mean((r) => r.heeds),
+      shrugsPerShift: mean((r) => r.shrugs),
       raw: opts.raw ? rows : undefined,
     };
+  }
+
+  // =========================================================================
+  // benchAnnounce — THE INSTRUMENT THIS ROUND'S ANTI-ORACLE CLAIM LIVES ON.
+  //
+  // The whole design risk in "Hey, put that back" is that it becomes a free
+  // guilt scanner: if the guilty visibly comply and the innocent visibly do
+  // not, the desk phase is over and so is the harassment complaint. So the
+  // number that has to be published is not "does deterrence work", it is the
+  // pair of rates and the likelihood ratio between them.
+  //
+  // Four populations, same store, same PA line, cop parked at the service desk
+  // 40 m away so nothing in the result is about a man walking at anybody:
+  //   cold    guilty, has NOT concealed yet
+  //   hot     guilty, already has it in his coat
+  //   clean   innocent
+  //   spill   in earshot of a call addressed to somebody else
+  // ...plus `repeat`, which is the second and third shout at the same body and
+  // is what stops the button being a slot machine.
+  //
+  // Reported as heed% (he put something back on a shelf) vs shrug% (he looked
+  // around and carried on). BOTH POPULATIONS PRODUCE BOTH, which is the point.
+  // =========================================================================
+  function benchAnnounce(n = 400, opts = {}) {
+    const dt = 1 / 60;
+    const saveLevel = DIFF.level;
+    const savePos = cop.position.clone(), saveUd = { ...cop.userData };
+    if (opts.difficulty != null) DIFF.level = clamp(+opts.difficulty || 0, 0, 1);
+
+    // One trial: put a subject in a known state, say the line, and watch.
+    // `shouts` > 1 re-fires at the same body once he has answered the last one.
+    function cell(kind, shouts) {
+      let heed = 0, shrug = 0, deaf = 0, quit = 0, complaints = 0, spillHeeds = 0;
+      for (let k = 0; k < n; k++) {
+        setSeed((opts.seed ?? 90210) + k * 7919);
+        reset();
+        // The desk is not a post on the door — see benchShift. This has to
+        // measure the PA and not the uniform.
+        cop.position.set(SERVICE_DESK.x, 0, SERVICE_DESK.z);
+        solids.resolve(cop.position, BODY_R);
+        cop.userData.vel.set(0, 0, 0); cop.userData.speed = 0;
+        const s = shoppers[k % shoppers.length];
+        resetShopper(s, kind !== 'clean');
+        // `hot` is forced rather than simulated into: reactToPA reads exactly
+        // `s.guilty && s.stole`, so setting them is faithful and it keeps the
+        // cell from being a measurement of how long a concealment takes.
+        if (kind === 'hot') { s.stole = true; s.state = 'drift'; s.concealT = 0; }
+        const api = {
+          onHarass() { complaints++; },
+          onAbort() {}, onLeave() {}, onBolt() {}, onCatch() {}, onEscape() {},
+          onAnnounce(sub, k2, out) {
+            if (sub !== s) { if (out === 'heed') spillHeeds++; return; }
+          },
+        };
+        let got = null;
+        for (let shout = 0; shout < (shouts || 1); shout++) {
+          const r = kind === 'spill'
+            // A call addressed to the nearest OTHER body, so this subject only
+            // ever hears it through the ceiling.
+            ? (() => {
+              let best = null, bd = 1e9;
+              for (const b of shoppers) {
+                if (b === s || !b.mesh.visible || b.caught || b.escaped) continue;
+                const d = dist2d(b.position.x, b.position.z, s.position.x, s.position.z);
+                if (d < bd) { bd = d; best = b; }
+              }
+              return best && bd <= K.annSpill ? announceAt(best, 'putback', { force: true })
+                : { ok: false, why: 'nobody-near' };
+            })()
+            : announceAt(s, 'putback', { force: true });
+          if (!r.ok) { break; }
+          // Long enough for the latency plus the clip to start. The outcome is
+          // committed the frame reactToPA runs, so this never waits on an
+          // animation.
+          for (let i = 0; i < 150 && !s.annOut; i++) tick(dt, { x: 0, z: 0 }, api);
+          got = s.annOut;
+          if (got === 'heed') break;                 // nothing left to shout at
+          s.annOut = null;
+        }
+        if (got === 'heed') { heed++; if (!s.guilty && kind !== 'clean') quit++; }
+        else if (got === 'shrug') shrug++;
+        else deaf++;
+      }
+      const tot = heed + shrug + deaf || 1;
+      return {
+        kind, shouts: shouts || 1, n,
+        heedPct: +(heed / tot * 100).toFixed(1),
+        shrugPct: +(shrug / tot * 100).toFixed(1),
+        // A heeding thief must end up a customer with nothing in his coat, or
+        // the deterrence is a delay and the announcement is a tempo tool worth
+        // 100 points instead of zero. This counts the ones that actually ended.
+        endedClean: quit,
+        noAnswer: deaf,
+        // MUST BE ZERO. The entire point of shouting from the desk is that it
+        // is the safe alternative to walking up to somebody.
+        complaints,
+        spillHeeds,
+      };
+    }
+
+    const out = {
+      cold: cell('cold', 1), hot: cell('hot', 1),
+      clean: cell('clean', 1), spill: cell('spill', 1),
+      coldx3: cell('cold', 3), cleanx3: cell('clean', 3),
+    };
+    DIFF.level = saveLevel;
+    cop.position.copy(savePos); Object.assign(cop.userData, saveUd);
+    grabGate = null; reset();
+
+    // THE NUMBER THE BRIEF ASKED FOR, computed rather than asserted. If a
+    // put-back were proof, this would be Infinity.
+    const lr = out.clean.heedPct > 0
+      ? +((out.cold.heedPct / out.clean.heedPct)).toFixed(2) : Infinity;
+    const lrShrug = out.clean.shrugPct > 0
+      ? +((out.cold.shrugPct / out.clean.shrugPct)).toFixed(2) : Infinity;
+    out.likelihoodRatio = {
+      // P(put it back | guilty) / P(put it back | innocent)
+      putback: lr,
+      // ...and the other way, for the man who blanks you
+      shrug: lrShrug,
+      // What one call moves a 50/50 suspicion to, both ways. This is the whole
+      // claim: it is a READ, not a test.
+      from50_ifPutback: +((out.cold.heedPct / (out.cold.heedPct + out.clean.heedPct)) * 100).toFixed(1),
+      from50_ifShrug: +((out.cold.shrugPct / (out.cold.shrugPct + out.clean.shrugPct)) * 100).toFixed(1),
+    };
+    out.override = Object.keys(OVR).length ? { ...OVR } : undefined;
+    return out;
+  }
+
+  function benchAnnounceLine(n = 400, opts = {}) {
+    const r = benchAnnounce(n, opts);
+    const row = (k) => `${k.padEnd(8)} heed ${String(r[k].heedPct).padStart(5)}%`
+      + `  shrug ${String(r[k].shrugPct).padStart(5)}%`
+      + `  complaints ${r[k].complaints}`;
+    return [row('cold'), row('hot'), row('clean'), row('spill'),
+      row('coldx3'), row('cleanx3'),
+      `LR(putback) ${r.likelihoodRatio.putback}  a 50/50 read goes to `
+      + `${r.likelihoodRatio.from50_ifPutback}% on a put-back, `
+      + `${r.likelihoodRatio.from50_ifShrug}% on a shrug`].join('\n');
   }
 
   // DOES CAMPING THE DOOR PAY? With one exit this cannot be answered with a
@@ -70627,6 +71361,9 @@ function createAgents(THREE, scene, world) {
       desk: fmtS(benchShift({ ...o, policy: 'desk' })),
       naive: fmtS(benchShift({ ...o, policy: 'chase' })),
       camper: fmtS(benchShift({ ...o, policy: 'camp' })),
+      // ROUND 7 — the man who never leaves the desk and just talks. He has to
+      // come out where the camper does, or the announcement is a free win.
+      pa: fmtS(benchShift({ ...o, policy: 'pa' })),
     };
   }
 
@@ -70686,6 +71423,7 @@ function createAgents(THREE, scene, world) {
     cop, shoppers, powerups, reset,
     update: tick,
     bench, benchAll, benchLine, benchReal, benchCamp, benchShift, benchIncome,
+    benchAnnounce, benchAnnounceLine,
 
     // ROUND 6 CONTRACT ADDITION — THE DIFFICULTY RAMP (additive; a game.js that
     // never calls this gets round 5's difficulty exactly, because level 1 IS
@@ -70722,8 +71460,37 @@ function createAgents(THREE, scene, world) {
     // WITH YOU STOOD THERE".
     get posted() { return doorPosted(); },
     get postedFor() { return postT; },
+
+    // ROUND 7 CONTRACT ADDITION — THE ANNOUNCEMENT. Additive; a game.js that
+    // never calls it gets round 6's game exactly.
+    //
+    //   const r = agents.announceAt(subject, 'putback');
+    //   // r = { ok, why, id, kind, heard, aisle, at:{x,z} }
+    //
+    // `subject` is a shopper object (or its id) — whatever the spot monitor is
+    // locked on. `kind` is 'putback' (the deterrence line, rolls compliance) or
+    // 'hold' (the price-check line, pins him where he stands and rolls
+    // nothing). Refusals come back as { ok:false, why } with why in
+    // 'cooldown' | 'no-subject' | 'gone' | 'running'.
+    //
+    // THE OUTCOME IS NOT IN THE RETURN VALUE and that is deliberate — it is
+    // rolled 0.35-0.95 s later, when he actually reacts, and delivered through
+    // the OPTIONAL callback
+    //
+    //   api.onAnnounce(subject, kind, outcome)   outcome: 'heed'|'shrug'|'hold'
+    //
+    // so a ticker line cannot get ahead of the picture on the monitor.
+    // `outcome` is what he VISIBLY did, never whether he was guilty: both
+    // populations produce both outcomes on purpose (K.annHeed / K.annSpook).
+    // A subject who heeds also fires the existing api.onAbort(s, 'announce'),
+    // so a game.js that already handles balks scores this correctly with no
+    // change: a deterred thief is worth zero, same as a ditched one.
+    announceAt,
+    get announceReady() { return annCool <= 0; },
+    get announceIn() { return annCool; },
     // Decoy clips, for a critic who wants to drive one on demand:
     //   agents.playGesture(agents.shoppers[3], 'restash')
+    //   agents.playGesture(agents.shoppers[3], 'whoMe')   // round 7
     gestures: GESTURES,
     playGesture(s, id) { return startGesture(s, 'decoy', id); },
     // debug handles
@@ -71097,6 +71864,20 @@ const { AISLE_COUNT, AISLE_GAP, AISLE_LEN, SHELF_W, SHELF_H, CEIL_H, aisleX, STO
 //   Same signature and same return shape as the copy in src/game/hud.js, but
 //   projected through the LIVE camera. See THE HUD PROJECTION BUG below.
 //
+// ADDITIVE (round 2): `moveYaw` — the bearing WASD should be rotated by.
+//   ASK TO THE LEAD, one line in main.js readInput():
+//       const y = (chaseCam.moveYaw ?? chaseCam.yaw) || 0;
+//   `yaw` stays exactly what the contract above says it is: the camera's real
+//   yaw, including whatever the player's mouse is doing to it this instant.
+//   `moveYaw` is the same number with the GLANCE TAKEN OUT — the corridor
+//   bearing the rig would be sitting at if the mouse had never been touched.
+//   Reasoning in THE GLANCE below; the short version is that rotating the
+//   movement basis with the look re-opens the feedback loop round 1 closed,
+//   because the axis latch reads the cop's velocity. This file works either
+//   way — it detects which number main.js is actually reading (the getter
+//   counts its own reads) and shrinks the look budget when it is still on
+//   `yaw`, so nothing is broken while the hook is pending.
+//
 // THE BRIEF: the player said walking through this store is the best thing in the
 // game, and then that he is "not seeing the angles I wanted from within the store".
 // This camera had been a fixed 6.4 m-high, 7.6 m-back, dead-flat follow since the
@@ -71172,6 +71953,98 @@ const { AISLE_COUNT, AISLE_GAP, AISLE_LEN, SHELF_W, SHELF_H, CEIL_H, aisleX, STO
 // The version below has the identical signature, the identical return shape and
 // the identical off-screen sentinel, and it projects through the real camera, so
 // it is correct for any pose this file ever takes.
+// ===========================================================================
+
+// ===========================================================================
+// THE GLANCE (round 2) — "I just want to be able to turn and look down those
+// aisles as I'm walking."
+//
+// WHAT IS ADDED IS AN OFFSET, NOT A CAMERA. Every number round 1 measured —
+// the 2.36 slot, the lane pin, the shoulder dolly, the sign clearance, the
+// corner swing, the boom — still computes the same pose it always did. The
+// mouse rotates the AIM off that pose and nothing else. With the mouse
+// untouched the two are the same angle to the bit, so a player who never
+// moves the mouse is playing round 1's camera exactly.
+//
+// 1. LOOK IS DECOUPLED FROM HEADING. This is the decision the round asked for
+//    and it is not the standard one. In a third-person game the mouse is the
+//    steering: turn the camera, W follows. Here that re-opens a loop this file
+//    spent round 1 closing. The chain is short and it is real:
+//
+//        mouse turns camera -> W (camera-relative) drives the cop diagonally
+//        -> the axis latch reads |vx| > |vz| * 1.35 -> the CORRIDOR bearing
+//        flips 90 degrees -> the camera whips, and W now means somewhere else
+//        again.
+//
+//    So a 40 degree glance while holding W does not just curve you into a
+//    gondola, it can trip a 90 degree automatic swing — the auto-whip the
+//    brief rules out — off nothing but a wrist movement. Decoupled, the mouse
+//    cannot move the cop at all, so the latch stays fed by pure walking and
+//    round 1's corridor behaviour is untouched while you look.
+//
+//    It is also just what was asked for. "Turn and look down those aisles AS
+//    I'M WALKING" is a head turn, not a change of course. Look-to-apex in a
+//    racing game, freelook in a milsim, glancing over your shoulder at a
+//    junction: all of them keep the body going where it was pointed.
+//
+//    It costs one line in main.js (see moveYaw above). Until that line lands
+//    the movement basis is the camera, so the look budget is capped at 52
+//    degrees instead of 110 — enough to read a cross-aisle, small enough that
+//    the diagonal never reaches the latch's dominance test. The file detects
+//    which world it is in rather than assuming.
+//
+// 2. IT RECENTRES, AT A RATE THAT SCALES WITH HOW FAST YOU ARE MOVING. One
+//    rule, and every awkward case falls out of it:
+//      standing still  rate 0     — it holds. Stand and read the aisle signs.
+//      walking         rate ~0.95 — a glance decays over about two seconds.
+//      sprinting       rate ~3.2  — back down the corridor in ~0.6 s.
+//    Which is the answer to "he has turned to admire the shelves and lost the
+//    man": during a chase you are sprinting, so the corridor comes back on its
+//    own the moment you stop pushing the mouse. Right-click recentres now.
+//    A 0.40 s dwell after the last mouse input keeps it from fighting the
+//    hand, and the return is suspended entirely while the corridor bearing is
+//    mid-swing, so the two rotations can never stack into a whip.
+//
+// 3. IT DOLLIES IN, IT DOES NOT ORBIT. A 5.55 m boom looking 90 degrees to the
+//    side does not see down the aisle — it sees the gondola end 5.55 m short
+//    of the mouth. The lens has to be AT the corner to read round it. Two ways
+//    to get there: orbit the eye around the cop, or run it up the boom.
+//    Orbiting takes the eye off the lane centreline, which is where every
+//    round-1 guarantee lives (sign clearance, the `lat` budget, the boom
+//    origin), and it is lateral translation, which is the nauseating kind.
+//    The dolly is along the view axis, it keeps the lens exactly on the lane,
+//    and it lands the eye 1.15 m behind the cop — inside the 2.00 m half-width
+//    of the aisle it is looking down. So the deep glance is a peek from the
+//    corner, and the geometry that makes it safe never changed.
+//    It only engages past 22 degrees: a small glance is pure rotation and
+//    moves the lens not at all.
+//
+// 4. PITCH, BECAUSE THE SIGNS ARE THE GAME. Aisle signs hang 2.47..4.11 m and
+//    the brief makes reading them a mechanic. From 2.36 m a sign 6 m ahead is
+//    only 9 degrees up, so a little goes a long way: 34 up, 24 down, and the
+//    absolute pitch is clamped at 42 either way. NO ROLL, still.
+//
+// 5. POINTER LOCK, RELEASED BY THE DESK. The client asked to "just mouse
+//    move", which means lock; the desk phase is a mouse UI, which means the
+//    lock cannot be allowed to outlive the floor. Both, then:
+//      - left click on the floor takes the lock. Plain mouse motion looks.
+//      - Esc gives the cursor back (the browser does this itself); clicking
+//        again takes it back. Nothing on the floor is clickable — every
+//        hud.js reg() call is inside drawDesk() — so a click there is free.
+//      - holding the left button and dragging looks WITHOUT the lock, which is
+//        the whole feature for anyone whose browser refuses the lock, and the
+//        way to take one quick look without being captured.
+//      - a 200 ms watchdog runs ONLY while locked and drops the lock the
+//        instant game.mode stops being 'floor' — Q, Tab, a catch, a write-up,
+//        a demotion. Belt and braces: every mouse handler no-ops unless the
+//        mode is 'floor' AND update() has been called in the last 500 ms, so
+//        even a wedged watchdog cannot leave the desk being steered.
+//    None of it touches main.js or game.js. The listeners are this file's.
+//
+// 6. prefers-reduced-motion: the automatic return is halved (an unrequested
+//    rotation is the thing that hurts), the pitch range is cut to 60%, and the
+//    glance dolly — the only translation in here — is turned off entirely.
+//    Read live, so toggling the OS setting takes effect without a reload.
 // ===========================================================================
 
 const RAD = Math.PI / 180;
@@ -71420,6 +72293,74 @@ const T = {
   // him as a man in a place rather than a reticle.
   laneEye: 0.62, laneAim: 0.75,
 
+  // --- the glance (round 2) ------------------------------------------------
+  // Sensitivity is in radians per CSS pixel of mouse travel, i.e. after the
+  // OS's own acceleration curve. 0.0032 puts the 110 degree stop 600 px away,
+  // which on a normal desktop setup is a 2-4 cm flick — a wrist, not an arm.
+  // Pointer lock is asked for with unadjustedMovement so the OS curve comes
+  // off where the browser allows it; it falls back silently where it does not.
+  lookSens: 0.0032,
+  // Drag has a hard travel limit (the window), so it runs hotter: full range
+  // in about 420 px, comfortably inside a 1280-wide canvas.
+  lookSensDrag: 0.0046,
+  lookPitchScale: 0.78,       // vertical is always the less-wanted axis
+  // The budget. lookMax applies once main.js is steering off `moveYaw`;
+  // lookMaxCoupled is the fallback while it is still steering off `yaw`, where
+  // every degree of look is also a degree of steering error. 52 is set at the
+  // latch: the axis flip needs the cross-axis component to dominate by 1.35,
+  // i.e. 53.5 degrees off the corridor, so at 52 a full-deflection glance on a
+  // held W still cannot trip a corridor swing. That is the number that matters
+  // in the fallback, not comfort.
+  lookMax: 110 * RAD,
+  lookMaxCoupled: 52 * RAD,
+  lookUp: 34 * RAD, lookDown: 24 * RAD, pitchClamp: 42 * RAD,
+  lookSmooth: 24,             // applied offset chases the target, tau ~42 ms.
+                              // Enough to kill the stair-step from a 125 Hz
+                              // mouse against a 60 Hz frame, short enough that
+                              // it is not felt as lag.
+  lookDwell: 0.40,            // seconds of a still mouse before the return starts
+  // Return rate = returnWalk * (speed/walk) + returnRun * sprint01
+  //             + returnChase * chase01. Standing still and with nobody
+  // running, that is zero and the look simply stays where it was put.
+  //
+  // returnChase is not decoration, and it was added after a measurement.
+  // Keyed to SPEED alone the rate is 3.23/s at a full 5.05 m/s sprint — 90
+  // degrees shed in about 0.4 s, which is right. Then the cop gasses out,
+  // which he is designed to do in seconds, drops to 2.04 m/s, and the rate
+  // falls with him to 0.83/s: a 3 second tail on the glance at the exact
+  // moment he is in the most trouble he can be in. Traced:
+  //
+  //     t 0.50  look 81.3 deg   rate 3.23   speed 4.90
+  //     t 0.75  look 50.4       rate 2.24   speed 2.65   <- gassing
+  //     t 1.50  look 20.7       rate 0.84   speed 2.04
+  //     t 2.50  look  9.1       rate 0.83   speed 2.04
+  //
+  // Speed was standing in for "is something happening". A man running from
+  // you is the thing that was actually meant, so read that instead. Gassed
+  // mid-chase now returns at 2.4/s regardless of how slowly he is waddling.
+  returnWalk: 0.95, returnRun: 2.30, returnChase: 1.60,
+  returnCap: 2.20,            // rad/s ceiling on the automatic return. Round 1
+                              // judged 2.1 rad/s (a 180 in 1.5 s) followable
+                              // rather than a whip; this sits just under it.
+  returnSwing: 0.35,          // suspend the return while the corridor bearing
+                              // is swinging harder than this. The two rotations
+                              // must never add up.
+  recentreRate: 9.0,          // right-click: ~0.35 s for 90 degrees, cap x1.5
+  // Glance dolly. Starts at 22 degrees, full by 95. 0.80 takes a 5.55 m boom
+  // to 1.11, floored at 1.15 — which is the number that matters, because the
+  // aisle it is looking down is 2.00 m half-width and the eye has to be inside
+  // that to see anything but shelf.
+  lookDollyAt: 22 * RAD, lookDollyFull: 95 * RAD,
+  lookDolly: 0.80, lookDollyMin: 1.15,
+  // Metres per second the glance dolly is allowed to travel. Rate-limited on
+  // the RAMP, not on `d`, on purpose: capping `d` itself would also cap the
+  // corner dolly, and that one is measured (0.00% hidden) and must not move.
+  dollyMax: 6.0,
+  // The shoulder exists to keep the cop's head off the vanishing point. In a
+  // deep glance he is not near it — he is off frame — and 0.90 m of lateral
+  // offset on a 1.15 m boom is a 38 degree skew. Fade it out with the dolly.
+  lookShoulderFade: 0.80,
+
   // --- life ----------------------------------------------------------------
   // NO ROLL. Vertical only, all of it small: a browser tab full of rolling
   // horizon is how you make someone put the game down. Bob is 1.6 cm at a full
@@ -71536,7 +72477,193 @@ function createCamera(THREE, cam) {
   let h = T.height, d = T.dist, fov = T.fov, look = T.look;
   let sprint01 = 0, gas01 = 0, chase01 = 0, gap01 = 0, boost01 = 0, swing01 = 0;
   let bobP = 0, shake = 0, prevStagger = 0, boomT = 1;
+  let baseYaw = 0;                     // corridor bearing with the glance removed
+  let moveReads = 0, lastReads = 0;    // has main.js ever read moveYaw?
   const dbg = {};                      // last frame's corridor read, for debug()
+
+  // =========================================================================
+  // THE GLANCE. Design rationale is in the block at the top of the file; this
+  // is the plumbing. Nothing in here touches another file: the listeners are
+  // ours, they are all no-ops unless the game is on the floor, and the one
+  // thing they can affect outside this closure is the pointer lock, which is
+  // taken on the floor and dropped the moment the floor ends.
+  // =========================================================================
+  const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+  const GL = {
+    on: true,                 // master switch, for the console
+    pointerLock: true,        // ask for the lock on click (drag still works without)
+    invertY: false,
+    tgtY: 0, tgtP: 0,         // where the player has put the look
+    curY: 0, curP: 0,         // what is applied, one smoothing step behind
+    pendX: 0, pendY: 0,       // mouse delta accumulated since the last update
+    idle: 9,                  // seconds since the last mouse input
+    // An explicit recentre runs UNTIL IT IS DONE, not for a fixed window. It
+    // was a 0.45 s timer first, and standing still — where the speed-scaled
+    // return rate is deliberately zero — that expired with 21.8 degrees still
+    // on the clock and simply held there. A button whose job is "put it back"
+    // has to actually put it back; it is still rate-capped, so finishing the
+    // job cannot turn into a whip.
+    forcing: false,
+    rate: 0,                  // last frame's return rate, for debug()
+    ramp: 0, rampA: 0,        // glance dolly, wanted and rate-limited
+    dragging: false, locked: false, decoupled: false, reduced: false,
+  };
+  function zeroGlance() {
+    GL.tgtY = GL.tgtP = GL.curY = GL.curP = 0;
+    GL.pendX = GL.pendY = 0; GL.ramp = GL.rampA = 0; GL.idle = 9; GL.forcing = false;
+  }
+
+  // --- is the player actually on the floor right now ------------------------
+  // Two independent reads, because the cost of getting this wrong is a desk
+  // phase you cannot click. main.js only calls update() when the mode is not
+  // 'desk', so a recent update is a liveness proof; game.mode is the direct
+  // answer and rules out 'writeup' and 'demoted', which also get update()d.
+  let lastUpdateMs = -1e9, prevMode = null;
+  function gameMode() {
+    try {
+      const g = typeof window !== 'undefined' && window.__CHOP && window.__CHOP.game;
+      return (g && g.mode) || null;
+    } catch (e) { return null; }
+  }
+  function onFloor() {
+    if (now() - lastUpdateMs > 500) return false;
+    const m = gameMode();
+    return m == null ? true : m === 'floor';
+  }
+
+  // --- pointer lock ---------------------------------------------------------
+  let watch = 0;
+  const lockEl = () => (typeof document !== 'undefined' && (document.body || document.documentElement)) || null;
+  function releaseLock() {
+    try { if (document.pointerLockElement) document.exitPointerLock(); } catch (e) { /* nothing */ }
+  }
+  function requestLock() {
+    const el = lockEl();
+    if (!el || !el.requestPointerLock) return;
+    try {
+      // unadjustedMovement takes the OS acceleration curve off where Chrome
+      // supports it. Where it does not, the promise rejects and the plain call
+      // is still inside the click's gesture window.
+      const p = el.requestPointerLock({ unadjustedMovement: true });
+      if (p && p.catch) p.catch(() => { try { el.requestPointerLock(); } catch (e) { /* denied */ } });
+    } catch (e) {
+      try { el.requestPointerLock(); } catch (e2) { /* denied, drag still works */ }
+    }
+  }
+  function startWatch() {
+    if (watch || typeof setInterval !== 'function') return;
+    watch = setInterval(() => {
+      if (typeof document === 'undefined' || !document.pointerLockElement) { stopWatch(); return; }
+      if (!onFloor()) releaseLock();
+    }, 200);
+  }
+  function stopWatch() { if (watch) { clearInterval(watch); watch = 0; } }
+
+  function bindLook() {
+    if (typeof window === 'undefined' || typeof document === 'undefined') return;
+    if (!window.addEventListener) return;
+
+    document.addEventListener('mousemove', (e) => {
+      if (!GL.on) return;
+      const locked = !!document.pointerLockElement;
+      if (!locked && !GL.dragging) return;
+      if (!onFloor()) { if (locked) releaseLock(); GL.dragging = false; return; }
+      const dx = e.movementX || 0, dy = e.movementY || 0;
+      if (!dx && !dy) return;
+      const s = locked ? T.lookSens : T.lookSensDrag;
+      GL.pendX += dx * s;
+      // Screen-down is a negative pitch offset. invertY flips it for the
+      // people who fly planes.
+      GL.pendY += dy * s * T.lookPitchScale * (GL.invertY ? 1 : -1);
+      GL.idle = 0;
+    }, { passive: true });
+
+    // NOTE: no preventDefault anywhere on the button path. game.js listens for
+    // mousedown on the HUD canvas and does its own hit test; if this handler
+    // ever swallowed an event the desk would stop taking clicks. It does not
+    // need to — on the floor hud.hit() has nothing to return.
+    window.addEventListener('pointerdown', (e) => {
+      if (!GL.on || !onFloor()) return;
+      if (e.button === 2) { GL.forcing = true; GL.idle = 9; return; }   // recentre now
+      if (e.button !== 0) return;
+      GL.dragging = true;
+      if (GL.pointerLock && !document.pointerLockElement) requestLock();
+    });
+    window.addEventListener('pointerup', () => { GL.dragging = false; });
+    // A mouse button held while the window loses focus never sends its up.
+    window.addEventListener('blur', () => { GL.dragging = false; GL.pendX = GL.pendY = 0; });
+    document.addEventListener('contextmenu', (e) => {
+      if (GL.on && onFloor()) e.preventDefault();      // right button is recentre
+    });
+    document.addEventListener('pointerlockchange', () => {
+      GL.locked = !!document.pointerLockElement;
+      if (GL.locked) startWatch(); else stopWatch();
+    });
+    document.addEventListener('pointerlockerror', () => { GL.pointerLock = false; });
+
+    try {
+      const mq = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)');
+      if (mq) {
+        GL.reduced = !!mq.matches;
+        const onMQ = () => { GL.reduced = !!mq.matches; };
+        if (mq.addEventListener) mq.addEventListener('change', onMQ);
+        else if (mq.addListener) mq.addListener(onMQ);
+      }
+    } catch (e) { /* no matchMedia, no reduced motion */ }
+  }
+  bindLook();
+
+  // --- one glance step ------------------------------------------------------
+  // Called from update() before the rig is built, so the dolly ramp is in hand
+  // by the time `d` is placed. `swing` is last frame's corridor swing; a frame
+  // of lag on a suspension test is not worth another ordering constraint.
+  function glanceStep(dt, spd, swing, sprint, chase) {
+    if (GL.pendX || GL.pendY) {
+      GL.tgtY += GL.pendX; GL.tgtP += GL.pendY;
+      GL.pendX = 0; GL.pendY = 0;
+    }
+    const maxY = GL.decoupled ? T.lookMax : T.lookMaxCoupled;
+    const rm = GL.reduced ? 0.6 : 1;
+    GL.tgtY = clamp(GL.tgtY, -maxY, maxY);
+    GL.tgtP = clamp(GL.tgtP, -T.lookDown * rm, T.lookUp * rm);
+    GL.idle += dt;
+
+    // ---- the return ------------------------------------------------------
+    let rate = 0, cap = T.returnCap;
+    if (GL.forcing) {
+      if (Math.abs(GL.tgtY) < 0.008 && Math.abs(GL.tgtP) < 0.008) GL.forcing = false;
+      else { rate = T.recentreRate; cap = T.returnCap * 1.5; }
+    }
+    if (!GL.forcing && GL.idle >= T.lookDwell && swing < T.returnSwing) {
+      const w = clamp(spd / Math.max(0.4, TUNING.copWalk), 0, 1);
+      rate = T.returnWalk * w + T.returnRun * sprint + T.returnChase * chase;
+      if (GL.reduced) rate *= 0.55;
+    }
+    GL.rate = rate;
+    if (rate > 0 && dt > 0) {
+      const k = 1 - Math.exp(-rate * dt), lim = cap * dt;
+      GL.tgtY += clamp(-GL.tgtY * k, -lim, lim);
+      GL.tgtP += clamp(-GL.tgtP * k, -lim, lim);
+      if (Math.abs(GL.tgtY) < 1e-4) GL.tgtY = 0;
+      if (Math.abs(GL.tgtP) < 1e-4) GL.tgtP = 0;
+    }
+
+    GL.curY = sm(GL.curY, GL.tgtY, T.lookSmooth, dt);
+    GL.curP = sm(GL.curP, GL.tgtP, T.lookSmooth, dt);
+    // dt == 0 is snap()'s single deterministic step. Nothing eases on a zero
+    // step, so a look set from the console would never reach the frame it is
+    // being screenshotted into. Apply it whole instead.
+    if (dt <= 0) { GL.curY = GL.tgtY; GL.curP = GL.tgtP; }
+
+    // ---- the dolly ramp, rate limited in metres --------------------------
+    GL.ramp = GL.reduced ? 0
+      : smoothstep((Math.abs(GL.curY) - T.lookDollyAt) / (T.lookDollyFull - T.lookDollyAt));
+    // A full ramp is T.lookDolly * d metres of boom, so the ramp rate that
+    // holds the lens under dollyMax m/s falls straight out of the current d.
+    const rr = T.dollyMax / Math.max(0.5, T.lookDolly * Math.max(1, d));
+    const st = rr * dt;
+    GL.rampA = dt > 0 ? clamp(GL.ramp, GL.rampA - st, GL.rampA + st) : GL.ramp;
+  }
 
   // Nearest aisle centreline to an x, and how far off it we are.
   function lane(x) {
@@ -71586,7 +72713,10 @@ function createCamera(THREE, cam) {
     // Live rig readout. Nothing depends on it — projectFromCop is the supported
     // way to put a marker on a world position — but it is here for anyone who
     // genuinely needs the numbers rather than the projection.
-    rig: { eye: [0, 0, 0], look: [0, 0, 0], fov: T.fov, yaw: 0, dist: T.dist, height: T.height },
+    rig: {
+      eye: [0, 0, 0], look: [0, 0, 0], fov: T.fov, yaw: 0, dist: T.dist,
+      height: T.height, moveYaw: 0, lookYaw: 0, lookPitch: 0,
+    },
 
     update(dt, state) {
       const cop = state && state.cop;
@@ -71596,6 +72726,30 @@ function createCamera(THREE, cam) {
       const vx = (u.vel && u.vel.x) || 0, vz = (u.vel && u.vel.z) || 0;
       const spd = u.speed || Math.hypot(vx, vz);
       dt = clamp(dt || 0, 0, 0.05);
+
+      // ---- who is main.js steering by ---------------------------------------
+      // The `moveYaw` getter counts its own reads: one read is proof the hook
+      // is live and the movement basis is the corridor rather than the camera.
+      //
+      // LATCHED, not windowed. This was a 4-frame window first — decoupled if
+      // moveYaw had been read in any of the last four updates — on the theory
+      // that main.js reads it every frame in readInput(). It does. But snap()
+      // and step(0) call update() with NO readInput in front of them, so a
+      // console driving the camera frame by frame falls out of the window and
+      // the look budget silently drops from 110 degrees to the 52 degree
+      // fallback. It cost a measurement: a live subject sweep looked
+      // non-monotonic and wrong, and the cause was the clamp changing halfway
+      // through it, not the camera. A main.js that reads moveYaw cannot stop
+      // existing mid-page-load, so once is once and it stays.
+      if (moveReads !== lastReads) { lastReads = moveReads; GL.decoupled = true; }
+      // ---- floor entry -------------------------------------------------------
+      // A look held when the player walked back to the desk must not still be
+      // held when he is dispatched again. Keyed off the mode transition rather
+      // than off a time gap, so pausing the loop for a screenshot does not
+      // silently wipe a look that was set from the console.
+      lastUpdateMs = now();
+      const md = gameMode();
+      if (md !== prevMode) { if (md === 'floor') zeroGlance(); prevMode = md; }
 
       if (!started) { fx = c.x; fz = c.z; started = true; }
 
@@ -71617,6 +72771,9 @@ function createCamera(THREE, cam) {
       boost01 = sm(boost01, bstTgt, 5.0, dt);
       chase01 = sm(chase01, chsTgt, 2.4, dt);
       gap01 = sm(gap01, gapTgt, 1.7, dt);
+
+      // ---- the player's own look, before anything is placed -----------------
+      if (GL.on) glanceStep(dt, spd, swing01, sprint01, chase01);
 
       // ---- WHICH WAY DOES THE STORE FACE HERE ------------------------------
       // The store is a hard grid: eight corridors along Z, three across in X.
@@ -71727,6 +72884,11 @@ function createCamera(THREE, cam) {
       d = sm(d, dT, T.rigRate, dt);
       fov = sm(fov, fT, T.rigRate, dt);
       look = sm(look, lT, T.rigRate, dt);
+      // The glance dolly rides ON TOP of `d` and never inside it. `d` keeps its
+      // measured corner behaviour to the byte; dEff is what the lens uses.
+      // At rampA 0 — mouse untouched — dEff === d, because d never gets near
+      // the 1.15 floor (the smallest the round-1 rig ever asks for is 1.93).
+      const dEff = Math.max(T.lookDollyMin, d * (1 - T.lookDolly * GL.rampA));
 
       // ---- focus: anisotropic follow + velocity lead ------------------------
       const bx = -Math.sin(yawA), bz = Math.cos(yawA);      // camera bearing
@@ -71761,6 +72923,43 @@ function createCamera(THREE, cam) {
         aimZ = lerp(c.z, nb.b.z, T.laneAim * k);
       }
 
+      // ---- THE MOVEMENT BASIS, TAKEN BEFORE THE GLANCE TOUCHES ANYTHING -----
+      // moveYaw has to be the corridor and it has to be PROVABLY independent of
+      // the look, so it is computed here off the UNDOLLIED boom rather than read
+      // back from the final camera the way `yaw` is.
+      //
+      // MEASURED, and it is the one thing in this round that was silently
+      // wrong. Round 1's read-back is honest about the CAMERA, and its
+      // justification is a residual: the eye and the aim carry different lane
+      // blends (0.62 against 0.75) and the focus spring lags, so the two sit up
+      // to ~0.15 m apart laterally, which across a 5.55 m boom is the 1.5
+      // degrees round 1 quotes. The glance dolly takes that boom to 1.15 m. The
+      // SAME 0.15 m is then 7 degrees, and a spring half a metre behind a
+      // moving cop is fifty. Logged before this line existed:
+      //
+      //     look    0 deg  ->  moveYaw  0.00   (corridor)
+      //     look  -90 deg  ->  moveYaw  0.95   = 54 deg OFF the corridor
+      //     look -110 deg  ->  moveYaw  1.00   = 57 deg
+      //
+      // So the decoupling was a fiction at exactly the angles it was bought
+      // for: a deep glance was steering the player after all, just through a
+      // trigonometric side door rather than through the axis latch. Everything
+      // in the header about the loop being closed depended on this being zero.
+      //
+      // (aimX - eyeX) + bx*d IS round 1's boom vector — the shoulder dolly adds
+      // to both ends and cancels, and the boom collision scales along the line,
+      // so neither can turn it. The shake jitter is deliberately left out: a
+      // shoulder barge should not wobble the direction W means.
+      baseYaw = Math.atan2(-((aimX - eyeX) + bx * d), (aimZ - eyeZ) + bz * d);
+      // ...and then converge the lens onto the aim's own lateral line as the
+      // dolly runs in, so the CAMERA's yaw stops being residual-dominated too
+      // and the corner peek sits square on the lane instead of skewed across
+      // it. A no-op at rampA 0, which is every frame the mouse is idle.
+      if (GL.rampA > 0) {
+        eyeX = lerp(eyeX, aimX, GL.rampA);
+        eyeZ = lerp(eyeZ, aimZ, GL.rampA);
+      }
+
       // ---- life: vertical only, no roll ------------------------------------
       bobP += dt * (u.phase != null ? 0 : spd * 2.0);
       const stride = u.phase != null ? u.phase : bobP;
@@ -71792,12 +72991,15 @@ function createCamera(THREE, cam) {
       // aisle it is looking down, and dolly by whatever it takes.
       const over = axisX ? 0 : clamp((h - T.signLo) / T.signRamp, 0, 1);
       const sgx = rx * T.shoulderSide, sgz = rz * T.shoulderSide;
-      const need = lerp(T.shoulder, Math.max(T.shoulder, T.signClear), over);
+      // Fade the shoulder as the glance dolly runs the lens up the boom. The
+      // SIGN clearance term is deliberately not faded — that one is structural.
+      const SHO = T.shoulder * (1 - T.lookShoulderFade * GL.rampA);
+      const need = lerp(SHO, Math.max(SHO, T.signClear), over);
       // Lane offsets the lens and the aim already carry. They are NOT the same —
       // the aim is pulled harder onto the centreline — so both get measured.
       const preEye = (eyeX - L.cx) * sgx;
       const preAim = (aimX - L.cx) * sgx;
-      let sh = Math.max(T.shoulder, need - Math.min(preEye, preAim));
+      let sh = Math.max(SHO, need - Math.min(preEye, preAim));
       // ...and then bounded, which is the bit that was missing. `need - pre`
       // is unbounded above, and the follow spring is deliberately soft, so a cop
       // moving sideways leaves the focus point trailing by up to two metres —
@@ -71813,8 +73015,8 @@ function createCamera(THREE, cam) {
       // `yaw` — is untouched by any of it.
       aimX += sgx * sh; aimZ += sgz * sh;
       const jx = sk * Math.sin(shake * 41);
-      let px = eyeX + sgx * sh - bx * d + rx * jx;
-      let pz = eyeZ + sgz * sh - bz * d + rz * jx;
+      let px = eyeX + sgx * sh - bx * dEff + rx * jx;
+      let pz = eyeZ + sgz * sh - bz * dEff + rz * jx;
       y += sk * 0.5 * Math.sin(shake * 53);
       // Walls. Clamping the lens rather than the aim means the shot tips down
       // and closes in when you run into the front end instead of the cop sliding
@@ -71853,6 +73055,38 @@ function createCamera(THREE, cam) {
 
       cam.position.set(px, y, pz);
       AIM.set(aimX, look, aimZ);
+
+      // ---- the glance, applied ----------------------------------------------
+      // Everything above is round 1's pose, unmodified. The look rotates the
+      // AIM POINT off the bearing that pose actually came out at — the NATURAL
+      // one, read back here, not the corridor bearing published as moveYaw.
+      // That distinction is what keeps this continuous: the two differ by the
+      // lane residual, and basing the rotation on moveYaw would pop the camera
+      // by that residual the instant the look crossed zero. The eye does not
+      // move. Rotating an aim point rather than composing a quaternion keeps
+      // this on exactly the same code path as round 1, so the yaw read-back
+      // below stays the single source of truth for what the camera is doing.
+      {
+        const ax2 = AIM.x - px, az2 = AIM.z - pz, ay2 = AIM.y - y;
+        const dh = Math.hypot(ax2, az2);
+        if (dh > 1e-4) {
+          if (GL.curY || GL.curP || GL.rampA > 0) {
+            const yawNat = Math.atan2(-ax2, az2);
+            const rad = Math.hypot(dh, ay2);
+            // Pitch: the natural one, blended toward the RESTING pitch as the
+            // glance dolly runs in. Without this the deep glance tips at the
+            // floor — the aim height is fixed at ~1.55 and the lens at ~2.36,
+            // so a boom of 5.55 is 8 degrees down and a boom of 1.15 is 34.
+            const pRest = Math.atan2(T.look - T.height, T.dist);
+            const p0 = lerp(Math.atan2(ay2, dh), pRest, GL.rampA);
+            const yF = wrapPi(yawNat + GL.curY);
+            const pF = clamp(p0 + GL.curP, -T.pitchClamp, T.pitchClamp);
+            const cp = Math.cos(pF);
+            AIM.set(px - Math.sin(yF) * cp * rad, y + Math.sin(pF) * rad,
+              pz + Math.cos(yF) * cp * rad);
+          }
+        }
+      }
       cam.lookAt(AIM);
       if (Math.abs(cam.fov - fov) > 0.01) { cam.fov = fov; cam.updateProjectionMatrix(); }
 
@@ -71873,21 +73107,76 @@ function createCamera(THREE, cam) {
       const r = api.rig;
       r.eye[0] = px; r.eye[1] = y; r.eye[2] = pz;
       r.look[0] = AIM.x; r.look[1] = AIM.y; r.look[2] = AIM.z;
-      r.fov = fov; r.yaw = api.yaw; r.dist = d; r.height = y;
+      r.fov = fov; r.yaw = api.yaw; r.dist = dEff; r.height = y;
+      r.moveYaw = baseYaw;
+      r.lookYaw = GL.curY; r.lookPitch = GL.curP;
+    },
+
+    // The look handle. Everything a console (or a critic's driver) needs to
+    // reproduce a glance exactly, plus the switches a player-facing options
+    // menu would want if this game ever grows one.
+    glance: {
+      // Absolute offsets in RADIANS, off the corridor bearing. Writes both the
+      // target and the applied value, so a set() is visible in the very next
+      // snap() even though snap steps with dt = 0.
+      set(y, p) {
+        const maxY = GL.decoupled ? T.lookMax : T.lookMaxCoupled;
+        const rm = GL.reduced ? 0.6 : 1;
+        if (y != null) GL.curY = GL.tgtY = clamp(y, -maxY, maxY);
+        if (p != null) GL.curP = GL.tgtP = clamp(p, -T.lookDown * rm, T.lookUp * rm);
+        GL.idle = 0; GL.forcing = false;
+        GL.ramp = GL.rampA = GL.reduced ? 0
+          : smoothstep((Math.abs(GL.curY) - T.lookDollyAt) / (T.lookDollyFull - T.lookDollyAt));
+        return api.glance.state();
+      },
+      // Degrees, for hands. glance.deg(-60) reads down the aisle on the left.
+      deg(y, p) { return api.glance.set(y == null ? null : y * RAD, p == null ? null : p * RAD); },
+      nudge(dy, dp) { GL.pendX += dy || 0; GL.pendY += dp || 0; GL.idle = 0; },
+      recentre() { GL.forcing = true; GL.idle = 9; },
+      state() {
+        return {
+          yaw: +GL.curY.toFixed(4), pitch: +GL.curP.toFixed(4),
+          deg: +(GL.curY / RAD).toFixed(1), pitchDeg: +(GL.curP / RAD).toFixed(1),
+          dolly: +GL.rampA.toFixed(3), locked: GL.locked, dragging: GL.dragging,
+          idle: +GL.idle.toFixed(2), returnRate: +GL.rate.toFixed(2), forcing: GL.forcing,
+          decoupled: GL.decoupled, reduced: GL.reduced, on: GL.on,
+          max: +((GL.decoupled ? T.lookMax : T.lookMaxCoupled) / RAD).toFixed(0),
+        };
+      },
+      // Switches. `enabled(false)` restores round 1 exactly.
+      enabled(v) { if (v != null) { GL.on = !!v; if (!GL.on) { zeroGlance(); releaseLock(); } } return GL.on; },
+      pointerLock(v) { if (v != null) { GL.pointerLock = !!v; if (!GL.pointerLock) releaseLock(); } return GL.pointerLock; },
+      invertY(v) { if (v != null) GL.invertY = !!v; return GL.invertY; },
+      release: releaseLock,
     },
 
     // Console handle: what the rig thinks it is doing, in one line.
     debug() {
       return {
-        yaw: +api.yaw.toFixed(3), axis: axisX ? 'X' : 'Z', sign,
+        yaw: +api.yaw.toFixed(3), moveYaw: +baseYaw.toFixed(3),
+        look: +(GL.curY / RAD).toFixed(1), pitch: +(GL.curP / RAD).toFixed(1),
+        dolly: +GL.rampA.toFixed(2), decoupled: GL.decoupled,
+        axis: axisX ? 'X' : 'Z', sign,
         h: +h.toFixed(2), d: +d.toFixed(2), fov: +fov.toFixed(1),
         sprint: +sprint01.toFixed(2), gas: +gas01.toFixed(2),
         chase: +chase01.toFixed(2), gap: +gap01.toFixed(2), swing: +swing01.toFixed(2),
         dbg,
       };
     },
-    bands: () => crossBands(),
+    // The three cross-store corridors this file frames against. Round 1 wrote
+    // this as crossBands(), which is agents.js's export and was never imported
+    // here — so calling it threw a ReferenceError. It was only ever a readout.
+    bands: () => BANDS.map((b) => ({ ...b })),
   };
+  // THE MOVEMENT BASIS. A getter, not a value, and it counts its own reads:
+  // that count is how update() knows whether main.js is steering by the
+  // corridor (this) or by the camera (`yaw`), and therefore how much look the
+  // player is allowed before the two disagree enough to matter. See the top
+  // of the file. Falls back to the true yaw until the first frame is posed.
+  Object.defineProperty(api, 'moveYaw', {
+    enumerable: true, configurable: true,
+    get() { moveReads++; return started ? baseYaw : api.yaw; },
+  });
   return api;
 }
 
@@ -75339,25 +76628,72 @@ function createBed(ctx, room, out, wetOut, rattleBuf) {
   const air = tap(srcC, 1);
   const airHP = N(filt(ctx, 'highpass', 430, 0.6));
   const airLP = N(filt(ctx, 'lowpass', 7200, 0.6));
-  const airG = N(gain(ctx, 0.19));
-  air.connect(airHP); airHP.connect(airLP); airLP.connect(airG);
+  // ROUND 4: a second pole on the top. One lowpass at 7200 falls at 12 dB/oct,
+  // which still has this layer 10 dB up at 12 kHz where a room has nothing.
+  // Two poles make it fall like a room instead of like a shelf. It costs
+  // nothing below 4 kHz, which is the half of this layer that does the work.
+  const airLP2 = N(filt(ctx, 'lowpass', 6400, 0.55));
+  const AIR_BASE = 0.19;
+  const airG = N(gain(ctx, AIR_BASE));
+  air.connect(airHP); airHP.connect(airLP); airLP.connect(airLP2); airLP2.connect(airG);
   place(airG, 0.25, 1.0);
 
-  // The top two octaves. Pink noise has already fallen 15 dB by the time it
-  // gets here, so this branch takes it back: a shelved-up, high-passed hiss
-  // that is the diffusers, the lights, and forty metres of hard air. Without it
-  // the store measured 0.000 of its energy above 5 kHz and read as a boiler
-  // room. It is quiet and it is doing more work than anything else in the file.
+  // THE TOP OF THE ROOM.
+  //
+  // ROUND 4 — THIS WAS THE HISS, AND IT IS THE WHOLE OF BUG 1. The client, on
+  // speakers: "there's this bad hiss in the background, just constantly going
+  // ... it sounds like there's music in the background, it actually sounds
+  // good, but the hissing is bad." It was this branch. Bed alone, aisle 4,
+  // muting this one gain node and nothing else:
+  //
+  //                        5-8 kHz    8-12 kHz   12-20 kHz
+  //     round 3, shipped   -56.0 dB   -57.7 dB    -58.7 dB
+  //     this node muted    -60.1 dB   -66.2 dB    -76.5 dB
+  //     so it owned          4.1 dB     8.5 dB      17.8 dB
+  //
+  // Read the shipped row again. The 12-20 kHz octave came back as loud as the
+  // 5-8 kHz one, and the reason is the +6 dB shelf that used to sit at 5200:
+  // pink noise falls 3 dB an octave, so a +6 dB shelf spanning two octaves
+  // flattens it EXACTLY. What was being generated here was not room air, it was
+  // white noise from 5 kHz up — which is the textbook definition of tape hiss,
+  // and it is what he heard sitting on top of a tape he otherwise liked.
+  //
+  // The 0.95 reverb send finished the job. Fed through a 2.35 s tail, the layer
+  // loses even the pink bed's own slow movement and becomes perfectly
+  // stationary. Every other layer in this file drifts — that is the first thing
+  // the top of the file promises. This was the only one that did not, and it is
+  // the only one anybody complained about. "Constantly going" is a literal
+  // description of a fixed gain on an unmodulated broadband source.
+  //
+  // What is here now is air absorption, which is what should have been modelled
+  // in the first place. 10 kHz loses on the order of 20 dB over the ~680 m of
+  // path length inside a 2 s tail, so the top end of a big room falls away hard
+  // and is gone by 12 k. A supermarket is bright in the MIDS because nothing in
+  // it is soft; that is not the same claim as flat to 20 kHz.
+  //
+  // Kept, because it is still true: without SOME energy up here the store
+  // measured 0.000 above 5 kHz and read as a boiler room. The layer stays. It
+  // stops being a hiss generator.
   const airTop = tap(srcB, 1);
   const atHP = N(filt(ctx, 'highpass', 3400, 0.5));
   const atHP2 = N(filt(ctx, 'highpass', 4200, 0.6));
-  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, 6));
-  const atG = N(gain(ctx, 0.21));
-  // No lowpass on the end of this. Round 2 briefly had one at 17-20 kHz and it
-  // was doing nothing except making a brick wall out of a band that pink noise
-  // has already rolled off by 25 dB on its own.
-  airTop.connect(atHP); atHP.connect(atHP2); atHP2.connect(atSh); atSh.connect(atG);
-  place(atG, 0.30, 0.95);
+  // The first pass at this fix overshot: -1 dB of shelf with the corner at 7600
+  // took 5.6-11.2 kHz down 12.8 dB and everything above 11.2 kHz down 36.8, and
+  // a store with NOTHING above 11 kHz is the round-1 boiler room again from the
+  // other side. The corner went to 9000 and the shelf back to +1, which lands
+  // the audible part of the cut at about 7 dB and leaves the ultrasonic part —
+  // the half that was pure hiss and no room — down where it belongs.
+  const atSh = N(filt(ctx, 'highshelf', 5200, 0.7, 1));    // was +6. That was the bug.
+  const atLP = N(filt(ctx, 'lowpass', 9000, 0.55));        // air absorption
+  const atLP2 = N(filt(ctx, 'lowpass', 12000, 0.6));       // and the rest of it
+  const AT_BASE = 0.150;                                   // was 0.21
+  const atG = N(gain(ctx, AT_BASE));
+  airTop.connect(atHP); atHP.connect(atHP2); atHP2.connect(atSh);
+  atSh.connect(atLP); atLP.connect(atLP2); atLP2.connect(atG);
+  // Wet was 0.95 — nearly all of this layer arrived as reverb, which is what
+  // made it stationary. HF does not survive forty metres of air; the top of the
+  // room is a local sound, not a reverberant one.
+  place(atG, 0.30, 0.30);
 
   // =========================================================================
   // REFRIGERATION — cycling over minutes, not seconds.
@@ -75768,6 +77104,17 @@ function createBed(ctx, room, out, wetOut, rattleBuf) {
     to(hvGain.gain, hvBase * hvm, t, 0.9);
     to(hvRes.frequency, 56 + 2.4 * Math.sin(c * 0.0271), t, 1.2);
     to(dfGain.gain, 0.115 * (1 + 0.22 * Math.sin(c * 0.0733 + 2.2)), t, 0.8);
+
+    // --- ROUND 4: THE AIR MOVES TOO. These two were the only always-on layers
+    // in the file with a fixed gain, and the top one was the hiss the client
+    // heard. A constant broadband source is a noise generator; the same source
+    // breathing on the same irrational sums as the air handling is a building.
+    // Four Math.sin calls and two setTargetAtTime a frame.
+    to(airG.gain, AIR_BASE * (1 + 0.13 * Math.sin(c * 0.0357 + 1.4)
+                                + 0.07 * Math.sin(c * 0.0091 + 5.1)), t, 1.3);
+    to(atG.gain, AT_BASE * (1 + 0.17 * Math.sin(c * 0.0421 + 0.9)
+                              + 0.09 * Math.sin(c * 0.0107 + 3.3)), t, 1.4);
+    to(atLP.frequency, 9000 * (1 + 0.09 * Math.sin(c * 0.0313 + 2.4)), t, 1.6);
 
     // --- ballast: a slow random walk of a few hundredths of a hertz, which is
     // exactly what the grid does. The three voices drift past each other and the
@@ -77124,25 +78471,29 @@ const { gain, filt, mulberry, clamp } = M_src_audio_dsp_js;
 // The player is on a laptop. The microphone is nine inches from the speakers and
 // the speakers are playing the PA. That is a loop with real gain in it, and the
 // honk at 1.6 k and the breakup peak at 3.6 k sit exactly where a howl wants to
-// live. Three defences, in order of how much work they do:
+// live. Four defences — and ROUND 4 REORDERED THEM, because the one that used
+// to be first turned out to be the bug:
 //
-//  1. `echoCancellation: true`. The browser's AEC references the page's own
-//     render stream, so the PA — including the player's own voice coming back —
-//     is subtracted at the capture. This does 90% of the job and it is why the
-//     constraints are not optional.
-//  2. THE TAPE DUCKS. pa.js pulls the music to 0.18 while the channel is open,
-//     the way a real priority input does. Authentic, and it removes the loudest
-//     thing in the loop.
-//  3. The howl watchdog below. A voice is bursty; a howl is a sine that does not
-//     stop. If the mic sits above HOWL_ON for HOWL_HOLD seconds the guard gain
-//     walks down, and it walks back up over three seconds once the level drops.
-//     This is what an automatic feedback suppressor does, and it is the backstop
-//     for the case where the AEC loses lock because somebody moved the laptop.
-//
-//  4. THE BED DUCKS TOO (audio.js). Seven decibels off the trolleys and the
-//     tills while the channel is open buys exactly as much audibility as seven
+//  1. THE TWO DUCKS, and they are first now because they are the only ones that
+//     cost nothing. pa.js pulls the tape to 0.18 and audio.js pulls the bed down
+//     6.9 dB while the channel is open, the way a real priority input does.
+//     Seven decibels off the trolleys buys exactly as much audibility as seven
 //     decibels more microphone gain, and unlike microphone gain it SUBTRACTS
-//     from the loop instead of adding to it. Reach for this one first.
+//     from the loop instead of adding to it. Reach for these first, always.
+//  2. `lim`, the amplifier's limiter, on the way out of this file. A hard
+//     ceiling on the speech bus is an absolute bound on what the loop can do,
+//     which no adaptive thing can promise.
+//  3. The howl watchdog below — which in round 3 had never fired and could not
+//     fire, because it was watching the wrong point in the chain. It works now,
+//     and it is measured: see the matrix by HOWL_ON. A voice is bursty, a howl
+//     is a tone that does not stop, and telling those apart is what it does.
+//  4. `echoCancellation`, WHICH IS NOW OFF BY DEFAULT. It was defence number one
+//     for a round and it was the reason the feature did nothing on speakers:
+//     the browser's AEC references the page's own render stream, and in this
+//     game the page's own render stream contains the player's voice coming back
+//     out of the ceiling. It was subtracting the thing it was supposed to be
+//     protecting. The full argument is by AEC_DEFAULT; talkEcho(true) restores
+//     it for a machine that turns out to need it.
 //
 // TALK_LVL is the number to be careful with, and the one place where the
 // audible answer and the safe answer pull against each other. See its comment.
@@ -77174,9 +78525,92 @@ const HOLD_MS = 20000;
 // costs distortion nothing and buys feedback margin rather than spending it.
 const TALK_LVL = 1.35;
 const HISS_LVL = 0.030;     // the amplifier's own noise floor, exposed by the key
-const HOWL_ON = 0.30;       // linear RMS at the mic that counts as "too loud"
-const HOWL_OFF = 0.12;
-const HOWL_HOLD = 0.55;     // seconds above HOWL_ON before the guard moves
+// Linear RMS AT THE RAW MICROPHONE, in a 1024-sample window. Round 3's comment
+// said "at the mic" and the code measured the compressor's output, which is why
+// it never fired — see the anIn note below. Against the real input these are
+// meaningful numbers: autoGainControl targets speech at about -19 dBFS (0.11),
+// a shouted syllable peaks near 0.25 for a few tens of milliseconds, and a howl
+// pins somewhere between 0.3 and 0.9 and STAYS there.
+//
+// The sweep, measured through the real chain:
+//
+//   0.34, level only    shout at -12 dBFS tripped it. A false positive on the
+//                       one thing the feature actively invites somebody to do.
+//   0.40, level only    shout safe, but a 1.6 kHz howl at 0.389 RMS — a
+//                       perfectly ordinary mid-strength one — walked under the
+//                       threshold and rang forever. A worse failure.
+//   0.34 + steadiness   both right. Kept.
+//
+// LEVEL CANNOT SEPARATE A SHOUT FROM A HOWL, because they overlap; two rounds
+// of threshold-picking is what proving that cost. Steadiness separates them by
+// a mile — see the detector in update(). The final matrix:
+//
+//     input                          guard      tripped
+//     voice, -19 dBFS (normal)       1.000      no
+//     voice, -12 dBFS (shouting)     1.000      no
+//     voice,  -8 dBFS (yelling)      1.000      no
+//     howl 1600 Hz, 0.39 RMS         0.080      yes, 801 ms
+//     howl 1600 Hz, 0.67 RMS         0.080      yes, 204 ms
+//     howl 3600 Hz (breakup peak)    0.091      yes, 273 ms
+//
+// The louder the howl the faster it is caught, which is the right way round.
+// Recovery to unity takes about 2.7 s once it stops.
+const HOWL_ON = 0.34;
+const HOWL_OFF = 0.14;
+// Coefficient of variation of the short-term RMS, below which the input is
+// "ringing" rather than "talking". Measured through the real chain: a 1.6 kHz
+// tone sits near 0.05, speech at every level tested sits above 0.45.
+const HOWL_STEADY = 0.30;
+// ROUND 4: 0.55 -> 0.20. The AEC is no longer the first line of defence (see
+// AEC_DEFAULT below), so the watchdog is. Half a second of a building howling
+// at 1.6 kHz is not a diagnostic delay, it is the entire unpleasant event; by
+// the time the old value had decided, the player had already reached for the
+// volume knob. The step also got bigger and the floor lower, because a howl
+// that is only pulled to -16 dB is a howl you can still hear.
+const HOWL_HOLD = 0.20;     // seconds above HOWL_ON before the guard moves
+const HOWL_STEP = 0.45;     // was 0.55
+const HOWL_FLOOR = 0.08;    // was 0.15
+
+// ---------------------------------------------------------------------------
+// echoCancellation, AND WHY IT IS OFF — ROUND 4, BUG 2
+//
+// Client, having played it on SPEAKERS: "the voice thing doesn't work. It looks
+// like it's recording, but it doesn't do anything."
+//
+// "Looks like it's recording" means the tab's capture indicator lit, so
+// getUserMedia resolved and the device is open. Everything downstream of that
+// was measured this round and is fine — see the note on the real-stream test at
+// the bottom of this file. What is left is the one part of the chain that is
+// not ours: the browser's own acoustic echo canceller, and on speakers it is
+// pointed directly at this feature.
+//
+// Chrome's AEC references THE PAGE'S OWN RENDER STREAM. Round 3's comment
+// called that a feature, and for a video call it is. Here it is fatal, because
+// of what the render stream contains: the store, the tape, and — ten to two
+// hundred milliseconds after he speaks, via four ceiling cans and a 2.35 s
+// tail — HIS OWN VOICE. The canceller is being asked to subtract a reference
+// signal that the near-end talker is inside. Worse, AEC3's residual suppressor
+// gates the capture hard whenever it believes the far end is active, and in
+// this game the far end is NEVER not active: there is always a supermarket
+// coming out of the speakers. Device open, indicator lit, nothing audible.
+// That is the client's sentence, mechanism first.
+//
+// On headphones there is no acoustic loop and none of this happens, which is
+// exactly why round 3 shipped it: it was never tested the way he played it.
+//
+// So the constraint is off, and the feedback budget is rebuilt around that:
+//
+//   - the tape still ducks to 0.18 and the bed still ducks 6.9 dB, and those
+//     two SUBTRACT from the loop instead of adding to it
+//   - `lim` below is a hard ceiling on the speech bus, so no amount of loop
+//     gain can produce a level the amp would not have produced anyway
+//   - the howl watchdog now moves in a fifth of a second instead of half of one
+//   - and the voice arrives at master around the level of the store bed, so the
+//     loop gain through a laptop's speaker-to-mic path is far below unity
+//
+// If it ever does howl on somebody's machine, audio.js exposes talkEcho(true)
+// and the old behaviour is one call away without a rebuild.
+const AEC_DEFAULT = false;
 
 // opts: { seed, onOpen(t), onClose(t) }
 function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
@@ -77204,16 +78638,69 @@ function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
   comp.attack.value = 0.003; comp.release.value = 0.25;
   const guard = N(gain(ctx, 1));      // the howl watchdog owns this
   const gate = N(gain(ctx, 0));       // 0 unless the key is down. Always.
+  // ---- the amplifier's limiter -------------------------------------------
+  // ROUND 4. Measured at the `speech` bus with a voice-shaped signal injected
+  // at the level a laptop microphone actually delivers (-19.1 dBFS RMS): the
+  // handset arrived at -14.7 dBFS RMS and PEAKED AT -2.81 dBFS. The next node
+  // it meets is pa.js's `drive`, a tanh at 1.55, so those peaks were being
+  // shaped at x = 0.72 — the top of the curve, where the paper cone stops
+  // sounding cheap and starts sounding broken. The compressor above is an AGC
+  // for people who hold a handset at arm's length; it has a 3 ms attack and a
+  // 12 dB knee and it lets every transient straight through, which is correct
+  // for what it is and useless as a ceiling.
+  //
+  // A 70 V rack amp has a limiter on its priority input. This is that: fast,
+  // high ratio, and it exists so the AVERAGE level can go up (see pa.js — the
+  // ceiling comes up 5 dB while the channel is live) while the PEAK into the
+  // cone goes DOWN. More voice, less distortion, and it is also the absolute
+  // bound on the feedback loop now that the browser's canceller is out of it.
+  //
+  // Measured doing its job on the voice-shaped test signal: 3.6 dB of gain
+  // reduction on average and 5.5 dB on the loudest syllables, which is a
+  // limiter catching peaks and not a compressor squashing a performance.
+  const lim = N(ctx.createDynamicsCompressor());
+  lim.threshold.value = -10; lim.knee.value = 2; lim.ratio.value = 20;
+  lim.attack.value = 0.002; lim.release.value = 0.10;
   micIn.connect(hp); hp.connect(comp); comp.connect(guard);
-  guard.connect(gate); gate.connect(speechDest);
+  guard.connect(gate); gate.connect(lim); lim.connect(speechDest);
 
-  // Level, for the HUD meter and for the watchdog. Time-domain only — this
-  // never runs an FFT, it copies 1024 floats when the channel is open and
-  // nothing at all when it is not.
+  // Level, for the HUD meter. Time-domain only — this never runs an FFT, it
+  // copies 1024 floats when the channel is open and nothing at all when it is
+  // not. It reads the COMPRESSOR, which is what is actually going to air.
   const an = N(ctx.createAnalyser());
   an.fftSize = 1024; an.smoothingTimeConstant = 0;
   comp.connect(an);
   const buf = new Float32Array(an.fftSize);
+
+  // ---- and a SECOND one, on the raw microphone, for the watchdog ----------
+  //
+  // ROUND 4 — THE WATCHDOG HAD NEVER FIRED, AND COULD NOT. It read the same
+  // analyser as the meter, i.e. the output of a 6:1 compressor with its
+  // threshold at -26 dBFS, and compared it against HOWL_ON = 0.30 linear, which
+  // is -10.5 dBFS. Work the compressor backwards: to put 0.30 RMS on its OUTPUT
+  // you have to put about +85 dBFS on its input. There is no such signal. The
+  // guard has sat at exactly 1.000 for every frame of its existence.
+  //
+  // Proved rather than reasoned: a sustained 1.6 kHz sine at 0.55 amplitude —
+  // the can's own honk frequency, i.e. a textbook howl, and 11 dB hotter than a
+  // shout — injected at micIn for 2.6 s. guard stayed at 1.000 for all 26
+  // samples. The compressor's own gain reduction was hiding the event from the
+  // thing whose job was to notice it.
+  //
+  // This is the shadow-block shape CLAUDE.md warns about, in a different
+  // costume: not a constant that is read from the wrong object, but a constant
+  // that is compared against the wrong SIGNAL. It read plausibly for a round and
+  // did nothing, and it mattered the moment round 4 took the browser's echo
+  // canceller out and told this file the watchdog was the first line of defence.
+  //
+  // A howl detector wants the raw input, because the compressor above it is an
+  // AGC and hiding level is its entire function. One more AnalyserNode, one more
+  // 1024-float copy per frame WHILE THE CHANNEL IS OPEN, and nothing at all the
+  // rest of the time.
+  const anIn = N(ctx.createAnalyser());
+  anIn.fftSize = 1024; anIn.smoothingTimeConstant = 0;
+  hp.connect(anIn);
+  const bufIn = new Float32Array(anIn.fftSize);
 
   // ---- the key ------------------------------------------------------------
   // A PA is identifiable before anybody says a word, and this is why: the
@@ -77270,6 +78757,8 @@ function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
   let deniedAt = -1e9;
   let releaseTimer = 0;
   let level = 0, hot = 0, guardG = 1;
+  let rMean = 0, rVar = 0;            // the howl detector's steadiness estimate
+  let aec = AEC_DEFAULT;              // see the note by AEC_DEFAULT
 
   function open(t) {
     click(t, false);
@@ -77321,9 +78810,20 @@ function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
       try {
         s = await md.getUserMedia({
           audio: {
-            // Not optional. See the FEEDBACK note at the top of the file.
-            echoCancellation: true,
+            // OFF by default, and the reason is forty lines at the top of this
+            // file. It is the thing that made the feature do nothing on
+            // speakers. talkEcho(true) puts it back.
+            echoCancellation: aec,
+            // Kept. Chrome's suppressor is a STATIONARY-noise suppressor, and
+            // the thing it will find in this microphone is the store bed coming
+            // back out of the speakers — which is exactly the broadband half of
+            // the feedback loop. It removes loop gain instead of adding it, and
+            // it does not touch a voice.
             noiseSuppression: true,
+            // Kept, reluctantly. Without it the delivered level is whatever the
+            // player's device felt like and TALK_LVL is a guess about a stranger's
+            // hardware. It rides down against the leaked bed, which costs a few
+            // decibels; the limiter and pa.js's ceiling lift buy them back.
             autoGainControl: true,
             channelCount: 1,
           },
@@ -77357,7 +78857,10 @@ function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
     }
     for (const tr of stream.getAudioTracks()) tr.enabled = true;
     state = 'live';
-    hot = 0; guardG = 1; guard.gain.setTargetAtTime(1, ctx.currentTime, 0.05);
+    // rMean/rVar too: a steadiness estimate left over from the last hold would
+    // otherwise decide the first third of a second of this one.
+    hot = 0; guardG = 1; rMean = 0; rVar = 0;
+    guard.gain.setTargetAtTime(1, ctx.currentTime, 0.05);
     open(ctx.currentTime + 0.02);
     return true;
   }
@@ -77386,15 +78889,50 @@ function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
     const rms = Math.sqrt(sum / buf.length);
 
     // Meter: -50 dB floor, -6 dB top, fast up and slow down so a HUD bar reads
-    // like a VU and not like a strobe.
+    // like a VU and not like a strobe. Unchanged — game.js's meter reads this
+    // and it was never the broken part.
     const db = 20 * Math.log10(rms + 1e-7);
     const v = clamp((db + 50) / 44, 0, 1);
     level += (v - level) * (1 - Math.exp(-(v > level ? 22 : 5) * dt));
 
-    // The howl watchdog.
-    if (rms > HOWL_ON) hot += dt;
-    else if (rms < HOWL_OFF) hot = Math.max(0, hot - dt * 0.8);
-    const target = hot > HOWL_HOLD ? Math.max(0.15, guardG * 0.55) : Math.min(1, guardG + dt / 3);
+    // The howl watchdog, now looking at the RAW MICROPHONE — see anIn above for
+    // why it spent round 3 looking at a signal that could not trip it.
+    anIn.getFloatTimeDomainData(bufIn);
+    let sIn = 0;
+    for (let i = 0; i < bufIn.length; i++) sIn += bufIn[i] * bufIn[i];
+    const rmsIn = Math.sqrt(sIn / bufIn.length);
+    // `hot` must DECAY whenever the input is not actually hot, and round 3's
+    // version only decayed below HOWL_OFF. Anything landing in the gap between
+    // the two thresholds froze the accumulator instead of unwinding it, so a
+    // loud voice — which lives in that gap almost continuously — ratcheted `hot`
+    // upward across its own syllable gaps.
+    //
+    // But the decay rule alone is not enough, and the sweep says so: at any
+    // threshold low enough to see a mid-strength howl, a sustained shout trips
+    // it too, because THE TWO OVERLAP IN LEVEL. Separating them by loudness is
+    // not possible. So separate them by the thing that actually differs.
+    //
+    // A howl is a room resonance ringing. Its short-term level is almost
+    // perfectly CONSTANT. A voice — any voice, at any volume — is syllables,
+    // and its short-term level swings enormously from frame to frame. The
+    // coefficient of variation of the 21 ms RMS over about a third of a second
+    // is ~0.05 for a ringing tone and 0.5-1.0 for speech, and that gap is a
+    // chasm compared to the few decibels separating a shout from a howl.
+    //
+    // Two exponential accumulators and a square root, once a frame, only while
+    // the channel is open. No FFT — the cost note at the top of this file still
+    // holds. `veryLoud` is the belt-and-braces: something twice over the
+    // threshold gets caught whatever its shape, because at that level being
+    // wrong about the diagnosis costs less than being slow.
+    const aS = 1 - Math.exp(-dt / 0.33);
+    rMean += (rmsIn - rMean) * aS;
+    const dv = rmsIn - rMean;
+    rVar += (dv * dv - rVar) * aS;
+    const steady = rMean > 1e-6 ? Math.sqrt(Math.max(0, rVar)) / rMean : 1;
+    const veryLoud = rmsIn > HOWL_ON * 1.7;
+    if (rmsIn > HOWL_ON && (steady < HOWL_STEADY || veryLoud)) hot += dt;
+    else hot = Math.max(0, hot - dt * (rmsIn < HOWL_OFF ? 1.6 : 0.55));
+    const target = hot > HOWL_HOLD ? Math.max(HOWL_FLOOR, guardG * HOWL_STEP) : Math.min(1, guardG + dt / 3);
     if (Math.abs(target - guardG) > 0.005) {
       guardG = target;
       guard.gain.setTargetAtTime(guardG, t, hot > HOWL_HOLD ? 0.05 : 0.4);
@@ -77419,6 +78957,22 @@ function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
     // Hand the device back now, without waiting out HOLD_MS.
     release() { if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = 0; } dropStream(); },
 
+    // ---- the AEC escape hatch ----------------------------------------------
+    // Round 4 turned the browser's echo canceller OFF because on speakers it
+    // was subtracting the player's own voice — see AEC_DEFAULT. If somebody's
+    // machine howls instead, this puts it back. It drops the cached stream, so
+    // the NEXT key press re-acquires with the new constraint; it cannot change
+    // a capture that is already open, because a MediaStreamTrack's audio
+    // processing is fixed when the track is created.
+    echo(on) {
+      const v = on !== false;
+      if (v === aec) return aec;
+      aec = v;
+      if (state !== 'live') dropStream();
+      return aec;
+    },
+    get aec() { return aec; },
+
     // ---- debug ------------------------------------------------------------
     // Opens the channel with NO microphone: click, hiss, duck, gate, the can,
     // the room — everything except getUserMedia. A critic connects a test signal
@@ -77426,12 +78980,79 @@ function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
     testOpen() {
       if (state === 'live') return false;
       want = true; state = 'live';
-      hot = 0; guardG = 1;
+      hot = 0; guardG = 1; rMean = 0; rVar = 0;
       open(ctx.currentTime + 0.02);
       return true;
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// ROUND 4 — WHAT WAS ACTUALLY TESTED, AND WHAT WAS NOT
+//
+// Round 3 shipped this file with the live-microphone path untested and that is
+// how a dead feature reached the client. So, plainly, in both directions:
+//
+// TESTED, with a real MediaStream through the real start().
+//   The browser available to the build agent answers navigator.permissions
+//   query({name:'microphone'}) with 'denied' and enumerateDevices() returns one
+//   input with no label, i.e. no capture is possible in it at all. So the test
+//   substituted getUserMedia itself: a MediaStreamAudioDestinationNode fed with
+//   a voice-shaped signal (three formant resonators, syllable-gated, trimmed to
+//   -19.1 dBFS RMS — the level round 3 measured a laptop microphone deliver),
+//   handed back from a patched navigator.mediaDevices.getUserMedia. That
+//   exercises start() verbatim: the constraints object, the `want` race, the
+//   cached-stream branch, createMediaStreamSource, track.enabled, micGate, the
+//   compressor, the guard, the gate and the ducking arbiter. Results:
+//
+//     talkStart() -> true, state 'live', track enabled/live/unmuted
+//     gate.gain     1.35   TALK_LVL IS applied on the real path
+//     guard         1.00   the watchdog did NOT fire on speech. The round-4
+//                          brief's hypothesis that it rides the gain to nothing
+//                          is wrong for a normal voice; it only moves under an
+//                          actual howl, which is its job.
+//     micGate       open   not left closed by recordWav
+//     master spectrum, real stream vs the same signal injected at micIn:
+//                          identical to within 0.2 dB in every band.
+//
+//   So nothing between the capture device and the ceiling is broken. That is
+//   worth stating positively, because it is what rules out the whole middle of
+//   the file and leaves only the two ends: the browser's processing, and the
+//   level.
+//
+//   The level end was measured at the `speech` bus against the store's own
+//   announcer, which is the right yardstick because it is the same cone:
+//
+//     announcer   -27.2 dBFS RMS,  peak -14.7
+//     handset     -14.7 dBFS RMS,  peak  -2.8      12.5 dB hotter, and
+//                                                  clipping the tanh
+//
+//   and at master, in aisle 4, against the whole store: the handset came out at
+//   PARITY with the bed, and opening the channel took the mix 4.3 dBA DOWN,
+//   because the tape duck and the bed duck are worth more than the voice they
+//   make room for. Hence pa.js's priority-input lift and the limiter above.
+//
+// NOT TESTED. A REAL MICROPHONE, ON SPEAKERS.
+//   Which is precisely the configuration the client played in and precisely the
+//   configuration the echoCancellation argument is about. The build agent could
+//   not do it: the browser it drives denies microphone permission outright, and
+//   opening the user's own microphone and playing sound out of the user's own
+//   speakers is not something to do on a colleague's say-so. So AEC_DEFAULT is
+//   reasoned, not measured — the mechanism is documented at the top of the file
+//   and it fits the client's sentence exactly, but the confirming experiment is
+//   one person, one laptop, one held key, and it has not happened yet. Somebody
+//   with a microphone should hold [F] on speakers before this is called fixed,
+//   and talkEcho(true) is the one-call fallback if it howls instead.
+//
+// AND ONE THING THAT IS NOT IN THIS FILE.
+//   game.js gates [F] on paReady(), which is `mode === 'desk' && holdCool <= 0
+//   && !held`, and talkClose() sets holdCool to HOLD.cool = 21 s on every
+//   release. HOLD.dur is 9 s. So for roughly twelve seconds after each use,
+//   talkOpen() returns immediately and the key does nothing at all — no click,
+//   no channel, no feedback of any kind — while talk.js is still holding the
+//   capture device open for HOLD_MS = 20 s and the tab's recording dot is still
+//   lit. "It looks like it's recording, but it doesn't do anything" is also a
+//   literal description of that window. Not mine to change; flagged to the lead.
 
 return { createTalk };
 })();
@@ -77675,20 +79296,64 @@ function createPA(ctx, room, out, wetOut, noiseBuf) {
   // ---- per-frame ----------------------------------------------------------
   // Lookahead scheduling lives in muzak.js; this only decides when somebody
   // picks up the handset, and how much of the ceiling arrives via the room.
-  let paOn = true, pres = 0, iv = 0;
+  let paOn = true, pres = 0, iv = 0, tf = 0;
   function update(dt, t, zn) {
     if (!paOn) return;
     muzak.update(dt, t);
     talk.update(dt, t);
     duckMusic(t, talk.live);
 
+    // ---- THE PRIORITY INPUT, ROUND 4 -------------------------------------
+    // Bug 2 was not one thing. The browser's echo canceller was subtracting the
+    // voice (see talk.js), and underneath that the voice was never loud enough
+    // to be an event even when it did arrive. Measured at master, in aisle 4,
+    // against the store's own bed: the handset came out at PARITY with the air
+    // conditioning. Something that is supposed to be a man's voice booming out
+    // of the ceiling arrived at the level of the ventilation, and opening the
+    // channel made the mix 4.3 dBA QUIETER overall, because the two ducks are
+    // worth more than the voice they were making room for. "It doesn't do
+    // anything" is a fair description of that.
+    //
+    // The fix is the one a real rack does. A 70 V amp's priority input does not
+    // merely duck the program — it ducks the program AND drives the amp harder,
+    // because the announcement has to carry over a room the music did not have
+    // to carry over. So the ceiling comes up 5 dB and the reverb send comes
+    // down a third while somebody is holding the handset. Down on the send
+    // matters as much as up on the level: at forty metres the room's copy is
+    // louder than the direct sound, and the room's copy is the unintelligible
+    // one. Less tail, more words.
+    //
+    // This is after the tanh, so it costs no distortion — and talk.js's limiter
+    // is pulling the peaks into the tanh DOWN at the same time (measured: 3.6 dB
+    // of gain reduction on average, 5.5 dB on the loudest syllables). Louder and
+    // cleaner, which is the only direction worth moving in.
+    //
+    // Measured after, aisle 4, master, bed vs the same bed with the channel
+    // open. 300 Hz-4 kHz is the band a voice lives in:
+    //
+    //     300 Hz - 4 kHz    -41.6  ->  -37.6     +4.1 dB
+    //     1 - 4 kHz         -51.7  ->  -44.7     +7.1 dB   (the consonants)
+    //     20 - 200 Hz       -39.5  ->  -43.8     -4.3 dB   (the bed ducking)
+    //
+    // Before this change the same comparison went the WRONG WAY — the whole mix
+    // got 4.3 dBA quieter when you keyed the handset. The store now gets out of
+    // the way underneath while the voice comes up on top of it, which is what
+    // keying a PA does to a building.
+    const tT = talk.live ? 1 : 0;
+    tf += (tT - tf) * (1 - Math.exp(-(tT > tf ? 7.0 : 1.8) * Math.min(0.1, dt)));
+    if (Math.abs(tT - tf) < 0.004) tf = tT;
+
     // The front end is where the amp is and where the ceiling is lowest, so
     // the direct-to-room balance changes even though the level does not. The
     // chase takes another fifth off the send: hearing the music rather than
     // the room's copy of it is the whole mix move, and it is a mix move and
     // not a cue.
-    to(paWet.gain, (0.85 + 0.5 * pres) * (1 - 0.22 * iv), t, 0.7);
-    to(paLvl.gain, 0.42 * (1 + 0.14 * iv), t, 0.9);
+    // The taus are shorter than round 3's 0.7/0.9 because a push-to-talk has to
+    // arrive with the key, not three seconds after it. `pres` and `iv` are both
+    // already smoothed upstream — zn.front ramps over two metres of walking and
+    // chaseF over 1.2 s — so nothing here got jumpier.
+    to(paWet.gain, (0.85 + 0.5 * pres) * (1 - 0.22 * iv) * (1 - 0.34 * tf), t, 0.15);
+    to(paLvl.gain, 0.42 * (1 + 0.14 * iv) * (1 + 0.78 * tf), t, 0.15);
 
     annAt -= dt;
     // `!talk.live` is the one that matters — a hold can outlast the three
@@ -78847,7 +80512,13 @@ const { SERVICE_DESK, TUNING } = M_src_config_js;
 //     talkStop(),              // call on keyup. Safe to call when nothing is live.
 //     talkState(),             // 'off' | 'requesting' | 'live' | 'denied' | 'unsupported'
 //     talkLevel(),             // 0..1 smoothed input level, for a HUD meter
+//     talkRelease(),           // optional: hand the capture device back now
+//     talkEcho(on),            // round 4, dev-only: put the browser's echo
+//                              //   canceller back. game.js never calls it.
 //   }
+//
+// NOTHING ABOVE CHANGED SHAPE IN ROUND 4. talkEcho is new and additive; every
+// other name, argument and return value is what game.js already binds.
 //
 // NOTHING about the game changes if the player has no microphone or says no.
 // talkStart() resolves false, talkState() reads 'denied' or 'unsupported', and
@@ -78892,9 +80563,11 @@ const { SERVICE_DESK, TUNING } = M_src_config_js;
 //     a 2.3-second tail, because it starts eight centimetres from his ears.
 //
 // Cost: see stats(). The DSP runs on the audio thread; what shows up in the
-// game's frame budget is only the JavaScript in update(), which is measured on
-// the bench at 0.11-0.16 ms a frame, 1.3 ms worst case, 634 persistent nodes
-// and two live convolvers in either mode. The worst case is a beat of the tape
+// game's frame budget is only the JavaScript in update(), which is measured in
+// the real game at 0.11-0.13 ms a frame, 2.4 ms worst case, 646 persistent
+// nodes and two live convolvers in either mode. Round 4 added five nodes: three
+// filters shaping the top of the room in bed.js, a limiter on the handset, and
+// the analyser the howl watchdog needed in order to be able to fire at all. The worst case is a beat of the tape
 // landing in the same frame as a checkout burst; it is a bar-scheduler spike,
 // not a floor, and it is why muzak.js schedules a BEAT at a time and not a bar.
 //
@@ -79340,6 +81013,13 @@ function createAudio(THREE, camera) {
     // Hands the capture device back immediately instead of after the idle
     // timeout. game.js can call it on pause or on game over; it is not required.
     talkRelease() { pa.talk.release(); },
+    // ROUND 4, ADDITIVE — nothing existing changed shape. The browser's echo
+    // canceller is now OFF by default because it was subtracting the player's
+    // own voice on speakers (the whole story is at the top of src/audio/talk.js).
+    // talkEcho(true) puts it back for a machine that howls; it takes effect on
+    // the next key press, because a track's audio processing is fixed when the
+    // track is created. game.js does not need to call this and does not.
+    talkEcho(on) { return pa.talk.echo(on); },
 
     // ---- agent-facing, same spirit as main.js's snap()/run()
     recordWav, stats, room, bed, pa, foley, desk,
@@ -79419,7 +81099,14 @@ function readInput() {
   // Rotate into world by the camera's own yaw, so WASD always means what the player
   // SEES no matter where the camera builder puts it. The base camera looks down +Z,
   // whose screen-right is world -X — the sign below is that, generalised.
-  const y = chaseCam.yaw || 0;
+  // Steer by moveYaw, NOT yaw: moveYaw is the corridor bearing with the player's
+  // mouse-look taken out. Reading `yaw` here re-opens the feedback loop round 1
+  // closed, by a longer path — mouse turns camera, camera-relative W drives the cop
+  // diagonally, the camera's axis latch sees the cross-axis dominate, and the
+  // corridor bearing flips 90 degrees on its own. A glance would whip the view.
+  // Decoupling also matches what was actually asked for: "turn and look down those
+  // aisles as I'm walking" is a head turn, not a change of course.
+  const y = (chaseCam.moveYaw ?? chaseCam.yaw) || 0;
   const cs = Math.cos(y), sn = Math.sin(y);
   // World basis for what the player sees. At yaw 0 the camera sits behind the cop
   // looking down +Z, so screen-forward is world +Z and screen-right is world -X.

@@ -286,7 +286,7 @@
    "verdict": "PASS. Reads at both scales: verified at the game's own rig (7m) and rendered at 214x120, one monitor feed's real budget, where the light-torso-over-dark-legs three-band silhouette still reads as a person at ~8px tall. Chase bench byte-identical: competent 74.7% / med 5.83s / <1s 14.3%, naive 35.3%, camper 21.3%. lungCheck passes."
   },
   "audio": {
-   "round": 3,
+   "round": 4,
    "state": "passed",
    "shots": [
     {
@@ -298,12 +298,17 @@
      "round": 3,
      "path": "../shots/audio_r3_talk.png",
      "t": 1787506991.511574
+    },
+    {
+     "round": 4,
+     "path": "../shots/store_r2_a.png",
+     "t": 1787520476.2125492
     }
    ],
    "gaps": [],
-   "updated": 1787507068.503772,
-   "note": "PRIVACY, verified not asserted: mic -> gate -> pa speech bus -> ceiling can -> panners + room convolver -> master -> destination. No MediaRecorder, no ScriptProcessor tap, no buffer outliving a sample, no fetch. Only a smoothed float escapes for the HUD meter. Tracks disabled on key-up and stopped after 20s idle so the tab's recording indicator clears. The dev recordWav() harness CLOSES the mic gate during a take, proven: a 997Hz tone injected past the gate reads +37.6dB over the floor, the same tone arriving through the microphone reads -6dB, i.e. below its own neighbouring noise. Iframe tested cross-origin: without allow=microphone talkStart resolves false in 74ms and never prompts. TALK_LVL journey 0.62 (10dB under the bed - inaudible, joke dead) -> 2.00 (25.7% THD vs the store announcer's 7.0%, past cheap into broken) -> 1.35 (12.9%, +8.3dB over the announcer).",
-   "verdict": "PASS. Push-to-talk live end to end through game.js's [F]. Voice measured through the ceiling-can chain: nothing under 88Hz, -7dB scoop at 500-630, +1 to +3.5dB across 1.25-6.3k, cliff at 10k. A gated burst decays 30dB in 570ms through the chain vs 10ms dry - the room is genuinely on the voice, not an EQ curve pretending. +0.021ms/frame, +7 nodes."
+   "updated": 1787521610.5673862,
+   "note": "It DISPROVED my hypothesis before trusting it: muting the whole pa bus left the hiss intact and the speech bus reads exact digital silence when closed, so the round-3 open-channel hiss was properly gated all along. PA had two causes in audio: echoCancellation on speakers (Chrome's AEC references the page's own render stream, which contains the player's voice returning from the ceiling 10-200ms later - it was subtracting the thing it was protecting), and the voice arriving at parity with the bed so opening the channel made the mix 4.3 dBA QUIETER because the two ducks outweighed the voice they made room for. THIRD BUG found while validating: the howl watchdog had never fired and COULD not - it read the output of a 6:1 compressor thresholded at -26dBFS against 0.30 linear, which needs +85dBFS at its input. Rebuilt on the raw mic with a steadiness discriminator, because level alone cannot separate a shout from a howl.",
+   "verdict": "PASS on both bugs. HISS: airTop in bed.js used filt('highshelf', 5200, 0.7, 6) on pink noise - pink falls 3dB/octave, so a +6dB shelf spanning two octaves flattens it EXACTLY, generating WHITE noise above 5kHz, which is the definition of tape hiss. 11.2kHz band went -46.6 -> -69.8dB while everything below 5.6kHz moved under 2dB."
   },
   "camera": {
    "round": 1,
@@ -322,6 +327,30 @@
   }
  },
  "log": [
+  {
+   "t": 1787521610.567389,
+   "piece": "audio",
+   "role": "builder",
+   "round": 4,
+   "state": "passed",
+   "text": "It DISPROVED my hypothesis before trusting it: muting the whole pa bus left the hiss intact and the speech bus reads exact digital silence when closed, so the round-3 open-channel hiss was properly gated all along. PA had two causes in audio: echoCancellation on speakers (Chrome's AEC references the page's own render stream, which contains the player's voice returning from the ceiling 10-200ms later - it was subtracting the thing it was protecting), and the voice arriving at parity with the bed so opening the channel made the mix 4.3 dBA QUIETER because the two ducks outweighed the voice they made room for. THIRD BUG found while validating: the howl watchdog had never fired and COULD not - it read the output of a 6:1 compressor thresholded at -26dBFS against 0.30 linear, which needs +85dBFS at its input. Rebuilt on the raw mic with a steadiness discriminator, because level alone cannot separate a shout from a howl."
+  },
+  {
+   "t": 1787521379.9558132,
+   "piece": "audio",
+   "role": "builder",
+   "round": 4,
+   "state": "passed",
+   "text": "BUG1 (hiss) = bed.js airTop: a +6dB shelf at 5.2k on pink noise flattens pink exactly, so it generated WHITE noise above 5k, at a fixed gain, sent 0.95 into a 2.35s tail. Measured absolute bands, aisle bed alone: 5.6-11.2k -43.4 -> -51.8 (-8.4dB), 11.2-22k -46.6 -> -69.8 (-23.2dB), everything under 5.6k within 2dB. The top end used to RISE from 2.8k to 5.6k; it now falls monotonically. Desk unchanged (it was never the problem). BUG2 = echoCancellation referencing the page's own render stream on speakers, plus the voice arriving at parity with the bed. Real-stream path proven electrically fine (patched getUserMedia with a synthetic MediaStream == micIn injection within 0.2dB; gate 1.35, guard 1.0, micGate open). Now +4.1dB over the bed at 300-4k and +7.1dB at 1-4k, where before opening the channel made the mix 4.3 dBA QUIETER. BUG3 found in passing: the howl watchdog had NEVER fired and could not - it read the output of a 6:1 compressor against a threshold that needed +85dBFS at its input. Rebuilt on the raw mic with a steadiness discriminator: zero false positives at -19/-12/-8 dBFS speech, catches every howl in 200-800ms. NOT TESTED: a real mic on speakers - the browser denies mic permission. docs/index.html still ships round-3 code and needs a bundle rebuild to reach the client."
+  },
+  {
+   "t": 1787520476.2125492,
+   "piece": "audio",
+   "role": "builder",
+   "round": 4,
+   "state": "building",
+   "text": "BUG1 found+fixed: the constant hiss was bed.js airTop \u2014 a +6dB shelf at 5.2k on pink noise (which flattens pink exactly = white above 5k) with NO lowpass, fixed gain, and a 0.95 send into a 2.35s tail. Measured: muting that one node dropped 5-8k by 4.1dB, 8-12k by 8.5dB, 12-20k by 17.8dB. Now air-absorption shaped: 5.6-11.2k -11.0dB, 11.2k+ -34.5dB, and it drifts like every other layer. BUG2: real-stream path proven fine (patched getUserMedia w/ synthetic MediaStream = identical to injection within 0.2dB; gate=1.35, guard=1.0, micGate open). Real cause: echoCancellation referencing the page's own render stream on speakers + the voice arriving at parity with the bed. AEC off, limiter on speech, PA priority-input lift."
+  },
   {
    "t": 1787507068.503773,
    "piece": "audio",
@@ -939,5 +968,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787507068.503774
+ "updated": 1787521610.567391
 }

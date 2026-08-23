@@ -1912,6 +1912,10 @@ export function createAgents(THREE, scene, world) {
   // reached, and a `let` in the temporal dead zone is a ReferenceError rather
   // than an undefined.
   let postT = 0;          // seconds the cop has been loitering on the way out
+  // ROUND 7 — the PA's own cooldown. Declared up here rather than next to
+  // announceAt() because reset() runs at module init and a `let` in the
+  // temporal dead zone is a boot-time crash, not a lint warning.
+  let annCool = 0;
   let grabGate = null;    // bench-only: the identity model, see bench({ident})
 
   function makeShopper() {
@@ -1945,6 +1949,12 @@ export function createAgents(THREE, scene, world) {
       // stood on the only way out, `shopT` is how much shopping an innocent has
       // left before he checks out and leaves through that same door.
       chill: 0, balk: 0, stall: 0, aborts: 0, shopT: 0, leaving: false, made: 0,
+      // ROUND 7 — the PA. `annT` counts down to the moment he reacts (0 the
+      // rest of the time, which is the only cost this feature has in the update
+      // loop), `annN` is how many times he has been shouted at, `annOut` is
+      // what he visibly did last time and `annSpill` says he was in earshot
+      // rather than the man being addressed.
+      annT: 0, annKind: null, annOut: null, annN: 0, annSpill: false, annClip: null,
     };
     shoppers.push(s);
     return s;
@@ -2059,6 +2069,8 @@ export function createAgents(THREE, scene, world) {
     s.gest = null; s.gestT = 0; s.gestD = 1; s.turnY = 0;
     s.gestIn = rr(1.5, K.decoyHi);
     s.chill = 0; s.balk = 0; s.stall = 0; s.aborts = 0; s.leaving = false; s.made = 0;
+    s.annT = 0; s.annKind = null; s.annOut = null; s.annN = 0; s.annSpill = false;
+    s.annClip = null;
     s.shopT = rr(K.shopLo, K.shopHi);
     s.held.scale.set(1, 1, 1);
   }
@@ -2072,7 +2084,7 @@ export function createAgents(THREE, scene, world) {
     const cu = cop.userData;
     cu.vel.set(0, 0, 0); cu.speed = 0; cu.stamina = K.staminaMax; cu.fatigue = 0;
     cu.gassed = false; cu.boost = 0; cu.heading = 0; cu.skid = 0; cu.stagger = 0;
-    postT = 0;
+    postT = 0; annCool = 0;
     for (const p of powerups) { p.live = true; p.respawn = 0; p.mesh.visible = true; }
   }
   setSeed(20240822);
@@ -2395,12 +2407,23 @@ export function createAgents(THREE, scene, world) {
     // the knee-less leg fakes that with a kick in the last quarter of the swing.
     const heel = Math.max(0, -Math.cos(u.phase)) * amp * 0.22;
     r.legL.rotation.x -= heel; r.legR.rotation.x += heel;
+    // WEIGHT ON THE HEELS. Both legs raked 2.6 degrees forward of the pelvis,
+    // so his feet lead and the gut is out over them. It is a constant on both
+    // legs, so the gait is untouched — the whole body just sits back on itself.
+    r.legL.rotation.x += 0.046; r.legR.rotation.x += 0.046;
     // Arms lag the legs — a big man's arms are late and they swing across the
     // gut rather than past it.
     const alag = Math.sin(u.phase - 0.55);
     r.armL.rotation.x = -alag * amp * 0.62; r.armR.rotation.x = alag * amp * 0.62;
-    const out = 0.24 + 0.06 * spd + 0.05 * F;                 // elbows off the belly
+    const out = 0.26 + 0.06 * spd + 0.06 * F;                 // elbows off the belly
     r.armL.rotation.z = out; r.armR.rotation.z = -out;
+    // ROUND 7 — THE SHOULDERS ROUND FURTHER AS HE FATIGUES, which was asked for
+    // by name. Not a rotation: the shoulder JOINTS travel forward, which is
+    // what actually happens to a blown man and what makes him narrower from the
+    // front at the same time. 30 mm at F=1, plus the chest drawing in 3.5%.
+    // Both are on the pivot, so it costs two assignments a frame.
+    const roll = (r.armZ ?? 0) + F * 0.030;
+    r.armL.position.z = roll; r.armR.position.z = roll;
 
     // ---- mass ---------------------------------------------------------------
     // Pelvic drop on the swing side plus a counter-rotating chest: that pairing
@@ -2434,13 +2457,23 @@ export function createAgents(THREE, scene, world) {
     // Chest and shoulders. From 7 m you are looking at his BACK, so the heave
     // has to be in the shoulder line and the upper back or it does not exist:
     // the chest group lifts and the whole torso swells forward.
-    r.chest.position.y = heave * 0.040;
-    r.chest.scale.set(1 + heave * 0.030, 1 + heave * 0.045, 1 + heave * 0.075);
+    // ROUND 7 — deeper, and the x term now goes the OTHER WAY with fatigue.
+    // The heave swelled him uniformly before; a man dragging air in narrows
+    // across the shoulders as he rounds them and swells front-to-back, so x
+    // carries the round-6 breath swell MINUS the 3.5% draw-in that pairs with
+    // the shoulder roll above. Front-to-back is up 0.075 -> 0.092 because the
+    // gut it is inflating is bigger now and the same fraction read as less.
+    r.chest.position.y = heave * 0.044;
+    r.chest.scale.set((1 + heave * 0.030) * (1 - 0.035 * F),
+      1 + heave * 0.052, 1 + heave * 0.092);
     if (r.belly) r.belly.scale.z = 0.470 * (1 + heave * 0.16 + w * 0.03);
 
     // Posture. Forward lean rises with fatigue and rises again on the exhale —
-    // a blown man folds a little every time he empties his lungs.
-    const stoopT = (boosted ? 0.14 : 0.08 + 0.06 * spd) + F * 0.30 + (1 - w) * F * 0.13;
+    // a blown man folds a little every time he empties his lungs. Round 7 adds
+    // a permanent slump underneath it: he is bent 0.14 rad before anything has
+    // happened at all, which is the difference between a fat man standing up
+    // straight and a fat man who has been on his feet since six.
+    const stoopT = (boosted ? 0.19 : 0.14 + 0.06 * spd) + F * 0.34 + (1 - w) * F * 0.14;
     r.chest.rotation.x = lerp(r.chest.rotation.x, stoopT, ed(7));
     // Head: up and back on the gasp, dropping forward as he blows out. That
     // alternation is the read, not the raw amplitude.
@@ -2742,13 +2775,17 @@ export function createAgents(THREE, scene, world) {
   // 'heed' | 'shrug' | 'hold' — what he visibly did, which is all the player
   // can see anyway. It is never his guilt.
   const REACT_IDS = ['whoMe', 'whoMeAffront', 'whoMeGlance'];
-  let annCool = 0;
 
   // He heard it and he is not doing anything about it: head up off the shelf, a
   // shoulder check, a look at the ceiling for the speaker, and back to work.
   // Guilty and innocent alike, and every bystander in earshot — see announceAt.
   function lookAround(s) {
-    startGesture(s, 'react', REACT_IDS[Math.floor(rnd() * REACT_IDS.length)]);
+    // `s.annClip` is an EVIDENCE HOOK, set by announceAt({clip}) and nothing
+    // else. The round-7 sheet has to fire the same react clip at a guilty and
+    // an innocent subject to show that the two pictures are identical, and it
+    // cannot do that if the clip is rolled independently in each strip. It is
+    // null in every code path the game takes.
+    startGesture(s, 'react', s.annClip || REACT_IDS[Math.floor(rnd() * REACT_IDS.length)]);
     if (!s.gest) return false;
     // A man who is walking somewhere keeps walking; a man at a shelf stops.
     // `drift`, `leave` and `bolt` keep their own legs — animateShopper runs the
@@ -2851,6 +2888,7 @@ export function createAgents(THREE, scene, world) {
     annCool = K.annCool;
     s.annT = rr(K.annLagLo, K.annLagHi);
     s.annKind = k; s.annOut = null; s.annSpill = false;
+    s.annClip = o.clip || null;                  // evidence hook, see lookAround
     s.annN = (s.annN || 0) + 1;
     s.concealT = Math.max(s.concealT, s.annT + 0.7);   // hold the fuse while he listens
 
@@ -4564,6 +4602,9 @@ export function createAgents(THREE, scene, world) {
       let incidents = 0, catches = 0, escapes = 0, aborts = 0, complaints = 0;
       let bolts = 0, thefts = 0, decoys = 0;
       let postedT = 0;
+      // ROUND 7 — what the PA did this shift. `calls` counts announcements the
+      // player actually got out, `heeds`/`shrugs` what came back.
+      let calls = 0, heeds = 0, shrugs = 0;
       // The cop's own little state machine. `job` is the subject he has been
       // dispatched onto, null when he is at the desk.
       let job = null, dispatchIn = 0;
@@ -4582,6 +4623,7 @@ export function createAgents(THREE, scene, world) {
         onHarass() { complaints++; },
         onAbort() { aborts++; },
         onLeave() {},
+        onAnnounce(s, kind, out) { if (out === 'heed') heeds++; else if (out === 'shrug') shrugs++; },
       };
       // The camper walks to the door once and stays. Everyone else starts at
       // the desk, which is 40 m from the only exit and is NOT a post on it —
@@ -4616,6 +4658,22 @@ export function createAgents(THREE, scene, world) {
           if (armOne()) rearm = rr(g[0], g[1]); else rearm = 2.0;
         }
 
+        // ---- ROUND 7: DOES SHOUTING AT EVERYBODY PAY? --------------------
+        // The `pa` player never leaves the desk and never dispatches. Every
+        // time the handset comes off cooldown he picks whoever is doing
+        // something with their hands right now — which is the honest maximal
+        // read, because a player CANNOT tell a steal clip from a decoy clip and
+        // this bot does not get to either — and says the line. This is the
+        // camper's experiment with a microphone instead of a doorway, and it
+        // has to come out the same way or the announcement is a free win
+        // button.
+        if (policy === 'pa' && annCool <= 0) {
+          const tgt = shoppers.find((s) => s.gest && !s.annT && !s.bolted
+            && !s.caught && !s.escaped && s.mesh.visible
+            && (s.gest.tell === 'steal' || s.gest.tell === 'decoy'));
+          if (tgt && announceAt(tgt, 'putback').ok) calls++;
+        }
+
         // ---- what the cop is doing ---------------------------------------
         let input;
         if (policy === 'camp') {
@@ -4637,7 +4695,7 @@ export function createAgents(THREE, scene, world) {
           // finishes concealing, and he presses DISPATCH `deskLag` later —
           // which is a teleport to the mouth of that man's aisle, exactly what
           // game.js's postSpawn('aisle') does.
-          if (!job) {
+          if (!job && policy !== 'pa') {
             const tell = shoppers.find((s) => s.guilty && s.stole && !s.escaped && !s.caught && s.mesh.visible);
             if (tell && dispatchIn <= 0) { dispatchIn = opts.deskLag ?? 4.0; }
             if (tell && dispatchIn > 0) {
@@ -4689,6 +4747,7 @@ export function createAgents(THREE, scene, world) {
         thefts, catches, escapes, aborts, complaints, bolts,
         points: catches * 100, decoys,
         postedFrac: postedT / maxT,
+        calls, heeds, shrugs,
       });
     }
 
@@ -4715,8 +4774,154 @@ export function createAgents(THREE, scene, world) {
       decoysPerShift: mean((r) => r.decoys),
       // Fraction of the shift the cop spent posted on the way out.
       postedFrac: mean((r) => r.postedFrac),
+      // ROUND 7 — the PA. `callsPerShift` counts announcements that actually
+      // went out; `heedsPerShift` counts the ones that came back with somebody
+      // putting something on a shelf, GUILTY OR NOT, because that is the only
+      // thing the player can see.
+      callsPerShift: mean((r) => r.calls),
+      heedsPerShift: mean((r) => r.heeds),
+      shrugsPerShift: mean((r) => r.shrugs),
       raw: opts.raw ? rows : undefined,
     };
+  }
+
+  // =========================================================================
+  // benchAnnounce — THE INSTRUMENT THIS ROUND'S ANTI-ORACLE CLAIM LIVES ON.
+  //
+  // The whole design risk in "Hey, put that back" is that it becomes a free
+  // guilt scanner: if the guilty visibly comply and the innocent visibly do
+  // not, the desk phase is over and so is the harassment complaint. So the
+  // number that has to be published is not "does deterrence work", it is the
+  // pair of rates and the likelihood ratio between them.
+  //
+  // Four populations, same store, same PA line, cop parked at the service desk
+  // 40 m away so nothing in the result is about a man walking at anybody:
+  //   cold    guilty, has NOT concealed yet
+  //   hot     guilty, already has it in his coat
+  //   clean   innocent
+  //   spill   in earshot of a call addressed to somebody else
+  // ...plus `repeat`, which is the second and third shout at the same body and
+  // is what stops the button being a slot machine.
+  //
+  // Reported as heed% (he put something back on a shelf) vs shrug% (he looked
+  // around and carried on). BOTH POPULATIONS PRODUCE BOTH, which is the point.
+  // =========================================================================
+  function benchAnnounce(n = 400, opts = {}) {
+    const dt = 1 / 60;
+    const saveLevel = DIFF.level;
+    const savePos = cop.position.clone(), saveUd = { ...cop.userData };
+    if (opts.difficulty != null) DIFF.level = clamp(+opts.difficulty || 0, 0, 1);
+
+    // One trial: put a subject in a known state, say the line, and watch.
+    // `shouts` > 1 re-fires at the same body once he has answered the last one.
+    function cell(kind, shouts) {
+      let heed = 0, shrug = 0, deaf = 0, quit = 0, complaints = 0, spillHeeds = 0;
+      for (let k = 0; k < n; k++) {
+        setSeed((opts.seed ?? 90210) + k * 7919);
+        reset();
+        // The desk is not a post on the door — see benchShift. This has to
+        // measure the PA and not the uniform.
+        cop.position.set(SERVICE_DESK.x, 0, SERVICE_DESK.z);
+        solids.resolve(cop.position, BODY_R);
+        cop.userData.vel.set(0, 0, 0); cop.userData.speed = 0;
+        const s = shoppers[k % shoppers.length];
+        resetShopper(s, kind !== 'clean');
+        // `hot` is forced rather than simulated into: reactToPA reads exactly
+        // `s.guilty && s.stole`, so setting them is faithful and it keeps the
+        // cell from being a measurement of how long a concealment takes.
+        if (kind === 'hot') { s.stole = true; s.state = 'drift'; s.concealT = 0; }
+        const api = {
+          onHarass() { complaints++; },
+          onAbort() {}, onLeave() {}, onBolt() {}, onCatch() {}, onEscape() {},
+          onAnnounce(sub, k2, out) {
+            if (sub !== s) { if (out === 'heed') spillHeeds++; return; }
+          },
+        };
+        let got = null;
+        for (let shout = 0; shout < (shouts || 1); shout++) {
+          const r = kind === 'spill'
+            // A call addressed to the nearest OTHER body, so this subject only
+            // ever hears it through the ceiling.
+            ? (() => {
+              let best = null, bd = 1e9;
+              for (const b of shoppers) {
+                if (b === s || !b.mesh.visible || b.caught || b.escaped) continue;
+                const d = dist2d(b.position.x, b.position.z, s.position.x, s.position.z);
+                if (d < bd) { bd = d; best = b; }
+              }
+              return best && bd <= K.annSpill ? announceAt(best, 'putback', { force: true })
+                : { ok: false, why: 'nobody-near' };
+            })()
+            : announceAt(s, 'putback', { force: true });
+          if (!r.ok) { break; }
+          // Long enough for the latency plus the clip to start. The outcome is
+          // committed the frame reactToPA runs, so this never waits on an
+          // animation.
+          for (let i = 0; i < 150 && !s.annOut; i++) tick(dt, { x: 0, z: 0 }, api);
+          got = s.annOut;
+          if (got === 'heed') break;                 // nothing left to shout at
+          s.annOut = null;
+        }
+        if (got === 'heed') { heed++; if (!s.guilty && kind !== 'clean') quit++; }
+        else if (got === 'shrug') shrug++;
+        else deaf++;
+      }
+      const tot = heed + shrug + deaf || 1;
+      return {
+        kind, shouts: shouts || 1, n,
+        heedPct: +(heed / tot * 100).toFixed(1),
+        shrugPct: +(shrug / tot * 100).toFixed(1),
+        // A heeding thief must end up a customer with nothing in his coat, or
+        // the deterrence is a delay and the announcement is a tempo tool worth
+        // 100 points instead of zero. This counts the ones that actually ended.
+        endedClean: quit,
+        noAnswer: deaf,
+        // MUST BE ZERO. The entire point of shouting from the desk is that it
+        // is the safe alternative to walking up to somebody.
+        complaints,
+        spillHeeds,
+      };
+    }
+
+    const out = {
+      cold: cell('cold', 1), hot: cell('hot', 1),
+      clean: cell('clean', 1), spill: cell('spill', 1),
+      coldx3: cell('cold', 3), cleanx3: cell('clean', 3),
+    };
+    DIFF.level = saveLevel;
+    cop.position.copy(savePos); Object.assign(cop.userData, saveUd);
+    grabGate = null; reset();
+
+    // THE NUMBER THE BRIEF ASKED FOR, computed rather than asserted. If a
+    // put-back were proof, this would be Infinity.
+    const lr = out.clean.heedPct > 0
+      ? +((out.cold.heedPct / out.clean.heedPct)).toFixed(2) : Infinity;
+    const lrShrug = out.clean.shrugPct > 0
+      ? +((out.cold.shrugPct / out.clean.shrugPct)).toFixed(2) : Infinity;
+    out.likelihoodRatio = {
+      // P(put it back | guilty) / P(put it back | innocent)
+      putback: lr,
+      // ...and the other way, for the man who blanks you
+      shrug: lrShrug,
+      // What one call moves a 50/50 suspicion to, both ways. This is the whole
+      // claim: it is a READ, not a test.
+      from50_ifPutback: +((out.cold.heedPct / (out.cold.heedPct + out.clean.heedPct)) * 100).toFixed(1),
+      from50_ifShrug: +((out.cold.shrugPct / (out.cold.shrugPct + out.clean.shrugPct)) * 100).toFixed(1),
+    };
+    out.override = Object.keys(OVR).length ? { ...OVR } : undefined;
+    return out;
+  }
+
+  function benchAnnounceLine(n = 400, opts = {}) {
+    const r = benchAnnounce(n, opts);
+    const row = (k) => `${k.padEnd(8)} heed ${String(r[k].heedPct).padStart(5)}%`
+      + `  shrug ${String(r[k].shrugPct).padStart(5)}%`
+      + `  complaints ${r[k].complaints}`;
+    return [row('cold'), row('hot'), row('clean'), row('spill'),
+      row('coldx3'), row('cleanx3'),
+      `LR(putback) ${r.likelihoodRatio.putback}  a 50/50 read goes to `
+      + `${r.likelihoodRatio.from50_ifPutback}% on a put-back, `
+      + `${r.likelihoodRatio.from50_ifShrug}% on a shrug`].join('\n');
   }
 
   // DOES CAMPING THE DOOR PAY? With one exit this cannot be answered with a
@@ -4733,6 +4938,9 @@ export function createAgents(THREE, scene, world) {
       desk: fmtS(benchShift({ ...o, policy: 'desk' })),
       naive: fmtS(benchShift({ ...o, policy: 'chase' })),
       camper: fmtS(benchShift({ ...o, policy: 'camp' })),
+      // ROUND 7 — the man who never leaves the desk and just talks. He has to
+      // come out where the camper does, or the announcement is a free win.
+      pa: fmtS(benchShift({ ...o, policy: 'pa' })),
     };
   }
 
@@ -4792,6 +5000,7 @@ export function createAgents(THREE, scene, world) {
     cop, shoppers, powerups, reset,
     update: tick,
     bench, benchAll, benchLine, benchReal, benchCamp, benchShift, benchIncome,
+    benchAnnounce, benchAnnounceLine,
 
     // ROUND 6 CONTRACT ADDITION — THE DIFFICULTY RAMP (additive; a game.js that
     // never calls this gets round 5's difficulty exactly, because level 1 IS
@@ -4828,8 +5037,37 @@ export function createAgents(THREE, scene, world) {
     // WITH YOU STOOD THERE".
     get posted() { return doorPosted(); },
     get postedFor() { return postT; },
+
+    // ROUND 7 CONTRACT ADDITION — THE ANNOUNCEMENT. Additive; a game.js that
+    // never calls it gets round 6's game exactly.
+    //
+    //   const r = agents.announceAt(subject, 'putback');
+    //   // r = { ok, why, id, kind, heard, aisle, at:{x,z} }
+    //
+    // `subject` is a shopper object (or its id) — whatever the spot monitor is
+    // locked on. `kind` is 'putback' (the deterrence line, rolls compliance) or
+    // 'hold' (the price-check line, pins him where he stands and rolls
+    // nothing). Refusals come back as { ok:false, why } with why in
+    // 'cooldown' | 'no-subject' | 'gone' | 'running'.
+    //
+    // THE OUTCOME IS NOT IN THE RETURN VALUE and that is deliberate — it is
+    // rolled 0.35-0.95 s later, when he actually reacts, and delivered through
+    // the OPTIONAL callback
+    //
+    //   api.onAnnounce(subject, kind, outcome)   outcome: 'heed'|'shrug'|'hold'
+    //
+    // so a ticker line cannot get ahead of the picture on the monitor.
+    // `outcome` is what he VISIBLY did, never whether he was guilty: both
+    // populations produce both outcomes on purpose (K.annHeed / K.annSpook).
+    // A subject who heeds also fires the existing api.onAbort(s, 'announce'),
+    // so a game.js that already handles balks scores this correctly with no
+    // change: a deterred thief is worth zero, same as a ditched one.
+    announceAt,
+    get announceReady() { return annCool <= 0; },
+    get announceIn() { return annCool; },
     // Decoy clips, for a critic who wants to drive one on demand:
     //   agents.playGesture(agents.shoppers[3], 'restash')
+    //   agents.playGesture(agents.shoppers[3], 'whoMe')   // round 7
     gestures: GESTURES,
     playGesture(s, id) { return startGesture(s, 'decoy', id); },
     // debug handles

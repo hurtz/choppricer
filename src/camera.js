@@ -471,9 +471,26 @@ const T = {
                               // mouse against a 60 Hz frame, short enough that
                               // it is not felt as lag.
   lookDwell: 0.40,            // seconds of a still mouse before the return starts
-  // Return rate = returnWalk * (speed/walk) + returnRun * sprint01. Standing
-  // still that is zero and the look simply stays where it was put.
-  returnWalk: 0.95, returnRun: 2.30,
+  // Return rate = returnWalk * (speed/walk) + returnRun * sprint01
+  //             + returnChase * chase01. Standing still and with nobody
+  // running, that is zero and the look simply stays where it was put.
+  //
+  // returnChase is not decoration, and it was added after a measurement.
+  // Keyed to SPEED alone the rate is 3.23/s at a full 5.05 m/s sprint — 90
+  // degrees shed in about 0.4 s, which is right. Then the cop gasses out,
+  // which he is designed to do in seconds, drops to 2.04 m/s, and the rate
+  // falls with him to 0.83/s: a 3 second tail on the glance at the exact
+  // moment he is in the most trouble he can be in. Traced:
+  //
+  //     t 0.50  look 81.3 deg   rate 3.23   speed 4.90
+  //     t 0.75  look 50.4       rate 2.24   speed 2.65   <- gassing
+  //     t 1.50  look 20.7       rate 0.84   speed 2.04
+  //     t 2.50  look  9.1       rate 0.83   speed 2.04
+  //
+  // Speed was standing in for "is something happening". A man running from
+  // you is the thing that was actually meant, so read that instead. Gassed
+  // mid-chase now returns at 2.4/s regardless of how slowly he is waddling.
+  returnWalk: 0.95, returnRun: 2.30, returnChase: 1.60,
   returnCap: 2.20,            // rad/s ceiling on the automatic return. Round 1
                               // judged 2.1 rad/s (a 180 in 1.5 s) followable
                               // rather than a whip; this sits just under it.
@@ -613,7 +630,7 @@ export function createCamera(THREE, cam) {
   let sprint01 = 0, gas01 = 0, chase01 = 0, gap01 = 0, boost01 = 0, swing01 = 0;
   let bobP = 0, shake = 0, prevStagger = 0, boomT = 1;
   let baseYaw = 0;                     // corridor bearing with the glance removed
-  let moveReads = 0, lastReads = 0, coupleT = 99;   // is main.js reading moveYaw?
+  let moveReads = 0, lastReads = 0;    // has main.js ever read moveYaw?
   const dbg = {};                      // last frame's corridor read, for debug()
 
   // =========================================================================
@@ -632,13 +649,20 @@ export function createCamera(THREE, cam) {
     curY: 0, curP: 0,         // what is applied, one smoothing step behind
     pendX: 0, pendY: 0,       // mouse delta accumulated since the last update
     idle: 9,                  // seconds since the last mouse input
-    force: 0,                 // right-click recentre timer
+    // An explicit recentre runs UNTIL IT IS DONE, not for a fixed window. It
+    // was a 0.45 s timer first, and standing still — where the speed-scaled
+    // return rate is deliberately zero — that expired with 21.8 degrees still
+    // on the clock and simply held there. A button whose job is "put it back"
+    // has to actually put it back; it is still rate-capped, so finishing the
+    // job cannot turn into a whip.
+    forcing: false,
+    rate: 0,                  // last frame's return rate, for debug()
     ramp: 0, rampA: 0,        // glance dolly, wanted and rate-limited
     dragging: false, locked: false, decoupled: false, reduced: false,
   };
   function zeroGlance() {
     GL.tgtY = GL.tgtP = GL.curY = GL.curP = 0;
-    GL.pendX = GL.pendY = 0; GL.ramp = GL.rampA = 0; GL.idle = 9; GL.force = 0;
+    GL.pendX = GL.pendY = 0; GL.ramp = GL.rampA = 0; GL.idle = 9; GL.forcing = false;
   }
 
   // --- is the player actually on the floor right now ------------------------
@@ -712,7 +736,7 @@ export function createCamera(THREE, cam) {
     // need to — on the floor hud.hit() has nothing to return.
     window.addEventListener('pointerdown', (e) => {
       if (!GL.on || !onFloor()) return;
-      if (e.button === 2) { GL.force = 0.45; GL.idle = 9; return; }   // recentre now
+      if (e.button === 2) { GL.forcing = true; GL.idle = 9; return; }   // recentre now
       if (e.button !== 0) return;
       GL.dragging = true;
       if (GL.pointerLock && !document.pointerLockElement) requestLock();
@@ -745,7 +769,7 @@ export function createCamera(THREE, cam) {
   // Called from update() before the rig is built, so the dolly ramp is in hand
   // by the time `d` is placed. `swing` is last frame's corridor swing; a frame
   // of lag on a suspension test is not worth another ordering constraint.
-  function glanceStep(dt, spd, swing, sprint) {
+  function glanceStep(dt, spd, swing, sprint, chase) {
     if (GL.pendX || GL.pendY) {
       GL.tgtY += GL.pendX; GL.tgtP += GL.pendY;
       GL.pendX = 0; GL.pendY = 0;
@@ -758,12 +782,16 @@ export function createCamera(THREE, cam) {
 
     // ---- the return ------------------------------------------------------
     let rate = 0, cap = T.returnCap;
-    if (GL.force > 0) { GL.force -= dt; rate = T.recentreRate; cap = T.returnCap * 1.5; }
-    else if (GL.idle >= T.lookDwell && swing < T.returnSwing) {
+    if (GL.forcing) {
+      if (Math.abs(GL.tgtY) < 0.008 && Math.abs(GL.tgtP) < 0.008) GL.forcing = false;
+      else { rate = T.recentreRate; cap = T.returnCap * 1.5; }
+    }
+    if (!GL.forcing && GL.idle >= T.lookDwell && swing < T.returnSwing) {
       const w = clamp(spd / Math.max(0.4, TUNING.copWalk), 0, 1);
-      rate = T.returnWalk * w + T.returnRun * sprint;
+      rate = T.returnWalk * w + T.returnRun * sprint + T.returnChase * chase;
       if (GL.reduced) rate *= 0.55;
     }
+    GL.rate = rate;
     if (rate > 0 && dt > 0) {
       const k = 1 - Math.exp(-rate * dt), lim = cap * dt;
       GL.tgtY += clamp(-GL.tgtY * k, -lim, lim);
@@ -852,13 +880,20 @@ export function createCamera(THREE, cam) {
       dt = clamp(dt || 0, 0, 0.05);
 
       // ---- who is main.js steering by ---------------------------------------
-      // The `moveYaw` getter counts its own reads. readInput() runs immediately
-      // before step() in main.js's frame(), and inside run() too, so a read
-      // since the previous update means the hook is live and the movement basis
-      // is the corridor. Four frames of slack so a bare step(0) — snap() takes
-      // one, with no readInput in front of it — cannot flip the mode.
-      if (moveReads !== lastReads) { lastReads = moveReads; coupleT = 0; } else coupleT++;
-      GL.decoupled = coupleT < 4;
+      // The `moveYaw` getter counts its own reads: one read is proof the hook
+      // is live and the movement basis is the corridor rather than the camera.
+      //
+      // LATCHED, not windowed. This was a 4-frame window first — decoupled if
+      // moveYaw had been read in any of the last four updates — on the theory
+      // that main.js reads it every frame in readInput(). It does. But snap()
+      // and step(0) call update() with NO readInput in front of them, so a
+      // console driving the camera frame by frame falls out of the window and
+      // the look budget silently drops from 110 degrees to the 52 degree
+      // fallback. It cost a measurement: a live subject sweep looked
+      // non-monotonic and wrong, and the cause was the clamp changing halfway
+      // through it, not the camera. A main.js that reads moveYaw cannot stop
+      // existing mid-page-load, so once is once and it stays.
+      if (moveReads !== lastReads) { lastReads = moveReads; GL.decoupled = true; }
       // ---- floor entry -------------------------------------------------------
       // A look held when the player walked back to the desk must not still be
       // held when he is dispatched again. Keyed off the mode transition rather
@@ -890,7 +925,7 @@ export function createCamera(THREE, cam) {
       gap01 = sm(gap01, gapTgt, 1.7, dt);
 
       // ---- the player's own look, before anything is placed -----------------
-      if (GL.on) glanceStep(dt, spd, swing01, sprint01);
+      if (GL.on) glanceStep(dt, spd, swing01, sprint01, chase01);
 
       // ---- WHICH WAY DOES THE STORE FACE HERE ------------------------------
       // The store is a hard grid: eight corridors along Z, three across in X.
@@ -1040,6 +1075,43 @@ export function createCamera(THREE, cam) {
         aimZ = lerp(c.z, nb.b.z, T.laneAim * k);
       }
 
+      // ---- THE MOVEMENT BASIS, TAKEN BEFORE THE GLANCE TOUCHES ANYTHING -----
+      // moveYaw has to be the corridor and it has to be PROVABLY independent of
+      // the look, so it is computed here off the UNDOLLIED boom rather than read
+      // back from the final camera the way `yaw` is.
+      //
+      // MEASURED, and it is the one thing in this round that was silently
+      // wrong. Round 1's read-back is honest about the CAMERA, and its
+      // justification is a residual: the eye and the aim carry different lane
+      // blends (0.62 against 0.75) and the focus spring lags, so the two sit up
+      // to ~0.15 m apart laterally, which across a 5.55 m boom is the 1.5
+      // degrees round 1 quotes. The glance dolly takes that boom to 1.15 m. The
+      // SAME 0.15 m is then 7 degrees, and a spring half a metre behind a
+      // moving cop is fifty. Logged before this line existed:
+      //
+      //     look    0 deg  ->  moveYaw  0.00   (corridor)
+      //     look  -90 deg  ->  moveYaw  0.95   = 54 deg OFF the corridor
+      //     look -110 deg  ->  moveYaw  1.00   = 57 deg
+      //
+      // So the decoupling was a fiction at exactly the angles it was bought
+      // for: a deep glance was steering the player after all, just through a
+      // trigonometric side door rather than through the axis latch. Everything
+      // in the header about the loop being closed depended on this being zero.
+      //
+      // (aimX - eyeX) + bx*d IS round 1's boom vector — the shoulder dolly adds
+      // to both ends and cancels, and the boom collision scales along the line,
+      // so neither can turn it. The shake jitter is deliberately left out: a
+      // shoulder barge should not wobble the direction W means.
+      baseYaw = Math.atan2(-((aimX - eyeX) + bx * d), (aimZ - eyeZ) + bz * d);
+      // ...and then converge the lens onto the aim's own lateral line as the
+      // dolly runs in, so the CAMERA's yaw stops being residual-dominated too
+      // and the corner peek sits square on the lane instead of skewed across
+      // it. A no-op at rampA 0, which is every frame the mouse is idle.
+      if (GL.rampA > 0) {
+        eyeX = lerp(eyeX, aimX, GL.rampA);
+        eyeZ = lerp(eyeZ, aimZ, GL.rampA);
+      }
+
       // ---- life: vertical only, no roll ------------------------------------
       bobP += dt * (u.phase != null ? 0 : spd * 2.0);
       const stride = u.phase != null ? u.phase : bobP;
@@ -1137,19 +1209,21 @@ export function createCamera(THREE, cam) {
       AIM.set(aimX, look, aimZ);
 
       // ---- the glance, applied ----------------------------------------------
-      // Everything above is round 1's pose, unmodified. Read the bearing it
-      // came out at — that IS the corridor bearing, lane blend, wall clamp and
-      // all, which is why it is read back and not assumed — publish it as
-      // `moveYaw`, and then rotate the aim point off it by the player's look.
-      // The eye does not move. Rotating an aim point rather than composing a
-      // quaternion keeps this on exactly the same code path as round 1, so the
-      // yaw read-back below stays the single source of truth for both.
+      // Everything above is round 1's pose, unmodified. The look rotates the
+      // AIM POINT off the bearing that pose actually came out at — the NATURAL
+      // one, read back here, not the corridor bearing published as moveYaw.
+      // That distinction is what keeps this continuous: the two differ by the
+      // lane residual, and basing the rotation on moveYaw would pop the camera
+      // by that residual the instant the look crossed zero. The eye does not
+      // move. Rotating an aim point rather than composing a quaternion keeps
+      // this on exactly the same code path as round 1, so the yaw read-back
+      // below stays the single source of truth for what the camera is doing.
       {
         const ax2 = AIM.x - px, az2 = AIM.z - pz, ay2 = AIM.y - y;
         const dh = Math.hypot(ax2, az2);
         if (dh > 1e-4) {
-          baseYaw = Math.atan2(-ax2, az2);
           if (GL.curY || GL.curP || GL.rampA > 0) {
+            const yawNat = Math.atan2(-ax2, az2);
             const rad = Math.hypot(dh, ay2);
             // Pitch: the natural one, blended toward the RESTING pitch as the
             // glance dolly runs in. Without this the deep glance tips at the
@@ -1157,7 +1231,7 @@ export function createCamera(THREE, cam) {
             // so a boom of 5.55 is 8 degrees down and a boom of 1.15 is 34.
             const pRest = Math.atan2(T.look - T.height, T.dist);
             const p0 = lerp(Math.atan2(ay2, dh), pRest, GL.rampA);
-            const yF = wrapPi(baseYaw + GL.curY);
+            const yF = wrapPi(yawNat + GL.curY);
             const pF = clamp(p0 + GL.curP, -T.pitchClamp, T.pitchClamp);
             const cp = Math.cos(pF);
             AIM.set(px - Math.sin(yF) * cp * rad, y + Math.sin(pF) * rad,
@@ -1202,7 +1276,7 @@ export function createCamera(THREE, cam) {
         const rm = GL.reduced ? 0.6 : 1;
         if (y != null) GL.curY = GL.tgtY = clamp(y, -maxY, maxY);
         if (p != null) GL.curP = GL.tgtP = clamp(p, -T.lookDown * rm, T.lookUp * rm);
-        GL.idle = 0; GL.force = 0;
+        GL.idle = 0; GL.forcing = false;
         GL.ramp = GL.rampA = GL.reduced ? 0
           : smoothstep((Math.abs(GL.curY) - T.lookDollyAt) / (T.lookDollyFull - T.lookDollyAt));
         return api.glance.state();
@@ -1210,12 +1284,13 @@ export function createCamera(THREE, cam) {
       // Degrees, for hands. glance.deg(-60) reads down the aisle on the left.
       deg(y, p) { return api.glance.set(y == null ? null : y * RAD, p == null ? null : p * RAD); },
       nudge(dy, dp) { GL.pendX += dy || 0; GL.pendY += dp || 0; GL.idle = 0; },
-      recentre() { GL.force = 0.45; GL.idle = 9; },
+      recentre() { GL.forcing = true; GL.idle = 9; },
       state() {
         return {
           yaw: +GL.curY.toFixed(4), pitch: +GL.curP.toFixed(4),
           deg: +(GL.curY / RAD).toFixed(1), pitchDeg: +(GL.curP / RAD).toFixed(1),
           dolly: +GL.rampA.toFixed(3), locked: GL.locked, dragging: GL.dragging,
+          idle: +GL.idle.toFixed(2), returnRate: +GL.rate.toFixed(2), forcing: GL.forcing,
           decoupled: GL.decoupled, reduced: GL.reduced, on: GL.on,
           max: +((GL.decoupled ? T.lookMax : T.lookMaxCoupled) / RAD).toFixed(0),
         };

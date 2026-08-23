@@ -231,20 +231,64 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   // ---- per-frame ----------------------------------------------------------
   // Lookahead scheduling lives in muzak.js; this only decides when somebody
   // picks up the handset, and how much of the ceiling arrives via the room.
-  let paOn = true, pres = 0, iv = 0;
+  let paOn = true, pres = 0, iv = 0, tf = 0;
   function update(dt, t, zn) {
     if (!paOn) return;
     muzak.update(dt, t);
     talk.update(dt, t);
     duckMusic(t, talk.live);
 
+    // ---- THE PRIORITY INPUT, ROUND 4 -------------------------------------
+    // Bug 2 was not one thing. The browser's echo canceller was subtracting the
+    // voice (see talk.js), and underneath that the voice was never loud enough
+    // to be an event even when it did arrive. Measured at master, in aisle 4,
+    // against the store's own bed: the handset came out at PARITY with the air
+    // conditioning. Something that is supposed to be a man's voice booming out
+    // of the ceiling arrived at the level of the ventilation, and opening the
+    // channel made the mix 4.3 dBA QUIETER overall, because the two ducks are
+    // worth more than the voice they were making room for. "It doesn't do
+    // anything" is a fair description of that.
+    //
+    // The fix is the one a real rack does. A 70 V amp's priority input does not
+    // merely duck the program — it ducks the program AND drives the amp harder,
+    // because the announcement has to carry over a room the music did not have
+    // to carry over. So the ceiling comes up 5 dB and the reverb send comes
+    // down a third while somebody is holding the handset. Down on the send
+    // matters as much as up on the level: at forty metres the room's copy is
+    // louder than the direct sound, and the room's copy is the unintelligible
+    // one. Less tail, more words.
+    //
+    // This is after the tanh, so it costs no distortion — and talk.js's limiter
+    // is pulling the peaks into the tanh DOWN at the same time (measured: 3.6 dB
+    // of gain reduction on average, 5.5 dB on the loudest syllables). Louder and
+    // cleaner, which is the only direction worth moving in.
+    //
+    // Measured after, aisle 4, master, bed vs the same bed with the channel
+    // open. 300 Hz-4 kHz is the band a voice lives in:
+    //
+    //     300 Hz - 4 kHz    -41.6  ->  -37.6     +4.1 dB
+    //     1 - 4 kHz         -51.7  ->  -44.7     +7.1 dB   (the consonants)
+    //     20 - 200 Hz       -39.5  ->  -43.8     -4.3 dB   (the bed ducking)
+    //
+    // Before this change the same comparison went the WRONG WAY — the whole mix
+    // got 4.3 dBA quieter when you keyed the handset. The store now gets out of
+    // the way underneath while the voice comes up on top of it, which is what
+    // keying a PA does to a building.
+    const tT = talk.live ? 1 : 0;
+    tf += (tT - tf) * (1 - Math.exp(-(tT > tf ? 7.0 : 1.8) * Math.min(0.1, dt)));
+    if (Math.abs(tT - tf) < 0.004) tf = tT;
+
     // The front end is where the amp is and where the ceiling is lowest, so
     // the direct-to-room balance changes even though the level does not. The
     // chase takes another fifth off the send: hearing the music rather than
     // the room's copy of it is the whole mix move, and it is a mix move and
     // not a cue.
-    to(paWet.gain, (0.85 + 0.5 * pres) * (1 - 0.22 * iv), t, 0.7);
-    to(paLvl.gain, 0.42 * (1 + 0.14 * iv), t, 0.9);
+    // The taus are shorter than round 3's 0.7/0.9 because a push-to-talk has to
+    // arrive with the key, not three seconds after it. `pres` and `iv` are both
+    // already smoothed upstream — zn.front ramps over two metres of walking and
+    // chaseF over 1.2 s — so nothing here got jumpier.
+    to(paWet.gain, (0.85 + 0.5 * pres) * (1 - 0.22 * iv) * (1 - 0.34 * tf), t, 0.15);
+    to(paLvl.gain, 0.42 * (1 + 0.14 * iv) * (1 + 0.78 * tf), t, 0.15);
 
     annAt -= dt;
     // `!talk.live` is the one that matters — a hold can outlast the three

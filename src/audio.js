@@ -17,7 +17,13 @@
 //     talkStop(),              // call on keyup. Safe to call when nothing is live.
 //     talkState(),             // 'off' | 'requesting' | 'live' | 'denied' | 'unsupported'
 //     talkLevel(),             // 0..1 smoothed input level, for a HUD meter
+//     talkRelease(),           // optional: hand the capture device back now
+//     talkEcho(on),            // round 4, dev-only: put the browser's echo
+//                              //   canceller back. game.js never calls it.
 //   }
+//
+// NOTHING ABOVE CHANGED SHAPE IN ROUND 4. talkEcho is new and additive; every
+// other name, argument and return value is what game.js already binds.
 //
 // NOTHING about the game changes if the player has no microphone or says no.
 // talkStart() resolves false, talkState() reads 'denied' or 'unsupported', and
@@ -62,9 +68,11 @@
 //     a 2.3-second tail, because it starts eight centimetres from his ears.
 //
 // Cost: see stats(). The DSP runs on the audio thread; what shows up in the
-// game's frame budget is only the JavaScript in update(), which is measured on
-// the bench at 0.11-0.16 ms a frame, 1.3 ms worst case, 634 persistent nodes
-// and two live convolvers in either mode. The worst case is a beat of the tape
+// game's frame budget is only the JavaScript in update(), which is measured in
+// the real game at 0.11-0.13 ms a frame, 2.4 ms worst case, 646 persistent
+// nodes and two live convolvers in either mode. Round 4 added five nodes: three
+// filters shaping the top of the room in bed.js, a limiter on the handset, and
+// the analyser the howl watchdog needed in order to be able to fire at all. The worst case is a beat of the tape
 // landing in the same frame as a checkout burst; it is a bar-scheduler spike,
 // not a floor, and it is why muzak.js schedules a BEAT at a time and not a bar.
 //
@@ -510,6 +518,13 @@ export function createAudio(THREE, camera) {
     // Hands the capture device back immediately instead of after the idle
     // timeout. game.js can call it on pause or on game over; it is not required.
     talkRelease() { pa.talk.release(); },
+    // ROUND 4, ADDITIVE — nothing existing changed shape. The browser's echo
+    // canceller is now OFF by default because it was subtracting the player's
+    // own voice on speakers (the whole story is at the top of src/audio/talk.js).
+    // talkEcho(true) puts it back for a machine that howls; it takes effect on
+    // the next key press, because a track's audio processing is fixed when the
+    // track is created. game.js does not need to call this and does not.
+    talkEcho(on) { return pa.talk.echo(on); },
 
     // ---- agent-facing, same spirit as main.js's snap()/run()
     recordWav, stats, room, bed, pa, foley, desk,
