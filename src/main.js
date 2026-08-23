@@ -104,12 +104,21 @@ requestAnimationFrame(frame);
 // Composites the 3D frame AND the HUD canvas, because a game screenshot without
 // its HUD is not the thing being judged. Pass {raw:true} for 3D only.
 async function post(name, url) {
+  // A capture failure must never look like a success. This returned a reassuring
+  // "no shot sink (hosted build)" for ANY error, so when the server's /shot handler
+  // broke, every agent's snap() silently no-op'd while reporting something benign.
+  // Hosted builds (no server) are the only case allowed to be quiet.
+  let res;
   try {
-    const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
-    return res.text();
+    res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
   } catch (e) {
-    return 'no shot sink (hosted build) — ' + name;   // artifact/static host has no server
+    if (location.protocol === 'file:' || !location.port) return 'no shot sink (static host) — ' + name;
+    throw new Error('SNAP FAILED (' + name + '): ' + e.message);
   }
+  const txt = await res.text();
+  if (!res.ok) throw new Error('SNAP FAILED (' + name + '): HTTP ' + res.status + ' ' + txt.slice(0, 120));
+  if (!/^shots\//.test(txt)) throw new Error('SNAP FAILED (' + name + '): unexpected reply ' + txt.slice(0, 120));
+  return txt;
 }
 async function snap(name, opts = {}) {
   step(0);                                   // guarantee a fresh frame, no RAF needed

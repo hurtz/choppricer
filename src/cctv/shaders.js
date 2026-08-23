@@ -232,9 +232,9 @@ export const ScreenShader = {
   name: 'CCTVScreen',
   uniforms: {
     tFeed:  { value: null },
-    tBurn:  { value: null },
+    tOsd:   { value: null },   // THIS PANEL's own overlay, in panel uv. See note.
     uRect:  { value: null },   // x,y,w,h in px, TOP-LEFT origin
-    uRes:   { value: null },
+    uLines: { value: 104.0 },  // scanline pitch: rows of the STREAM, not the panel
     uGlass: { value: 0.035 },
     uSheen: { value: 0.05 },
     uPhase: { value: 0.0 },
@@ -247,9 +247,9 @@ export const ScreenShader = {
   fragmentShader: /* glsl */`
 precision highp float;
 varying vec2 vUv;
-uniform sampler2D tFeed, tBurn;
+uniform sampler2D tFeed, tOsd;
 uniform vec4 uRect;
-uniform vec2 uRes;
+uniform float uLines;
 uniform float uGlass, uSheen, uPhase, uActive, uDim, uScan;
 uniform vec3 uPanel;
 
@@ -265,17 +265,28 @@ void main() {
 
   vec3 col = texture2D(tFeed, fuv).rgb * uDim;
 
-  // burn-in is composited flat by the recorder, so it does not bow
-  vec2 cp = uRect.xy + vec2(l.x, 1.0 - l.y) * uRect.zw;
-  vec4 b = texture2D(tBurn, vec2(cp.x / uRes.x, 1.0 - cp.y / uRes.y));
+  // ROUND 4. The OSD is now PER PANEL, in the panel's own uv, and sampled
+  // through the SAME glass bulge as the picture. Two reasons, and the second is
+  // the one that mattered:
+  //   1. one shared 1280x720 overlay meant every channel's text was drawn at
+  //      wall scale, so a 138px thumbnail carried a channel id a third of its
+  //      width. Per-panel canvases let a thumbnail print 5px type and the spot
+  //      monitor print a real timestamp.
+  //   2. the analytics boxes live in here, and a box that does not sit through
+  //      the same glass as the man it is drawn around is not a box round a man.
+  vec4 b = texture2D(tOsd, fuv);
   col = mix(col, b.rgb, b.a);
 
-  // Scanlines live HERE and not in the grade pass on purpose. The burn-in is
+  // Scanlines live HERE and not in the grade pass on purpose. The OSD is
   // composited into the recorded stream, so the timestamp has to carry the same
   // line structure as the picture under it. Text that stays perfectly crisp
   // while the video is degraded is the loudest "this is a game HUD" tell there
-  // is. uRect.w is the panel height in px, so this lands on exact screen rows.
-  col *= 1.0 - uScan * (0.5 + 0.5 * sin(l.y * uRect.w * 3.14159265));
+  // is. uLines is the STREAM's row count rather than the panel's: a 432-line
+  // substream blown up onto a 431px spot monitor has 432 lines, and a 768x432
+  // mainstream on the same glass has 432 too — but a 104-line thumbnail
+  // upscaled has 104, and pretending otherwise is what made every panel on the
+  // round-3 wall read as the same panel.
+  col *= 1.0 - uScan * (0.5 + 0.5 * sin(l.y * uLines * 3.14159265));
 
   // LCD backlight leak: a screen showing black is never actually black
   col = col * 0.960 + 0.017;

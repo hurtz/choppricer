@@ -454,32 +454,92 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
   // ======================================================================
   // THE COP'S LUNGS
   // ======================================================================
-  // When he gasses out the breathing IS the mechanic. Everything else in this
-  // file is scenery; this is the only sound in the build that the player is
-  // supposed to want to stop.
+  // THE CLIENT, ROUND 2, VERBATIM:
   //
-  // One persistent voice: noise through a bandpass whose centre sweeps up on the
-  // inhale and down on the exhale, a very high-Q peak that only comes up when he
-  // is in trouble (that is the wheeze), and a low pulse train through a narrow
-  // filter for the rasp at the back of the throat. Almost entirely dry — your own
-  // breath does not come to you via a 2.3 second reverb.
+  //   "He's out of energy, like when he's running out of breath. He pants, like
+  //    he breathes heavily, and then it lets up right as he gets his breath
+  //    back, but you should see that too. You should see that in his huff-huff
+  //    that he's really just kind of winded."
+  //
+  // Three things in that sentence, and round 1 delivered none of them.
+  //
+  //  1. HUFF-HUFF. Not one continuous breath cycle sped up — PAIRS. Two short
+  //     hard mouth-breaths tight together and then a beat, over and over. Round
+  //     1 ran a single symmetrical in/out at a rate that scaled with effort,
+  //     which at speed reads as a man doing breathing exercises. A pant has a
+  //     rhythm and the rhythm is two.
+  //
+  //  2. THROUGH THE MOUTH. A nose breath is dark and narrow. An open mouth is
+  //     broadband — turbulence at the lips and teeth, a hard 2-5 kHz hiss over
+  //     the throat's own 250 Hz weight — and the switch from one to the other
+  //     is most of how you hear that somebody has stopped coping. So the mouth
+  //     opens as he goes: a highshelf and a chest peak that both track fatigue.
+  //
+  //  3. IT LETS UP, AND THE LETTING UP IS THE POINT. He said it twice. Recovery
+  //     is a decision the player is actively making — the HUD shouts KEY HELD —
+  //     NO RECOVERY at them — so releasing sprint has to FEEL like relief. It
+  //     gets a dedicated event: one long, deep, unobstructed breath on the way
+  //     out of winded, with the wheeze gone off it. That single sound is the
+  //     reward for letting go of the key.
+  //
+  // ---------------------------------------------------------------------
+  // DRIVEN OFF FATIGUE, NOT OFF THE TANK
+  //
+  // agents.js maintains `cop.userData.fatigue` — 0..1, rising fast and falling
+  // slow. The stamina bar bounces every 2.2 seconds in a chase; the lungs must
+  // not. A man who has been running for thirty seconds is still wrecked a
+  // moment after the bar refills, and `fatigue` is the only signal in the build
+  // that carries that. `gassed` rides on top of it as the acute state.
+  //
+  // (main.js passes `report: agents.report && agents.report()` and agents.js has
+  // no `report` export — it CALLS api.report() into game.js — so state.report is
+  // undefined. userData is the authority and always has been. Both are read.)
+  //
+  // ---------------------------------------------------------------------
+  // Almost entirely dry. Your own breath does not come to you via a 2.3 second
+  // reverb; it starts eight centimetres from your ears. A small wet send exists
+  // only so a hard exhale in an aisle puts something into the corridor.
   const brSrc = N(loopNoise(ctx, noise, 0.85, rnd));
   const brBP = N(filt(ctx, 'bandpass', 600, 1.1));
   const brWheeze = N(filt(ctx, 'peaking', 1180, 13, 0));
   const brWheeze2 = N(filt(ctx, 'peaking', 2350, 9, 0));
-  const brHP = N(filt(ctx, 'highpass', 180, 0.7));
+  // the mouth. Opens as he stops coping: +top for the lips and teeth, +250 Hz
+  // for the size of the man doing the breathing.
+  const brMouth = N(filt(ctx, 'highshelf', 2500, 0.7, 0));
+  const brChest = N(filt(ctx, 'peaking', 235, 1.1, 0));
+  const brHP = N(filt(ctx, 'highpass', 165, 0.7));
   const brG = N(gain(ctx, 0));
   brSrc.connect(brBP); brBP.connect(brWheeze); brWheeze.connect(brWheeze2);
-  brWheeze2.connect(brHP); brHP.connect(brG);
+  brWheeze2.connect(brMouth); brMouth.connect(brChest); brChest.connect(brHP);
+  brHP.connect(brG);
   const brDry = N(gain(ctx, 1.0)); brG.connect(brDry); brDry.connect(playerOut);
   const brWet = N(gain(ctx, 0.16)); brG.connect(brWet); brWet.connect(wetOut);
 
+  // The voiced part. A fat man does not exhale silently when he is finished —
+  // there is a grunt in it, and the grunt is the difference between "breathing"
+  // and "in trouble". Sawtooth through a narrow throat formant, only ever
+  // present on the exhale, and only when the wheeze is.
   const raspOsc = N(ctx.createOscillator()); raspOsc.type = 'sawtooth'; raspOsc.frequency.value = 74;
   const raspBP = N(filt(ctx, 'bandpass', 330, 3.2));
-  const raspLP = N(filt(ctx, 'lowpass', 900, 0.8));
+  const raspFm = N(filt(ctx, 'peaking', 640, 1.8, 6));
+  const raspLP = N(filt(ctx, 'lowpass', 1100, 0.8));
   const raspG = N(gain(ctx, 0));
-  raspOsc.connect(raspBP); raspBP.connect(raspLP); raspLP.connect(raspG);
+  raspOsc.connect(raspBP); raspBP.connect(raspFm); raspFm.connect(raspLP); raspLP.connect(raspG);
   raspG.connect(brDry); raspOsc.start();
+
+  // A dry mouth. Occasional, quiet, and the single cheapest detail that makes
+  // the rest read as a person rather than as filtered noise.
+  const smackBP = N(filt(ctx, 'bandpass', 1900, 1.4)); smackBP.connect(brDry);
+  function smack(t) {
+    const s = ctx.createBufferSource(); s.buffer = noise; s.playbackRate.value = 1.7;
+    const g = gain(ctx, 0);
+    s.connect(g); g.connect(smackBP);
+    g.gain.setValueAtTime(0.055 + rnd() * 0.05, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.028 + rnd() * 0.02);
+    s.start(t, rnd() * 2, 0.08);
+    s.onended = () => { try { g.disconnect(); } catch (e) {} };
+    created += 2;
+  }
 
   // the pulse in your ears. Only when he is truly finished, and quiet enough
   // that it reads as a body rather than as a sound effect.
@@ -488,57 +548,103 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
   const heartLP = N(filt(ctx, 'lowpass', 120, 0.9));
   heartG.connect(heartLP); heartLP.connect(playerOut); heart.start();
 
-  const breath = { ph: 0, rate: 0.3, len: 3.3, next: 0, effort: 0, gass: 0, hb: 0 };
+  const breath = { next: 0, effort: 0, fat: 0, acute: 0, hb: 0, relief: -9, wasHard: false };
 
-  function breathCycle(t, effort, gass) {
-    // in : out is about 40:60 at rest and closer to 50:50 when he is gulping
-    const rate = lerp(lerp(0.30, 0.95, effort), 2.05, gass);
-    const len = (1 / rate) * (0.86 + rnd() * 0.30);       // never a loop
-    const inh = len * lerp(0.40, 0.49, gass);
-    const lvl = lerp(lerp(0.030, 0.14, effort), 0.62, gass);
-
-    // ---- inhale: filter sweeps up, gets narrow, gets loud
-    brBP.frequency.cancelScheduledValues(t);
-    brBP.frequency.setValueAtTime(brBP.frequency.value, t);
-    brBP.frequency.exponentialRampToValueAtTime(lerp(760, 1420, gass) * (0.9 + rnd() * 0.2), t + inh * 0.75);
-    brBP.Q.setTargetAtTime(lerp(1.0, 2.6, gass), t, inh * 0.4);
-    brG.gain.cancelScheduledValues(t);
-    brG.gain.setValueAtTime(Math.max(0.0001, brG.gain.value), t);
-    brG.gain.linearRampToValueAtTime(lvl * (0.9 + rnd() * 0.25), t + inh * (gass > 0.4 ? 0.16 : 0.42));
-    // the catch: when he is finished the inhale is not smooth, it stops and
-    // restarts
-    if (gass > 0.45 && rnd() < 0.55) {
-      brG.gain.setTargetAtTime(lvl * 0.35, t + inh * 0.34, 0.02);
-      brG.gain.setTargetAtTime(lvl * 1.05, t + inh * 0.46, 0.03);
+  // ---- one breath ---------------------------------------------------------
+  // inh/exh in seconds, lvl the exhale's peak, k the severity 0..1. Everything
+  // about the shape of it changes with k, not just the volume — a shallow fast
+  // huff and a deep slow breath are different EVENTS, and cross-fading between
+  // two amplitudes would only ever produce a loud version of the calm one.
+  function oneBreath(t, inh, exh, lvl, k, sigh) {
+    const F = brBP.frequency, G = brG.gain;
+    // --- inhale. Filter sweeps UP and narrows: air being pulled in through a
+    // gap that is too small for how much of it he wants.
+    F.cancelScheduledValues(t);
+    F.setValueAtTime(Math.max(80, F.value), t);
+    F.exponentialRampToValueAtTime(lerp(700, 1500, k) * (0.9 + rnd() * 0.2), t + inh * 0.78);
+    brBP.Q.setTargetAtTime(lerp(0.9, 2.8, k), t, inh * 0.5);
+    G.cancelScheduledValues(t);
+    G.setValueAtTime(Math.max(0.0001, G.value), t);
+    // the inhale is the quieter half of a pant and the sharper one
+    G.linearRampToValueAtTime(lvl * lerp(0.55, 0.86, k), t + inh * lerp(0.45, 0.14, k));
+    // THE CATCH. When he is finished the inhale is not smooth — it stops and
+    // restarts, because the top of his chest has run out of room.
+    if (k > 0.5 && !sigh && rnd() < 0.6) {
+      G.setTargetAtTime(lvl * 0.28, t + inh * 0.36, 0.018);
+      G.setTargetAtTime(lvl * 0.80, t + inh * 0.50, 0.024);
     }
-    brG.gain.setTargetAtTime(lvl * 0.12, t + inh * 0.86, 0.045);
+    G.setTargetAtTime(lvl * 0.10, t + inh * 0.88, 0.035);
 
-    // ---- exhale: down and out, with the rasp on it
+    // --- the wheeze rides the inhale and only exists when he is in trouble.
+    // Two high-Q peaks a fifth apart, which is what a narrowed airway does.
+    const wz = sigh ? 0 : clamp((k - 0.18) / 0.82, 0, 1);
+    for (const [pk, amt, fq] of [[brWheeze, 15, 1020 + rnd() * 430], [brWheeze2, 8, 2240 + rnd() * 320]]) {
+      pk.gain.cancelScheduledValues(t);
+      pk.gain.setValueAtTime(0, t);
+      pk.gain.linearRampToValueAtTime(wz * (amt * (0.7 + rnd() * 0.6)), t + inh * 0.55);
+      pk.gain.setTargetAtTime(0, t + inh * 0.9, 0.07);
+      pk.frequency.setValueAtTime(fq, t);
+    }
+
+    // --- exhale. Down and out, and it is the LOUD half — this is the huff.
     const ex = t + inh;
-    brBP.frequency.exponentialRampToValueAtTime(lerp(430, 300, gass) * (0.9 + rnd() * 0.2), ex + (len - inh) * 0.8);
-    brG.gain.setTargetAtTime(lvl * lerp(0.7, 1.0, gass), ex + 0.03, 0.05);
-    brG.gain.setTargetAtTime(0.0008, ex + (len - inh) * 0.72, 0.06);
+    F.exponentialRampToValueAtTime(lerp(500, 340, k) * (0.9 + rnd() * 0.2), ex + exh * 0.7);
+    G.setTargetAtTime(lvl * (sigh ? 0.8 : 1.0), ex + 0.012, sigh ? 0.09 : 0.022);
+    G.setTargetAtTime(0.0006, ex + exh * (sigh ? 0.62 : 0.55), sigh ? 0.10 : 0.05);
 
-    // wheeze rides the inhale and only exists when he is in trouble
-    const wz = clamp((gass - 0.15) / 0.85, 0, 1);
-    brWheeze.gain.cancelScheduledValues(t);
-    brWheeze.gain.setValueAtTime(0, t);
-    brWheeze.gain.linearRampToValueAtTime(wz * (14 + rnd() * 8), t + inh * 0.5);
-    brWheeze.gain.setTargetAtTime(0, t + inh * 0.9, 0.08);
-    brWheeze.frequency.setValueAtTime(1050 + rnd() * 420, t);
-    brWheeze2.gain.cancelScheduledValues(t);
-    brWheeze2.gain.setValueAtTime(0, t);
-    brWheeze2.gain.linearRampToValueAtTime(wz * (6 + rnd() * 6), t + inh * 0.55);
-    brWheeze2.gain.setTargetAtTime(0, t + inh * 0.92, 0.09);
-
-    // rasp on the exhale
-    raspOsc.frequency.setValueAtTime((66 + rnd() * 22) * lerp(1, 1.18, gass), ex);
+    // --- the grunt in it
+    raspOsc.frequency.setValueAtTime((64 + rnd() * 24) * lerp(1, 1.22, k), ex);
     raspG.gain.cancelScheduledValues(ex);
     raspG.gain.setValueAtTime(0, ex);
-    raspG.gain.linearRampToValueAtTime(wz * 0.075 * (0.6 + rnd() * 0.8), ex + 0.05);
-    raspG.gain.setTargetAtTime(0, ex + (len - inh) * 0.5, 0.09);
+    raspG.gain.linearRampToValueAtTime((sigh ? wz * 0.03 : wz * 0.085) * (0.6 + rnd() * 0.8), ex + 0.04);
+    raspG.gain.setTargetAtTime(0, ex + exh * 0.45, 0.07);
+  }
 
-    return len;
+  // ---- what he is doing right now ----------------------------------------
+  // Returns the seconds until the next call. Two completely different
+  // behaviours with a hard threshold between them, because a pant and a breath
+  // are not the same action performed at different speeds.
+  function breathe(t, k, acute) {
+    // mouth and chest open with fatigue and stay open — this is a slow-moving
+    // colour change and it is what "he is not coping" sounds like
+    to(brMouth.gain, lerp(-4, 9, k), t, 0.35);
+    to(brChest.gain, lerp(0, 7, k), t, 0.35);
+
+    if (k > 0.42) {
+      // ---- HUFF-HUFF -----------------------------------------------------
+      // Two shallow mouth breaths tight together, then a beat. The pair period
+      // runs from 2.5 s (labouring) down to 1.12 s (gone), i.e. about 105
+      // breaths a minute at the bottom, which for a man in his fifties who has
+      // just sprinted 30 metres is roughly right and sounds worse than that.
+      const per = lerp(2.50, 1.12, k) * (0.90 + rnd() * 0.22);
+      const gap = per * lerp(0.44, 0.34, k);
+      const inh = lerp(0.20, 0.115, k), exh = lerp(0.30, 0.165, k);
+      const lvl = lerp(0.20, 0.66, k) * (1 + 0.14 * acute);
+      oneBreath(t, inh, exh, lvl * (0.92 + rnd() * 0.16), k);
+      oneBreath(t + gap, inh * 0.94, exh * 0.92, lvl * (0.78 + rnd() * 0.20), k);
+      if (rnd() < 0.13) smack(t + gap + inh + exh + 0.06);
+      breath.wasHard = true;
+      return per;
+    }
+
+    // ---- and it lets up --------------------------------------------------
+    // The transition out of huffing gets its own event: one long unobstructed
+    // breath with the wheeze off it. It fires ONCE, on the way down, and it is
+    // the sound of the player having made the right decision about the sprint
+    // key. Everything after it is quiet.
+    if (breath.wasHard && t - breath.relief > 3.0) {
+      breath.wasHard = false; breath.relief = t;
+      oneBreath(t, 0.62, 0.95, lerp(0.16, 0.34, k), Math.min(k, 0.3), true);
+      if (rnd() < 0.5) smack(t + 1.7 + rnd() * 0.4);
+      return 1.85 + rnd() * 0.5;
+    }
+    // ---- at rest ---------------------------------------------------------
+    // A big man at rest still breathes audibly and it is barely there.
+    const rate = lerp(0.30, 0.72, k / 0.42);
+    const per = (1 / rate) * (0.84 + rnd() * 0.34);
+    oneBreath(t, per * 0.40, per * 0.42, lerp(0.032, 0.17, k / 0.42), k * 0.5);
+    if (rnd() < 0.06) smack(t + per * 0.85);
+    return per;
   }
 
   // ======================================================================
@@ -576,26 +682,45 @@ export function createFoley(ctx, room, out, wetOut, playerOut, noise, rattleBuf)
     } else phaseInit = false;
 
     // ---- breathing
+    // FATIGUE IS THE SIGNAL. agents.js keeps `cop.userData.fatigue` — a 0..1
+    // that rises fast and falls slow — precisely because the tank itself
+    // bounces every 2.2 s in a chase and a pair of lungs must not. Everything
+    // audible here is a function of it. `gassed` is layered on as the acute
+    // state (he cannot sprint AT ALL right now) and buys about 15% more level
+    // and a touch more urgency, not a different sound.
+    //
+    // Effort from the legs adds on top, so trotting across the store while
+    // still carrying fatigue from the last chase sounds like a man who is not
+    // over it — which he is not.
     const K = st.tuning || {};
     const smax = K.staminaMax || 1.4;
+    const R = st.report || {};
     const wind = clamp((u.stamina == null ? smax : u.stamina) / smax, 0, 1);
-    const gassed = u.gassed ? 1 : 0;
-    // effort lags the speed; a fat man's lungs do not know he stopped for a
-    // second and a half
-    const eff = clamp((u.speed || 0) / 4.6, 0, 1) * 0.55 + (1 - wind) * 0.75;
-    breath.effort += (clamp(eff, 0, 1) - breath.effort) * (1 - Math.exp(-1.6 * Math.min(0.1, dt)));
-    // gass rises instantly and comes off slowly — that asymmetry is the feeling
-    const gTarget = gassed ? 1 : clamp((1 - wind) * 0.75, 0, 0.6);
-    breath.gass += (gTarget - breath.gass) * (1 - Math.exp(-(gTarget > breath.gass ? 6.0 : 0.55) * Math.min(0.1, dt)));
+    const fatigue = clamp(R.fatigue != null ? R.fatigue : (u.fatigue != null ? u.fatigue : 1 - wind), 0, 1);
+    const gassed = (u.gassed || R.wind === 'winded') ? 1 : 0;
+    // The legs' own contribution, lagged: a fat man's lungs do not know he
+    // stopped for a second and a half.
+    const eff = clamp((u.speed || 0) / 4.6, 0, 1);
+    breath.effort += (eff - breath.effort) * (1 - Math.exp(-1.6 * Math.min(0.1, dt)));
+    breath.fat += (fatigue - breath.fat) * (1 - Math.exp(-6.0 * Math.min(0.1, dt)));
+    // acute rises instantly and comes off over about two seconds — that
+    // asymmetry is the feeling, and it is what makes the release audible
+    breath.acute += (gassed - breath.acute) * (1 - Math.exp(-(gassed > breath.acute ? 7.0 : 0.55) * Math.min(0.1, dt)));
+    // The severity the whole voice is built around. Fatigue dominates; the legs
+    // can push it up a bit; being actually winded pins it near the top.
+    const sev = clamp(breath.fat * 0.86 + breath.effort * 0.24 + breath.acute * 0.30, 0, 1);
     if (t >= breath.next) {
-      breath.next = (breath.next < t - 1 ? t : breath.next) + breathCycle(Math.max(t, breath.next), breath.effort, breath.gass);
+      breath.next = (breath.next < t - 1 ? t : breath.next)
+        + breathe(Math.max(t, breath.next), sev, breath.acute);
     }
     // pulse
-    if (breath.gass > 0.5) {
+    if (sev > 0.5) {
       breath.hb -= dt;
       if (breath.hb <= 0) {
-        breath.hb = 0.42 + rnd() * 0.06;
-        const tt = t + 0.01, v = (breath.gass - 0.5) * 2 * 0.10;
+        // it slows as he comes back down, and that is a second, quieter copy of
+        // the same "it lets up" cue sitting underneath the breathing
+        breath.hb = lerp(0.62, 0.40, sev) + rnd() * 0.05;
+        const tt = t + 0.01, v = (sev - 0.5) * 2 * 0.11;
         heartG.gain.cancelScheduledValues(tt);
         heartG.gain.setValueAtTime(0, tt);
         heartG.gain.linearRampToValueAtTime(v, tt + 0.012);

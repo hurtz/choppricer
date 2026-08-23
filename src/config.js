@@ -21,6 +21,10 @@ export const STORE = {
 
 export const FRONT_WALK_Z = STORE.minZ + 3.5; // cross-aisle in front of checkouts
 export const BACK_WALK_Z  = STORE.maxZ - 2.5; // cross-aisle along the back wall
+// Mid-store cross-aisle. store.js, agents.js and camera.js all need this; it lived
+// privately in store.js as CROSS_Z, which is one copy away from the duplication
+// hazard in CLAUDE.md. This is its home.
+export const MID_WALK_Z   = -0.70;
 export const EXIT = { x: STORE.minX + 3.0, z: STORE.minZ + 0.4 };
 // Second exit, 35m from Door 1. Two doors is what inverted the door-camping
 // exploit — one door made the thief's destination public knowledge.

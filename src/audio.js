@@ -169,7 +169,7 @@ export function createAudio(THREE, camera) {
   })();
 
   // ---- subsystems ---------------------------------------------------------
-  const bed = createBed(ctx, room, buses.ambience, wetB.ambience);
+  const bed = createBed(ctx, room, buses.ambience, wetB.ambience, rattle);
   const pa = createPA(ctx, room, buses.pa, wetB.pa, noise);
   const foley = createFoley(ctx, room, buses.foley, wetB.foley, playerBus, noise, rattle);
   const desk = createDesk(ctx, room, buses.ui, wetB.ui, noise, pinkD);
@@ -189,6 +189,7 @@ export function createAudio(THREE, camera) {
   const perf = { ms: 0, peak: 0, ema: 0, n: 0, made: 0 };
   let zn = room.zone;
   let gassF = 0;
+  let chaseF = 0;
 
   function update(dt, state) {
     if (ctx.state !== 'running') return;
@@ -218,26 +219,52 @@ export function createAudio(THREE, camera) {
     bed.update(dt, t, zn, { x: lx, z: lz });
 
     // ---- bodies
+    const sh = state.shoppers || [];
     if (cop) {
       perf.made = foley.update(dt, t, {
-        mode: state.mode, cop, shoppers: state.shoppers || [], tuning: TUNING,
+        mode: state.mode, cop, shoppers: sh, tuning: TUNING, report: state.report,
       }, zn, lx, lz) || perf.made;
     }
     desk.update(dt, t, isDesk);
+
+    // ---- IS A CHASE HAPPENING -------------------------------------------
+    // main.js passes `chasing: game.st.chasing` and game.st has no such field,
+    // so it is always false. The honest signal is the shoppers' own `bolted`
+    // flags — the same ones foley.js reads to fire the shove — plus how close
+    // the man is, because a chase you are winning is not the same event as a
+    // chase forty metres away.
+    //
+    // This is the ONLY number the game hands the music, and it moves slowly
+    // in both directions (about 1.2 s up, 3.3 s down) so the tape never
+    // appears to react to anything. See muzak.js for what it does with it.
+    let hot = 0;
+    if (!isDesk) {
+      for (const s of sh) {
+        if (!s.bolted || s.escaped || s.caught) continue;
+        const d = Math.hypot(s.position.x - lx, s.position.z - lz);
+        hot = Math.max(hot, clamp(1.30 - d / 34, 0.38, 1));
+      }
+      if (state.chasing) hot = Math.max(hot, 0.8);
+    }
+    chaseF += (hot - chaseF) * (1 - Math.exp(-(hot > chaseF ? 0.85 : 0.30) * dt));
+    pa.setIntensity(chaseF);
     pa.update(dt, t, zn);
 
-    // ---- the duck. `report` is agents.js's wind block when the harness wires
-    // it; the cop's own userData is the authority either way, so this works
-    // whether or not report() exists.
+    // ---- the duck. Driven off FATIGUE, not off the tank: the bar bounces
+    // every 2.2 s in a chase and the world receding has to move at the speed
+    // of the man, not at the speed of the meter. `report` is agents.js's wind
+    // block when the harness wires it; cop.userData.fatigue is the authority
+    // either way and is always present.
     const u = (cop && cop.userData) || {};
     const r = state.report || {};
     const winded = u.gassed || r.wind === 'winded';
     const frac = r.windFrac != null ? r.windFrac
       : clamp((u.stamina == null ? TUNING.staminaMax : u.stamina) / TUNING.staminaMax, 0, 1);
-    const gTarget = winded ? 1 : clamp((1 - frac) * 0.5, 0, 0.5);
-    gassF += (gTarget - gassF) * (1 - Math.exp(-(gTarget > gassF ? 5.5 : 0.6) * dt));
-    to(duckLP.frequency, lerp(20000, 3200, gassF), t, 0.25);
-    to(duckG.gain, lerp(1.0, 0.62, gassF), t, 0.25);
+    const fat = clamp(r.fatigue != null ? r.fatigue : (u.fatigue != null ? u.fatigue : 1 - frac), 0, 1);
+    const gTarget = clamp(fat * 0.82 + (winded ? 0.30 : 0), 0, 1);
+    gassF += (gTarget - gassF) * (1 - Math.exp(-(gTarget > gassF ? 5.5 : 0.75) * dt));
+    to(duckLP.frequency, lerp(20000, 3000, gassF), t, 0.25);
+    to(duckG.gain, lerp(1.0, 0.58, gassF), t, 0.25);
 
     const el = performance.now() - p0;
     perf.ms = el; perf.n++;
@@ -292,7 +319,7 @@ export function createAudio(THREE, camera) {
   }
 
   function stats() {
-    const n = bed.nodes.length + pa.nodes.length + foley.nodes.length + desk.nodes.length;
+    const n = bed.nodes.length + pa.nodes.length + pa.muzak.nodes.length + foley.nodes.length + desk.nodes.length;
     return {
       buildMs: +buildMs.toFixed(1),
       updateMs: +perf.ema.toFixed(3),
@@ -301,6 +328,9 @@ export function createAudio(THREE, camera) {
       convolvers: room.convs.filter((c) => c.live).length,
       irSeconds: room.convs.map((c) => +c.conv.buffer.duration.toFixed(2)),
       oneShotNodesPerSec: perf.made,
+      musicNodesPerSec: pa.muzak.stats().nodesPerSec,
+      nowPlaying: pa.muzak.now,
+      chase: +chaseF.toFixed(2),
       sampleRate: ctx.sampleRate,
       zone: {
         open: +zn.open.toFixed(2), aisle: zn.aisle + 1,

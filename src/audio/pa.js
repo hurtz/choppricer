@@ -32,7 +32,7 @@
 //   +2.5 dB @ 1.6 kHz   the cone's shout
 //   -5 dB @ 640 Hz      and the hole under it
 //   +3 dB @ 3.6 kHz     paper breakup
-//   LP 7.4 / 9.2 kHz    the whizzer giving up
+//   LP 8.2 / 11 kHz     the whizzer giving up
 //
 // Net: the bass fundamental at 90 Hz is down about 12 dB and its second and
 // third harmonics are not, so the ear reconstructs the missing fundamental and
@@ -73,8 +73,8 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   const suck = N(filt(ctx, 'peaking', 640, 1.5, -5));       // the baffle hole
   const honk = N(filt(ctx, 'peaking', 1600, 1.2, 2.5));     // the cone's shout
   const brk = N(filt(ctx, 'peaking', 3600, 2.0, 3));        // paper breakup
-  const lp1 = N(filt(ctx, 'lowpass', 7400, 0.75));
-  const lp2 = N(filt(ctx, 'lowpass', 9200, 0.6));
+  const lp1 = N(filt(ctx, 'lowpass', 8200, 0.75));
+  const lp2 = N(filt(ctx, 'lowpass', 11000, 0.6));
   const paLvl = N(gain(ctx, 0.42));
   paIn.connect(drive); drive.connect(hp1); hp1.connect(hp2); hp2.connect(suck);
   suck.connect(honk); honk.connect(brk); brk.connect(lp1); lp1.connect(lp2); lp2.connect(paLvl);
@@ -82,7 +82,7 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   // direct sound, from four cans at four distances
   for (const [x, z, dly] of SPK) {
     const d = N(ctx.createDelay(0.1)); d.delayTime.value = dly;
-    const c = N(filt(ctx, 'lowpass', 4200 + rnd() * 2200, 0.7));
+    const c = N(filt(ctx, 'lowpass', 6000 + rnd() * 3500, 0.7));
     const p = N(panner(ctx, x, 4.85, z, 8, 0.55));
     const g = N(gain(ctx, 0.42));
     paLvl.connect(d); d.connect(c); c.connect(p); p.connect(g); g.connect(out);

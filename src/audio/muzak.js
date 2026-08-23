@@ -285,9 +285,9 @@ export function createMuzak(ctx, dest, noiseBuf, seed = 4711) {
   const bassBus = N(gain(ctx, 0.72));
   const leadBus = N(gain(ctx, 0.44));
   const padBus = N(gain(ctx, 0.20));       // strings, only fed on the reprise
-  const percBus = N(gain(ctx, 0.34));
+  const percBus = N(gain(ctx, 0.46));
   for (const b of [compBus, bassBus, leadBus, padBus, percBus]) b.connect(glue);
-  const LEAD_LVL = 0.44, PERC_LVL = 0.34;
+  const LEAD_LVL = 0.44, PERC_LVL = 0.46;
 
   // ---- shared modulators --------------------------------------------------
   // One vibrato and one tape wow for the whole band. Per-note LFOs would be
@@ -315,22 +315,27 @@ export function createMuzak(ctx, dest, noiseBuf, seed = 4711) {
   // ---- shared drum colouring ---------------------------------------------
   // Every hit of a given drum runs through the same filters, so a bar of 16ths
   // costs 2 nodes a hit and not 5.
-  const hatHP = N(filt(ctx, 'highpass', 5600, 0.7));
-  const hatPk = N(filt(ctx, 'peaking', 9200, 1.2, 5));
-  const hatLvl = N(gain(ctx, 0.62));
+  // The hats decide whether the tape has a beat. Round 2 first pass put them
+  // above 5.6 kHz, which is where the ceiling speaker's whizzer gives up, and
+  // measured 0.0% of the music's energy over 5.6 kHz — a drum machine you could
+  // not hear. A real 8-inch coax passes a hi-hat perfectly well; it is the
+  // FORTY METRES that eats it, and that happens in the room, not in the can.
+  const hatHP = N(filt(ctx, 'highpass', 4200, 0.7));
+  const hatPk = N(filt(ctx, 'peaking', 8000, 1.0, 5));
+  const hatLvl = N(gain(ctx, 0.95));
   hatHP.connect(hatPk); hatPk.connect(hatLvl); hatLvl.connect(percBus);
 
   const snBP = N(filt(ctx, 'bandpass', 1850, 0.75));
   const snPk = N(filt(ctx, 'peaking', 420, 1.6, 5));
-  const snLvl = N(gain(ctx, 0.60));
+  const snLvl = N(gain(ctx, 0.78));
   snBP.connect(snPk); snPk.connect(snLvl); snLvl.connect(percBus);
 
-  const shkBP = N(filt(ctx, 'bandpass', 7400, 0.8));
-  const shkLvl = N(gain(ctx, 0.30)); shkBP.connect(shkLvl); shkLvl.connect(percBus);
+  const shkBP = N(filt(ctx, 'bandpass', 5800, 0.75));
+  const shkLvl = N(gain(ctx, 0.44)); shkBP.connect(shkLvl); shkLvl.connect(percBus);
 
   const kickLP = N(filt(ctx, 'lowpass', 900, 1.0));
   const kickClick = N(filt(ctx, 'bandpass', 1250, 1.4));
-  const kickLvl = N(gain(ctx, 0.85));
+  const kickLvl = N(gain(ctx, 1.05));
   kickLP.connect(kickLvl); kickClick.connect(kickLvl); kickLvl.connect(percBus);
 
   // ---- voices -------------------------------------------------------------
@@ -580,16 +585,20 @@ export function createMuzak(ctx, dest, noiseBuf, seed = 4711) {
     const o = ctx.createOscillator(); o.type = 'sine';
     const g = gain(ctx, 0);
     o.connect(g); g.connect(kickLP);
-    o.frequency.setValueAtTime(150, t);
-    o.frequency.exponentialRampToValueAtTime(52, t + 0.075);
-    g.gain.setValueAtTime(vel, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.19);
-    o.start(t); o.stop(t + 0.22);
+    // Pitched HIGH on purpose. A kick's fundamental is 55 Hz and the ceiling
+    // speaker's transformer deletes it, so the drum you actually hear in a
+    // supermarket is the top of its thump plus the beater. Sweeping 190 -> 78
+    // puts the audible part above the highpass instead of under it.
+    o.frequency.setValueAtTime(190, t);
+    o.frequency.exponentialRampToValueAtTime(78, t + 0.065);
+    g.gain.setValueAtTime(vel * 1.25, t);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.17);
+    o.start(t); o.stop(t + 0.2);
     // and the beater, which is the part that survives the ceiling
     const s = ctx.createBufferSource(); s.buffer = noiseBuf; s.playbackRate.value = 1.2;
     const sg = gain(ctx, 0); s.connect(sg); sg.connect(kickClick);
-    sg.gain.setValueAtTime(vel * 0.30, t);
-    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.020);
+    sg.gain.setValueAtTime(vel * 0.55, t);
+    sg.gain.exponentialRampToValueAtTime(0.0001, t + 0.022);
     s.start(t, rnd() * 2, 0.06); made += 4;
     o.onended = () => { try { g.disconnect(); } catch (e) {} };
     s.onended = () => { try { sg.disconnect(); } catch (e) {} };
@@ -632,8 +641,9 @@ export function createMuzak(ctx, dest, noiseBuf, seed = 4711) {
         if (beat === 2) A(0, 'kick', 0.62);
         if (beat === 1 || beat === 3) A(0, 'snare', 0.55 + iv * 0.3);
         if (beat === 3 && rnd() < 0.35 + iv * 0.4) A(0.5, 'snare', 0.28);
-        if (iv > 0.35) { for (let o = 0; o < 1; o += sub) A(o, 'hat', (o % 0.5 === 0 ? 0.22 : 0.11)); }
-        else { A(0, 'hat', 0.22); A(0.5, 'hat', 0.13); A(0, 'brush', 0.10); }
+        for (let o = 0; o < 1; o += sub) A(o, 'hat', o === 0 ? 0.30 : (o === 0.5 ? 0.20 : 0.11));
+        if (beat === 1 || beat === 3) A(0, 'shaker', 0.26);   // the tambourine
+        A(0, 'brush', 0.09);
         break;
       case 'disco':
         A(0, 'kick', beat === 0 ? 0.95 : 0.82);
@@ -846,7 +856,7 @@ export function createMuzak(ctx, dest, noiseBuf, seed = 4711) {
     if (nextBeatAt < t) nextBeatAt = t + 0.05;
 
     let guard = 0;
-    while (nextBeatAt < t + 0.55 && guard++ < 6) {
+    while (nextBeatAt < t + 0.9 && guard++ < 10) {
       const T = track;
       // tempo: the intensity leans on it a few per cent, plus the tape's own
       // slow drift. Neither is ever a jump.

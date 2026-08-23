@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>CHOP PRICER — figure probe</title>
+<style>html,body{margin:0;background:#111;overflow:hidden}canvas{display:block}</style>
+</head>
+<body>
+<!--
+  CHARACTER builder's private harness. NOT part of the game and not linked from
+  anything: it stands the store and the people up WITHOUT src/cctv.js, so a
+  character pass can be judged while the CCTV builder's file is mid-round. It
+  also gives a free camera, which the game deliberately does not have, and a
+  posable cop, which is the only way to check a walk cycle frame by frame.
+
+    /src/agents/probe.html    then  P.shot('name', {pos, look, fov})
+-->
+<div id="app"></div>
+<script type="importmap">
+{ "imports": {
+    "three": "/vendor/three.module.js",
+    "three/addons/postprocessing/EffectComposer.js": "/vendor/EffectComposer.js",
+    "three/addons/postprocessing/RenderPass.js": "/vendor/RenderPass.js",
+    "three/addons/postprocessing/ShaderPass.js": "/vendor/ShaderPass.js",
+    "three/addons/postprocessing/Pass.js": "/vendor/Pass.js",
+    "three/addons/shaders/CopyShader.js": "/vendor/CopyShader.js"
+} }
+</script>
+<script type="module">
+import * as THREE from 'three';
+import { buildStore } from '/src/store.js';
+import { createAgents } from '/src/agents.js';
+
+const W = 1280, H = 720;
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1); renderer.setSize(W, H, false);
+renderer.shadowMap.enabled = true;
+document.getElementById('app').appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x151515);
+const world = buildStore(THREE, scene);
+const agents = createAgents(THREE, scene, world);
+const cam = new THREE.PerspectiveCamera(52, W / H, 0.05, 200);
+
+const input = { x: 0, z: 0, sprint: false };
+function step(dt) { agents.update(dt, input, {}); }
+function run(sec, opt = {}) {
+  const dt = 1 / 60, n = Math.round(sec / dt);
+  Object.assign(input, { x: 0, z: 0, sprint: false }, opt.input || {});
+  for (let i = 0; i < n; i++) step(dt);
+}
+const SINK = 'http://127.0.0.1:8172/shot?name=';
+async function shot(name, pose) {
+  if (pose) {
+    cam.fov = pose.fov ?? 52;
+    cam.position.set(...pose.pos); cam.lookAt(...pose.look);
+    cam.updateProjectionMatrix();
+  }
+  renderer.render(scene, cam);
+  const r = await fetch(SINK + encodeURIComponent(name),
+    { method: 'POST', body: renderer.domElement.toDataURL('image/png') });
+  return r.text();
+}
+// Orbit a subject at a fixed distance/height — the turntable that tells you
+// whether a silhouette works from every side or only from the one you built it in.
+async function orbit(name, o) {
+  const t = o.at, n = o.n ?? 4, d = o.d ?? 2.6, y = o.y ?? 1.35;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const a = (o.a0 ?? 0) + (i / n) * Math.PI * 2;
+    out.push(await shot(`${name}_${i}`, {
+      fov: o.fov ?? 34,
+      pos: [t[0] + Math.sin(a) * d, y, t[2] + Math.cos(a) * d],
+      look: [t[0], o.ly ?? 1.0, t[2]],
+    }));
+  }
+  return out;
+}
+function draws() {
+  renderer.info.reset(); renderer.render(scene, cam);
+  return { calls: renderer.info.render.calls, tris: renderer.info.render.triangles };
+}
+window.P = { THREE, scene, renderer, agents, world, cam, step, run, shot, orbit, draws, input };
+run(0.2);
+</script>
+</body>
+</html>

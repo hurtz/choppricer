@@ -6,6 +6,14 @@
 // boxes with filled title tabs, scanlines, burn-in ghosts, a clock that is wrong.
 
 export const W = 1280, H = 720;
+
+// Projection is owned by src/camera.js and read off the LIVE camera. This file used
+// to carry a hand-copied duplicate of the rig, correct only while the camera never
+// moved; see CLAUDE.md on derivation duplication.
+// NB: `export {x} from` re-exports WITHOUT creating a local binding, and this file
+// calls projectFromCop itself — so import it, then re-export the binding.
+import { projectFromCop } from '../camera.js';
+export { projectFromCop };
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace';
 
 export const AMB = '#ffb43a';
@@ -28,27 +36,6 @@ export function fallbackTiles(n = 8) {
   return Array.from({ length: n }, (_, i) => ({
     x: x0 + (i % cols) * (tw + gap), y: y0 + Math.floor(i / cols) * (th + gap), w: tw, h: th,
   }));
-}
-
-// --- The floor camera rig is fixed relative to the cop (see main.js): eye at
-// cop+(0,6.4,-7.6) looking at cop+(0,1.0,2.5), 58deg vertical FOV. Reproduced here
-// so HUD markers can sit on world positions without needing the camera object.
-const F = (() => {
-  const dy = 1.0 - 6.4, dz = 2.5 + 7.6, l = Math.hypot(dy, dz);
-  const f = [0, dy / l, dz / l];
-  return { f, right: [1, 0, 0], up: [0, f[2], -f[1]] };
-})();
-const TAN = Math.tan((58 * Math.PI / 180) / 2), ASP = W / H;
-export function projectFromCop(cop, x, y, z) {
-  const v = [x - cop.x, y - 6.4, z - (cop.z - 7.6)];
-  const zc = v[0] * F.f[0] + v[1] * F.f[1] + v[2] * F.f[2];
-  const xc = v[0] * F.right[0] + v[1] * F.right[1] + v[2] * F.right[2];
-  const yc = v[0] * F.up[0] + v[1] * F.up[1] + v[2] * F.up[2];
-  if (zc <= 0.25) return { x: xc > 0 ? W + 90 : -90, y: H / 2, behind: true };
-  return {
-    x: ((xc / zc) / (TAN * ASP) * 0.5 + 0.5) * W,
-    y: (0.5 - (yc / zc) / TAN * 0.5) * H, behind: false,
-  };
 }
 
 export function createHUD(hudEl) {

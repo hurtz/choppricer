@@ -247,6 +247,14 @@ import {
   STORE, FRONT_WALK_Z, SERVICE_DESK,
 } from './config.js';
 import { makeNav } from './agents/nav.js';
+// ROUND 6 — the figures moved out. agents.js owns how people MOVE; figures.js
+// owns what they look like while they do it. It also carries the write-up of
+// the bug that was this round's whole brief (every person in the game was
+// headless: the head sphere was 96% inside the torso capsule). Read it there.
+import {
+  mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG,
+  SKIN, HAIR, CLOTH, PANTS,
+} from './agents/figures.js';
 
 // ---------------------------------------------------------------------------
 // Tunables. Anything already in TUNING is read from TUNING, no local copy.
@@ -773,13 +781,8 @@ function makeSolids(world) {
 // ---------------------------------------------------------------------------
 // MESHES
 // ---------------------------------------------------------------------------
-const SKIN = [0xf0c8a0, 0xe0ab84, 0xc68f68, 0x8d5a3b, 0x62402c, 0xf7d7b8];
-const HAIR = [0x2b2118, 0x120e0b, 0x6b4a2a, 0x9c8b6e, 0xa8a8a8, 0x4a3320, 0x7d2f16];
-const CLOTH = [
-  0x9aa7b4, 0x6d7f8c, 0xb8574a, 0x4a6b52, 0xd6c07a, 0x8a6f92, 0x3f4a5c,
-  0xc98a4b, 0x7d8f6b, 0xa8b6c4, 0x5c4a3f, 0xbfa89b, 0x2f4858, 0xd9b8a0,
-];
-const PANTS = [0x2f3a4a, 0x3d3d42, 0x5a4738, 0x1f2733, 0x6b6b70, 0x4a3f52];
+// Palettes (SKIN/HAIR/CLOTH/PANTS) live in agents/figures.js now, next to the
+// figures that wear them, and are re-exported here by import.
 
 // ---------------------------------------------------------------------------
 // GEOMETRY BAKING. A real supermarket trolley is about a hundred thin wires you
@@ -791,47 +794,8 @@ const PANTS = [0x2f3a4a, 0x3d3d42, 0x5a4738, 0x1f2733, 0x6b6b70, 0x4a3f52];
 // buffer at startup and shared by every cart: a cart is now seven draw calls,
 // which is three FEWER than the grey box it replaces.
 // ---------------------------------------------------------------------------
-function mergeParts(THREE, parts) {
-  let vTot = 0, iTot = 0, wantCol = false;
-  for (const p of parts) {
-    vTot += p.g.attributes.position.count;
-    iTot += p.g.index ? p.g.index.count : p.g.attributes.position.count;
-    if (p.c != null) wantCol = true;
-  }
-  const pos = new Float32Array(vTot * 3);
-  const nrm = new Float32Array(vTot * 3);
-  const uvs = new Float32Array(vTot * 2);
-  const col = wantCol ? new Float32Array(vTot * 3) : null;
-  const idx = vTot > 65535 ? new Uint32Array(iTot) : new Uint16Array(iTot);
-  const nm = new THREE.Matrix3(), v = new THREE.Vector3(), c = new THREE.Color();
-  let vo = 0, io = 0;
-  for (const p of parts) {
-    const g = p.g, m = p.m;
-    if (m) nm.getNormalMatrix(m);
-    if (p.c != null) c.set(p.c);
-    const P = g.attributes.position, N = g.attributes.normal, U = g.attributes.uv;
-    for (let i = 0; i < P.count; i++) {
-      v.fromBufferAttribute(P, i); if (m) v.applyMatrix4(m); v.toArray(pos, (vo + i) * 3);
-      if (N) {
-        v.fromBufferAttribute(N, i); if (m) v.applyMatrix3(nm).normalize();
-        v.toArray(nrm, (vo + i) * 3);
-      }
-      if (U) { uvs[(vo + i) * 2] = U.getX(i); uvs[(vo + i) * 2 + 1] = U.getY(i); }
-      if (col) { col[(vo + i) * 3] = c.r; col[(vo + i) * 3 + 1] = c.g; col[(vo + i) * 3 + 2] = c.b; }
-    }
-    const gi = g.index, n = gi ? gi.count : P.count;
-    for (let i = 0; i < n; i++) idx[io + i] = (gi ? gi.getX(i) : i) + vo;
-    vo += P.count; io += n;
-  }
-  const out = new THREE.BufferGeometry();
-  out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  out.setAttribute('normal', new THREE.BufferAttribute(nrm, 3));
-  out.setAttribute('uv', new THREE.BufferAttribute(uvs, 2));
-  if (col) out.setAttribute('color', new THREE.BufferAttribute(col, 3));
-  out.setIndex(new THREE.BufferAttribute(idx, 1));
-  out.computeBoundingSphere();
-  return out;
-}
+// mergeParts() moved to agents/figures.js — same function, plus an optional
+// per-part UV remap so the cop can run off one atlas. Imported above.
 
 // A square-section wire between two points. Round wire at this scale is four
 // extra triangles per strut for nothing you can see.
@@ -1015,79 +979,15 @@ function labelTex(THREE, draw, w = 128, h = 128) {
   return t;
 }
 
-// Four garments, greyscale so the per-person shirt colour still tints them.
-// The blind critic called the figures blocky and untextured; a striped tee and
-// a buttoned placket cost one 256px canvas between all fourteen of them and are
-// the difference between "a person" and "a grey slab with arms".
-function clothAtlas(THREE) {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
-  const x = c.getContext('2d');
-  const cell = (i, f) => { x.save(); x.translate((i % 2) * 128, ((i / 2) | 0) * 128);
-    x.beginPath(); x.rect(0, 0, 128, 128); x.clip(); f(x); x.restore(); };
-  cell(0, (g) => {                                    // horizontal stripes
-    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
-    g.fillStyle = '#b3b3b3';
-    for (let y = 10; y < 128; y += 26) g.fillRect(0, y, 128, 11);
-  });
-  cell(1, (g) => {                                    // plain tee with a print
-    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
-    g.fillStyle = '#9a9a9a'; g.fillRect(34, 46, 60, 40);
-    g.fillStyle = '#ffffff'; g.fillRect(40, 56, 48, 6); g.fillRect(40, 68, 34, 6);
-    g.fillStyle = '#c9c9c9'; g.fillRect(0, 0, 128, 14);   // collar band
-  });
-  cell(2, (g) => {                                    // button placket
-    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
-    g.fillStyle = '#d0d0d0'; g.fillRect(0, 0, 128, 12);
-    g.fillStyle = '#bcbcbc'; g.fillRect(58, 12, 12, 116);
-    g.fillStyle = '#8c8c8c';
-    for (let y = 26; y < 124; y += 22) { g.beginPath(); g.arc(64, y, 3.2, 0, 7); g.fill(); }
-  });
-  cell(3, (g) => {                                    // plaid
-    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
-    g.fillStyle = 'rgba(140,140,140,0.55)';
-    for (let y = 6; y < 128; y += 21) g.fillRect(0, y, 128, 8);
-    for (let v = 6; v < 128; v += 21) g.fillRect(v, 0, 8, 128);
-  });
-  const out = [];
-  for (let i = 0; i < 4; i++) {
-    const t = new THREE.CanvasTexture(c);
-    t.colorSpace = THREE.SRGBColorSpace ?? t.colorSpace;
-    t.repeat.set(0.5, 0.5); t.offset.set((i % 2) * 0.5, 1 - ((i / 2) | 0) * 0.5 - 0.5);
-    t.needsUpdate = true; out.push(t);
-  }
-  return out;
-}
-
-// A leg with the shoe baked onto the end of it, hanging DOWN from the origin so
-// the pivot needs no offset. Vertex colours: white over the trouser so the
-// material tint still does the colour, dark over the shoe so it comes out as a
-// dark version of it — which is what shoes are. One draw call, not two.
-function legGeo(THREE, w, h, d) {
-  const shoeH = 0.075, shaft = h - shoeH;
-  return mergeParts(THREE, [
-    { g: new THREE.BoxGeometry(w, shaft, d), c: 0xffffff,
-      m: new THREE.Matrix4().makeTranslation(0, -shaft / 2, 0) },
-    { g: new THREE.BoxGeometry(w * 1.04, shoeH, d * 1.45), c: 0x4a4a50,
-      m: new THREE.Matrix4().makeTranslation(0, -shaft - shoeH / 2, d * 0.20) },
-  ]);
-}
+// clothAtlas() and legGeo() moved to agents/figures.js.
 
 function buildGeo(THREE) {
   const cart = buildCartGeo(THREE);
+  // The human half of this bundle (torso/head/hair/limb/arm/hand/belly/cap/
+  // brim/belt/cloth) is gone: figures.js bakes a whole library of bodies now,
+  // and it is spread over `F` below. What is left here is everything a person
+  // is not.
   return {
-    torso: new THREE.CapsuleGeometry(0.19, 0.42, 3, 7),
-    head: new THREE.SphereGeometry(0.135, 10, 8),
-    hair: new THREE.SphereGeometry(0.142, 10, 6, 0, Math.PI * 2, 0, Math.PI * 0.62),
-    limb: legGeo(THREE, 0.135, 0.56, 0.16),
-    limbH: 0.56,
-    arm: new THREE.BoxGeometry(0.11, 0.50, 0.13),
-    armH: 0.50,
-    hand: new THREE.BoxGeometry(0.098, 0.105, 0.115),
-    cloth: clothAtlas(THREE),
-    belly: new THREE.SphereGeometry(0.25, 12, 9),
-    cap: new THREE.CylinderGeometry(0.145, 0.155, 0.09, 12),
-    brim: new THREE.BoxGeometry(0.30, 0.025, 0.16),
-    belt: new THREE.TorusGeometry(0.235, 0.035, 5, 14),
     goods: new THREE.BoxGeometry(0.15, 0.18, 0.11),
     ring: new THREE.RingGeometry(0.42, 0.60, 20),
     cart,
@@ -1104,60 +1004,12 @@ function buildGeo(THREE) {
   };
 }
 
-function makePerson(THREE, G, o) {
-  const g = new THREE.Group();
-  const shirt = new THREE.MeshStandardMaterial({
-    color: o.shirt, roughness: 0.92, map: o.plain ? null : pick(G.cloth),
-  });
-  const pants = new THREE.MeshStandardMaterial({
-    color: o.pants, roughness: 0.95, vertexColors: true,
-  });
-  const skin = new THREE.MeshStandardMaterial({ color: o.skin, roughness: 0.8 });
-  const hair = new THREE.MeshStandardMaterial({ color: o.hair, roughness: 1.0 });
-
-  const hips = new THREE.Group(); hips.position.y = 0.62; g.add(hips);
-
-  const torso = new THREE.Mesh(G.torso, shirt);
-  torso.position.y = 0.31; torso.scale.set(o.girth, 1, o.girth * 0.84);
-  torso.castShadow = true; hips.add(torso);
-
-  let belly = null;
-  if (o.girth > 1.25) {
-    belly = new THREE.Mesh(G.belly, shirt);
-    belly.position.set(0, 0.20, 0.10);
-    belly.scale.set(o.girth * 0.82, 0.78, o.girth * 0.62);
-    hips.add(belly);
-  }
-
-  const neck = new THREE.Group(); neck.position.y = 0.60; hips.add(neck);
-  const head = new THREE.Mesh(G.head, skin); neck.add(head);
-  const hairM = new THREE.Mesh(G.hair, hair); hairM.position.y = 0.012; neck.add(hairM);
-
-  // A visible neck, so the head is not a ball resting on a slab.
-  const collar = new THREE.Mesh(G.head, skin);
-  collar.scale.set(0.42, 0.52, 0.42); collar.position.y = 0.55; hips.add(collar);
-
-  // The leg geometry already hangs from its own origin (shoe and all); the arm
-  // is a plain box, so it still needs centring, and it gets a hand on the end.
-  const mkLimb = (geo, mat, x, y, h, handAt) => {
-    const piv = new THREE.Group(); piv.position.set(x, y, 0);
-    const m = new THREE.Mesh(geo, mat);
-    if (h != null) m.position.y = -h / 2;
-    piv.add(m);
-    if (handAt != null) {
-      const hd = new THREE.Mesh(G.hand, skin);
-      hd.position.y = handAt; piv.add(hd);
-    }
-    hips.add(piv); return piv;
-  };
-  const legL = mkLimb(G.limb, pants, -0.11 * o.girth, 0.02);
-  const legR = mkLimb(G.limb, pants, 0.11 * o.girth, 0.02);
-  const armL = mkLimb(G.arm, shirt, -0.20 * o.girth - 0.03, 0.53, G.armH, -G.armH - 0.03);
-  const armR = mkLimb(G.arm, shirt, 0.20 * o.girth + 0.03, 0.53, G.armH, -G.armH - 0.03);
-
-  g.scale.setScalar(o.height);
-  return { root: g, hips, torso, belly, neck, head, legL, legR, armL, armR, shirt, pants };
-}
+// makePerson() moved to agents/figures.js, along with makeCop(), which is new.
+// The rig contract they both return gained ONE joint — `chest`, between the
+// hips and everything above them — and that joint is most of why the walk now
+// reads as a walk: hips carry the legs and the waddle, chest carries the torso,
+// arms and head and counter-rotates against it. It is also where the winded
+// heave lives. See animateCop().
 
 function makeCart(THREE, G) {
   const g = new THREE.Group();
@@ -1313,6 +1165,7 @@ function angerTexture(THREE) {
 export function createAgents(THREE, scene, world) {
   world = world || {};
   const G = buildGeo(THREE);
+  const F = buildFigureGeo(THREE);      // every body in the store, baked once
   const PW = buildPowerupProps(THREE);
   let solids = makeSolids(world);
   let solidCount = solids.count;
@@ -1493,28 +1346,25 @@ export function createAgents(THREE, scene, world) {
   const V = (x, y, z) => new THREE.Vector3(x, y, z);
 
   // ---- cop -----------------------------------------------------------------
-  const copRig = makePerson(THREE, G, {
-    shirt: 0x2c3a56, pants: 0x22252c, skin: 0xe2b48c, hair: 0x50412e,
-    girth: 1.62, height: 1.06, plain: true,          // a uniform is not a print tee
-  });
-  {
-    const duty = new THREE.MeshStandardMaterial({ color: 0x1a1a1e, roughness: 0.7 });
-    const belt = new THREE.Mesh(G.belt, duty);
-    belt.rotation.x = Math.PI / 2; belt.position.y = 0.06;
-    belt.scale.set(1.42, 1.42, 1.0); copRig.hips.add(belt);
-    const cap = new THREE.Mesh(G.cap, new THREE.MeshStandardMaterial({ color: 0x1e2a44, roughness: 0.8 }));
-    cap.position.y = 0.10; copRig.neck.add(cap);
-    const brim = new THREE.Mesh(G.brim, new THREE.MeshStandardMaterial({ color: 0x16203a, roughness: 0.8 }));
-    brim.position.set(0, 0.075, 0.145); copRig.neck.add(brim);
-    const badge = new THREE.Mesh(new THREE.CircleGeometry(0.045, 8),
-      new THREE.MeshStandardMaterial({ color: 0xd9c169, roughness: 0.3, metalness: 0.8 }));
-    badge.position.set(-0.13, 0.42, 0.20 * 1.62); copRig.hips.add(badge);
-  }
+  // He used to be built here, out of the shopper rig at girth 1.62 with a belt
+  // torus, a cap cylinder and a badge bolted on. The playtest verdict on that
+  // was "he's just kinda black... he's not a character yet", and it was right
+  // for a reason nobody had measured: at girth 1.62 the shopper capsule's top
+  // cap reached hips-local 0.71 and the head sat at 0.60, so the head was
+  // INSIDE the torso and the cap was sitting on his chest. There was no face to
+  // see because there was no head above the shoulders. makeCop() is a rig built
+  // for him instead of a shopper wearing a hat — see agents/figures.js.
+  const copRig = makeCop(THREE, F);
   const cop = copRig.root;
   cop.userData = {
     rig: copRig, vel: V(0, 0, 0), speed: 0, phase: 0, heading: 0, prevHeading: 0,
     stamina: K.staminaMax, gassed: false, boost: 0, breath: 0, lean: 0, skid: 0, turn: 0,
     stagger: 0,
+    // ROUND 6 — the visible half of the lung. `fatigue` is integrated in
+    // updateCop() now instead of in telemetry(), because telemetry() is behind
+    // `if (!api.report) return` and the ANIMATION cannot be: a cop who only
+    // pants when the HUD happens to be listening is not a character.
+    fatigue: 0, heave: 0, brace: 0, sway: 0,
   };
   scene.add(cop);
   // steer() writes speed/skid and moves .position; the cop's live on userData.
@@ -1530,10 +1380,10 @@ export function createAgents(THREE, scene, world) {
   let nextId = 1;
 
   function makeShopper() {
-    const rig = makePerson(THREE, G, {
-      shirt: pick(CLOTH), pants: pick(PANTS), skin: pick(SKIN), hair: pick(HAIR),
-      girth: rr(0.86, 1.30), height: rr(0.94, 1.10),
-    });
+    // rollPerson() rolls a BUILD, an AGE and a silhouette, not just four
+    // palette picks. The critic's line was "two identically-proportioned bodies
+    // ... recoloured"; proportion is the first word in it.
+    const rig = makePerson(THREE, F, rollPerson({ rnd, rr, ri, pick }));
     const cart = makeCart(THREE, G);
     cart.visible = false;
     const held = new THREE.Mesh(G.goods, new THREE.MeshStandardMaterial({ color: pick(CLOTH), roughness: 0.9 }));
@@ -1913,45 +1763,173 @@ export function createAgents(THREE, scene, world) {
         u.vel.multiplyScalar(0.985);
       }
     }
+    // ---- the visible lung ---------------------------------------------------
+    // `fatigue` used to be integrated inside telemetry(), which is guarded by
+    // `if (!api.report) return`. The HUD can afford to be optional; the man's
+    // breathing cannot. It is a LAGGING 0..1 — rises at 5.5/s, falls at 0.9/s —
+    // so it survives across a whole chase instead of snapping back the instant
+    // the tank refills, and it is what makes the heave visibly LET UP rather
+    // than switch off. Same signal the audio piece drives its huff off, so the
+    // body and the sound stay locked without either side calling the other.
+    {
+      const frac = u.stamina / K.staminaMax;
+      const want = clamp(1 - frac, 0, 1);
+      const k = want > u.fatigue ? 5.5 : 0.9;
+      u.fatigue += (want - u.fatigue) * (1 - Math.exp(-k * dt));
+      if (u.gassed) u.fatigue = Math.max(u.fatigue, 0.92);
+      if (boosted) u.fatigue *= Math.exp(-2.6 * dt);   // the drink IS the relief
+    }
     animateCop(dt, moving, boosted);
+  }
+
+  // ===========================================================================
+  // THE WALK, THE WADDLE AND THE HUFF
+  // ===========================================================================
+  // Three things changed and only the third one is the client's note.
+  //
+  // 1. There is a `chest` joint now. Hips carry the legs, the pelvic drop and
+  //    the lean; chest carries the torso, arms and head and counter-rotates
+  //    against the hips. Everything used to hang off `hips`, so the whole man
+  //    rotated as one piece and a walk cycle was two sticks swinging under a
+  //    stationary egg.
+  //
+  // 2. The vertical bob had the wrong sign. It read
+  //    `hips.y = 0.62 + |sin(phase)| * 0.028`, i.e. HIGHEST at the two moments
+  //    the foot is planted and the body is passing over it — which is a bounce,
+  //    not a gait. A walking body is highest at mid-stance and drops onto the
+  //    heel. Same term, minus a half, and a heavy man lands instead of hopping.
+  //
+  // 3. The breath. Verbatim: "he pants, like he breathes heavily, and then it
+  //    lets up right as he gets his breath back, but you should see that too."
+  //    So it is not a gassed FLAG that switches an animation on. Rate, depth,
+  //    hunch and head-drop are all continuous functions of `fatigue`, which
+  //    rises at 5.5/s and falls at 0.9/s: he is still heaving for a good two
+  //    seconds after the WIND bar goes green, and you can watch it ease off.
+  //    The tank is 1.40 s with a 0.81 s refill, so the winded cycle repeats
+  //    about every 2.2 s — a heave has to be visible inside that, which is why
+  //    the rate tops out near 1.3 Hz and not at some tasteful 0.3 Hz.
+  const TAU = Math.PI * 2;
+  // Lungs-full, 0..1, with a fast gasp in and a slower blow out. A sine is
+  // symmetric and reads as a machine; the asymmetry is the whole tell.
+  function breathWave(ph) {
+    const p = ((ph % TAU) + TAU) % TAU, IN = TAU * 0.34;
+    return p < IN ? Math.sin((p / IN) * (Math.PI / 2))
+                  : Math.cos(((p - IN) / (TAU - IN)) * (Math.PI / 2));
   }
 
   function animateCop(dt, moving, boosted) {
     const u = cop.userData, r = u.rig;
+    const ed = (k) => 1 - Math.exp(-k * (dt || 0.016));
     if (u.speed > 0.12) u.heading = Math.atan2(u.vel.x, u.vel.z);
     let dh = u.heading - u.prevHeading;
     while (dh > Math.PI) dh -= Math.PI * 2;
     while (dh < -Math.PI) dh += Math.PI * 2;
     u.prevHeading = u.heading;
-    u.turn = lerp(u.turn, dt > 0 ? clamp(dh / dt, -4, 4) : 0, 1 - Math.exp(-12 * (dt || 0.016)));
+    u.turn = lerp(u.turn, dt > 0 ? clamp(dh / dt, -4, 4) : 0, ed(12));
     cop.rotation.y = u.heading;
-    const stride = 0.95;
-    u.phase += (u.speed / stride) * dt * Math.PI * 2;
-    const amp = clamp(u.speed * 0.17, 0.04, 0.62);
-    const sw = Math.sin(u.phase);
+
+    const F = clamp(u.fatigue, 0, 1);
+    const spd = clamp(u.speed / T.copRun, 0, 1.2);
+
+    // ---- gait ---------------------------------------------------------------
+    // A short stride, because he is wide and tired. It shortens further as he
+    // fatigues, which is what actually makes a knackered man look knackered
+    // from behind: the cadence stays up and the ground stops moving.
+    const stride = 0.95 - 0.16 * F;
+    u.phase += (u.speed / stride) * dt * TAU;
+    const amp = clamp(u.speed * 0.165, 0.03, 0.58) * (1 - 0.20 * F);
+    const sw = Math.sin(u.phase), sw2 = Math.sin(u.phase * 2);
     r.legL.rotation.x = sw * amp; r.legR.rotation.x = -sw * amp;
-    r.armL.rotation.x = -sw * amp * 0.85; r.armR.rotation.x = sw * amp * 0.85;
-    r.armL.rotation.z = 0.30; r.armR.rotation.z = -0.30;   // arms out over the gut
+    // Heel strike: the trailing leg straightens hard just before it lands, and
+    // the knee-less leg fakes that with a kick in the last quarter of the swing.
+    const heel = Math.max(0, -Math.cos(u.phase)) * amp * 0.22;
+    r.legL.rotation.x -= heel; r.legR.rotation.x += heel;
+    // Arms lag the legs — a big man's arms are late and they swing across the
+    // gut rather than past it.
+    const alag = Math.sin(u.phase - 0.55);
+    r.armL.rotation.x = -alag * amp * 0.62; r.armR.rotation.x = alag * amp * 0.62;
+    const out = 0.34 + 0.06 * spd + 0.05 * F;                 // elbows off the belly
+    r.armL.rotation.z = out; r.armR.rotation.z = -out;
 
-    // lean into the turn — sells the skid
+    // ---- mass ---------------------------------------------------------------
+    // Pelvic drop on the swing side plus a counter-rotating chest: that pairing
+    // IS the waddle. Scaled by speed so a standing cop is not doing the twist.
+    const gait = clamp(u.speed / 1.6, 0, 1);
     const wantLean = clamp(u.turn * 0.11 * clamp(u.speed / T.copRun, 0, 1.3), -0.36, 0.36);
-    u.lean = lerp(u.lean, wantLean, 1 - Math.exp(-9 * (dt || 0.016)));
-    r.hips.rotation.z = u.lean;
+    u.lean = lerp(u.lean, wantLean, ed(9));
+    u.sway = lerp(u.sway, sw * 0.075 * gait, ed(16));
+    r.hips.rotation.z = u.lean + u.sway;
+    r.hips.rotation.y = sw * 0.075 * gait;
+    r.chest.rotation.y = -sw * 0.115 * gait - u.turn * 0.035;
+    r.chest.rotation.z = -u.sway * 0.55;
+    // Highest at mid-stance, lowest on the strike. The `- 0.5` is item 2 above.
+    const bob = (Math.abs(sw) - 0.5) * (0.034 + 0.012 * spd) * gait;
+    const land = Math.max(0, -sw2) * 0.012 * gait;            // the heel taking him
+    r.hips.position.y = r.hipY + bob - land;
 
-    u.breath += dt * (u.gassed ? 7.4 : 2.2);
-    const puff = Math.sin(u.breath);
-    if (u.gassed) {
-      r.hips.rotation.x = lerp(r.hips.rotation.x, 0.34, 1 - Math.exp(-7 * dt));   // hunched
-      r.neck.rotation.x = lerp(r.neck.rotation.x, -0.30, 1 - Math.exp(-7 * dt));  // head up, gasping
-      if (r.belly) r.belly.scale.z = 1.0 * (1 + puff * 0.10);
-      r.hips.position.y = 0.62 + puff * 0.022;
-      if (!moving) { r.armL.rotation.x = -1.15; r.armR.rotation.x = -1.15; }      // hands on knees
-    } else {
-      const t = boosted ? 0.20 : 0.06 + clamp(u.speed * 0.03, 0, 0.12);
-      r.hips.rotation.x = lerp(r.hips.rotation.x, t, 1 - Math.exp(-7 * dt));
-      r.neck.rotation.x = lerp(r.neck.rotation.x, 0, 1 - Math.exp(-7 * dt));
-      if (r.belly) r.belly.scale.z = 1.0 * (1 + puff * 0.035);
-      r.hips.position.y = 0.62 + Math.abs(Math.sin(u.phase)) * 0.028;
+    // ---- the huff -----------------------------------------------------------
+    // Rate 0.34 Hz calm -> 1.30 Hz blown, depth likewise, both off `fatigue`.
+    const rate = TAU * (0.34 + 1.00 * F);
+    u.breath += dt * rate;
+    const w = breathWave(u.breath);                            // 0 empty, 1 full
+    const heave = w * (0.22 + 0.78 * F) * F;                   // squared-ish in F
+    u.heave = heave;
+
+    // Chest and shoulders. From 7 m you are looking at his BACK, so the heave
+    // has to be in the shoulder line and the upper back or it does not exist:
+    // the chest group lifts and the whole torso swells forward.
+    r.chest.position.y = heave * 0.040;
+    r.chest.scale.set(1 + heave * 0.030, 1 + heave * 0.045, 1 + heave * 0.075);
+    if (r.belly) r.belly.scale.z = 0.470 * (1 + heave * 0.16 + w * 0.03);
+
+    // Posture. Forward lean rises with fatigue and rises again on the exhale —
+    // a blown man folds a little every time he empties his lungs.
+    const stoopT = (boosted ? 0.14 : 0.08 + 0.06 * spd) + F * 0.30 + (1 - w) * F * 0.13;
+    r.chest.rotation.x = lerp(r.chest.rotation.x, stoopT, ed(7));
+    // Head: up and back on the gasp, dropping forward as he blows out. That
+    // alternation is the read, not the raw amplitude.
+    const neckT = r.stoop - w * (0.10 + 0.34 * F) + (1 - w) * F * 0.26;
+    r.neck.rotation.x = lerp(r.neck.rotation.x, neckT, ed(11));
+    r.neck.rotation.z = lerp(r.neck.rotation.z, -u.sway * 0.5, ed(10));
+
+    // Hands to the knees, but only once he is properly cooked AND stopped, and
+    // it comes on gradually so it is a man giving up on standing rather than a
+    // pose snapping into place.
+    const wantBrace = (!moving && F > 0.55) ? clamp((F - 0.55) / 0.30, 0, 1) : 0;
+    u.brace = lerp(u.brace, wantBrace, ed(wantBrace > u.brace ? 5 : 3.2));
+    if (u.brace > 0.01) {
+      const b = u.brace;
+      r.chest.rotation.x = lerp(r.chest.rotation.x, 0.62 + w * 0.10, b);
+      r.armL.rotation.x = lerp(r.armL.rotation.x, -0.92 - w * 0.10, b);
+      r.armR.rotation.x = lerp(r.armR.rotation.x, -0.92 - w * 0.10, b);
+      r.armL.rotation.z = lerp(r.armL.rotation.z, 0.46, b);
+      r.armR.rotation.z = lerp(r.armR.rotation.z, -0.46, b);
+      r.neck.rotation.x = lerp(r.neck.rotation.x, -0.34 + (1 - w) * 0.30, b);
+    }
+
+    // Shaken off by a shoulder barge: arms up, off balance, facing the way the
+    // man came from. Reads as a beat lost rather than a freeze.
+    if (u.stagger > 0) {
+      const t = clamp(u.stagger / Math.max(0.05, T.bargeStagger), 0, 1);
+      const f = Math.sin(t * Math.PI) * t;
+      r.chest.rotation.z += f * 0.34;
+      r.chest.rotation.x -= f * 0.30;
+      r.armL.rotation.x -= f * 1.5; r.armR.rotation.x -= f * 1.1;
+      r.armL.rotation.z += f * 0.5; r.armR.rotation.z -= f * 0.35;
+      r.hips.position.y -= f * 0.05;
+    }
+
+    // ---- the belt, out of phase --------------------------------------------
+    // Eight kilos of leather hung off a man's hips does not travel with them.
+    // It lags a fifth of a stride and bounces at twice the cadence, and the
+    // torch and the keys go with it because they are welded into the same
+    // merged mesh.
+    if (r.beltGrp) {
+      const bl = Math.sin(u.phase - 1.15);
+      r.beltGrp.rotation.y = bl * 0.085 * gait;
+      r.beltGrp.rotation.z = -bl * 0.045 * gait;
+      r.beltGrp.position.y = Math.sin(u.phase * 2 - 1.5) * 0.014 * gait - heave * 0.006;
+      r.beltGrp.position.x = bl * 0.010 * gait;
     }
     r.shirt.emissive?.setHex(boosted ? 0x1d3a12 : 0x000000);
   }
@@ -2076,7 +2054,7 @@ export function createAgents(THREE, scene, world) {
         if (s.concealT <= 0 && s.state !== 'conceal') {
           s.state = 'conceal'; s.timer = 1.9; s.look = 0;
           s.held.visible = true;
-          s.held.position.set(0.22, 1.02, 0.24);
+          s.held.position.set(0.22, 1.24, 0.26);
         }
       }
       // ROUND 3. He is walking out with a jacket full of steaks and a uniform
@@ -2130,9 +2108,9 @@ export function createAgents(THREE, scene, world) {
         s.timer -= dt; target = 0;
         const t = 1 - clamp(s.timer / 1.9, 0, 1);
         // item arcs from the shelf lip into the jacket, then is gone
-        const ax = lerp(0.30, 0.02, clamp(t * 1.6, 0, 1));
-        const ay = lerp(1.02, 1.12, clamp(t * 1.6, 0, 1)) + Math.sin(clamp(t * 1.6, 0, 1) * Math.PI) * 0.16;
-        const az = lerp(0.28, 0.13, clamp(t * 1.6, 0, 1));
+        const ax = lerp(0.32, 0.02, clamp(t * 1.6, 0, 1));
+        const ay = lerp(1.24, 1.34, clamp(t * 1.6, 0, 1)) + Math.sin(clamp(t * 1.6, 0, 1) * Math.PI) * 0.16;
+        const az = lerp(0.30, 0.15, clamp(t * 1.6, 0, 1));
         s.held.position.set(ax, ay, az);
         s.held.visible = t < 0.62;
         s.look = Math.sin(t * Math.PI * 3.2) * 0.85;              // shoulder checks
@@ -2276,14 +2254,23 @@ export function createAgents(THREE, scene, world) {
 
   function animateShopper(s, dt, target) {
     const r = s.rig;
+    const ed = (k) => 1 - Math.exp(-k * (dt || 0.016));
     if (s.speed > 0.15) s.heading = Math.atan2(s.vel.x, s.vel.z);
     s.mesh.rotation.y = s.heading;
     s.phase += (s.speed / (0.88 * r.root.scale.x)) * dt * Math.PI * 2 + dt * 0.6;
     const amp = clamp(s.speed * 0.20, 0.02, 0.66);
     const sw = Math.sin(s.phase);
+    const gait = clamp(s.speed / 1.4, 0, 1);
     r.legL.rotation.x = sw * amp; r.legR.rotation.x = -sw * amp;
-    r.neck.rotation.y = lerp(r.neck.rotation.y, s.look, 1 - Math.exp(-8 * dt));
-    r.hips.position.y = 0.62 + Math.abs(sw) * 0.022;
+    // Same two fixes as the cop: hips and chest counter-rotate, and the bob is
+    // highest at mid-stance rather than at the strike.
+    r.hips.rotation.y = sw * 0.055 * gait;
+    r.chest.rotation.y = -sw * 0.085 * gait;
+    r.hips.rotation.z = sw * 0.030 * gait;
+    r.hips.position.y = r.hipY + (Math.abs(sw) - 0.5) * 0.030 * gait;
+    r.neck.rotation.y = lerp(r.neck.rotation.y, s.look, ed(8));
+    // Idle breathing, so a browsing shopper is not a statue. Cheap: one lerp.
+    r.chest.scale.y = 1 + Math.sin(s.phase * 0.42 + s.id) * 0.012;
 
     // Shouldering the door. Both arms out flat on the leaf, body pitched into
     // it — the beat has to be VISIBLE or the grab window is invisible too.
@@ -2292,8 +2279,8 @@ export function createAgents(THREE, scene, world) {
       if (e) s.mesh.rotation.y = s.heading = Math.atan2(e.x - s.position.x, e.z - s.position.z);
       const heave = Math.sin((1 - clamp(s.shoveT / Math.max(0.05, e ? e.shove : 1), 0, 1)) * Math.PI);
       r.armL.rotation.x = -1.75 - heave * 0.28; r.armR.rotation.x = -1.75 - heave * 0.28;
-      r.hips.rotation.x = 0.22 + heave * 0.18;
-      r.hips.position.y = 0.62;
+      r.chest.rotation.x = 0.22 + heave * 0.18;
+      r.hips.position.y = r.hipY;
       return;
     }
     const bolting = s.state === 'bolt' || s.state === 'react';
@@ -2312,25 +2299,28 @@ export function createAgents(THREE, scene, world) {
         s.cart.rotation.y = s.dropCartAt.y + 0.5;                 // slewed, abandoned
         s.dropCartAt = null;
       }
-      r.armL.rotation.x = -sw * amp * (bolting ? 1.25 : 0.8);
-      r.armR.rotation.x = sw * amp * (bolting ? 1.25 : 0.8);
-      r.armL.rotation.z = bolting ? 0.10 : 0.06;
-      r.armR.rotation.z = bolting ? -0.10 : -0.06;
+      const al = Math.sin(s.phase - (bolting ? 0.2 : 0.45));
+      r.armL.rotation.x = -al * amp * (bolting ? 1.25 : 0.8);
+      r.armR.rotation.x = al * amp * (bolting ? 1.25 : 0.8);
+      r.armL.rotation.z = bolting ? 0.12 : 0.09;
+      r.armR.rotation.z = bolting ? -0.12 : -0.09;
     }
     if (s.angry > 0) {
       const w = Math.sin(s.angry * 22);
       r.armR.rotation.x = -1.9 + w * 0.45; r.armR.rotation.z = -0.55;
-      r.armL.rotation.x = -0.4; r.hips.rotation.x = 0.12;
+      r.armL.rotation.x = -0.4; r.chest.rotation.x = 0.12;
       r.neck.rotation.x = -0.12;
-      s.bang.position.y = 2.05 + Math.abs(w) * 0.07;
+      s.bang.position.y = 2.15 + Math.abs(w) * 0.07;
     } else if (s.state === 'browse' || s.state === 'conceal') {
       const reach = s.state === 'conceal' ? 1.55 : 1.05 + Math.sin(s.phase * 0.7) * 0.25;
       r.armR.rotation.x = -reach; r.armR.rotation.z = -0.22;
-      r.hips.rotation.x = 0.05;
+      r.chest.rotation.x = r.stoop + 0.05;
+      r.neck.rotation.x = lerp(r.neck.rotation.x, 0.22, ed(6));   // looking at the shelf
     } else {
-      r.hips.rotation.x = bolting ? 0.26 : lerp(r.hips.rotation.x, 0.04, 1 - Math.exp(-8 * dt));
+      r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + (bolting ? 0.24 : 0.02), ed(8));
+      r.neck.rotation.x = lerp(r.neck.rotation.x, bolting ? -0.10 : 0, ed(6));
     }
-    r.hips.rotation.z = 0;
+    r.chest.rotation.z = -sw * 0.020 * gait;
   }
 
   // ---- powerups ------------------------------------------------------------
@@ -2534,8 +2524,9 @@ export function createAgents(THREE, scene, world) {
     const rate = K.staminaRegen * held;
     const need = u.gassed ? K.gassedRecover * K.staminaMax - u.stamina
                           : K.staminaMax - u.stamina;
-    u.fatigue = u.fatigue == null ? 0 : u.fatigue
-      + ((1 - frac) - u.fatigue) * (1 - Math.exp(-(1 - frac > u.fatigue ? 5.5 : 0.9) * dtLast));
+    // `fatigue` is integrated in updateCop() now — it drives the cop's heave
+    // animation, which has to run whether or not anything is reading the HUD.
+    // Same number, same rise/fall rates, one owner.
     api.report({
       stamina: u.stamina, staminaMax: K.staminaMax, boost: u.boost,
       gassed: u.gassed, speed: u.speed, nearest, chase,

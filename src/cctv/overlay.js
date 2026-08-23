@@ -60,7 +60,7 @@ function inPanel(ctx, p, fn) {
 // ---------------------------------------------------------------------------
 // Static furniture
 // ---------------------------------------------------------------------------
-export function paintFurniture(cv, W, H, panels, wall) {
+export function paintFurniture(cv, W, H, panels, wall, deck) {
   const ctx = cv.getContext('2d');
   const rnd = rng(0x5eed17);
   ctx.clearRect(0, 0, W, H);
@@ -129,7 +129,7 @@ export function paintFurniture(cv, W, H, panels, wall) {
   }
 
   paintCables(ctx, panels, wall, rnd);
-  paintFixtures(ctx, panels, wall, rnd);
+  paintFixtures(ctx, panels, wall, rnd, deck);
 
   // --- the monitors --------------------------------------------------------
   for (const p of panels) inPanel(ctx, p, () => paintHousing(ctx, p, rnd));
@@ -236,7 +236,9 @@ function paintHousing(ctx, p, rnd) {
 // housings so they only show in the gaps, which is where you actually see them.
 function paintCables(ctx, panels, wall, rnd) {
   ctx.lineCap = 'round';
-  const trunks = [8, 468, 918, 1258];
+  // Where the coax runs disappear behind something. Two at the outer edges of
+  // the wall, one down the seam between the spot monitor and the bank.
+  const trunks = [10, 400, 800, 1276];
   const near = (x) => trunks.reduce((a, b) => (Math.abs(b - x) < Math.abs(a - x) ? b : a));
 
   for (const p of panels) {
@@ -261,22 +263,14 @@ function paintCables(ctx, panels, wall, rnd) {
     }
   }
 
-  // a hank of unused coax, coiled and hung on a nail in the bottom-right pocket
-  for (let i = 0; i < 5; i++) {
-    ctx.strokeStyle = `rgba(${20 + rnd() * 8 | 0},22,28,${0.78 + rnd() * 0.18})`;
-    ctx.lineWidth = 2.2 + rnd() * 0.8;
-    ctx.beginPath();
-    ctx.ellipse(994 + i * 1.6 + (rnd() - 0.5) * 5, 554 + i * 3.4 + (rnd() - 0.5) * 5,
-      26 - i * 1.4 + (rnd() - 0.5) * 4, 30 - i * 2.0 + (rnd() - 0.5) * 4,
-      0.18 + (rnd() - 0.5) * 0.16, 0, 7);
-    ctx.stroke();
-  }
-  ctx.strokeStyle = 'rgba(126,140,164,0.10)'; ctx.lineWidth = 0.9;
-  ctx.beginPath(); ctx.ellipse(994, 554, 26, 30, 0.22, 0, 7); ctx.stroke();
 }
 
 // --- shelves, the DVR itself, and the paper on the wall ---------------------
-function paintFixtures(ctx, panels, wall, rnd) {
+// ROUND 4: everything here used to be hand-placed at coordinates that are now
+// underneath the spot monitor. It is placed off `deck` — the strip of bare wall
+// layout.js hands back — so the gear follows the composition instead of being
+// re-found by hand every time a panel moves.
+function paintFixtures(ctx, panels, wall, rnd, deck) {
   // steel shelf under whichever panel is standing on one
   for (const p of panels) {
     if (!p.shelf) continue;
@@ -290,14 +284,13 @@ function paintFixtures(ctx, panels, wall, rnd) {
     ctx.fillRect(sx + sw - 21, sy + 9, 7, 22);
   }
 
-  // --- the recorder, on its own shelf bottom-left -------------------------
-  const sx = 198, sy = 556, sw = 258;
-  ctx.fillStyle = '#191b21'; ctx.fillRect(sx, sy, sw, 9);
+  const D = deck || { x: 6, y: 553, w: 790, h: 51 };
+  // --- the recorder, on the equipment deck under the spot monitor ---------
+  const sx = D.x + 10, sy = D.y + D.h - 4, sw = 262;
+  ctx.fillStyle = '#191b21'; ctx.fillRect(sx, sy, sw, 8);
   ctx.fillStyle = 'rgba(168,182,204,0.16)'; ctx.fillRect(sx, sy, sw, 1.4);
-  ctx.fillStyle = '#0e1013';
-  ctx.fillRect(sx + 12, sy + 9, 7, 26); ctx.fillRect(sx + sw - 19, sy + 9, 7, 26);
 
-  const dx = 208, dy = 508, dw = 238, dh = 48;
+  const dx = D.x + 22, dy = D.y + 6, dw = 238, dh = 44;
   const dg = ctx.createLinearGradient(0, dy, 0, dy + dh);
   dg.addColorStop(0, '#232630'); dg.addColorStop(0.15, '#15171d'); dg.addColorStop(1, '#0b0c10');
   ctx.fillStyle = dg;
@@ -305,32 +298,43 @@ function paintFixtures(ctx, panels, wall, rnd) {
   ctx.strokeStyle = 'rgba(150,164,186,0.14)'; ctx.lineWidth = 1;
   rr(ctx, dx + 0.5, dy + 0.5, dw - 1, dh - 1, 3); ctx.stroke();
   ctx.fillStyle = '#07080a';                                   // optical drive slot
-  ctx.fillRect(dx + 10, dy + 9, 92, 7);
+  ctx.fillRect(dx + 10, dy + 7, 92, 7);
   // dymo strip on the front, the way every rack box in every back office is
   ctx.fillStyle = 'rgba(186,188,178,0.62)';
-  ctx.fillRect(dx + 10, dy + 24, 80, 11);
-  drawText(ctx, 'DO NOT REBOOT', dx + 13, dy + 26, 1, 'rgba(18,20,24,0.9)', null);
-  drawText(ctx, 'VIGILANT DVR-16', dx + 100, dy + 11, 1, 'rgba(158,170,190,0.42)', null);
-  drawText(ctx, 'STORE 4417 A', dx + 100, dy + 24, 1, 'rgba(158,170,190,0.24)', null);
+  ctx.fillRect(dx + 10, dy + 22, 80, 11);
+  drawText(ctx, 'DO NOT REBOOT', dx + 13, dy + 24, 1, 'rgba(18,20,24,0.9)', null);
+  drawText(ctx, 'VIGILANT DVR-16', dx + 100, dy + 9, 1, 'rgba(158,170,190,0.42)', null);
+  drawText(ctx, 'STORE 4417 A', dx + 100, dy + 22, 1, 'rgba(158,170,190,0.24)', null);
   ctx.fillStyle = 'rgba(120,134,156,0.10)';                    // vent slots
-  for (let i = 0; i < 5; i++) ctx.fillRect(dx + dw - 46 + i * 6, dy + 9, 3, 30);
+  for (let i = 0; i < 5; i++) ctx.fillRect(dx + dw - 46 + i * 6, dy + 8, 3, 28);
   // status LEDs, stacked down the right edge. One is amber and nobody knows why.
   const leds = ['#6cff9a', '#6cff9a', '#ffb04a', '#6cff9a', '#4ab4ff'];
   leds.forEach((c, i) => {
     ctx.fillStyle = c; ctx.globalAlpha = 0.85;
-    ctx.beginPath(); ctx.arc(dx + dw - 12, dy + 11 + i * 7, 2.0, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(dx + dw - 12, dy + 9 + i * 7, 2.0, 0, 7); ctx.fill();
     ctx.globalAlpha = 0.13;
-    ctx.beginPath(); ctx.arc(dx + dw - 12, dy + 11 + i * 7, 5.5, 0, 7); ctx.fill();
+    ctx.beginPath(); ctx.arc(dx + dw - 12, dy + 9 + i * 7, 5.5, 0, 7); ctx.fill();
     ctx.globalAlpha = 1;
   });
 
-  // --- shift schedule taped to the wall above the recorder ----------------
-  paperNote(ctx, 214, 452, 116, 50, -0.015, rnd, 'SHIFT');
-  // --- camera map, curling, next to it ------------------------------------
-  paperNote(ctx, 342, 456, 100, 44, 0.022, rnd, 'MAP');
+  // --- shift schedule, camera map and the extension card, along the deck --
+  paperNote(ctx, D.x + 280, D.y + 4, 104, 44, -0.015, rnd, 'SHIFT');
+  paperNote(ctx, D.x + 396, D.y + 6, 92, 42, 0.022, rnd, 'MAP');
+  paperNote(ctx, D.x + 500, D.y + 4, 96, 44, 0.008, rnd, 'EXT');
 
-  // --- clipboard hanging on a nail, bottom right --------------------------
-  const cbx = 1176, cby = 520;
+  // a hank of unused coax, coiled and hung on a nail at the end of the deck
+  for (let i = 0; i < 5; i++) {
+    ctx.strokeStyle = `rgba(${20 + rnd() * 8 | 0},22,28,${0.78 + rnd() * 0.18})`;
+    ctx.lineWidth = 2.0 + rnd() * 0.8;
+    ctx.beginPath();
+    ctx.ellipse(D.x + 690 + i * 1.5 + (rnd() - 0.5) * 4, D.y + 26 + i * 2.6 + (rnd() - 0.5) * 4,
+      22 - i * 1.3 + (rnd() - 0.5) * 3, 21 - i * 1.6 + (rnd() - 0.5) * 3,
+      0.18 + (rnd() - 0.5) * 0.16, 0, 7);
+    ctx.stroke();
+  }
+
+  // --- clipboard hanging on a nail, right of the bank ---------------------
+  const cbx = 1032, cby = 500;
   ctx.fillStyle = 'rgba(0,0,0,0.55)'; ctx.fillRect(cbx + 3, cby + 4, 66, 78);
   ctx.fillStyle = '#3b2f22'; ctx.fillRect(cbx, cby, 66, 78);          // masonite
   ctx.fillStyle = 'rgba(180,181,172,0.70)'; ctx.fillRect(cbx + 4, cby + 9, 58, 65);
@@ -343,9 +347,6 @@ function paintFixtures(ctx, panels, wall, rnd) {
     ctx.lineTo(cbx + 9 + 20 + rnd() * 26, cby + 18 + i * 7.6);
     ctx.stroke();
   }
-
-  // --- index card of extensions, taped flat ------------------------------
-  paperNote(ctx, 1052, 536, 96, 52, 0.008, rnd, 'EXT');
 }
 
 function paperNote(ctx, x, y, w, h, rot, rnd, kind) {
@@ -464,11 +465,12 @@ function strip(ctx, x, y, txt, age = 1) {
 // that panel.
 export function labelFor(p) {
   switch (p.slot) {
-    case 0: return ['PUBLIC VIEW', 1];
-    case 4: return ['BAD FOCUS', 1];
-    case 5: return ['CH6 GHOST', 1];
-    case 7: return ['DOORS X241', 1];
-    case 8: return [p.cam >= 0 ? 'DOOR 2  NEW' : 'DOOR 2  NOT WIRED', 0];
+    case -1: return ['MAIN / CH SELECT', 1];   // the spot monitor
+    case 0: return ['X241', 1];
+    case 1: return [p.cam >= 0 ? 'NEW' : 'NOT WIRED', 0];
+    case 2: return ['PUBLIC', 1];
+    case 6: return ['FOCUS', 1];
+    case 7: return ['GHOST', 1];
     default: return null;
   }
 }
@@ -494,18 +496,22 @@ function paintClutter(ctx, panels, wall, rnd) {
   const bySlot = (i) => panels.find((p) => p.slot === i);
   if (!panels.length) return;
 
-  // yellow note on the bottom-left corner of a top-left monitor's glass
-  const a = bySlot(2);
+  // Yellow note stuck across the seam between two thumbnails. It covers a
+  // corner of a 138px picture, which is a real cost and is why it is on a
+  // thumbnail: NOTHING is allowed onto the spot monitor's glass. That panel is
+  // the one the player reads a person on, and a sticky note on it would be the
+  // same mistake as the giant burnt-in channel id it replaced.
+  const a = bySlot(5);
   if (a) {
-    stickyNote(ctx, a.x - 6, a.y + a.h - 40, 46, 42, -0.09,
+    stickyNote(ctx, a.x + a.w - 26, a.y + a.h - 30, 44, 40, -0.09,
       'rgba(220,208,122,0.94)', 'rgba(192,176,92,0.94)', 3, rnd);
   }
 
-  // pink one taped along the top bezel of the big door monitor, dipping just
-  // onto the glass. Kept clear of the camera id and the REC dot.
-  const b = bySlot(7);
+  // pink one taped along the top bezel of the spot monitor, ON THE PLASTIC,
+  // hanging clear of the glass by a couple of pixels
+  const b = bySlot(-1);
   if (b) {
-    stickyNote(ctx, b.x + b.w - 116, b.y - 26, 38, 34, 0.13,
+    stickyNote(ctx, b.x + b.w - 150, b.hy - 4, 38, 34, 0.13,
       'rgba(220,146,158,0.93)', 'rgba(192,118,132,0.93)', 2, rnd);
   }
 
@@ -516,7 +522,7 @@ function paintClutter(ctx, panels, wall, rnd) {
     if (l) chinStrip(ctx, p, l[0], l[1]);
   }
 
-  const knocked = bySlot(4);
+  const knocked = panels.find((p) => p.ledDead);
   if (knocked) {
     // masking tape over the dead power LED, because that is what people do
     // instead of fixing it
@@ -590,70 +596,168 @@ const DIM = 'rgba(214,226,208,0.60)';
 // where half of these cameras point. That is what the keyline is for.
 const SHA = 'rgba(0,0,0,0.80)';
 
-// Vertical geometry of one tile's overlay, all measured from the tile edges.
-// A glyph at scale s occupies s*7 rows plus one row of drop shadow, so a scale-2
-// line is 16px tall. ROW2 puts the second line one glyph-height plus 3px below
-// the first. STAMP_UP is measured so the bottom line's LAST row lands 9px above
-// the bottom edge — the round-1 bug was two 16px-tall lines anchored 21 and 6
-// from the bottom, which put the time half outside the panel and printed its top
-// three rows over the date's descenders.
-const PAD = 8, LINE = 16;
-// The channel id has to stay readable — gameplay depends on it — but the
-// timestamp does not, and a stamp that spans 80% of the tile is the thing that
-// makes a mosaic read as a game HUD. Real DVR OSD in a multiplexed view is small
-// enough that you can only just make it out. So: id big, stamp small.
-//
-// The OSD is burnt into the RECORDED stream, so a bigger panel showing the same
-// stream shows bigger text. Scale therefore tracks panel width — the 416px
-// primary gets scale 3, everything else gets 2 — instead of being one constant,
-// which is what made every monitor read as the same monitor.
-const STAMP_S = 1, STAMP_H = STAMP_S * 7 + 1, STAMP_UP = PAD + STAMP_H;
-const idScale = (w) => (w >= 380 ? 3 : 2);
+// The two colours the analytics is allowed to speak in. GREEN is "this blob is
+// moving", AMBER is "this blob stopped". There is deliberately no RED and no
+// third state, because a third state would be a verdict and the recorder does
+// not have one — see track.js.
+const VMD = (a) => `rgba(126,240,158,${a})`;
+const VMD_A = (a) => `rgba(255,186,72,${a})`;
 
-export function paintBurnIn(cv, W, H, tiles, cams, active, now, blink) {
+// ===========================================================================
+// PER-PANEL OSD — the round-4 rewrite, and the whole readability fix
+// ===========================================================================
+// Round 3 painted ONE 1280x720 overlay for the whole wall and let each screen
+// shader cut its own rect out of it. That is what forced every channel's text to
+// be drawn at WALL scale, which is why a 190px monitor carried a channel id a
+// third of its width and a timestamp across most of the rest. Look at
+// shots/cctv_r4_before.png: on CAM 01 the burn-in occupies more pixels than the
+// aisle does.
+//
+// Now every panel gets its own small canvas in its own uv, so a thumbnail can
+// print 5-pixel type at the very edge and the spot monitor can print a real
+// timestamp, and the analytics boxes have somewhere to live that is measured in
+// the same pixels as the picture they are drawn on.
+//
+// `boxes` entries are already in PANEL PIXELS — cctv.js does the projection,
+// including undoing the lens barrel, because it is the only place that knows
+// the camera. Each is { x,y,w,h, moving, code, token, tracked }.
+
+const PAD = 8;
+const p2s = (n) => String(n).padStart(2, '0');
+
+// --- a thumbnail. 138x104 of glass, and its only job is "something moved". ---
+// No timestamp, no camera label, no analytics text: at this size those cost more
+// picture than they return. What it does carry is the three things that survive
+// being small — a box round each blob, a motion meter, and an alarm frame when
+// the detector fires — plus the channel number, which gameplay needs.
+export function paintThumbOsd(cv, o) {
+  const W = cv.width, H = cv.height;
   const ctx = cv.getContext('2d');
   ctx.clearRect(0, 0, W, H);
-  const { date, time } = stampParts(now);
-  const oneLine = `${date} ${time}`;
 
-  tiles.forEach((t, i) => {
-    if (!t || t.w < 8) return;
-    const cam = cams[i] || { id: 'CAM ' + p2(i + 1), label: '' };
-    const s = idScale(t.w);
-    const row2 = s * 7 + 3;
-    const px = t.x + PAD, py = t.y + PAD;
-    const rx = t.x + t.w - PAD;
+  // motion boxes: 1px, no label. At 138px a box round a 10px man is the
+  // difference between "grey blur" and "four people, one of them stopped".
+  for (const b of o.boxes || []) {
+    const x = Math.round(b.x) + 0.5, y = Math.round(b.y) + 0.5;
+    const w = Math.max(3, Math.round(b.w)), h = Math.max(4, Math.round(b.h));
+    ctx.strokeStyle = b.moving ? VMD(0.62) : VMD_A(0.85);
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x, y, w, h);
+  }
 
-    // top-left: channel identity, burnt in over years of the same overlay
-    drawText(ctx, cam.id, px, py, s, TXT, SHA);
-    drawText(ctx, cam.label, px, py + row2, s, DIM, SHA);
+  // the alarm frame a cheap DVR throws round the whole picture when its video
+  // motion detector trips. It is what pulls your eye across the bank.
+  if (o.alarm > 0) {
+    ctx.strokeStyle = VMD_A(0.30 + 0.55 * o.alarm);
+    ctx.lineWidth = 2;
+    ctx.strokeRect(1, 1, W - 2, H - 2);
+  }
 
-    // top-right: the blinking record indicator
-    drawTextR(ctx, 'REC', rx, py, s, blink ? 'rgba(255,120,110,0.92)' : 'rgba(150,84,80,0.45)', SHA);
-    const dotX = rx - textW('REC', s) - 9;
-    ctx.fillStyle = blink ? 'rgba(255,58,48,0.95)' : 'rgba(112,34,30,0.5)';
-    ctx.beginPath(); ctx.arc(dotX, py + s * 3, 2 + s, 0, 7); ctx.fill();
-    if (blink) {
-      ctx.fillStyle = 'rgba(255,58,48,0.18)';
-      ctx.beginPath(); ctx.arc(dotX, py + s * 3, 4.5 + s * 2, 0, 7); ctx.fill();
+  // channel number, top-left, small and burnt in
+  drawText(ctx, p2s(o.chan), 4, 3, 1, TXT, SHA);
+
+  // motion meter up the left edge — a VU meter for movement. Reads at a glance
+  // from the far side of the wall, which is the point of it.
+  const mh = Math.round((H - 26) * Math.min(1, o.energy || 0));
+  if (mh > 0) {
+    ctx.fillStyle = VMD(0.55);
+    ctx.fillRect(2, H - 5 - mh, 3, mh);
+  }
+  ctx.fillStyle = 'rgba(120,150,130,0.20)';
+  ctx.fillRect(2, H - 5 - (H - 26), 3, H - 26);
+
+  // record pip, bottom-right, clear of builder-game's subject badge
+  ctx.fillStyle = o.blink ? 'rgba(255,58,48,0.92)' : 'rgba(112,34,30,0.45)';
+  ctx.beginPath(); ctx.arc(W - 7, H - 7, 2.6, 0, 7); ctx.fill();
+  return cv;
+}
+
+// --- the spot monitor. 766x431, and the only place a person is legible. -----
+export function paintSpotOsd(cv, o) {
+  const W = cv.width, H = cv.height;
+  const ctx = cv.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+  const cam = o.cam || { id: 'CAM', label: '' };
+
+  // ---- trails ------------------------------------------------------------
+  // Three and a half seconds of where each blob has been. This is the cheapest
+  // readability win on the whole wall, because DIRECTION and RHYTHM survive
+  // downscaling when a face does not: a knot of dots is a man who has not moved,
+  // a straight run of them pointing off-frame is a man leaving, and an even
+  // spacing that suddenly bunches is a man who slowed down to do something.
+  for (const b of o.boxes || []) {
+    const tr = b.trail;
+    if (!tr || tr.length < 2) continue;
+    for (let i = 0; i < tr.length; i++) {
+      const a = (i / tr.length) * (b.tracked ? 0.42 : 0.20);
+      ctx.fillStyle = b.moving ? VMD(a) : VMD_A(a);
+      ctx.fillRect(tr[i].x - 1, tr[i].y - 1, 2.5, 2.5);
     }
+  }
 
-    // bottom-right: MM/DD/YYYY HH:MM:SS on one line, which is what these boxes
-    // print. Only if it actually fits — a narrower tile stacks it instead, and
-    // the two lines are then a full line-height apart, never overlapping.
-    if (textW(oneLine, STAMP_S) + PAD * 2 <= t.w) {
-      drawTextR(ctx, oneLine, rx, t.y + t.h - STAMP_UP, STAMP_S, TXT, SHA);
-    } else {
-      drawTextR(ctx, date, rx, t.y + t.h - STAMP_UP - STAMP_H - 3, STAMP_S, TXT, SHA);
-      drawTextR(ctx, time, rx, t.y + t.h - STAMP_UP, STAMP_S, TXT, SHA);
+  // ---- analytics boxes ---------------------------------------------------
+  for (const b of o.boxes || []) {
+    const x = Math.round(b.x) + 0.5, y = Math.round(b.y) + 0.5;
+    const w = Math.max(8, Math.round(b.w)), h = Math.max(10, Math.round(b.h));
+    const col = b.moving ? VMD : VMD_A;
+    ctx.lineWidth = b.tracked ? 2 : 1;
+    ctx.strokeStyle = col(b.tracked ? 0.95 : 0.5);
+    ctx.strokeRect(x, y, w, h);
+    if (b.tracked) {
+      // corner ticks, brighter, the way a tracker marks its lock
+      ctx.strokeStyle = col(1.0); ctx.lineWidth = 3;
+      const k = Math.min(14, w * 0.35);
+      for (const [cx, cy, sx, sy] of [[0, 0, 1, 1], [1, 0, -1, 1], [0, 1, 1, -1], [1, 1, -1, -1]]) {
+        const px = x + cx * w, py = y + cy * h;
+        ctx.beginPath();
+        ctx.moveTo(px + sx * k, py); ctx.lineTo(px, py); ctx.lineTo(px, py + sy * k);
+        ctx.stroke();
+      }
     }
+    // the label goes ABOVE the head, never over the body — the body is the
+    // evidence and the recorder is not allowed to print on it
+    const s = b.tracked ? 2 : 1;
+    const txt = `${b.code} ${b.token}`;
+    const tw = textW(txt, s), th = s * 7;
+    let ly = y - th - 5;
+    if (ly < 2) ly = y + h + 4;
+    let lx = x;
+    if (lx + tw > W - 4) lx = W - 4 - tw;
+    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillRect(lx - 3, ly - 2, tw + 6, th + 4);
+    drawText(ctx, txt, lx, ly, s, col(b.tracked ? 1.0 : 0.72), SHA);
+  }
 
-    // the selected channel gets a tag under REC; the bottom strip is the
-    // timestamp's and nothing else is allowed to share it.
-    if (i === active) {
-      drawTextR(ctx, 'LIVE', rx, py + row2, s, 'rgba(158,232,172,0.88)', SHA);
-    }
-  });
+  // ---- DVR chrome --------------------------------------------------------
+  const { date, time } = stampParts(o.now);
+  drawText(ctx, cam.id, PAD + 2, PAD + 1, 3, TXT, SHA);
+  drawText(ctx, cam.label, PAD + 2, PAD + 26, 2, DIM, SHA);
+
+  const rx = W - PAD - 2;
+  drawTextR(ctx, 'REC', rx, PAD + 1, 2,
+    o.blink ? 'rgba(255,120,110,0.92)' : 'rgba(150,84,80,0.45)', SHA);
+  const dotX = rx - textW('REC', 2) - 11;
+  ctx.fillStyle = o.blink ? 'rgba(255,58,48,0.95)' : 'rgba(112,34,30,0.5)';
+  ctx.beginPath(); ctx.arc(dotX, PAD + 8, 4.5, 0, 7); ctx.fill();
+  if (o.blink) {
+    ctx.fillStyle = 'rgba(255,58,48,0.18)';
+    ctx.beginPath(); ctx.arc(dotX, PAD + 8, 9.5, 0, 7); ctx.fill();
+  }
+
+  // The lens state, said out loud, because a picture that silently pushes in is
+  // a picture the player cannot trust. WIDE means you are seeing the channel;
+  // PTZ means the dome has walked onto a subject and there is more frame than
+  // you can see.
+  const ptz = o.zoom > 1.06 ? `PTZ  ${o.zoom.toFixed(1)}X` : 'WIDE  1.0X';
+  drawTextR(ctx, ptz, rx, PAD + 20, 2, o.zoom > 1.06 ? VMD_A(0.92) : DIM, SHA);
+  if (o.trackN) {
+    drawTextR(ctx, `TRACK ${o.trackI + 1}/${o.trackN}`, rx, PAD + 38, 1, DIM, SHA);
+  }
+
+  // bottom-left: the stream the spot monitor is actually being fed. A DVR shows
+  // you this and it is how you know why the mosaic looks worse than this does.
+  drawText(ctx, o.stream || '', PAD + 2, H - PAD - 8, 1, 'rgba(200,214,196,0.42)', SHA);
+  drawTextR(ctx, `${date} ${time}`, rx, H - PAD - 16, 2, TXT, SHA);
   return cv;
 }
 
