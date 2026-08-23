@@ -48,3 +48,13 @@ the most useful documentation in the file.
 Two bugs of exactly this shape have already cost rounds here: gassed sprint speed
 outrunning the healthy walk for four rounds, and `bargeDump` being byte-identical
 at 0.40 and 0.85 because its `Math.max` never fired.
+
+The same hazard is not limited to tuning constants. `src/game/hud.js` carried a
+hand-copied duplicate of the floor camera rig ("reproduced here so HUD markers can
+sit on world positions without needing the camera object") — correct only while the
+camera never moved, and held in sync purely by coincidence. Deliberate duplication
+with a comment explaining itself is how every one of these starts.
+
+Rule: exactly one piece of code owns a derivation, and everyone else calls it. If a
+second copy is genuinely unavoidable, it needs an assertion that fails loudly when
+the two disagree — see `lungCheck()` in `src/agents.js` for the pattern.

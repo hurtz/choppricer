@@ -23,8 +23,9 @@ class H(SimpleHTTPRequestHandler):
     def do_POST(self):
         if self.path.startswith("/audio"):
             return self.do_audio()
-        if not self.path.startswith("/shot"):
-            self.send_error(404); return
+        if self.path.startswith("/shot"):
+            return self.do_shot()
+        self.send_error(404)
 
     def do_audio(self):
         """Binary audio sink. POST /audio?name=x with a raw wav/webm body."""
@@ -46,6 +47,9 @@ class H(SimpleHTTPRequestHandler):
         self.send_header("Content-Length", str(len(msg)))
         self.end_headers()
         self.wfile.write(msg)
+
+    def do_shot(self):
+        """PNG sink. POST /shot?name=x with a data:image/png;base64 body."""
         m = re.search(r"name=([A-Za-z0-9_.-]+)", self.path)
         name = (m.group(1) if m else "shot")[:60]
         n = int(self.headers.get("Content-Length", 0))

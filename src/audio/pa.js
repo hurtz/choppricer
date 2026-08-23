@@ -1,41 +1,63 @@
 // OWNER: builder-audio. THE PA.
 //
-// The only music allowed in this game, and it is not a soundtrack — it is a
-// 4-inch paper cone in a steel can in the ceiling, forty metres of hard room
-// between it and you, playing a licensing-library instrumental at a level
-// somebody set in 1997 and never touched again.
+// The ceiling. Four 8-inch coaxial cans on a 70-volt line, forty metres of hard
+// room between them and you, an amplifier in a rack behind the customer service
+// counter, and a level somebody set in 1997.
 //
-// Procedural muzak is a real synthesis problem and the trap is trying to write
-// good music. Good music is the wrong answer: the player would start listening
-// to it. What sells it is that it is BLAND and SLIGHTLY WRONG — a lead line that
-// holds a note one beat too long, a chord voicing that sits on a ninth for no
-// reason, a tempo nobody chose. So the harmony here is the most obvious
-// progression in music, the melody is a random walk that occasionally fumbles,
-// and the whole thing is destroyed by the speaker before it reaches the room.
+// Two things come out of it: the tape (src/audio/muzak.js — the tunes, the band,
+// the arrangement) and the announcements. This file is not the music. This file
+// is what the building does TO the music, which is most of why a supermarket
+// sounds like a supermarket and not like a radio.
 //
-// It never repeats: the key steps up every eight to sixteen bars, the melody is
-// generated a phrase at a time, and the tempo drifts.
+// ---------------------------------------------------------------------------
+// WHAT ROUND 1 GOT WRONG, MEASURED
+//
+// solo_pa.wav, round 1: RMS -38.8 dBFS, and 70.4% of its total energy inside
+// ONE octave centred on 2 kHz. 0.0% below 180 Hz. 0.0% above 5.6 kHz.
+//
+// That is not a ceiling speaker, that is a telephone. The chain was highpassed
+// at 210/240 Hz and lowpassed at 4.3/5.4 kHz, which sounds like a defensible
+// model of a 4-inch cone until you notice it deletes the bass line — and a
+// piece of music with no bass line is not perceived as music, it is perceived
+// as leakage from somewhere. The client's "there needs to be music" is that
+// measurement.
+//
+// So the can got bigger, which is also more accurate: American grocery ceiling
+// speakers are 8-inch coax (Atlas, Bogen, Soundolier) with a rated response
+// down to about 100 Hz and up past 12 k. They are not hi-fi because of the
+// baffle, the 70 V transformer's insertion loss at the bottom, and the paper,
+// and all three of those are modelled here as EQ rather than as a brick wall.
+//
+//   HP 125 / 150 Hz     the transformer and the can, 24 dB/oct
+//   +2.5 dB @ 1.6 kHz   the cone's shout
+//   -5 dB @ 640 Hz      and the hole under it
+//   +3 dB @ 3.6 kHz     paper breakup
+//   LP 7.4 / 9.2 kHz    the whizzer giving up
+//
+// Net: the bass fundamental at 90 Hz is down about 12 dB and its second and
+// third harmonics are not, so the ear reconstructs the missing fundamental and
+// you hear a bass line. Which is exactly what happens in a real store.
+//
+// ---------------------------------------------------------------------------
+// AND THE ROOM DOES THE REST
+//
+// Four cans at four distances, each with its own delay and its own top-end
+// rolloff, so you are never underneath one — you always hear two of them a few
+// milliseconds apart, which is a comb filter that moves as you walk. That is
+// the single most identifiable thing about ceiling-distributed sound and it is
+// free.
+//
+// Most of what you actually hear is `paWet`: the room's opinion of the music,
+// which at forty metres is louder than the music.
 
-import { gain, filt, shaper, panner, mulberry, clamp } from './dsp.js';
+import { gain, filt, shaper, panner, mulberry, clamp, to } from './dsp.js';
 import { createVoiceBank } from './voice.js';
+import { createMuzak } from './muzak.js';
 
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
-// The four progressions muzak is actually made of, as semitone offsets from the
-// key and a chord quality.
-const MAJ7 = [0, 4, 7, 11], MIN7 = [0, 3, 7, 10], DOM7 = [0, 4, 7, 10], MAJ6 = [0, 4, 7, 9];
-const PROGS = [
-  [[0, MAJ7], [9, MIN7], [2, MIN7], [7, DOM7]],
-  [[0, MAJ7], [5, MAJ7], [4, MIN7], [9, MIN7], [2, MIN7], [7, DOM7]],
-  [[2, MIN7], [7, DOM7], [0, MAJ6], [0, MAJ6]],
-  [[0, MAJ7], [5, MAJ7], [0, MAJ7], [7, DOM7]],
-  [[0, MAJ7], [2, MIN7], [4, MIN7], [5, MAJ7]],
-];
-const SCALE = [0, 2, 4, 5, 7, 9, 11];
-
-// Ceiling speaker positions. Four cans on a 70-volt line, spread out, and the
-// point of them is that you are NEVER underneath one — you always hear two at
-// slightly different distances, which is a comb filter that changes as you walk.
+// Ceiling speaker positions. Four cans, spread out, and the point of them is
+// that you are NEVER underneath one.
 const SPK = [[-16, -10, 0.000], [-5, 4, 0.012], [7, -6, 0.022], [17, 9, 0.031]];
 
 export function createPA(ctx, room, out, wetOut, noiseBuf) {
@@ -45,21 +67,22 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
 
   // ---- the speaker --------------------------------------------------------
   const paIn = N(gain(ctx, 1));
-  const drive = N(shaper(ctx, 1.9));
-  const hp1 = N(filt(ctx, 'highpass', 210, 0.7));
-  const hp2 = N(filt(ctx, 'highpass', 240, 0.6));
-  const honk = N(filt(ctx, 'peaking', 1750, 1.5, 4));      // the cone's own shout
-  const suck = N(filt(ctx, 'peaking', 820, 1.8, -6));       // and its hole
-  const lp1 = N(filt(ctx, 'lowpass', 4300, 0.8));
-  const lp2 = N(filt(ctx, 'lowpass', 5400, 0.6));
-  const paLvl = N(gain(ctx, 0.175));
-  paIn.connect(drive); drive.connect(hp1); hp1.connect(hp2); hp2.connect(honk);
-  honk.connect(suck); suck.connect(lp1); lp1.connect(lp2); lp2.connect(paLvl);
+  const drive = N(shaper(ctx, 1.55));          // paper, at the level it is run at
+  const hp1 = N(filt(ctx, 'highpass', 125, 0.72));
+  const hp2 = N(filt(ctx, 'highpass', 150, 0.62));
+  const suck = N(filt(ctx, 'peaking', 640, 1.5, -5));       // the baffle hole
+  const honk = N(filt(ctx, 'peaking', 1600, 1.2, 2.5));     // the cone's shout
+  const brk = N(filt(ctx, 'peaking', 3600, 2.0, 3));        // paper breakup
+  const lp1 = N(filt(ctx, 'lowpass', 7400, 0.75));
+  const lp2 = N(filt(ctx, 'lowpass', 9200, 0.6));
+  const paLvl = N(gain(ctx, 0.42));
+  paIn.connect(drive); drive.connect(hp1); hp1.connect(hp2); hp2.connect(suck);
+  suck.connect(honk); honk.connect(brk); brk.connect(lp1); lp1.connect(lp2); lp2.connect(paLvl);
 
   // direct sound, from four cans at four distances
   for (const [x, z, dly] of SPK) {
     const d = N(ctx.createDelay(0.1)); d.delayTime.value = dly;
-    const c = N(filt(ctx, 'lowpass', 3400 + rnd() * 1600, 0.7));
+    const c = N(filt(ctx, 'lowpass', 4200 + rnd() * 2200, 0.7));
     const p = N(panner(ctx, x, 4.85, z, 8, 0.55));
     const g = N(gain(ctx, 0.42));
     paLvl.connect(d); d.connect(c); c.connect(p); p.connect(g); g.connect(out);
@@ -73,91 +96,7 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   const speech = N(gain(ctx, 1)); speech.connect(paIn);
 
   const voices = createVoiceBank(ctx, noiseBuf, 777);
-
-  // ---- instruments --------------------------------------------------------
-  // Every note is built, played and thrown away. That is what Web Audio is for,
-  // and it keeps the resting node count at the ~30 above.
-  const compBus = N(gain(ctx, 0.16)); compBus.connect(music);
-  const bassBus = N(gain(ctx, 0.30)); bassBus.connect(music);
-  const leadBus = N(gain(ctx, 0.20)); leadBus.connect(music);
-  const percBus = N(gain(ctx, 0.10)); percBus.connect(music);
-
-  // one shared vibrato for the lead — a per-note LFO would be three more nodes
-  // per note for no audible gain
-  const vib = N(ctx.createOscillator()); vib.frequency.value = 5.2; vib.type = 'sine';
-  const vibAmt = N(gain(ctx, 11)); vib.connect(vibAmt); vib.start();
-  // and one wow: the whole PA drifts a few cents, like everything that has been
-  // playing continuously since 1997
-  const wow = N(ctx.createOscillator()); wow.frequency.value = 0.077; wow.type = 'sine';
-  const wowAmt = N(gain(ctx, 5)); wow.connect(wowAmt); wow.start();
-
-  function rhodes(f, t, dur, vel) {
-    const g = gain(ctx, 0);
-    const o1 = ctx.createOscillator(); o1.type = 'sine'; o1.frequency.value = f;
-    const o2 = ctx.createOscillator(); o2.type = 'sine'; o2.frequency.value = f * 2.002;
-    const o3 = ctx.createOscillator(); o3.type = 'sine'; o3.frequency.value = f * 4.01;
-    const g2 = gain(ctx, 0.20), g3 = gain(ctx, 0.10);
-    wowAmt.connect(o1.detune); wowAmt.connect(o2.detune);
-    o1.connect(g); o2.connect(g2); g2.connect(g); o3.connect(g3); g3.connect(g);
-    g.connect(compBus);
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vel, t + 0.008);
-    g.gain.exponentialRampToValueAtTime(vel * 0.30, t + 0.35);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    // the tine's bark dies before the body does
-    g3.gain.setValueAtTime(0.10, t); g3.gain.exponentialRampToValueAtTime(0.001, t + 0.22);
-    for (const o of [o1, o2, o3]) { o.start(t); o.stop(t + dur + 0.05); }
-    o1.onended = () => { try { g.disconnect(); } catch (e) {} };
-  }
-
-  function bass(f, t, dur, vel) {
-    const g = gain(ctx, 0);
-    const o = ctx.createOscillator(); o.type = 'sine'; o.frequency.value = f;
-    const o2 = ctx.createOscillator(); o2.type = 'triangle'; o2.frequency.value = f;
-    const g2 = gain(ctx, 0.16);
-    const lp = filt(ctx, 'lowpass', 340, 1.0);
-    o.connect(g); o2.connect(g2); g2.connect(g); g.connect(lp); lp.connect(bassBus);
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vel, t + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
-    o.start(t); o2.start(t); o.stop(t + dur + 0.03); o2.stop(t + dur + 0.03);
-    o.onended = () => { try { lp.disconnect(); } catch (e) {} };
-  }
-
-  function lead(f, t, dur, vel) {
-    const g = gain(ctx, 0);
-    const o = ctx.createOscillator(); o.type = 'triangle'; o.frequency.value = f;
-    const bp = filt(ctx, 'bandpass', clamp(f * 2.4, 500, 2600), 1.1);
-    const pk = filt(ctx, 'peaking', 1300, 1.5, 4);
-    vibAmt.connect(o.detune); wowAmt.connect(o.detune);
-    o.connect(bp); bp.connect(pk); pk.connect(g); g.connect(leadBus);
-    g.gain.setValueAtTime(0, t);
-    g.gain.linearRampToValueAtTime(vel, t + 0.065);      // a breath, not a pluck
-    g.gain.setTargetAtTime(vel * 0.82, t + 0.065, 0.25);
-    g.gain.setTargetAtTime(0.0001, t + dur * 0.88, 0.055);
-    o.start(t); o.stop(t + dur + 0.25);
-    o.onended = () => { try { g.disconnect(); } catch (e) {} };
-  }
-
-  const hatHP = N(filt(ctx, 'highpass', 6200, 0.7));
-  const hatLvl = N(gain(ctx, 0.5)); hatHP.connect(hatLvl); hatLvl.connect(percBus);
-  function hat(t, vel) {
-    const s = ctx.createBufferSource(); s.buffer = noiseBuf;
-    const g = gain(ctx, 0);
-    s.connect(g); g.connect(hatHP);
-    g.gain.setValueAtTime(vel, t);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.035);
-    s.start(t, rnd() * 2, 0.06); s.onended = () => { try { g.disconnect(); } catch (e) {} };
-  }
-  function kick(t, vel) {
-    const o = ctx.createOscillator(); o.type = 'sine';
-    const g = gain(ctx, 0);
-    o.connect(g); g.connect(percBus);
-    o.frequency.setValueAtTime(88, t); o.frequency.exponentialRampToValueAtTime(46, t + 0.09);
-    g.gain.setValueAtTime(vel, t); g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16);
-    o.start(t); o.stop(t + 0.2);
-    o.onended = () => { try { g.disconnect(); } catch (e) {} };
-  }
+  const muzak = createMuzak(ctx, music, noiseBuf, 4711);
 
   // ---- the chime ----------------------------------------------------------
   // Two struck bars, inharmonic, in the room. A real building sound, not a
@@ -178,89 +117,13 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
     setTimeout(() => { try { g.disconnect(); } catch (e) {} }, 2600);
   }
 
-  // ---- sequencer state ----------------------------------------------------
-  let key = 65;                    // F, because muzak lives in flat keys
-  let bpm = 84 + rnd() * 10;
-  let prog = PROGS[(rnd() * PROGS.length) | 0];
-  let bar = 0, barsSinceKey = 0, keyEvery = 8 + ((rnd() * 9) | 0);
-  let nextBarAt = 0;
-  let melNote = key + 12, restBars = 0;
-  let paOn = true;
-
-  // announcements
-  let annAt = 30 + rnd() * 50;
+  // ---- announcements ------------------------------------------------------
+  let annAt = 26 + rnd() * 44;
   let annUntil = -1;
 
-  function scheduleBar(t) {
-    const spb = 60 / bpm, barLen = spb * 4;
-    const [deg, qual] = prog[bar % prog.length];
-    const root = key + deg;
-
-    // --- comp. Rootless-ish, up in the middle where a 4-inch cone can pass it.
-    const voicing = [];
-    for (let i = 1; i < qual.length; i++) voicing.push(root + qual[i] + 12);
-    if (rnd() < 0.4) voicing.push(root + qual[1] + 24);
-    for (const hit of (rnd() < 0.35 ? [0, 1.5, 2.5] : [0, 2])) {
-      const tt = t + hit * spb;
-      const vel = 0.75 + rnd() * 0.3;
-      for (const m of voicing) rhodes(mtof(m), tt, barLen * 0.85, vel * (0.7 + rnd() * 0.4));
-    }
-    // --- bass. Root, then the fifth or a walk to the next root.
-    bass(mtof(root - 12), t, spb * 1.5, 0.9);
-    const nxt = prog[(bar + 1) % prog.length][0] + key;
-    const walk = rnd() < 0.45 ? nxt - 1 : root + 7;
-    bass(mtof(walk - 12), t + spb * 2, spb * 1.4, 0.72);
-
-    // --- percussion, barely there. Through the speaker it is a tick and a bump,
-    // which is exactly how you hear a drum machine two aisles away.
-    for (let e = 0; e < 8; e++) {
-      if (e % 2 === 1 && rnd() < 0.35) continue;
-      hat(t + e * spb * 0.5 + (e % 2 ? 0.02 : 0), (e % 2 ? 0.10 : 0.19) * (0.7 + rnd() * 0.6));
-    }
-    kick(t, 0.5); if (rnd() < 0.7) kick(t + spb * 2, 0.42);
-
-    // --- melody. A random walk on the chord and the scale, in phrases, with the
-    // occasional wrong note held far too long. That is the whole joke and it is
-    // played straight.
-    if (restBars > 0) { restBars--; } else {
-      let tt = t + (rnd() < 0.3 ? spb * 0.5 : 0);
-      const tones = qual.map((q) => root + q);
-      while (tt < t + barLen - spb * 0.4) {
-        const len = spb * [0.5, 1, 1, 1.5, 2][(rnd() * 5) | 0];
-        // step, mostly; leap to a chord tone sometimes
-        if (rnd() < 0.30) {
-          melNote = tones[(rnd() * tones.length) | 0] + (rnd() < 0.5 ? 12 : 24);
-        } else {
-          const dir = rnd() < 0.5 ? -1 : 1;
-          let m = melNote + dir * (rnd() < 0.7 ? 1 : 2);
-          // quantise to the key... usually
-          const pc = ((m - key) % 12 + 12) % 12;
-          if (!SCALE.includes(pc) && rnd() < 0.82) m += dir;
-          melNote = m;
-        }
-        melNote = clamp(melNote, key + 7, key + 31);
-        const hold = rnd() < 0.09 ? len * 2.4 : len;      // the note held too long
-        lead(mtof(melNote), tt, hold * 0.92, 0.72 + rnd() * 0.35);
-        tt += hold;
-      }
-      if (rnd() < 0.34) restBars = 1 + ((rnd() * 2) | 0);
-    }
-
-    bar++; barsSinceKey++;
-    if (barsSinceKey >= keyEvery) {
-      barsSinceKey = 0; keyEvery = 8 + ((rnd() * 9) | 0);
-      key += rnd() < 0.6 ? 2 : (rnd() < 0.5 ? -3 : 5);     // the muzak modulation
-      while (key > 72) key -= 12; while (key < 58) key += 12;
-      if (rnd() < 0.5) prog = PROGS[(rnd() * PROGS.length) | 0];
-      bpm = clamp(bpm + (rnd() * 6 - 3), 76, 98);
-      bar = 0;
-    }
-    return barLen;
-  }
-
-  // ---- announcements ------------------------------------------------------
   function announce(t, kind) {
-    // key-up: a real PA clicks and hisses before it speaks
+    // key-up: a real PA clicks and hisses before it speaks, and the click is
+    // the part everyone in the building has learned to turn their head for
     const s = ctx.createBufferSource(); s.buffer = noiseBuf;
     const g = gain(ctx, 0); const bp = filt(ctx, 'bandpass', 1900, 0.9);
     s.connect(bp); bp.connect(g); g.connect(speech);
@@ -277,27 +140,35 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
     }
     const dur = kind === 'short' ? 2.2 + rnd() * 1.6 : 4.0 + rnd() * 3.2;
     voices.say({
-      when: t0, dur, dest: speech, level: 0.42,
+      when: t0, dur, dest: speech, level: 0.46,
       f0: rnd() < 0.55 ? 104 + rnd() * 22 : 178 + rnd() * 32,
       tense: rnd() < 0.55 ? 1.0 : 1.14,
       rate: 3.5 + rnd() * 1.2,
     });
-    // duck the music under it, the way a real PA does because it is one amp
+    // duck the music under it, the way a real PA does because it is one amp.
+    // Not all the way: the amp has a priority input with a fixed depth on it,
+    // so the band keeps going quietly behind the announcement.
     const end = t0 + dur + 0.35;
-    music.gain.setTargetAtTime(0.34, t, 0.25);
+    music.gain.setTargetAtTime(0.30, t, 0.22);
     music.gain.setTargetAtTime(1.0, end, 0.7);
     return end;
   }
 
   // ---- per-frame ----------------------------------------------------------
-  // Lookahead scheduling against ctx.currentTime, NOT against dt: main.js's
-  // run() can advance four simulated seconds in thirty milliseconds and a
-  // sequencer driven off dt would try to play all of it at once.
+  // Lookahead scheduling lives in muzak.js; this only decides when somebody
+  // picks up the handset, and how much of the ceiling arrives via the room.
+  let paOn = true, pres = 0, iv = 0;
   function update(dt, t, zn) {
     if (!paOn) return;
-    if (nextBarAt < t) nextBarAt = t + 0.15;
-    let guard = 0;
-    while (nextBarAt < t + 0.9 && guard++ < 4) nextBarAt += scheduleBar(nextBarAt);
+    muzak.update(dt, t);
+
+    // The front end is where the amp is and where the ceiling is lowest, so
+    // the direct-to-room balance changes even though the level does not. The
+    // chase takes another fifth off the send: hearing the music rather than
+    // the room's copy of it is the whole mix move, and it is a mix move and
+    // not a cue.
+    to(paWet.gain, (0.85 + 0.5 * pres) * (1 - 0.22 * iv), t, 0.7);
+    to(paLvl.gain, 0.42 * (1 + 0.14 * iv), t, 0.9);
 
     annAt -= dt;
     if (annAt <= 0 && t > annUntil) {
@@ -308,13 +179,18 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   }
 
   return {
-    update, nodes, paLvl, music, speech,
+    update, nodes, paLvl, music, speech, muzak,
     // debug handle: an announcement is a once-a-minute event, so a twelve second
     // clip will not contain one unless you ask for one.
     say(kind) { return announce(ctx.currentTime + 0.05, kind || 'full'); },
-    // the front end is where the PA amp lives and where the ceiling is lowest;
-    // the level does not change but the balance of direct to room does
-    setPresence(v) { paWet.gain.value = 0.85 + 0.5 * v; },
-    set on(v) { paOn = v; },
+    setPresence(v) { pres = v; },
+    // THE CHASE. Not a cue — the mix tightening. muzak.js leans on the drummer
+    // and pulls the melody back; here the ceiling's reverb send comes down and
+    // the amp comes up a hair. Everything moves over about a second, and it
+    // only ever moves a little, because the tape does not know about the game
+    // and must never appear to.
+    setIntensity(v) { iv = clamp(v || 0, 0, 1); muzak.setIntensity(iv); },
+    get intensity() { return iv; },
+    set on(v) { paOn = v; muzak.on = v; },
   };
 }
