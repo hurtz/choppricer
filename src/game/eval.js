@@ -368,18 +368,29 @@ export async function run(ctx, opts = {}) {
       complaints: 0, demotions: 0, points: 0, dispatches: 0, deadZone: 0,
       holds: 0, floorTime: 0, deskTime: 0, wuTime: 0,
       stallEscape: 0, stallPutBack: 0,
+      // ROUND 6 pacing census. `liveT[n]` is seconds of shift with exactly n
+      // ANNOUNCED, UNRESOLVED incidents on the board — the thing the client was
+      // describing when he said one at a time. A thief whose tell has not fired
+      // yet is not an incident; he is a shopper.
+      liveT: [0, 0, 0, 0, 0, 0],
     };
-    let windows = [];
+    let windows = [], cases = [];
     for (let k = 0; k < shifts; k++) {
       const seed = (opts.seed ?? 7717) + k * 104729;
       const r = await shift(ctx, name, { ...opts, seed, seconds, dt });
       for (const key of Object.keys(agg)) {
         if (typeof agg[key] === 'number' && key in r) agg[key] += r[key];
       }
+      for (let n = 0; n < agg.liveT.length; n++) agg.liveT[n] += r.liveT[n] || 0;
       windows = windows.concat(r.windows);
+      cases = cases.concat(r.cases);
     }
     agg.windowMedian = med(windows);
     agg.windowP10 = q(windows, 0.10);
+    // How long an incident LASTS, tell to resolution, whether he is caught or
+    // walks. "It should take a minute" is a claim about this number and no other.
+    agg.caseMedian = med(cases);
+    agg.caseP90 = q(cases, 0.90);
     const resolved = agg.caught + agg.escaped;
     const mins = (shifts * seconds) / 60;
     agg.catchRate = resolved ? +(100 * agg.caught / resolved).toFixed(1) : null;
@@ -388,6 +399,12 @@ export async function run(ctx, opts = {}) {
     agg.demotionsPerShift = +(agg.demotions / shifts).toFixed(2);
     agg.deadZoneRate = resolved ? +(100 * agg.deadZone / resolved).toFixed(1) : null;
     agg.pointsPerShift = Math.round(agg.points / shifts);
+    agg.incidentsPerMin = +(agg.thieves / mins).toFixed(2);
+    const tot = agg.liveT.reduce((a, b) => a + b, 0) || 1;
+    agg.quietPct = +(100 * agg.liveT[0] / tot).toFixed(1);
+    agg.soloPct = +(100 * agg.liveT[1] / tot).toFixed(1);
+    agg.overlapPct = +(100 * (tot - agg.liveT[0] - agg.liveT[1]) / tot).toFixed(1);
+    agg.catchPerShift = +(agg.caught / shifts).toFixed(2);
     out[name] = agg;
   }
   Object.assign(game.bot.FIX, fixWas);
@@ -413,6 +430,8 @@ async function shift(ctx, policyName, opts) {
     thieves: 0, caught: 0, escaped: 0, complaints: 0, demotions: 0, points: 0,
     dispatches: 0, deadZone: 0, holds: 0, floorTime: 0, deskTime: 0, wuTime: 0,
     windows: [],            // seconds from the concealment tell to the door
+    cases: [],              // ...to the door OR the cuffs. How long one takes.
+    liveT: [0, 0, 0, 0, 0, 0],
   };
   // A thief counts as dead-zoned when he resolves having spent time on a cross
   // aisle with an untouched analytics flag — i.e. the terminal saw him and the
@@ -440,7 +459,11 @@ async function shift(ctx, policyName, opts) {
     r.thieves++;
     const m = seen.get(s.id);
     if (m && m.dead) r.deadZone++;
-    if (escaped && m && m.tellAt != null) r.windows.push(+(clock - m.tellAt).toFixed(2));
+    if (m && m.tellAt != null) {
+      const len = +(clock - m.tellAt).toFixed(2);
+      r.cases.push(len);
+      if (escaped) r.windows.push(len);
+    }
     seen.delete(s.id);
   }
 
@@ -483,6 +506,15 @@ async function shift(ctx, policyName, opts) {
         m.dead = true;
       }
     }
+    // A caught or escaped thief leaves the census through closeOut(). One the
+    // stall watchdog quietly put back never resolves at all, so without this his
+    // entry sits on the board forever and every overlap number drifts upward
+    // over the shift.
+    for (const id of [...seen.keys()]) {
+      const s = agents.shoppers.find((q) => q.id === id);
+      if (!s || !s.guilty) seen.delete(id);
+    }
+    r.liveT[Math.min(5, seen.size)] += dt;
     if ((i & 2047) === 2047) await yieldNow();
   }
   r.points = game.st.points;

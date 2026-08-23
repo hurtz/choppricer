@@ -5,6 +5,18 @@
 //   }
 // `api` provides: api.onBolt(shopper), api.onCatch(shopper),
 //                 api.onEscape(shopper), api.onHarass(shopper)
+// ROUND 6 adds two OPTIONAL callbacks. Nothing breaks if they are absent, but
+// one of them is now load-bearing for the scoreboard:
+//   api.onLeave(shopper)  — a CUSTOMER finished his shop and walked out of the
+//     one exit. Innocents use that door now (see the note in escape()), so
+//     onEscape must not fire for them or every honest shopper scores as a
+//     merchandise loss. agents.js already routes them here instead; a game.js
+//     that ignores onLeave simply sees fewer events than before, never more.
+//   api.onAbort(shopper)  — he had it in his hand, saw the uniform posted on
+//     the only way out, and put it back. This is the entire feedback loop of
+//     the one-exit design: camping the door is punished by there being no
+//     crime, and if the HUD never says so, a shift with no income reads as a
+//     broken game rather than as a consequence. See agents.posted.
 // All movement constants come from TUNING in ./config.js.
 //
 // Also (additive, all optional — nothing breaks if the other side is absent):
@@ -255,6 +267,13 @@ import {
   mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG,
   SKIN, HAIR, CLOTH, PANTS,
 } from './agents/figures.js';
+// ROUND 6 — the decoy library. Every reach-with-an-object in the store, guilty
+// and innocent, keyframed in ONE table and sampled by ONE function, so the
+// steal has no code path of its own that a tuning pass could accidentally make
+// louder than the six innocent behaviours it has to hide inside. Read the
+// header there: it is the answer to the CCTV builder's own finding that a
+// legible picture had become a PROOF.
+import { GESTURES, BY_ID, pickGesture, applyGesture } from './agents/decoy.js';
 
 // ---------------------------------------------------------------------------
 // Tunables. Anything already in TUNING is read from TUNING, no local copy.
@@ -640,7 +659,197 @@ const K = {
   // field. The aisle number is then the only thing in the game that tells you
   // where the man ACTUALLY is, which is what the desk phase is for.
   get doorBias()      { return t('doorBias', 7.5); },  // m of route he will pay
+
+  // =========================================================================
+  // ROUND 6 — ONE WAY OUT, AND A REASON NOT TO STAND ON IT
+  //
+  // The client: "In the store, I think there should only be one exit that
+  // people can leave out of. I think you should kind of have a clue where
+  // they're going. The cop should kind of have a chance to get there."
+  //
+  // He is right and round 4's fix was the cheap one. Two doors killed the
+  // door-camper by HIDING THE DESTINATION, which also hid it from the player —
+  // the reason to leave the desk stopped being "I know where he is going" and
+  // became "I cannot know, so I had better follow him". Measured today, on this
+  // build, n=120, before any of this round's changes:
+  //                       cut off0   cut off1   camp off0   chase off0
+  //   two doors             76.7       (34.7)      23.3        38.3
+  //   one door              76.7        73.3       71.7        24.2
+  // One door hands the camper 48 points and flattens the misaim table from 40
+  // points to 3.4. Both of those are the same fact: with one way out, WHERE he
+  // is going is public, so the only thing the aisle number can still be worth
+  // is WHO he is and WHEN he moves. This round makes it worth exactly that,
+  // three ways, and none of them is geometry:
+  //
+  //   1. DETERRENCE. A shoplifter who can see the guard posted on the only way
+  //      out does not commit. He puts it back and shops. Camping the door
+  //      therefore produces a shift with NO INCIDENTS IN IT — punished by
+  //      income, not by catch rate, which is why benchShift() exists and why a
+  //      camper's catch rate is no longer the number that describes him.
+  //   2. INNOCENTS CHECK OUT AND LEAVE. Through the same door. So the door is a
+  //      crowd and not a chokepoint, "subject heading for the exit" stops being
+  //      evidence, and the man at the door has to know WHICH of the four people
+  //      shouldering through it is his.
+  //   3. IDENTITY. You cannot grab a man you never made. See `ident` in
+  //      bench(): a cop who has never had a clear look at the subject inside
+  //      identR grabs the nearest body instead, and if that is a shopper it is
+  //      a harassment complaint. That is the aisle number's real job with one
+  //      exit, and it is what puts the slope back in the misaim table.
+  // =========================================================================
+  // Route metres from the cop to the way out, under which he counts as POSTED.
+  // Route, not straight line: a cop the same distance away through a shelf run
+  // is not standing on the door and a shoplifter can tell the difference.
+  get deterR()        { return t('deterR', 8.5); },
+  get deterSpeed()    { return t('deterSpeed', 1.35); }, // m/s: under this he is loitering
+  get deterT()        { return t('deterT', 2.20); },  // s posted before anyone reads it
+  get deterSight()    { return t('deterSight', 26.0); }, // m of route within which he cases it
+  get deterBalk()     { return t('deterBalk', 3.00); }, // s of balking before he gives up
+  // ...and the same decision one step later in the timeline. He already has it
+  // in his coat, he is walking out, and there is a uniform on the only door. He
+  // does not walk into it. He hangs back in the aisles and waits you out, and
+  // after `dumpT` he ditches the goods in a shelf and leaves clean — no arrest,
+  // no loss, no points. THIS is what makes camping fail against an incident
+  // that is already in flight, and it is the difference between the one-exit
+  // design working and the one-exit design being a 71.7% door-camping bot.
+  // It applies to `drift` ONLY: once he has BOLTED he is committed and standing
+  // on the door is the correct play. Before he runs / after he runs is a clean
+  // line a player can learn in one shift.
+  get dumpT()         { return t('dumpT', 11.0); },  // s of waiting before he ditches it
+  // The race, in route metres. He goes for it while his own route to the only
+  // exit is shorter than the cop's, times raceEdge, plus raceSlack metres of
+  // nerve. Sweeps are in this round's report; raceEdge below ~0.85 makes him
+  // turn back from a cop who is nowhere near the door and the chase stops
+  // existing, above ~1.1 he commits into a man already standing on it, which is
+  // the 71.7% door-camper this round exists to kill.
+  get raceEdge()      { return t('raceEdge', 0.98); },
+  get raceSlack()     { return t('raceSlack', 3.20); }, // m, divided by his nerve
+  // Inside this, a uniform on his line is a bolt whether or not it is walking
+  // at him. Outside it, it has to be coming AT him. Half of thiefLook.
+  get boltNear()      { return t('boltNear', 9.00); }, // m
+  get chillLo()       { return t('chillLo', 14.0); }, // s of honest shopping after a balk
+  get chillHi()       { return t('chillHi', 30.0); },
+  // How close, and for how long, you have to have SEEN him before the grab is
+  // his and not the nearest stranger's. 12 m is most of an aisle from its mouth.
+  get identR()        { return t('identR', 12.0); },
+  get identT()        { return t('identT', 0.45); }, // s of clear look
+  // ...and how big the crowd he is choosing from is at the moment he commits to
+  // a grab. Two metres and a bit: everybody he could plausibly have got a hand
+  // on. One body inside it is not a choice and never costs him anything.
+  get identPick()     { return t('identPick', 2.30); }, // m
+  get identCool()     { return t('identCool', 1.10); }, // s before he tries again
+  // Innocent customers finish their shop and leave. Without this the only body
+  // that ever walks at the door is the thief, and the door is a chokepoint
+  // instead of a crowd.
+  // Seconds of shopping a customer has left when he is placed. NEGATIVE at the
+  // bottom on purpose: about one body in ten is placed already walking at the
+  // door, so the exit has traffic through it from the first frame of a shift
+  // instead of staying empty for the first minute and then discovering a
+  // stream. It is also what makes the identity model in bench() bite from t=0.
+  get shopLo()        { return t('shopLo', -14.0); },
+  get shopHi()        { return t('shopHi', 165.0); },
+  // The decoys. Seconds between one innocent behaviour and the next, per
+  // shopper. At 14 shoppers, 9-22 s each puts roughly one reach-with-an-object
+  // in the building every 1.1 s, which is what makes the wall worth watching
+  // and a single frame worth nothing.
+  get decoyLo()       { return t('decoyLo', 9.0); },
+  get decoyHi()       { return t('decoyHi', 22.0); },
+
+  // =========================================================================
+  // ROUND 6 — THE DIFFICULTY RAMP. Six numbers, one dial.
+  //
+  // Client: "especially in the beginning of the game when we want it to be
+  // easier to draw people in."
+  //
+  // `DIFF.level` runs 0 (opening minutes) to 1 (round 5's shipped game), and
+  // every ramped quantity is `easy -> 1.0 x shipped`, so LEVEL 1 IS EXACTLY THE
+  // BUILD EVERY NUMBER IN THIS FILE'S HEADER WAS MEASURED ON. That is the whole
+  // safety property: the ramp cannot silently re-tune the game, because its top
+  // end is the identity. It also defaults to 1, so a game.js that never calls
+  // setDifficulty() gets precisely the round-5 difficulty and nothing regresses.
+  //
+  // What is ramped, and why each one is a DIFFICULTY change and not a DENSITY
+  // change (game.js owns density — see its PACE table, and the note below
+  // about sharing the breakpoints):
+  //   run    5.35 -> 4.60 m/s at level 0. He is slower than you for the first
+  //          few minutes, so a stern chase is winnable while you are learning
+  //          that a stern chase is not the plan.
+  //   walk   the DRIFT. 1.25 -> 1.00 m/s, i.e. the window between the tell on
+  //          the monitor and his shoulder on the door is 25% longer. This is
+  //          the one the client actually described ("it should take a minute")
+  //          and it is the cheapest difficulty in the file, because it costs
+  //          the player nothing to use and buys him the only thing he is short
+  //          of at the start, which is time to read.
+  //   react  0.22 -> 0.53 s. The "oh shit" freeze before the bolt. A third of a
+  //          second of a man standing still staring at you is a beat a new
+  //          player can see and act on; at 0.22 it is a frame and a half.
+  //   adren  4.20 -> 2.30 s of panic fuel, so riding his shoulder pays off
+  //          sooner and the last three metres close.
+  //   tell   gesture clips run 1.35x long at level 0. The concealment is the
+  //          same five frames, held longer. Note this ramps EVERY clip, decoys
+  //          included — slowing only the steal would make clip length the tell
+  //          and hand the whole of JOB 3 back.
+  //   look   17.0 m unchanged at both ends, deliberately. Shortening his sight
+  //          line "to make it easier" is the round-3 pathology: he bolts later,
+  //          the cop is already on top of him, and the catch lands inside a
+  //          second. Easier must never mean shorter.
+  get rampRun()       { return t('rampRun',   0.86); }, // x thiefRun at level 0
+  get rampWalk()      { return t('rampWalk',  0.80); }, // x thiefWalk (the drift)
+  get rampReact()     { return t('rampReact', 2.40); }, // x thiefReact
+  get rampAdren()     { return t('rampAdren', 0.55); }, // x thiefAdren
+  get rampTell()      { return t('rampTell',  1.35); }, // x gesture duration
+
+  // The ramped reads. EVERYTHING that touches a thief's speed goes through
+  // these, including the pursuit bot's model of him (`tSpd` in botGoal and the
+  // dead-reckoning in botInput) and the thiefCruise()/thiefTop() handles
+  // game.js counts the door alarm down on. That is not tidiness, it is the
+  // POISONED-LEVER RULE from this file's header: `thiefTired` measured a
+  // 34-point collapse when it was swept naively, because the bot predicts the
+  // thief with the same constant the thief runs on, so a change that moves one
+  // without the other measures the bot. The ramp moves both, by construction.
+  get thiefRun()      { return t('thiefRun',   5.35) * dlerp(K.rampRun,  1); },
+  get thiefWalk()     { return t('thiefWalk',  1.25) * dlerp(K.rampWalk, 1); },
+  get thiefReactD()   { return K.thiefReact * dlerp(K.rampReact, 1); },
+  get thiefAdrenD()   { return K.thiefAdren * dlerp(K.rampAdren, 1); },
+  get tellMul()       { return dlerp(K.rampTell, 1); },
 };
+
+// ---------------------------------------------------------------------------
+// ROUND 6 — THE RAMP'S ONE PIECE OF STATE, AND ITS ENTRY POINT.
+//
+// `level` 0..1. Default 1 = round 5's shipped difficulty, so this file behaves
+// identically until somebody drives it.
+//
+// THE ENTRY POINT FOR game.js, which owns shift/rank state:
+//     agents.setDifficulty(d)                 // 0..1, idempotent, free to call
+//     agents.setDifficulty(a.difficultyForClock(st.clock))    // every frame
+//     agents.difficulty                       // read it back
+//
+// The breakpoints in difficultyForClock() ARE game.js's own PACE breakpoints
+// (0 / 150 / 330 s) on purpose. Density and difficulty are deliberately
+// different axes — game.js decides how MANY cases are open, this file decides
+// how hard one of them is — but they should tighten on the same clock, or the
+// shift has two unrelated ramps in it and neither reads as a curve. If game.js
+// moves its table, move this one with it.
+// ---------------------------------------------------------------------------
+const DIFF = { level: 1 };
+const dlerp = (easy, hard) => easy + (hard - easy) * DIFF.level;
+const RAMP = [
+  { at: 0,   level: 0.00 },   // learn the wall against a slow man
+  { at: 150, level: 0.50 },
+  { at: 330, level: 1.00 },   // round 5's game, in full
+];
+function difficultyForClock(sec) {
+  const s = +sec || 0;
+  for (let i = RAMP.length - 1; i >= 0; i--) {
+    if (s >= RAMP[i].at) {
+      const b = RAMP[i + 1];
+      if (!b) return RAMP[i].level;
+      const f = clamp((s - RAMP[i].at) / (b.at - RAMP[i].at), 0, 1);
+      return RAMP[i].level + (b.level - RAMP[i].level) * f;
+    }
+  }
+  return 0;
+}
 
 // ---------------------------------------------------------------------------
 // THE INEQUALITY, CHECKED OUT LOUD. A warning comment is what this file had for
@@ -1237,7 +1446,21 @@ export function createAgents(THREE, scene, world) {
   // Attribution switch: run the store with only the first `doorLimit` doors, so
   // round 4's changes can be measured one at a time instead of asserted as a
   // bundle. 1 = the old single-exit store.
-  let doorLimit = 99;
+  //
+  // ROUND 6 — AND IT IS 1 NOW, ON THE CLIENT'S ASK. Door 2 is still built by
+  // src/store.js and still stands there; it is the way IN. Only Door 1 is a way
+  // out, so the whole store drains through one hole and you always know where
+  // he is going. See the K block above for what pays for that. `useDoors(2)`
+  // reproduces round 4/5 exactly and every ablation in this round's report was
+  // taken by flipping it.
+  //
+  // NOTE FOR THE LEAD: config's EXIT2 and CAMERAS[8] ('DOOR 2') both still
+  // exist and are correct — a camera on the entrance is a camera on a real
+  // door. What is now wrong is only the SIGNAGE: store.js paints a lit EXIT box
+  // over a door nobody may leave by. That is a store.js change (ENTRANCE / NO
+  // EXIT / IN), not mine, and it is the one thing about this that would read as
+  // a bug to a player.
+  let doorLimit = 1;
   function buildExits() {
     const probe = nav.field(EXIT.x, EXIT.z);
     EXITS = [];
@@ -1378,6 +1601,12 @@ export function createAgents(THREE, scene, world) {
   const angerTex = angerTexture(THREE);
   const shoppers = [];
   let nextId = 1;
+  // ROUND 6. Declared up here rather than next to updatePost()/interactions()
+  // because reset() runs at construction, before either of those lines is
+  // reached, and a `let` in the temporal dead zone is a ReferenceError rather
+  // than an undefined.
+  let postT = 0;          // seconds the cop has been loitering on the way out
+  let grabGate = null;    // bench-only: the identity model, see bench({ident})
 
   function makeShopper() {
     // rollPerson() rolls a BUILD, an AGE and a silhouette, not just four
@@ -1400,6 +1629,16 @@ export function createAgents(THREE, scene, world) {
       concealT: 0, look: 0, lean: 0, target: null, dropCartAt: null,
       duck: 0, duckT: 0, stumble: 0, bargeT: 0, bargeN: 0, bargeStam: null, nerve: 1,
       adren: 1, shoveT: 0, exitI: 0, viaBack: false, doorPref: 0,
+      // ROUND 6 — the decoy clip currently playing on this body, guilty or not.
+      // `gest` is an entry from decoy.js, `gestT` counts DOWN, `gestD` is its
+      // scaled duration. `turnY` is the yaw a clip adds on top of `heading`,
+      // which is how a man turns away from the shelf without turning his walk.
+      gest: null, gestT: 0, gestD: 1, gestIn: 0, turnY: 0,
+      // ...and the one-exit economy: `chill` is seconds of honest shopping
+      // after he balked, `balk` is how long he has been looking at a guard
+      // stood on the only way out, `shopT` is how much shopping an innocent has
+      // left before he checks out and leaves through that same door.
+      chill: 0, balk: 0, stall: 0, aborts: 0, shopT: 0, leaving: false, made: 0,
     };
     shoppers.push(s);
     return s;
@@ -1511,6 +1750,11 @@ export function createAgents(THREE, scene, world) {
     s.hasCart = true; s.cart.visible = true; s.mesh.visible = true;
     s.held.visible = false; s.bang.visible = false; s.target = null;
     s.stole = false;
+    s.gest = null; s.gestT = 0; s.gestD = 1; s.turnY = 0;
+    s.gestIn = rr(1.5, K.decoyHi);
+    s.chill = 0; s.balk = 0; s.stall = 0; s.aborts = 0; s.leaving = false; s.made = 0;
+    s.shopT = rr(K.shopLo, K.shopHi);
+    s.held.scale.set(1, 1, 1);
   }
 
   function reset() {
@@ -1522,6 +1766,7 @@ export function createAgents(THREE, scene, world) {
     const cu = cop.userData;
     cu.vel.set(0, 0, 0); cu.speed = 0; cu.stamina = K.staminaMax; cu.fatigue = 0;
     cu.gassed = false; cu.boost = 0; cu.heading = 0; cu.skid = 0; cu.stagger = 0;
+    postT = 0;
     for (const p of powerups) { p.live = true; p.respawn = 0; p.mesh.visible = true; }
   }
   setSeed(20240822);
@@ -1948,7 +2193,7 @@ export function createAgents(THREE, scene, world) {
 
   // How fast the thief can ACTUALLY run right now.
   //
-  // T.thiefRun is his ceiling for the first couple of seconds, not his cruise.
+  // K.thiefRun is his ceiling for the first couple of seconds, not his cruise.
   // He is a shoplifter with a jacket full of steaks; he blows up on roughly the
   // same clock the cop does. Without this the chase is a straight speed subtract
   // — thief 5.35, cop 5.05 — and the gap grows 0.30 m/s forever, so the only way
@@ -1975,12 +2220,12 @@ export function createAgents(THREE, scene, world) {
     // where he can hear you — and it does not care whether you have closed the
     // last three.
     const press = clamp((K.thiefPanicGap + 3.0 - copD) / 3.0, 0, 1);
-    s.adren = clamp(s.adren - dt * press / K.thiefAdren
+    s.adren = clamp(s.adren - dt * press / K.thiefAdrenD
                             + dt * (1 - press) * K.thiefAdrenBack, 0, 1);
     const cruise = lerp(K.thiefTired, 1, s.wind);              // opening sprint, fading
     const surge = lerp(K.thiefTired, K.thiefPanic, near * s.adren);  // fear, and it runs out
     s.dbgNear = near;
-    return T.thiefRun * Math.max(cruise, surge);
+    return K.thiefRun * Math.max(cruise, surge);
   }
 
   // Escape direction, read off the exit field. No repathing, no waypoint list
@@ -2041,6 +2286,126 @@ export function createAgents(THREE, scene, world) {
     return (u.vel.x * dx + u.vel.z * dz) / (u.speed * copD) > K.harassAim;
   }
 
+  // =========================================================================
+  // ROUND 6 — THE DECOY CLIPS AND THE MAN ON THE DOOR
+  // =========================================================================
+
+  // Start a clip. `kind` is 'steal' | 'decoy' | 'putback'; the roll comes off
+  // the same seeded rnd() every other decision in this file uses, so a bench
+  // trial replays exactly. The clip's LENGTH is ramped (see K.tellMul), and it
+  // is ramped for decoys and steals alike — slowing only the steal would make
+  // clip length the tell and give the whole ambiguity back.
+  function startGesture(s, kind, forceId) {
+    const g = forceId ? BY_ID.get(forceId) : pickGesture(rnd, kind);
+    if (!g) return null;
+    s.gest = g;
+    s.gestD = g.dur * K.tellMul;
+    s.gestT = s.gestD;
+    return g;
+  }
+  // Clock only. The POSE is applied in animateShopper, so a body nobody is
+  // looking at costs one subtraction per frame and not a keyframe sample.
+  function tickGesture(s, dt) {
+    if (!s.gest) return false;
+    s.gestT -= dt;
+    if (s.gestT > 0) return true;
+    s.gest = null; s.gestT = 0; s.turnY = 0;
+    s.held.visible = false;
+    s.held.scale.set(1, 1, 1);
+    // Parked INSIDE the torso rather than left wherever the clip dropped it.
+    // Invisible children are pruned by cctv/track.js's measure(), but they are
+    // NOT pruned by Box3.setFromObject, which is the bug in CLAUDE.md that made
+    // every shopper in this store 2.38 m tall. Do not leave props in the air.
+    s.held.position.set(0.18, 1.02, 0.14);
+    return false;
+  }
+
+  // ---- is the guard posted on the only way out? ----------------------------
+  // Route metres, not a straight line: a cop the same distance away on the far
+  // side of a gondola is not standing on the door, and a man deciding whether
+  // to steal something can tell the difference. Decays 2.2x faster than it
+  // builds, so stepping off the door for a second and a half clears it — the
+  // player is not locked out of the front of his own store, he just cannot LIVE
+  // there.
+  // ---- can he still get there first? ---------------------------------------
+  // Both distances are ROUTE metres off the same exit flood, so a cop ten
+  // metres away through a gondola is not "in front of him" and the answer knows
+  // it. `nerve` is the per-subject roll that already decides whether he will
+  // chance your shoulder (nerveLo 0.55 = bold), so a bold man needs less
+  // daylight to go for it and a nervous one needs more — two identical-looking
+  // dispatches do not play out the same way, which is what nerve is for.
+  function beatsCopToDoor(s) {
+    const mine = toExit(s.position.x, s.position.z);
+    const his = toExit(cop.position.x, cop.position.z);
+    if (!isFinite(mine) || !isFinite(his)) return true;
+    return mine < his * K.raceEdge + K.raceSlack / Math.max(0.35, s.nerve || 1);
+  }
+  // IS HE BEING HELD OFF. Both halves are needed and the pair of them is the
+  // whole one-exit design:
+  //
+  //   posted   — the cop is STOPPED, on the way out, and has been for deterT.
+  //              Not "the cop is in front of him": the dispatch puts the cop in
+  //              the mouth of his aisle EVERY SINGLE TIME, so a rule that reads
+  //              "is he between me and the door" fires on every chase in the
+  //              game. Measured: gating the bolt on the race alone took the
+  //              competent bot to 32.5% with 21 of 40 trials ending in a
+  //              ditched item — i.e. it deleted the chase. A man MOVING is a
+  //              man to run past. A man PARKED IN THE DOORWAY is not.
+  //   !beatable— and he cannot get there first anyway. A thief three metres
+  //              from the door with the cop eight metres off it still goes.
+  const heldOff = (s) => doorPosted() && !beatsCopToDoor(s);
+
+  // He has decided he cannot make it. Back into the shelf runs, look busy, and
+  // wait for you to get bored. `stall` runs from here; see dumpGoods().
+  function turnBack(s) {
+    s.state = 'walk'; s.timer = rr(2.5, 6.0); s.path = []; s.aim = null; s.aimT = 0;
+    s.target = { x: aisleX(ri(0, AISLE_COUNT - 1)) + rr(-1.0, 1.0), z: rr(0.5, HALF_LEN - 2) };
+    s.gestIn = Math.min(s.gestIn, rr(0.4, 2.5));
+  }
+
+  function updatePost(dt) {
+    const d = toExit(cop.position.x, cop.position.z);
+    const posted = isFinite(d) && d < K.deterR && cop.userData.speed < K.deterSpeed;
+    postT = posted ? postT + dt : Math.max(0, postT - dt * 2.2);
+  }
+  const doorPosted = () => postT > K.deterT;
+
+  // He thought better of it. THIS IS THE WHOLE ONE-EXIT DESIGN IN ONE FUNCTION:
+  // camping the door does not lower your catch rate, it removes the crime. The
+  // shift produces no incidents, the wall stays quiet and the player earns
+  // nothing — punished by income rather than by geometry, which is also exactly
+  // what a real shoplifter does when he clocks a uniform by the door.
+  //
+  // Second balk and he is done with this store: he goes back to being a
+  // customer and checks out. That matters, because otherwise a camped door
+  // leaves two permanently-balking subjects in the building, game.js's
+  // ensureThieves() sees `live >= 1` and never arms anybody else, and the
+  // deadlock flatters the design by hiding it behind a spawn cap. Let them
+  // leave and let the shift keep arming people; every one of them balks, and
+  // the zero is an honest zero.
+  function abortTheft(s, api) {
+    s.balk = 0; s.aborts++;
+    s.chill = rr(K.chillLo, K.chillHi);
+    s.stole = false;
+    s.state = 'putback'; s.timer = 0; s.path = []; s.target = null;
+    s.concealT = Math.max(s.concealT, s.chill + rr(1.5, 5.0));
+    startGesture(s, 'putback');
+    if (s.aborts >= 2) { s.guilty = false; s.leaving = true; s.shopT = 0; }
+    api && api.onAbort && api.onAbort(s, 'balk');
+  }
+
+  // He already had it. He waited you out for `dumpT`, you did not move off the
+  // door, so it goes back on a shelf and he walks out a customer. No arrest, no
+  // merchandise loss, no points — the most expensive possible outcome for a
+  // player whose whole plan was to stand on the exit.
+  function dumpGoods(s, api) {
+    s.stall = 0; s.aborts++;
+    s.stole = false; s.guilty = false; s.leaving = true; s.shopT = 0;
+    s.state = 'putback'; s.timer = 0; s.path = []; s.target = null; s.aim = null;
+    startGesture(s, 'putback');
+    api && api.onAbort && api.onAbort(s, 'dump');
+  }
+
   function updateShopper(s, dt, api, frozen) {
     if (s.escaped || s.caught) { animateShopper(s, dt, 0); return; }
     if (frozen) { s.vel.multiplyScalar(Math.exp(-6 * dt)); animateShopper(s, dt, 0); return; }
@@ -2052,14 +2417,90 @@ export function createAgents(THREE, scene, world) {
       s.adren = clamp(s.adren + dt * K.thiefAdrenBack, 0, 1);
     }
 
+    // ---- ROUND 6: clips run first, so a state can ask "am I still doing it".
+    const clipOn = tickGesture(s, dt);
+    // ...and anybody standing at a shelf might start one. THIS IS THE ONE THAT
+    // MATTERS. Guilty or innocent, pre-conceal or post-abort — the scheduler
+    // does not look at `s.guilty`, so "the man doing something with his hands"
+    // is never the answer, and a five-frame strip off the spot monitor is
+    // evidence of a shopper rather than evidence of a crime. See decoy.js.
+    if (!clipOn && s.angry <= 0 && !s.bolted && s.state !== 'leave'
+        && (s.state === 'browse' || s.state === 'walk')) {
+      s.gestIn -= dt;
+      if (s.gestIn <= 0) {
+        s.gestIn = rr(K.decoyLo, K.decoyHi);
+        // You stop walking to dig your phone out. He drops into `browse` for
+        // the length of the clip and a beat either side, which is also what
+        // gives the motion detector a STOPPED subject to box — the identical
+        // analytics verdict the CCTV builder flagged.
+        if (s.state === 'walk') { s.target = null; s.path = []; }
+        s.state = 'browse';
+        startGesture(s, 'decoy');
+        s.timer = Math.max(s.timer, s.gestD + rr(0.25, 1.20));
+      }
+    }
+
     // ---- guilty timeline: browse -> conceal -> drift -> bolt
     if (s.guilty && !s.bolted) {
+      // Computed once, at the top, because THREE separate decisions below read
+      // it and a one-frame-stale copy of it made him oscillate on the boundary
+      // between drifting out and turning back.
+      s.beatable = beatsCopToDoor(s);
       if (!s.stole) {
+        // ROUND 6 — HE DOES NOT COMMIT WITH A UNIFORM ON THE ONLY WAY OUT.
+        // `chill` is the honest-shopping stretch after a balk; while it runs
+        // the fuse is held, and he is doing decoy clips like everybody else,
+        // which is the correct picture — a man who decided not to steal
+        // something is a shopper.
+        if (s.chill > 0) {
+          s.chill -= dt;
+          s.concealT = Math.max(s.concealT, 1.2);
+        } else {
+          // He cases the front. Either he is close enough to the way out to
+          // see it on his way there, or he has a clean line to the man himself.
+          const cased = doorPosted()
+            && (toExit(s.position.x, s.position.z) < K.deterSight
+                || nav.clearSeg(s.position.x, s.position.z, cop.position.x, cop.position.z));
+          if (cased) {
+            s.balk += dt;
+            s.concealT = Math.max(s.concealT, 0.9);      // hold the fuse
+            if (s.balk > K.deterBalk && s.state !== 'conceal') { abortTheft(s, api); }
+          } else if (s.balk > 0) {
+            s.balk = Math.max(0, s.balk - dt * 0.8);
+          }
+        }
         s.concealT -= dt;
-        if (s.concealT <= 0 && s.state !== 'conceal') {
-          s.state = 'conceal'; s.timer = 1.9; s.look = 0;
-          s.held.visible = true;
-          s.held.position.set(0.22, 1.24, 0.26);
+        if (s.concealT <= 0 && s.state !== 'conceal' && !s.gest && s.chill <= 0) {
+          s.state = 'conceal'; s.look = 0;
+          startGesture(s, 'steal');
+          s.timer = s.gestD;
+        }
+      } else if (s.state === 'walk' || s.state === 'browse') {
+        // STALLED. He has it in his coat and there is a uniform on the only
+        // door, so he is hanging back in the aisles doing an extremely good
+        // impression of a man choosing a pasta sauce. He resumes the moment the
+        // door clears — no range test on the way out, deliberately: once he has
+        // decided to wait you out, he waits until you MOVE, not until he
+        // wanders far enough away to forget. Hysteresis, or he oscillates on
+        // the deterSight boundary and it reads as a twitch.
+        // The resume test has to be the SAME test that made him turn back, or
+        // he flips between drifting and waiting every other frame on the
+        // boundary. Either you are posted on the door, or you are simply closer
+        // to it than he is: both are reasons to sit tight, and neither of them
+        // stops being true because he took two steps backwards.
+        if (heldOff(s)) {
+          s.stall += dt;
+          if (s.stall > K.dumpT) dumpGoods(s, api);
+        } else {
+          // Patience DECAYS, it does not reset. A man who has spent eight
+          // seconds hanging back does not start his patience again from zero
+          // because you stepped off the door for a moment — otherwise a cop who
+          // drifts on and off the mat holds him forever and the trial never
+          // resolves. Measured: 8 of 40 camp trials were timing out at 30 s
+          // with a reset; with the decay they end in a ditched item, which is
+          // an outcome instead of a hang.
+          s.stall = Math.max(0, s.stall - dt * 0.5);
+          s.state = 'drift'; s.path = []; s.aim = null; s.aimT = 0;
         }
       }
       // ROUND 3. He is walking out with a jacket full of steaks and a uniform
@@ -2070,12 +2511,70 @@ export function createAgents(THREE, scene, world) {
       // already at a dead sprint, which is 0.3 s of "chase" and 100% caught.
       // Needs line of sight and needs the cop to actually be ON his route, so a
       // cop stood at his post across the store never trips it.
-      if (s.state === 'drift' && copD < T.suspicionRadius) { s.state = 'react'; s.timer = K.thiefReact; }
-      else if (s.state === 'drift' && copD < K.thiefLook && seesBlocker(s, copD)) {
-        s.state = 'react'; s.timer = K.thiefReact;
+      // ROUND 6 — `stalling` is the man who has it in his coat and has turned
+      // back into the aisles rather than walk into you. He is walking, not
+      // drifting, so without this line he would be UNCATCHABLE: interactions()
+      // only grabs a subject who has bolted or is reacting. He must still bolt
+      // when you find him, or "stand on the door and he waits" would have an
+      // exploit in it where the thief strolls past your elbow untouchable.
+      // It is also the intended counterplay to your own post: leave the door
+      // and go and get him.
+      const stalling = s.stole && !s.bolted && (s.state === 'walk' || s.state === 'browse');
+      // CAN HE STILL BEAT YOU TO IT. Route metres, both of you, off the same
+      // field. This is the client's sentence turned into a comparison:
+      //   "I think you should kind of have a clue where they're going. The cop
+      //    should kind of have a chance to get there."
+      // With one exit you always have the clue. What you have to do with it is
+      // GET THERE FIRST, and this is the line that decides whether getting
+      // there first was worth anything.
+      s.beatable = beatsCopToDoor(s);
+      if ((s.state === 'drift' || stalling) && copD < T.suspicionRadius) { s.state = 'react'; s.timer = K.thiefReactD; }
+      // ROUND 6 — AND HE ONLY RUNS FROM A MAN WHO IS COMING AT HIM. Round 3
+      // made any uniform on his line inside 17 m a bolt, which was the right
+      // fix for "he ambles up to 4.5 m of a sprinting cop" and is worth most of
+      // the 1.13 s -> 3.03 s median. With ONE exit it has a second, wrong
+      // consequence: EVERY route out of this store passes the front end, so a
+      // cop merely WALKING TOWARDS THE DOORS is on every thief's line, and the
+      // thief sets off running before the man has even noticed him. Nobody does
+      // that. You keep strolling and you hope.
+      // So the sighting still fires at 17 m if he is being closed on (the aisle
+      // mouth case, unchanged), and otherwise not until `boltNear`.
+      else if ((s.state === 'drift' || stalling) && copD < K.thiefLook
+               && (copClosingOn(s, copD) || copD < K.boltNear)
+               && seesBlocker(s, copD)) {
+        // ROUND 6 — SEEING THE WAY BLOCKED IS NO LONGER AUTOMATICALLY A BOLT.
+        // Round 3 made him bolt the moment a uniform appeared on his line, and
+        // that was right: before it, he ambled up to 4.5 m of a sprinting cop
+        // and 61% of "chases" were over inside a second. But with ONE door it
+        // has a degenerate consequence — a man who cannot possibly beat you to
+        // the only exit sets off running at it anyway, straight into the arms
+        // of the man standing on it. That is not fear, it is a scripted
+        // donation, and it is most of why a door-camping bot scored 71.7%.
+        //
+        // So the sighting still fires, and now it asks a question: can I still
+        // get there first? If yes he commits and it is the round-5 chase,
+        // unchanged. If no he turns back into the aisles, waits you out, and
+        // ditches the goods if you never move (see dumpGoods). The counterplay
+        // to a man who has turned back is the one the whole game is about: stop
+        // guarding the door and go and take him, which trips the line above.
+        if (heldOff(s)) { if (s.state === 'drift') turnBack(s); }
+        else { s.state = 'react'; s.timer = K.thiefReactD; }
       }
-      if (s.state === 'conceal' && copD < T.suspicionRadius && s.timer < 1.2) { s.state = 'react'; s.timer = K.thiefReact; }
+      if (s.state === 'conceal' && copD < T.suspicionRadius && s.gestT < 1.2) { s.state = 'react'; s.timer = K.thiefReactD; }
     } else if (!s.guilty) {
+      // ---- ROUND 6: customers finish their shop and leave, by the same door.
+      // Without this the only body that ever walks at the exit is the thief, so
+      // "subject moving toward the doors" is a confession and the exit is a
+      // chokepoint one man can hold. With it the door is a CROWD: the camper is
+      // standing in a stream of people and has to know which of them is his,
+      // which is the job the aisle number does once there is only one way out.
+      if (!s.leaving && s.angry <= 0 && !s.gest) {
+        s.shopT -= dt;
+        if (s.shopT <= 0) {
+          s.leaving = true; s.state = 'leave';
+          s.path = []; s.target = null; s.aim = null; s.aimT = 0;
+        }
+      }
       // ---- innocent: turn and yell, never run
       // A complaint is for ROLLING UP ON someone. Standing at your post while a
       // shopper wanders past you is not harassment, and the old pure-distance
@@ -2089,7 +2588,7 @@ export function createAgents(THREE, scene, world) {
       if (s.angry > 0) { s.angry -= dt; if (s.angry <= 0) s.bang.visible = false; }
     }
 
-    let target = T.thiefWalk;
+    let target = K.thiefWalk;
     let dir = null;
 
     switch (s.state) {
@@ -2109,22 +2608,54 @@ export function createAgents(THREE, scene, world) {
         if (s.timer <= 0) { s.state = 'walk'; s.timer = rr(4, 9); s.target = null; s.path = []; }
         break;
       }
+      // ROUND 6 — the concealment is now GESTURES[0] and it is sampled by the
+      // same applyGesture() the six decoys are. Round 5's inline lerp is gone,
+      // keyframe for keyframe, into decoy.js: item off the lip, past the
+      // sternum, into the coat, gone, hands back on the bar, with the shoulder
+      // checks on the same beats. The point is structural — there is no longer
+      // any code a thief runs that an innocent does not — so please do not
+      // re-inline it to "make the tell clearer".
       case 'conceal': {
-        s.timer -= dt; target = 0;
-        const t = 1 - clamp(s.timer / 1.9, 0, 1);
-        // item arcs from the shelf lip into the jacket, then is gone
-        const ax = lerp(0.32, 0.02, clamp(t * 1.6, 0, 1));
-        const ay = lerp(1.24, 1.34, clamp(t * 1.6, 0, 1)) + Math.sin(clamp(t * 1.6, 0, 1) * Math.PI) * 0.16;
-        const az = lerp(0.30, 0.15, clamp(t * 1.6, 0, 1));
-        s.held.position.set(ax, ay, az);
-        s.held.visible = t < 0.62;
-        s.look = Math.sin(t * Math.PI * 3.2) * 0.85;              // shoulder checks
-        if (s.timer <= 0) { s.stole = true; s.state = 'drift'; s.path = []; s.held.visible = false; }
+        target = 0;
+        if (!s.gest) { s.stole = true; s.state = 'drift'; s.path = []; s.held.visible = false; }
+        break;
+      }
+      // He balked. The item comes back out of the coat and goes back on the
+      // shelf, which is the only clip in the file that ends that way and is the
+      // player's feedback that his post on the door worked.
+      case 'putback': {
+        target = 0;
+        if (!s.gest) {
+          if (s.leaving) { s.state = 'leave'; s.path = []; s.aim = null; s.aimT = 0; }
+          else { s.state = 'walk'; s.timer = rr(2, 5); s.target = null; s.path = []; }
+        }
+        break;
+      }
+      // A customer who is done shopping, walking at the same door on the same
+      // field with the same gait. He is not evidence of anything.
+      case 'leave': {
+        dir = navToExit(s, false, dt);
+        target = K.thiefWalk * 1.06;
+        s.look = Math.sin(s.phase * 0.55) * 0.32;
+        if (atExit(s) >= 0) { startShove(s); break; }
         break;
       }
       case 'drift': {
+        // ROUND 6 — HE DOES NOT WALK INTO A UNIFORM STOOD ON THE ONLY DOOR.
+        // He turns back into the shelf runs and waits. See the `walk` branch of
+        // the guilty timeline above for the other half, and dumpGoods() for
+        // what happens if you never move.
+        if (heldOff(s) && toExit(s.position.x, s.position.z) < K.deterSight) {
+          s.state = 'walk'; s.timer = rr(2.5, 6.0); s.path = [];
+          // Back INTO the store, not to a random point that might be the aisle
+          // the cop is standing at the end of. He is going somewhere to wait.
+          s.target = { x: aisleX(ri(0, AISLE_COUNT - 1)) + rr(-1.0, 1.0), z: rr(0.5, HALF_LEN - 2) };
+          s.stall += dt;
+          s.gestIn = Math.min(s.gestIn, rr(0.4, 2.5));   // look busy
+          break;
+        }
         dir = navToExit(s, false, dt);
-        target = T.thiefWalk * 1.12;
+        target = K.thiefWalk * 1.12;
         s.look = Math.sin(s.phase * 0.8) * 0.5;
         if (atExit(s) >= 0) { startShove(s); break; }
         break;
@@ -2228,10 +2759,10 @@ export function createAgents(THREE, scene, world) {
       }
       s.dbgCorner = cm;
       s.dbgTarget = target;
-      steer(s, av.x, av.z, target, K.thiefAccel, 0.72, T.thiefRun, dt);
+      steer(s, av.x, av.z, target, K.thiefAccel, 0.72, K.thiefRun, dt);
     } else {
       s.dbgTarget = 0;
-      steer(s, 0, 0, 0, K.thiefAccel, 0.72, T.thiefRun, dt);
+      steer(s, 0, 0, 0, K.thiefAccel, 0.72, K.thiefRun, dt);
     }
     solids.resolve(s.position, BODY_R);
     animateShopper(s, dt, target);
@@ -2254,7 +2785,15 @@ export function createAgents(THREE, scene, world) {
   function escape(s, api) {
     s.escaped = true; s.mesh.visible = false; s.cart.visible = false;
     s.bang.visible = false; s.vel.set(0, 0, 0);
-    api.onEscape && api.onEscape(s);
+    // ROUND 6 — innocents use this door too, and an innocent walking out is not
+    // a merchandise loss. game.js's onEscape() scores a loss, logs it and stands
+    // the player down, so it MUST NOT fire for a customer who has finished his
+    // shop. `onLeave` is additive and optional; a game.js that ignores it sees
+    // exactly what it saw before, minus the false losses. game.js's own
+    // repopulate() already puts an escaped body back in the building 18 s later,
+    // so the store refills with no change on that side.
+    if (s.guilty) api.onEscape && api.onEscape(s);
+    else api.onLeave && api.onLeave(s);
   }
 
   function animateShopper(s, dt, target) {
@@ -2288,6 +2827,40 @@ export function createAgents(THREE, scene, world) {
       r.hips.position.y = r.hipY;
       return;
     }
+    // ROUND 6 — A CLIP IS PLAYING, AND IT OWNS THE UPPER BODY.
+    // Arms, prop, neck pitch, shoulder check and the yaw he turns away from the
+    // shelf by, all sampled out of decoy.js — the SAME four lines for a
+    // concealment and for a man taking a phone out of his pocket. That identity
+    // is the point: the strip of frames off the spot monitor is drawn by one
+    // function, so there is no per-frame difference for a player to learn and
+    // no way for a later tuning pass to make one of them louder by accident.
+    // The legs keep walking off `sw`/`amp` above, because people do fidget with
+    // their hands while they shuffle along a shelf.
+    if (s.gest) {
+      const u = 1 - clamp(s.gestT / Math.max(0.05, s.gestD), 0, 1);
+      const p = applyGesture(s.gest, u);
+      s.turnY = p.turn;
+      s.mesh.rotation.y = s.heading + p.turn;
+      r.armR.rotation.x = p.armR; r.armR.rotation.z = p.armRz;
+      r.armL.rotation.x = p.armL; r.armL.rotation.z = p.armLz;
+      r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + p.chest, ed(10));
+      r.neck.rotation.x = lerp(r.neck.rotation.x, p.neck, ed(9));
+      r.neck.rotation.y = lerp(r.neck.rotation.y, p.look, ed(9));
+      s.held.visible = !!p.vis;
+      s.held.position.set(p.hand[0], p.hand[1], p.hand[2]);
+      s.held.scale.set(p.item[0], p.item[1], p.item[2]);
+      // The cart is parked where he stopped, hands OFF the bar. Half the
+      // picture is the two seconds his hands are not on it.
+      if (s.hasCart) {
+        const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+        s.cart.visible = true;
+        s.cart.position.set(s.position.x + fx * 0.62, 0, s.position.z + fz * 0.62);
+        s.cart.rotation.y = s.heading;
+      }
+      r.chest.rotation.z = -sw * 0.020 * gait;
+      return;
+    }
+
     const bolting = s.state === 'bolt' || s.state === 'react';
     if (s.hasCart) {
       // both hands on the bar, cart pushed out front
@@ -2316,8 +2889,13 @@ export function createAgents(THREE, scene, world) {
       r.armL.rotation.x = -0.4; r.chest.rotation.x = 0.12;
       r.neck.rotation.x = -0.12;
       s.bang.position.y = 2.15 + Math.abs(w) * 0.07;
-    } else if (s.state === 'browse' || s.state === 'conceal') {
-      const reach = s.state === 'conceal' ? 1.55 : 1.05 + Math.sin(s.phase * 0.7) * 0.25;
+    } else if (s.state === 'browse') {
+      // 'conceal' used to share this branch with a fixed 1.55 reach. It cannot
+      // reach here any more — a concealing thief always has a clip loaded, so
+      // the block above returned before this line. Left as the plain
+      // reaching-at-a-shelf pose it always was, which is what a shopper does
+      // between clips.
+      const reach = 1.05 + Math.sin(s.phase * 0.7) * 0.25;
       r.armR.rotation.x = -reach; r.armR.rotation.z = -0.22;
       r.chest.rotation.x = r.stoop + 0.05;
       r.neck.rotation.x = lerp(r.neck.rotation.x, 0.22, ed(6));   // looking at the shelf
@@ -2476,6 +3054,12 @@ export function createAgents(THREE, scene, world) {
       const d = dist2d(s.position.x, s.position.z, cop.position.x, cop.position.z);
       if (d > T.catchRadius) continue;
       if (s.duck && !copCovers(s)) { barge(s); continue; }
+      // ROUND 6 — YOU CANNOT GRAB A MAN YOU NEVER MADE. The gate is null in the
+      // live game (the player is looking at the floor and picks his own body to
+      // run at), and non-null in bench(), where the bot's information set has to
+      // be modelled honestly or the one-exit misaim table measures an oracle.
+      // See the `ident` block in bench().
+      if (grabGate && !grabGate(s)) continue;
       s.caught = true; s.vel.set(0, 0, 0); s.state = 'caught';
       s.rig.armL.rotation.x = -2.5; s.rig.armR.rotation.x = -2.5;     // hands up
       api.onCatch && api.onCatch(s);
@@ -2560,7 +3144,7 @@ export function createAgents(THREE, scene, world) {
     }
     const frozen = !!api.frozen;
     updateCop(dt, input, frozen);
-    if (!frozen) updateFlee(dt);
+    if (!frozen) { updatePost(dt); updateFlee(dt); }
     updatePowerups(dt);
     for (const s of shoppers) updateShopper(s, dt, api, frozen);
     interactions(dt, api);
@@ -2742,7 +3326,7 @@ export function createAgents(THREE, scene, world) {
       st.route = routePoints(tx, tz);
     }
     const route = st.route || [];
-    const tSpd = T.thiefRun * K.thiefTired;                 // his cruise, not his ceiling
+    const tSpd = K.thiefRun * K.thiefTired;                 // his cruise, not his ceiling
     const cSpd = T.copRun * 0.86;
     // ROUND 5 — A BOOST IS A TIMER, NOT A TOP SPEED. This read
     // `copRun * (boost > 0 ? boostMul : 0.86)` — one flat speed for the whole
@@ -2790,11 +3374,34 @@ export function createAgents(THREE, scene, world) {
       // Cannot head him off anywhere. Then the door is the last place he has to
       // be, so go and stand on it — this is exactly why camping works at all,
       // and a bot that would not do it is not a competent player.
-      const cD = nav.at(st.copF, door.x, door.z);
-      const tT = rTot / tSpd, cT = arrive(cD);
-      if (isFinite(cD) && cT < tT + 1.2) return { x: door.x, z: door.z, sprint: true };
+      //
+      // ROUND 6 — WITH ONE EXIT THAT IS ONLY TRUE AFTER HE RUNS. A man who is
+      // still WALKING out will not walk into a uniform on the only door: he
+      // turns back into the aisles, waits you out, and ditches the goods in a
+      // shelf after dumpT (see the drift case in updateShopper). So the
+      // fallback that was correct with two doors is now a losing line, and a
+      // competent player learns that in one shift. Before the bolt: go and find
+      // him. After it: the door is still the last place he has to be.
+      // Measured, n=120, one door, this build: leaving the old fallback in
+      // costs the `cut` bot 12 points, all of them to `ditched` trials.
+      if (thief.bolted) {
+        const cD = nav.at(st.copF, door.x, door.z);
+        const tT = rTot / tSpd, cT = arrive(cD);
+        if (isFinite(cD) && cT < tT + 1.2) return { x: door.x, z: door.z, sprint: true };
+      }
       return { x: tx, z: tz, sprint: true };
     }
+    // ROUND 6 — AND HE DOES NOT STAND STILL ON THE ONLY DOOR EITHER. The
+    // intercept the search returns is often the door itself, which is correct
+    // arithmetic and, since this round, a losing line: a subject who has not
+    // bolted yet will not walk into a parked uniform, he turns back into the
+    // aisles and ditches the goods. So the moment this bot's own loitering has
+    // made him POSTED and the man is still walking, it stops waiting and closes
+    // on him. That is one shift's worth of learning for a person and one line
+    // here; without it the competent bot measures 60% instead of 74%, and all
+    // 14 of those points are trials that end with the item back on a shelf.
+    if (doorPosted() && !thief.bolted) return { x: tx, z: tz, sprint: true };
+
     // Wind management. Sprinting to arrive four seconds early buys nothing and
     // costs you the legs you need at the door; spend it when the intercept is
     // tight, or when he is close enough to grab.
@@ -2852,6 +3459,15 @@ export function createAgents(THREE, scene, world) {
       if (nav.clearSeg(cop.position.x, cop.position.z, tx, tz)
           && dist2d(cop.position.x, cop.position.z, tx, tz) < 20) {
         st.seen.x = tx; st.seen.z = tz; st.seenT = 0; st.lost = null;
+        // ROUND 6 — DID HE EVER ACTUALLY MAKE HIM. Seeing a shape down a lane
+        // at nineteen metres is a sighting; knowing which coat to grab in a
+        // doorway is a different and much closer thing. `identR` is most of an
+        // aisle from its mouth, which is exactly the look the dispatch buys
+        // you and exactly the look a man stood on the door never gets.
+        if (dist2d(cop.position.x, cop.position.z, tx, tz) < K.identR) {
+          st.madeT = (st.madeT || 0) + dt;
+          if (st.madeT > K.identT) st.made = true;
+        }
       } else {
         // ROUND 4 — the bot used to steer at where it last SAW him, which is
         // the one thing a competent player never does: a man who was heading
@@ -2870,7 +3486,7 @@ export function createAgents(THREE, scene, world) {
         if (st.bot !== 'cut') { tx = st.seen.x; tz = st.seen.z; }
         else {
           if (!st.lost) st.lost = { x: st.seen.x, z: st.seen.z };
-          let step = T.thiefRun * K.thiefTired * dt;
+          let step = K.thiefRun * K.thiefTired * dt;
           while (step > 0.05) {
             const d = nav.steer(exitF, st.lost.x, st.lost.z, { look: 3.0 });
             if (!d) break;
@@ -2949,6 +3565,12 @@ export function createAgents(THREE, scene, world) {
     const gapMul = opts.gapMul ?? 0.96;
     const traceK = opts.trace == null ? -1 : (opts.trace | 0);
     const trace = [];
+    // ROUND 6 — the ramp is a bench axis. Default 1 = round 5's difficulty, so
+    // every headline in this file's header stays directly comparable and a run
+    // that was taken at an easier setting says so on its own result object
+    // (`res.difficulty`), the same way `res.override` announces a sweep.
+    const saveLevel = DIFF.level;
+    if (opts.difficulty != null) DIFF.level = clamp(+opts.difficulty || 0, 0, 1);
     const save = { pos: cop.position.clone(), ud: { ...cop.userData } };
     const R = [];                            // per-trial records
     const bands = crossBands();              // the corridors the store ACTUALLY has
@@ -2980,7 +3602,7 @@ export function createAgents(THREE, scene, world) {
       let fx = w0 ? w0.x : EXIT.x - thief.position.x;
       let fz = w0 ? w0.z : EXIT.z - thief.position.z;
       const fm = Math.hypot(fx, fz) || 1; fx /= fm; fz /= fm;
-      thief.vel.set(fx * T.thiefWalk, 0, fz * T.thiefWalk);
+      thief.vel.set(fx * K.thiefWalk, 0, fz * K.thiefWalk);
 
       // ---- where the COP starts. This is the whole methodology. -------------
       // The default is `aisle`, which reproduces game.js postSpawn({kind:'aisle'})
@@ -3035,6 +3657,56 @@ export function createAgents(THREE, scene, world) {
         copF: null, copBuf: null, cfT: 0, planT: 0, route: null, campI: null,
         // All the desk actually told him: an aisle number. Not a position in it.
         blind: opts.blind !== false, seen: { x: aisleX(dAisle), z: 0 }, seenT: 0,
+        // ROUND 6 — has he had a close enough look to know WHICH BODY is his.
+        made: false, madeT: 0,
+      };
+
+      // ---- THE IDENTITY MODEL. ------------------------------------------
+      // Round 4 solved the door-camper by hiding the destination behind a
+      // second door. With one door back — the client asked for it and he is
+      // right — the destination is public again, and the ONE-DOOR TABLE
+      // MEASURED BEFORE ANY OF THIS ROUND'S CHANGES says exactly what that
+      // costs: cut 76.7 / 76.7 at off0 with two doors and one, but off1 goes
+      // 34.7 -> 73.3 and the camper goes 23.3 -> 71.7. Being sent to the wrong
+      // aisle stopped costing anything, because you did not need to find him:
+      // you needed to be at the only place he had to be.
+      //
+      // What the old bench was quietly asserting is that a cop standing in a
+      // doorway KNOWS WHICH OF THE PEOPLE COMING THROUGH IT IS THE SUBJECT. He
+      // does not. That is the entire job of the aisle number once there is one
+      // exit, and it was the one thing the instrument could not see, because
+      // botInput() is handed `thief` directly and every other blindness in this
+      // file is about POSITION.
+      //
+      // So: you cannot grab a man you never made. If the bot has never had a
+      // clear line to the subject inside identR, then at the moment of contact
+      // it grabs one of the bodies within identPick at random — and if that is
+      // a shopper it is a HARASSMENT COMPLAINT, which is what it is in the game
+      // too. One body inside the radius is not a choice and costs nothing, so
+      // this is inert everywhere except in a crowd, which in this store means
+      // the front end and the doorway. `ident:false` reproduces the old oracle
+      // exactly, and every one-door-vs-two-door comparison in this round's
+      // report is published both ways.
+      let falseGrabs = 0, identCool = 0, crowdAtGrab = 0;
+      grabGate = opts.ident === false ? null : (sub) => {
+        if (st.made) return true;
+        if (identCool > 0) return false;
+        let n = 0, hitI = -1, k = 0;
+        for (const o of shoppers) {
+          if (o.escaped || o.caught || !o.mesh.visible) continue;
+          if (dist2d(o.position.x, o.position.z, cop.position.x, cop.position.z) < K.identPick) n++;
+        }
+        crowdAtGrab = Math.max(crowdAtGrab, n);
+        if (n <= 1) return true;
+        const pickI = Math.floor(rnd() * n);
+        for (const o of shoppers) {
+          if (o.escaped || o.caught || !o.mesh.visible) continue;
+          if (dist2d(o.position.x, o.position.z, cop.position.x, cop.position.z) >= K.identPick) continue;
+          if (k++ === pickI) { hitI = o === sub ? 1 : 0; break; }
+        }
+        if (hitI === 1) return true;
+        falseGrabs++; identCool = K.identCool;      // he has the wrong man by the arm
+        return false;
       };
 
       let time = 0, done = 0, finalGap = 0, ducked = false;
@@ -3049,6 +3721,12 @@ export function createAgents(THREE, scene, world) {
       let bursts = 0, wasSprint = false, usedBand = null, wentBack = false;
       const api = {
         onBolt() {}, onHarass() {},
+        // ROUND 6 — a fourth ending. He waited you out and ditched the goods in
+        // a shelf, so there is nothing to arrest him for and nothing was lost.
+        // It is NOT a catch and it is NOT an escape, and pooling it into either
+        // one would hide the whole point: a cop who stands on the door turns
+        // every incident into this, which pays nothing.
+        onAbort() { done = 4; },
         onCatch() { done = 1; },
         onEscape() {
           done = 2;
@@ -3057,6 +3735,7 @@ export function createAgents(THREE, scene, world) {
         },
       };
       while (time < maxT && !done) {
+        if (identCool > 0) identCool -= dt;
         tick(dt, botInput(thief, mode, st, dt), api);
         time += dt;
         const g = dist2d(thief.position.x, thief.position.z, cop.position.x, cop.position.z);
@@ -3099,7 +3778,7 @@ export function createAgents(THREE, scene, world) {
           sumTs += thief.speed; sumCs += cu.speed; nS++;
           if (cu.gassed) gassedT += dt;
           if (cu.boost > 0) boostT += dt;
-          if (thief.dbgTarget < T.thiefRun * 0.92) slowT += dt;
+          if (thief.dbgTarget < K.thiefRun * 0.92) slowT += dt;
           sumCm += thief.dbgCorner ?? 1;
           if (Math.abs(cop.position.z) < HALF_LEN) {
             sumLat += Math.abs(cop.position.x - aisleX(aisleOf(cop.position.x))); nLat++;
@@ -3125,6 +3804,10 @@ export function createAgents(THREE, scene, world) {
         copLat: nLat ? sumLat / nLat : NaN,
         aisle: ai, wentBack, ducked, barged: thief.bargeN > 0,
         bursts, usedBand,
+        // ROUND 6 — the identity model's output: did he ever make the subject,
+        // how many bodies were inside grabbing range when he committed, and how
+        // many times he came away with a stranger's arm (= a complaint).
+        made: !!st.made, falseGrabs, crowdAtGrab,
         bargeStam: thief.bargeStam,
         atCop: atCop === true, doorT, exitUsed,
         caughtShoving: done === 1 && isFinite(doorT),
@@ -3136,6 +3819,7 @@ export function createAgents(THREE, scene, world) {
       });
     }
 
+    grabGate = null;
     cop.position.copy(save.pos);
     Object.assign(cop.userData, save.ud);
     reset();
@@ -3169,6 +3853,8 @@ export function createAgents(THREE, scene, world) {
       lungBroken: lungCheck().ok ? null : lungCheck(),
       catchRate: +(caught.length / n * 100).toFixed(1),
       escaped: esc.length, stalled: stall.length,
+      // He ditched it rather than walk into you. See onAbort above and dumpT.
+      ditched: R.filter((r) => r.done === 4).length,
       // Seconds from DISPATCH (not from the bolt) to the grab. If this is ~1s
       // the player never had a chase, whatever the catch rate says.
       catchFromDispatch_median: _f2(_q(caught.map((r) => r.time), 0.5)),
@@ -3260,10 +3946,249 @@ export function createAgents(THREE, scene, world) {
       thiefSlowFrac: _f2(_mean(R.map((r) => r.slowFrac).filter(isFinite))),
       cornerMul: _f2(_mean(R.map((r) => r.corner).filter(isFinite))),
       copLat_mean: _f2(_mean(R.map((r) => r.copLat).filter(isFinite))),
+      // ---- ROUND 6: one exit, and who he thinks he is holding ---------------
+      doors: EXITS.length,
+      difficulty: DIFF.level,
+      // Did he ever get a close enough look to know which coat to grab. This is
+      // the number that separates a dispatch you used from one you ignored, and
+      // with one door it is most of what the aisle number is now worth.
+      madePct: +(R.filter((r) => r.made).length / n * 100).toFixed(1),
+      // Grabbed a stranger. In the game that is a harassment complaint and three
+      // of them is traffic duty, so it is not a rounding error on a catch rate.
+      falseGrabs: R.reduce((a, r) => a + r.falseGrabs, 0),
+      falseGrabTrials: R.filter((r) => r.falseGrabs > 0).length,
+      // Biggest crowd inside grabbing range at the moment he committed.
+      crowdAtGrab_median: _f2(_q(R.map((r) => r.crowdAtGrab), 0.5)),
+      ident: opts.ident !== false,
     };
     if (opts.raw) res.raw = R;
     if (traceK >= 0) res.trace = trace;
+    DIFF.level = saveLevel;
     return res;
+  }
+
+  // =========================================================================
+  // benchShift — THE SECOND INSTRUMENT, AND THE ONE THE ONE-EXIT DESIGN LIVES
+  // OR DIES ON.
+  //
+  // bench() measures ONE CHASE from a dispatch that has already happened. It
+  // cannot see the thing this round changed, because deterrence acts BEFORE the
+  // theft: a camper's catch rate is high and always was, and under this round
+  // it is still high — he is standing on the only door. What collapses is that
+  // there is nothing to catch. A catch rate is a conditional probability and
+  // the condition is what moved, so the headline number for a camper has to be
+  // POINTS PER SHIFT, not percent.
+  //
+  // So this runs a whole shift: fourteen customers, subjects armed on game.js's
+  // own cadence, a cop driven by one of three policies, and it counts what the
+  // scoreboard would count. game.js scores a catch at 100 and an escape at 0,
+  // so points = 100 x catches; complaints are the other axis and three of them
+  // is a demotion, so they are reported rather than netted.
+  //
+  //   desk   sits at the service desk, reads the wall, and dispatches into the
+  //          mouth of the subject's aisle `deskLag` seconds after he conceals —
+  //          which is postSpawn('aisle'), the same teleport the DISPATCH button
+  //          performs. Then chases with `cut`. This is the intended player.
+  //   chase  same dispatch, naive pursuit. The intended player, badly.
+  //   camp   walks to the door at the start of the shift and stands on it. He
+  //          never reads the wall, never dispatches, and never has to.
+  // =========================================================================
+  function benchShift(opts = {}) {
+    const n = opts.n ?? 8;
+    const minutes = opts.minutes ?? 4;
+    const policy = opts.policy ?? 'desk';
+    const dt = 1 / 60;
+    const saveLevel = DIFF.level;
+    const savePos = cop.position.clone(), saveUd = { ...cop.userData };
+    const rows = [];
+    // game.js's PACE table, as of round 6. Density is ITS axis, so this is a
+    // copy for measurement only and it is marked as one: if game.js moves its
+    // table, this stops describing the shift and has to be re-copied.
+    const PACE = [
+      { at: 0, live: 1, gap: [26, 38] },
+      { at: 150, live: 2, gap: [18, 28] },
+      { at: 330, live: 3, gap: [12, 20] },
+    ];
+    const paceAt = (c) => { let p = PACE[0]; for (const q of PACE) if (c >= q.at) p = q; return p; };
+
+    for (let k = 0; k < n; k++) {
+      setSeed((opts.seed ?? 5150) + k * 7919);
+      reset();
+      for (const s of shoppers) resetShopper(s, false);
+      let clock = 0, rearm = 2.0;
+      let incidents = 0, catches = 0, escapes = 0, aborts = 0, complaints = 0;
+      let bolts = 0, thefts = 0, decoys = 0;
+      let postedT = 0;
+      // The cop's own little state machine. `job` is the subject he has been
+      // dispatched onto, null when he is at the desk.
+      let job = null, dispatchIn = 0;
+      const st = {
+        gotBoost: true, puTarget: null, puT: 0, detour: 7,
+        path: [], repath: 0, goal: { x: 0, z: 0 },
+        lag: 0.16, hist: [0, 0], bot: policy === 'chase' ? 'chase' : 'cut',
+        conserve: opts.conserve, blown: false,
+        copF: null, copBuf: null, cfT: 0, planT: 0, route: null, campI: 0,
+        blind: true, seen: { x: 0, z: 0 }, seenT: 0, made: false, madeT: 0,
+      };
+      const api = {
+        onBolt() { bolts++; },
+        onCatch() { catches++; job = null; st.made = false; st.madeT = 0; },
+        onEscape() { escapes++; job = null; st.made = false; st.madeT = 0; },
+        onHarass() { complaints++; },
+        onAbort() { aborts++; },
+        onLeave() {},
+      };
+      // The camper walks to the door once and stays. Everyone else starts at
+      // the desk, which is 40 m from the only exit and is NOT a post on it —
+      // that separation is what makes deterrence a choice rather than a tax.
+      cop.position.set(SERVICE_DESK.x, 0, SERVICE_DESK.z);
+      solids.resolve(cop.position, BODY_R);
+      cop.userData.vel.set(0, 0, 0); cop.userData.speed = 0;
+
+      const armOne = () => {
+        const live = shoppers.filter((s) => s.guilty && !s.escaped && !s.caught && s.mesh.visible).length;
+        if (live >= paceAt(clock).live) return false;
+        const pool = shoppers.filter((s) => !s.guilty && !s.escaped && !s.caught && s.mesh.visible
+          && !s.leaving && s.angry <= 0
+          && dist2d(s.position.x, s.position.z, cop.position.x, cop.position.z) > 9);
+        if (!pool.length) return false;
+        const s = pool[Math.floor(rnd() * pool.length)];
+        s.guilty = true; s.stole = false; s.bolted = false; s.aborts = 0;
+        s.chill = 0; s.balk = 0; s.leaving = false;
+        s.concealT = rr(10, 22);
+        return true;
+      };
+
+      const maxT = minutes * 60;
+      while (clock < maxT) {
+        if (opts.difficulty != null) DIFF.level = clamp(+opts.difficulty || 0, 0, 1);
+        else DIFF.level = difficultyForClock(clock);
+
+        // ---- spawn pacing, on game.js's cadence --------------------------
+        rearm -= dt;
+        if (rearm <= 0) {
+          const g = paceAt(clock).gap;
+          if (armOne()) rearm = rr(g[0], g[1]); else rearm = 2.0;
+        }
+
+        // ---- what the cop is doing ---------------------------------------
+        let input;
+        if (policy === 'camp') {
+          const e = EXITS[0];
+          const d = dist2d(cop.position.x, cop.position.z, e.x, e.z);
+          // Once somebody is inside grabbing range, stop being furniture.
+          let tgt = shoppers.find((s) => s.guilty && s.bolted && !s.escaped && !s.caught);
+          if (tgt && dist2d(tgt.position.x, tgt.position.z, cop.position.x, cop.position.z) < 4.0) {
+            st.made = st.made || false;
+            input = botInput(tgt, 'none', st, dt);
+          } else {
+            const p = nav.path(cop.position.x, cop.position.z, e.x, e.z);
+            const holder = { position: cop.position, path: p };
+            const dir = followPath(holder, 0);
+            input = dir ? { x: dir.x, z: FWD_SIGN * dir.z, sprint: d > 6 } : { x: 0, z: 0, sprint: false };
+          }
+        } else {
+          // THE DESK. He is watching the wall; the tell fires when the subject
+          // finishes concealing, and he presses DISPATCH `deskLag` later —
+          // which is a teleport to the mouth of that man's aisle, exactly what
+          // game.js's postSpawn('aisle') does.
+          if (!job) {
+            const tell = shoppers.find((s) => s.guilty && s.stole && !s.escaped && !s.caught && s.mesh.visible);
+            if (tell && dispatchIn <= 0) { dispatchIn = opts.deskLag ?? 4.0; }
+            if (tell && dispatchIn > 0) {
+              dispatchIn -= dt;
+              if (dispatchIn <= 0) {
+                job = tell; incidents++;
+                const a = clamp(aisleOf(tell.position.x) + (opts.misaim ?? 0), 0, AISLE_COUNT - 1);
+                cop.position.set(aisleX(a), 0, -HALF_LEN + 3.0);
+                solids.resolve(cop.position, BODY_R);
+                cop.userData.vel.set(0, 0, 0); cop.userData.speed = 0;
+                cop.userData.stamina = K.staminaMax; cop.userData.gassed = false;
+                st.path = []; st.repath = 0; st.made = false; st.madeT = 0;
+                st.seen.x = aisleX(a); st.seen.z = 0; st.seenT = 0; st.lost = null;
+                st.hist = [tell.position.x, tell.position.z];
+                st.copF = null; st.cfT = 0; st.planT = 0; st.route = null;
+              }
+            }
+          }
+          if (job && (job.escaped || job.caught || !job.guilty)) job = null;
+          if (job) input = botInput(job, 'none', st, dt);
+          else {
+            // Back to the desk between cases. Walking, so the deterrence field
+            // sees a man moving and not a man posted.
+            const d = dist2d(cop.position.x, cop.position.z, SERVICE_DESK.x, SERVICE_DESK.z);
+            if (d < 1.2) input = { x: 0, z: 0, sprint: false };
+            else {
+              const p = nav.path(cop.position.x, cop.position.z, SERVICE_DESK.x, SERVICE_DESK.z);
+              const dir = followPath({ position: cop.position, path: p }, 0);
+              input = dir ? { x: dir.x, z: FWD_SIGN * dir.z, sprint: false } : { x: 0, z: 0, sprint: false };
+            }
+          }
+        }
+
+        tick(dt, input, api);
+        clock += dt;
+        if (doorPosted()) postedT += dt;
+        for (const s of shoppers) {
+          if (s.gest && s.gest.tell === 'decoy' && s.gestT <= dt) decoys++;
+          // A THEFT THAT ACTUALLY HAPPENED, counted once, whether or not the
+          // player ever saw it. This is the number the camper has to be judged
+          // on: his catch RATE is a percentage of whatever got as far as this
+          // line, and the whole claim of the one-exit design is that standing
+          // on the door drives this to zero rather than driving the rate down.
+          if (s.guilty && s.stole && !s.__inc) { s.__inc = 1; thefts++; }
+        }
+      }
+      for (const s of shoppers) s.__inc = 0;
+      rows.push({
+        thefts, catches, escapes, aborts, complaints, bolts,
+        points: catches * 100, decoys,
+        postedFrac: postedT / maxT,
+      });
+    }
+
+    DIFF.level = saveLevel;
+    cop.position.copy(savePos); Object.assign(cop.userData, saveUd);
+    grabGate = null; reset();
+    const mean = (f) => +(_mean(rows.map(f))).toFixed(2);
+    return {
+      policy, minutes, n, doors: EXITS.length,
+      misaim: opts.misaim ?? 0,
+      difficulty: opts.difficulty == null ? 'ramped' : opts.difficulty,
+      // THE HEADLINE FOR THIS INSTRUMENT.
+      pointsPerShift: mean((r) => r.points),
+      catchesPerShift: mean((r) => r.catches),
+      escapesPerShift: mean((r) => r.escapes),
+      // THE ONE THAT ANSWERS THE BRIEF. A theft that actually happened, counted
+      // whether or not the player saw it. If deterrence works, this is what
+      // goes to zero for a camper, and his catch rate is then a percentage of
+      // nothing — which is why a catch rate alone cannot describe him.
+      incidentsPerShift: mean((r) => r.thefts),
+      boltsPerShift: mean((r) => r.bolts),
+      abortsPerShift: mean((r) => r.aborts),
+      complaintsPerShift: mean((r) => r.complaints),
+      decoysPerShift: mean((r) => r.decoys),
+      // Fraction of the shift the cop spent posted on the way out.
+      postedFrac: mean((r) => r.postedFrac),
+      raw: opts.raw ? rows : undefined,
+    };
+  }
+
+  // DOES CAMPING THE DOOR PAY? With one exit this cannot be answered with a
+  // catch rate, so it is answered with the scoreboard. Three players, same
+  // shift length, same spawn cadence.
+  function benchIncome(n = 8, opts = {}) {
+    const o = { ...opts, n };
+    const fmtS = (r) => `pts/shift ${r.pointsPerShift}`
+      + ` | incidents ${r.incidentsPerShift} caught ${r.catchesPerShift}`
+      + ` lost ${r.escapesPerShift} | balked ${r.abortsPerShift}`
+      + ` | complaints ${r.complaintsPerShift}`
+      + ` | on the door ${(r.postedFrac * 100).toFixed(0)}%`;
+    return {
+      desk: fmtS(benchShift({ ...o, policy: 'desk' })),
+      naive: fmtS(benchShift({ ...o, policy: 'chase' })),
+      camper: fmtS(benchShift({ ...o, policy: 'camp' })),
+    };
   }
 
   // Every scenario is measured FROM THE REAL SPAWN unless you say otherwise.
@@ -3321,12 +4246,52 @@ export function createAgents(THREE, scene, world) {
   return {
     cop, shoppers, powerups, reset,
     update: tick,
-    bench, benchAll, benchLine, benchReal, benchCamp,
+    bench, benchAll, benchLine, benchReal, benchCamp, benchShift, benchIncome,
+
+    // ROUND 6 CONTRACT ADDITION — THE DIFFICULTY RAMP (additive; a game.js that
+    // never calls this gets round 5's difficulty exactly, because level 1 IS
+    // round 5 and 1 is the default).
+    //
+    //   in game.js's update, once a frame, idempotent and free:
+    //       const a = agentsOf();
+    //       a.setDifficulty(a.difficultyForClock(st.clock));
+    //
+    // DENSITY IS NOT ON THIS DIAL. game.js owns how many cases are open and how
+    // often one is armed (its PACE table); this owns how hard ONE of them is —
+    // his running speed, the length of his drift out to the door, the "oh shit"
+    // beat before the bolt, how much panic fuel he has, and how long the tell
+    // is held on the monitor. The two ramps share the 0/150/330 s breakpoints
+    // on purpose so the shift reads as one curve; if game.js moves its table,
+    // move RAMP with it rather than letting them drift apart.
+    //
+    // The lever the game builder asked for by name is `rampWalk`: the drift out
+    // to the door is 0.80x for the first couple of minutes, so the tell-to-door
+    // window — route metres over thiefWalk — is 25% longer while the player is
+    // still learning to read the wall. That is the client's "it should take a
+    // minute", bought on the difficulty axis where it belongs.
+    setDifficulty(d) { DIFF.level = clamp(+d || 0, 0, 1); return DIFF.level; },
+    get difficulty() { return DIFF.level; },
+    difficultyForClock, get ramp() { return RAMP; },
+
+    // ROUND 6 — the one-exit economy, for anyone who wants to show it.
+    // `posted` is true while the cop has been loitering within deterR route
+    // metres of the way out for longer than deterT: the state in which nobody
+    // in the building will start a theft. game.js may want it on the HUD — a
+    // player who is being punished by an ABSENCE needs to be told that is what
+    // is happening, or a quiet shift reads as a broken one. Suggested copy is
+    // the fiction, not the mechanic: "FLOOR IS QUIET — NOBODY'S GOING TO TRY IT
+    // WITH YOU STOOD THERE".
+    get posted() { return doorPosted(); },
+    get postedFor() { return postT; },
+    // Decoy clips, for a critic who wants to drive one on demand:
+    //   agents.playGesture(agents.shoppers[3], 'restash')
+    gestures: GESTURES,
+    playGesture(s, id) { return startGesture(s, 'decoy', id); },
     // debug handles
     // game.js counts down the door alarm off a thief's speed. TUNING.thiefRun is
     // his opening ceiling, not his cruise — use these instead so the ETA is true.
-    thiefCruise: () => T.thiefRun * K.thiefTired,
-    thiefTop: () => T.thiefRun * K.thiefPanic,
+    thiefCruise: () => K.thiefRun * K.thiefTired,
+    thiefTop: () => K.thiefRun * K.thiefPanic,
     get nav() { return nav; }, get exitField() { return exitF; }, toExit,
     // ROUND 4 CONTRACT ADDITION (additive; nothing that ignores it breaks).
     // There are now TWO ways out of this store — see EXIT_SPEC. Anything that

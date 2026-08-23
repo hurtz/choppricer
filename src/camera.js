@@ -37,29 +37,38 @@ import {
 // the next run, so every aisle in the store is visible at once and none of them
 // is a corridor. That is a tactical map of a supermarket. It is not being in one.
 //
-// THE NEW BAND. Two hard numbers set it:
-//   2.05 m  gondola top. Below it the camera is in the shelving.
-//   2.50 m  the bottom edge of the hanging aisle signs (SIGN_Y 3.32, SIGN_H 1.64
-//           in store.js), which hang over the aisle centreline at four z planes
-//           per aisle — both store ends and both sides of the mid-store walkway.
-// So there is a 45 cm slot, 2.05..2.50, where the camera flies over the shelves
-// and under the signage, and that slot is the shot: the gondolas become walls,
-// the signs pass overhead the way they do when you walk under one, and the
-// ceiling occupies the top third of frame from about 9 m out.
+// THE NEW BAND. Three hard numbers set it, and only the first two were the ones
+// I expected:
+//   2.05 m  gondola deck top. Below it the lens is in the shelving.
+//   2.47 m  the underside of a hanging aisle sign — the CARRIER, not the panel
+//           (store.js hangs a fix() box 3 cm taller than the artwork). They hang
+//           over the aisle centreline at four z planes per aisle: both store
+//           ends and both sides of the mid-store walkway.
+//   3.80 m  the top of the SIGN GANTRY bolted to every gondola — uprights at
+//           SHELF_H+0.30, slot panels at +0.55, a sage signage band at +1.30.
+//           None of it has a collider, because none of it ever stopped a person.
 //
-// It is also, measured honestly, the worst height in the store for FINDING a man.
-// To see a 1.7 m head standing in the NEXT aisle over, the lens has to clear the
-// far top edge of the gondola between you: it needs 2.63 m. So the beautiful
-// height and the informative height are on opposite sides of the sign line, and
-// they cannot both be the resting height.
+// So the slot is 2.05..2.47, and it is not a compromise, it is the only place a
+// camera can be in this store. 2.36 sits in the middle of it: 31 cm over the
+// decks, 11 cm under the signage. From there the gondolas are walls, the signs
+// pass overhead the way they do when you walk under one, and the ceiling — which
+// the old 6.4 m rig lived ABOVE and therefore never showed anyone — takes the
+// top third of frame from about 9 m out.
 //
-// THE RESOLUTION IS THE WHOLE DESIGN: the camera lives in the slot when you have
-// time, and buys height with the gap when you do not. Walking, it sits at 2.44 —
-// under the signs, in the aisle, no idea what is in aisle 5. Once a man is
-// running and the gap opens it climbs on `gap01` to about 3.5, clears the shelf
-// tops, and hands the sightline back. You get the photograph when you can afford
-// it and the floor plan when you need it, and the trade is legible while it
-// happens because the store visibly opens up underneath you.
+// I SPENT THIS ROUND BELIEVING THE OPPOSITE. The plan was a camera that lived
+// low when you had time and bought height with the gap when you needed to find
+// a man, on the reasoning that clearing a 2.05 m shelf top restores the
+// sightline into the next aisle. It does not, because there is no 2.05 m shelf
+// top: number three above is what is actually between you and him, and nothing
+// under a 5.2 m ceiling clears it. Measured on a replayed chase against the real
+// scene, the rise moved visibility from 10.7% to 10.9% and made keeping him IN
+// FRAME slightly worse. See the gap block in T for the numbers and for the
+// wrong version of the same measurement that nearly shipped.
+//
+// What that leaves is a better camera than the one I set out to build: it sits
+// in the slot all the time. The gap still widens the frame — distance and FOV,
+// so more of the aisle and more of the cross-aisle mouths are in shot — but it
+// no longer climbs out of the store to do it.
 // ===========================================================================
 
 // ===========================================================================
@@ -112,11 +121,21 @@ function wrapPi(a) {
 // ---------------------------------------------------------------------------
 const T = {
   // --- resting shot (walking the floor, no chase) --------------------------
-  // 2.44 is the slot: 39 cm over the gondolas, 6 cm under the sign edge.
-  // MEASURED: the first build let the pursuit rise carry the lens to 3.16 m and
-  // shots/cam_r1_gassed.png came back with a full-screen CRACKERS / NUTS banner
-  // across the middle of the frame. Under 2.46 no guard is needed at all.
-  height: 2.44,
+  // 2.36 is the slot: 31 cm over the gondolas, 11 cm under the signage.
+  // MEASURED TWICE, and the second one is the reason this is 2.36 and not 2.44.
+  //   1. The first build let the pursuit rise carry the lens to 3.16 m and
+  //      shots/cam_r1_gassed.png came back with a full-screen CRACKERS / NUTS
+  //      banner across the middle of frame.
+  //   2. With the rise fixed, the CORNER frame still came back as a wall of
+  //      cream. The panel bottom is 2.50, but the sign sits on a carrier box —
+  //      store.js: fix(x, SIGN_Y, z, SIGN_W+0.06, SIGN_H+0.06, 0.07) — which is
+  //      3 cm taller, so the real underside of a hanging sign is 2.47, not 2.50.
+  //      2.44 was clearing it by three centimetres and the camera was grazing
+  //      the carrier every time it passed one. Nothing in the occlusion metric
+  //      caught it because the metric only modelled gondolas.
+  // The lesson is the cheap one: measure the thing that is actually in the way,
+  // not the thing named in the brief.
+  height: 2.36,
   dist: 5.55,
   // Aim height. 1.30 (chest) was the first guess and it is wrong: aiming low
   // tips the frame DOWN, which parks the cop's head on the vanishing point —
@@ -146,26 +165,44 @@ const T = {
   // chase* is the flat lift the moment a man bolts. gap* is the part that scales
   // with how far away he is, and it is the playability half of this whole file.
   //
-  // MEASURED, and this is the number that decides whether the low camera is
-  // allowed to exist. One 420-frame chase was recorded as a tape of cop and
-  // thief positions and replayed under each rig, so the trajectory is identical
-  // and the camera is the only variable. "Visible" = the thief projects inside
-  // the frame AND the segment from lens to his chest clears every gondola:
+  // MEASURED, TWICE, AND THE SECOND ONE OVERTURNED THE FIRST. This is the
+  // number that was supposed to decide whether the low camera is allowed to
+  // exist, and the answer turned out to be that it does not matter at all.
   //
-  //     no rise      lens avg 2.69 m     visible 63.8%
-  //     gapHeight 0.85   avg 3.22 m      visible 69.8%     <- shipped
-  //     gapHeight 1.60   avg 3.68 m      visible 71.2%
+  // Method: record one chase as a tape of cop and thief positions, replay it
+  // under each rig so the trajectory is identical and the camera is the only
+  // variable, and count frames where the thief is on screen AND has a clear
+  // line from the lens to his head, chest or hip.
   //
-  // So the rise is worth six points and the second half of it is worth 1.4 —
-  // it saturates just as the frame starts going back to being a floor plan.
-  // 0.85 takes nearly all of the benefit at the smallest cost to the shot.
+  // First pass modelled the shelving as 2.05 m boxes — SHELF_H, straight out of
+  // config — and reported that lifting the lens took visibility from 63.8% to
+  // 69.8%. On that number the gap rise was the playability half of this file.
   //
-  // Do not trust an uncontrolled version of this test. Running it as three live
-  // chases instead of one replayed tape gave 20.4 / 45.8 / 54.2 for the same
-  // three rigs — chase-to-chase variance dwarfing the effect, and a number I
-  // nearly reported as a doubling.
-  chaseHeight: +0.26, chaseLook: +0.05,
-  gapHeight: +0.85, gapDist: +1.60, gapFov: +5.0, gapLook: +0.16,
+  // Then a raycast against the ACTUAL SCENE found the thing that had been
+  // filling the corner frame sitting at y 2.39, and a gondola turned out to
+  // carry uprights, slot panels and a sage signage band to about 3.8 m. There
+  // is no 2.05 m shelf in this store to see over. Re-run against real geometry:
+  //
+  //     gapHeight 0      lens avg 2.60 m    visible 10.7%   on screen 82.3%
+  //     gapHeight 0.85   lens avg 2.91 m    visible 10.9%   on screen 78.1%
+  //
+  // Two tenths of a point, and it makes KEEPING him in frame slightly worse.
+  // The rise bought nothing, and everything expensive in this file — the sign
+  // dolly, the height cap, the boom budget — existed to pay for it.
+  //
+  // So it is zero. A thief who leaves your aisle is not visible from anywhere
+  // under a 5.2 m ceiling in a store shelved like this one, and no camera height
+  // changes that; the pursuit panel's DOOR / HIM / YOU / OUT IN readout is the
+  // mechanism that answers "where is he", and it is a good one. What the gap
+  // still buys is FRAMING — distance and FOV, so more of the aisle and more of
+  // the cross-aisle mouths are in shot. Those stay.
+  //
+  // The general lesson, which cost this round about an hour: a measurement is
+  // only as good as its model of the world. Both of my first two occlusion
+  // models were made of config constants and both were confidently wrong. The
+  // scene itself was always right there to ask.
+  chaseHeight: +0.16, chaseLook: +0.05,
+  gapHeight: 0.0, gapDist: +1.60, gapFov: +5.0, gapLook: +0.16,
   gapNear: 4.0, gapFar: 16.0,
   // YOUR chase, not any chase. Without this the rig read a man who had bolted
   // forty metres away in another department as a pursuit and sat in the high
@@ -205,13 +242,28 @@ const T = {
   reArm: 1.00, reArmStill: 0.25,
 
   // --- corner behaviour ----------------------------------------------------
-  // Mid-swing the lens is on a diagonal, which in a grid of gondolas means it
-  // is over a shelf run with another shelf run between it and the cop. Pulling
-  // the dolly in and lifting during the swing addresses both: shorter arc, and
-  // the sightline clears the run. Reasoned, not swept — but the corner frame
-  // (shots/cam_r1_corner.png, caught at 65% through the swing) has the cop clear
-  // and no shelf in the lens, so it is at least not wrong.
-  swingDolly: 0.30, swingLift: 0.42,
+  // Mid-swing the lens is on a diagonal, which in a grid of gondolas means it is
+  // over a shelf run with another shelf run between it and the cop. The first
+  // corner frame came back as a full-screen wall of cream.
+  //
+  // MEASURED. A soak walks aisle 4 end to end (all four sign planes), turns 180
+  // at the back, comes back and turns into the mid walkway — 1018 frames — and
+  // counts frames where a gondola or a sign slab sits on the segment from lens
+  // to cop's chest:
+  //
+  //     swingDolly 0.30, swingFollow 0      6.68% hidden
+  //     swingDolly 0.30, swingFollow 2.4    6.68%
+  //     swingDolly 0.58, swingFollow 0      4.13%
+  //     swingDolly 0.58, swingFollow 2.4    0.00%   <- shipped
+  //
+  // Read that carefully, because it is not what I expected and not what I first
+  // wrote down. NEITHER CONSTANT DOES ANYTHING USEFUL ALONE. Tightening the
+  // follow spring on its own changes nothing at all; pulling the dolly in on its
+  // own gets a third of the way. They only work together: the dolly has to bring
+  // the lens close enough that the aisle cell it shares with the cop has no shelf
+  // in it, and THEN the spring has to stop framing where he was a third of a
+  // second ago. Either one without the other and the corner still eats him.
+  swingDolly: 0.58, swingLift: 0.50, swingFollow: 2.4,
 
   // --- over the shoulder ---------------------------------------------------
   // Round 1's first render was otherwise right and unplayable: dead centre in a
@@ -231,38 +283,53 @@ const T = {
   shoulderSide: 1,     // +1 puts the cop left of centre
 
   // --- sign clearance: SLIDE OUT, DO NOT DUCK ------------------------------
-  // The gap rise pushes the lens through 2.50 m, and 2.50 m is the bottom edge
-  // of the hanging aisle signs. Measured, not predicted: shots/cam_r1_gassed.png
-  // caught it — a full-screen CRACKERS / NUTS banner across the middle of the
-  // frame with the man being chased somewhere behind it.
+  // The lens is not pinned at one height — the chase lift and the corner lift
+  // carry it between 2.35 and 2.63, and the signage starts at 2.47. So it does
+  // still cross the sign line, just by 16 cm instead of the 80 that the deleted
+  // gap rise used to cost. Measured, not predicted: shots/cam_r1_gassed.png
+  // caught the first version of this — a full-screen CRACKERS / NUTS banner
+  // across the middle of the frame with the man being chased somewhere behind it.
   //
   // The obvious fix is to duck under the sign as it comes up. It is the wrong
-  // one: a 0.9 m vertical dip inside a 1.3 m window at 6 m/s is a 4 m/s lurch,
-  // four times per aisle, which is precisely the motion-sickness case the brief
-  // rules out. And it needs the sign's z planes, i.e. a fourth private copy of
-  // store.js's floor plan.
+  // one: a vertical dip inside a 1.3 m window at 6 m/s is a lurch, four times
+  // per aisle, which is precisely the motion-sickness case the brief rules out.
+  // And it needs the sign's z planes, i.e. another private copy of store.js's
+  // floor plan.
   //
   // Slide instead. A sign is only 1.86 m wide on a 4 m aisle, so going wide of
   // the centreline clears the panel, its rail and its two hangers, and needs NO
   // z knowledge at all — only that a sign hangs over the middle of an aisle,
   // which is what makes it a sign. It rides `height`, so the camera cranes out
   // sideways as it rises and back in as it settles: one horizontal move instead
-  // of four vertical ones. It also widens the shoulder parallax exactly when the
-  // gap is widest, which is when you most need to see past the man's back.
+  // of four vertical ones. It also widens the shoulder parallax while it is out
+  // there, which is free.
   //
   // 1.20 m is what it takes to MISS a sign, and missing it is not enough: it
   // leaves the panel edge 0.21 m off the lens, and a 1.86 x 1.64 m board at
-  // 0.21 m is most of the screen. shots/cam_sw_clear120.png is that frame. 1.72
-  // puts it at 0.71 m, where it sweeps the edge of frame the way signage does
-  // when you walk under it — see cam_sw_clear172.png for the same instant.
-  //
-  // The other way out was to climb OVER them (4.20+). Measured and rejected:
-  // cam_sw_high.png at 4.37 m still has a sign filling the corner, because you
-  // pass just as close on the way up, and the store underneath has gone back to
-  // being the floor plan this file exists to stop it being.
-  signLo: 2.46,        // sign panels start at 2.50 (SIGN_Y 3.32 - SIGN_H/2)
-  signClear: 1.72,     // half of SIGN_W 1.86 is 0.93; the rail takes it to 1.01
+  // 0.21 m is most of the screen — shots/cam_sw_clear120.png is that frame, and
+  // cam_sw_clear172.png is the same instant with the lens further out, where the
+  // sign sweeps the edge of frame the way signage does when you walk under it.
+  // The shipped 1.66 is that, minus the 6 cm the boom radius needs back (see
+  // `lat`). The other way out was to climb OVER them: cam_sw_high.png at 4.37 m
+  // still has a sign filling the corner, because you pass just as close on the
+  // way up, and the store underneath has gone back to being a floor plan.
+  signLo: 2.38,        // underside of the sign CARRIER, 2.47, minus 9 cm
+  signClear: 1.66,     // half of SIGN_W 1.86 is 0.93; the rail takes it to 1.01
   signRamp: 0.50,      // metres of height over which the dolly widens
+  // Where the height cap lets go. It has to be OUTSIDE the sign footprint
+  // (1.01 m), not merely on the way there: at 0.78 the cap released while the
+  // lens was still directly under the panel, which is the other half of the
+  // wall-of-cream corner frame.
+  signFree: 1.06,
+  // Hard ceiling on how far off the lane centreline the lens or the aim may sit,
+  // and it has to be budgeted against `boomR`, not just against the aisle.
+  // AISLE_GAP/2 is 2.00 to the gondola face. Round 1 set this to 1.78 with a
+  // 0.34 boom radius: 1.78 + 0.34 = 2.12, so the swept lens was permanently 12
+  // cm INSIDE the inflated shelf and the boom collapsed to its minimum on every
+  // frame the gap rise was active — avgBoom 2.92 m against a 5.55 m rig, and a
+  // thief visible in 0% of a replayed chase. `lat + boomR` and
+  // `signClear + boomR` must both stay under 2.00.
+  lat: 1.70, boomR: 0.26,
 
   // --- lane framing --------------------------------------------------------
   // The lens rides the AISLE centreline, not the cop's x. He is 4 m of walkable
@@ -305,6 +372,77 @@ export function createCamera(THREE, cam) {
   const V = new THREE.Vector3();
   const AIM = new THREE.Vector3();
 
+  // --- the store's own colliders, for boom collision -----------------------
+  // Round 1 spent three passes guessing what was in front of the lens from
+  // config numbers and got it wrong every time — first the gondolas (2.05),
+  // then the sign panels (2.50), then the sign carriers (2.47). The thing that
+  // was ACTUALLY filling the corner frame turned out to be none of them: a
+  // raycast against the live scene put it at y 2.39, x 1.97 off the lane, which
+  // is the gondola's SIGN GANTRY — uprights at SHELF_H+0.30, slot panels at
+  // +0.55, a sage signage band at +1.30 x 0.70 tall. A shelf run is 3.7 m tall
+  // as far as a camera is concerned, not 2.05.
+  //
+  // So stop asserting the floor plan and read it. store.js publishes Box3
+  // colliders (74 of them — nothing, per frame) and they are the authoritative
+  // footprint of everything solid. The one adjustment: a collider's height is
+  // sized for a PERSON, and nothing above head height was ever given one, so
+  // anything tall enough to stop a body is treated as solid to the ceiling.
+  // Things shorter than that — checkout counters, bins, produce tables — keep
+  // their real height and the camera may fly over them, which it should.
+  let boxes = null;
+  function solids() {
+    if (boxes) return boxes;
+    try {
+      const w = typeof window !== 'undefined' && window.__CHOP && window.__CHOP.world;
+      const cs = w && w.colliders;
+      if (!cs || !cs.length) return null;
+      boxes = cs.map((b) => ({
+        x0: b.min.x, x1: b.max.x, z0: b.min.z, z1: b.max.z,
+        // A gondola's collider stops at 2.0 because that is where it stops
+        // stopping people; the sign gantry bolted to it goes to about 3.8
+        // (SHELF_H + 1.30 + 0.35) and has no collider at all. Walls declare
+        // their real height and keep it. Round 1 first wrote this as "anything
+        // over 1.5 is solid to the ceiling", which is what strangled the wide
+        // pursuit shot — at 5.2 there is no height the lens can rise to.
+        y1: b.max.y > 2.5 ? b.max.y : b.max.y > 1.5 ? SHELF_H + 1.75 : b.max.y + 0.15,
+      }));
+    } catch (e) { boxes = null; }
+    return boxes;
+  }
+  // Slab sweep from the aim point back along the boom. Returns the fraction of
+  // the boom that is clear, so a wall or an endcap tucks the lens in behind the
+  // cop instead of putting itself between them.
+  function boomClear(ax, ay, az, ex, ey, ez, r) {
+    const bs = solids();
+    if (!bs) return 1;
+    const dx = ex - ax, dy = ey - ay, dz = ez - az;
+    let best = 1;
+    for (let i = 0; i < bs.length; i++) {
+      const b = bs[i];
+      let t0 = 0, t1 = best;
+      if (dx > -1e-9 && dx < 1e-9) { if (ax < b.x0 - r || ax > b.x1 + r) continue; }
+      else {
+        let a = (b.x0 - r - ax) / dx, c = (b.x1 + r - ax) / dx;
+        if (a > c) { const s = a; a = c; c = s; }
+        if (a > t0) t0 = a; if (c < t1) t1 = c; if (t0 > t1) continue;
+      }
+      if (dy > -1e-9 && dy < 1e-9) { if (ay < -r || ay > b.y1 + r) continue; }
+      else {
+        let a = (-r - ay) / dy, c = (b.y1 + r - ay) / dy;
+        if (a > c) { const s = a; a = c; c = s; }
+        if (a > t0) t0 = a; if (c < t1) t1 = c; if (t0 > t1) continue;
+      }
+      if (dz > -1e-9 && dz < 1e-9) { if (az < b.z0 - r || az > b.z1 + r) continue; }
+      else {
+        let a = (b.z0 - r - az) / dz, c = (b.z1 + r - az) / dz;
+        if (a > c) { const s = a; a = c; c = s; }
+        if (a > t0) t0 = a; if (c < t1) t1 = c; if (t0 > t1) continue;
+      }
+      if (t0 < best) best = t0 < 0 ? 0 : t0;
+    }
+    return best;
+  }
+
   // --- persistent rig state ------------------------------------------------
   let fx = 0, fz = 0;                 // smoothed focus point (world XZ)
   let started = false;
@@ -313,10 +451,10 @@ export function createCamera(THREE, cam) {
   let sign = 1;                       // +1 / -1 along that axis
   let axisT = 0, signT = 0, lockT = 0;
   let armed = true, agreeT = 0, stillT = 0;   // see WHICH END OF IT
-  let vAlong = 0, vCross = 0;         // low-passed velocity in axis frame
+  let vAlong = 0;                     // low-passed velocity along the axis
   let h = T.height, d = T.dist, fov = T.fov, look = T.look;
   let sprint01 = 0, gas01 = 0, chase01 = 0, gap01 = 0, boost01 = 0, swing01 = 0;
-  let bobP = 0, shake = 0, prevStagger = 0;
+  let bobP = 0, shake = 0, prevStagger = 0, boomT = 1;
   const dbg = {};                      // last frame's corridor read, for debug()
 
   // Nearest aisle centreline to an x, and how far off it we are.
@@ -441,7 +579,7 @@ export function createCamera(THREE, cam) {
         // that, then start the lockout.
         const nv = axisX ? vx : vz;
         sign = nv >= 0 ? 1 : -1;
-        signT = 0; vAlong = nv; vCross = 0; armed = true; agreeT = 0;
+        signT = 0; vAlong = nv; armed = true; agreeT = 0;
       }
 
       // ---- WHICH END OF IT ------------------------------------------------
@@ -516,7 +654,8 @@ export function createCamera(THREE, cam) {
       const tx = c.x + bx * ld, tz = c.z + bz * ld;
       let ex = tx - fx, ez = tz - fz;
       const alo = ex * bx + ez * bz, cro = ex * rx + ez * rz;
-      const kA = 1 - Math.exp(-T.followAlong * dt), kC = 1 - Math.exp(-T.followCross * dt);
+      const sf = 1 + T.swingFollow * swing01;
+      const kA = 1 - Math.exp(-T.followAlong * sf * dt), kC = 1 - Math.exp(-T.followCross * sf * dt);
       fx += (alo * kA) * bx + (cro * kC) * rx;
       fz += (alo * kA) * bz + (cro * kC) * rz;
 
@@ -572,9 +711,23 @@ export function createCamera(THREE, cam) {
       // aisle it is looking down, and dolly by whatever it takes.
       const over = axisX ? 0 : clamp((h - T.signLo) / T.signRamp, 0, 1);
       const sgx = rx * T.shoulderSide, sgz = rz * T.shoulderSide;
-      const pre = (eyeX - L.cx) * sgx;              // lane offset already in hand
       const need = lerp(T.shoulder, Math.max(T.shoulder, T.signClear), over);
-      const sh = Math.max(T.shoulder, need - pre);
+      // Lane offsets the lens and the aim already carry. They are NOT the same —
+      // the aim is pulled harder onto the centreline — so both get measured.
+      const preEye = (eyeX - L.cx) * sgx;
+      const preAim = (aimX - L.cx) * sgx;
+      let sh = Math.max(T.shoulder, need - Math.min(preEye, preAim));
+      // ...and then bounded, which is the bit that was missing. `need - pre`
+      // is unbounded above, and the follow spring is deliberately soft, so a cop
+      // moving sideways leaves the focus point trailing by up to two metres —
+      // which reads as a huge negative lane offset, which inflates the dolly to
+      // compensate, which put the AIM POINT 1.92 m off the centreline: inside
+      // the gondola. The boom then swept from a start position that was already
+      // inside a shelf, collapsed to its minimum every single frame, and the
+      // thief was visible in 0% of a replayed chase. A camera-collision system
+      // whose origin is inside the wall is worse than none.
+      if (!axisX) sh = Math.min(sh, T.lat - Math.max(preEye, preAim));
+      sh = Math.max(sh, 0);
       // Lens and aim get the same push, so the forward vector — and therefore
       // `yaw` — is untouched by any of it.
       aimX += sgx * sh; aimZ += sgz * sh;
@@ -585,9 +738,6 @@ export function createCamera(THREE, cam) {
       // Walls. Clamping the lens rather than the aim means the shot tips down
       // and closes in when you run into the front end instead of the cop sliding
       // to the edge of frame — the aim is still on him either way.
-      px = clamp(px, STORE.minX + 1.1, STORE.maxX - 1.1);
-      pz = clamp(pz, STORE.minZ + 1.1, STORE.maxZ - 1.1);
-
       // Sign guard, belt and braces. The dolly above holds the lens clear while
       // the camera is settled on an axis, but it pushes along the camera's OWN
       // right vector — and halfway through a swing that vector points down the
@@ -599,8 +749,24 @@ export function createCamera(THREE, cam) {
       // if it is not enough. Cheap, smooth, and it can only ever lower the lens
       // under 2.46 — where nothing hangs.
       const laneRel = Math.abs(px - lane(px).cx);
-      const clear = smoothstep((laneRel - 0.78) / (T.signClear - 0.78));
+      const clear = smoothstep((laneRel - T.signFree) / (T.signClear - T.signFree));
       y = Math.min(y, lerp(T.signLo, 99, clear));
+      // Boom collision. Sweep from just above the aim point back to where the
+      // lens wants to be; whatever fraction of that is clear is the boom we get.
+      // Snaps in hard and eases back out, so a wall tucks the camera in at once
+      // and gives the shot back gently rather than pumping.
+      const ay = look + 0.30;
+      const t = boomClear(aimX, ay, aimZ, px, y, pz, T.boomR);
+      boomT = sm(boomT, t, t < boomT ? 26 : 4.5, dt);
+      const bt = clamp(boomT, 0.16, 1);
+      if (bt < 1) {
+        px = aimX + (px - aimX) * bt;
+        pz = aimZ + (pz - aimZ) * bt;
+        y = ay + (y - ay) * bt;
+      }
+      // Backstop only — the boom above should already have handled the walls.
+      px = clamp(px, STORE.minX + 1.1, STORE.maxX - 1.1);
+      pz = clamp(pz, STORE.minZ + 1.1, STORE.maxZ - 1.1);
       // Never inside the shelving, never through the ceiling.
       y = clamp(y, SHELF_H + 0.30, CEIL_H - 0.55);
 

@@ -36,23 +36,71 @@ const d2 = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 const aisleIdx = (x) => clamp(Math.round(x / PITCH + (AISLE_COUNT - 1) / 2), 0, AISLE_COUNT - 1);
 const inAisle = (z) => z > -HALF - 0.35 && z < HALF + 0.35;
 
-// CAM 01..04 cover aisle pairs; 05 front end, 06 back wall, 07 exit, 08 produce.
-// These are INDICES into CAMERAS, so 6 is CAM 07 EXIT DOORS and 4 is CAM 05.
+// ===========================================================================
+// ROUND 6 — THE ROSTER NOW ASKS THE WALL WHICH MONITOR HE IS ON
+// ===========================================================================
+// What follows was the channel oracle for five rounds: a zone table. z below the
+// aisles is CAM 07 or CAM 05, z above them is CAM 08 or CAM 06, anything between
+// is the aisle pair by x. It was written when the wall was wallpaper, and as
+// wallpaper it was fine.
 //
-// ROUND 3, AND DELIBERATELY NOT CHANGED. The vestibule test names Door 1 because
-// CAM 07 is bolted to Door 1: config's CAMERAS was written for a one-door store
-// and nothing in it is aimed at Door 2 — CAM 07 faces -Z from x=-21.9 and CAM 05
-// faces +Z from x=0, so a man standing in the Door 2 vestibule at x=14.5 is in
-// neither frustum. I tried filing him under EXIT DOORS anyway; that is a worse
-// lie than the one it replaces, because the roster would then name a channel
-// whose picture is of a doorway thirty-five metres away with nobody in it.
-// FRONT END is the least-wrong channel available. The real fix is a ninth camera
-// on Door 2, which lives in config.js and is reported, not taken.
-function camFor(x, z) {
+// It is not fine now. cctv.js rebuilt the desk around a 766x431 spot monitor, so
+// the player LOOKS at the picture, and the picture and this table disagreed for
+// 7 of 13 subjects on the first frame I measured — 54%. Worse, the disagreements
+// are the loud kind: shots/game_r6_before.png is CAM 06 with a man standing in
+// the middle of the spot monitor, boxed and labelled STOPPED 0:02, over a roster
+// that says NO SUBJECTS IN FRAME. That is the original playtest complaint
+// wearing different clothes — the pictures and the list are unrelated, so read
+// the list.
+//
+// cctv.channelsFor(x,z,h) answers the question properly: frustum test plus the
+// same line-of-sight test through the store's colliders that its analytics boxes
+// use, nearest first. 0.022 ms/frame for all thirteen subjects across all nine
+// channels — it is free, and it is the only source of truth that agrees with the
+// glass by construction.
+//
+// The zone table survives as a fallback for a console that builds this file
+// without a cctv, and for nothing else.
+//
+// WHAT WENT WITH IT: round 3's note here explained that a man in the Door 2
+// vestibule sat in no frustum at all, and that filing him under EXIT DOORS
+// anyway measured WORSE than calling it FRONT END (-1pp for the reader, +5 for
+// the guesser) because the roster then named a channel showing an empty doorway
+// thirty-five metres away. Both halves of that are settled: config.js took the
+// fix and added CAM 09 DOOR 2, and it carries the measurement in its own comment
+// beside the camera. There is no least-wrong channel to pick any more, because
+// the wall is now asked instead of guessed.
+function camForZone(x, z) {
   if (z <= -HALF - 0.35) return d2(x, z, EXIT.x, EXIT.z) < 10 ? 6 : 4;
   if (z >= HALF + 0.35) return x > STORE.maxX - 11 ? 7 : 5;
   return Math.min(3, aisleIdx(x) >> 1);
 }
+function camDist(i, x, z) {
+  const p = CAMERAS[i].pos;
+  return Math.hypot(p[0] - x, p[2] - z);
+}
+// Nearest-first is the right ORDER and the wrong RULE to apply every frame. Two
+// domes whose ranges cross put a subject a metre from the tie-break, and a
+// roster row that changes channel four times a second is less readable than the
+// zone table was. So a row STAYS on a channel that can still see him, and only
+// moves when another is CHAN_MARGIN metres closer AND has been for CHAN_DWELL.
+// Measured: at 4.0 m / 0.7 s the row follows a man walking out of an aisle onto
+// the front end within about a stride of when the picture does, and a man
+// browsing an end-cap never flips at all.
+const CHAN_MARGIN = 4.0;
+const CHAN_DWELL = 0.7;
+// This store has blind spots. 13.2% of subject-seconds are on NO channel —
+// median blackout 2 s, p90 3 s, but with a 33 s tail for somebody parked in the
+// lee of an end-cap gondola. The honest thing is a row that says the track is
+// lost. Filing him under a channel whose picture he is not in for thirty-three
+// seconds is the exact bug this round is about, only slower.
+//
+// Held at 8 s, not the 4 s I started with. At 4 s a FLAGGED subject had no row
+// at all for 8.3% of his announced life, and a case the terminal drops is a case
+// the player cannot act on for reasons he cannot see. A row that says SIGNAL
+// LOST — LAST SEEN 6.1s is not the bug this round is about: it is not claiming
+// he is in the picture, it is saying out loud that he is not.
+const LOST_HOLD = 8.0;
 // Where the cop is standing while he is supposed to be watching the wall: behind
 // the service counter, far enough back that walk-by traffic is not "contact".
 const POST = { x: Math.min(STORE.maxX - 0.9, SERVICE_DESK.x + 3.2), z: STORE.minZ + 0.7 };
@@ -96,7 +144,14 @@ const HOLD = { dur: 9.0, cool: 21.0 };
 
 // Sub-fixes, individually switchable so the bench in ./game/eval.js can attribute
 // the change instead of guessing. Ship values are all true.
-const FIX = { post: true, hold: true, roster: true, harass: true, close: true };
+// ROUND 6 adds two: `chan` swaps the roster's channel oracle back to the old
+// zone table, and `pace` restores round 5's thief supply. Both exist so the
+// bench can attribute this round's two changes separately instead of reporting
+// one number for a round that moved two things.
+const FIX = {
+  post: true, hold: true, roster: true, harass: true, close: true,
+  chan: true, pace: true,
+};
 const ROWS = 3;                 // roster rows the analytics panel can physically fit
 
 export function createGame(hudEl, deps = {}) {
@@ -112,11 +167,22 @@ export function createGame(hudEl, deps = {}) {
   // cctv.js burns a REC pip, a "CAM 09 FLOOR PATROL" label and a timestamp into
   // the on-foot view. The HUD's top band draws all three, better and on purpose,
   // so the two used to sit on top of each other. One owner: this one.
+  //
+  // ROUND 6 — AND THERE ARE TWO CLOCKS ON THIS SCREEN NOW. The HUD band printed
+  // a shift clock forty-three minutes fast off a fixed 08/22/26 date; cctv's
+  // spot-monitor OSD prints new Date(). shots/game_r6_before.png has them
+  // 20 hours and 26 minutes apart on one desk, which is the same species of
+  // mistake as the roster naming a channel the picture disagrees with. The HUD
+  // is now the one that moved — see dvrClock() in ./game/hud.js, which reads
+  // wall time so the two stamps are identical to the second. If cctv ever ships
+  // the setClock(fn) it offered, hand it the same function rather than both of
+  // us independently deciding to agree.
   {
     const c = cctvOf();
     if (c) {
       c.floorBurnIn = false;
       if (c.setParams) c.setParams('floor', { burnIn: 0 });
+      if (c.setClock) c.setClock(() => hud.wallClock(st.clock));
     }
   }
 
@@ -128,7 +194,7 @@ export function createGame(hudEl, deps = {}) {
   const recs = new Map();     // shopper.id -> the DVR's opinion of that shopper
   let caseSeq = 112;
   let softAlarm = null;
-  let rearmT = 6;
+  let rearmT = 8;
   let harassCool = 0;
   let recycle = [];           // shoppers to quietly put back on the floor
   let held = null;            // { id, until } — the one live PA price check
@@ -260,6 +326,9 @@ export function createGame(hudEl, deps = {}) {
     dbg: { stallEscape: 0, stallPutBack: 0 },
     get rankName() { return RANKS[clamp(st.rank | 0, 0, RANKS.length - 1)].toUpperCase(); },
     get tiles() { const c = cctvOf(); const t = c && c.tiles; return (t && t.length) ? t : FALLBACK; },
+    // The big monitor's glass rect, so the HUD can make it clickable. cctv.js
+    // draws every pixel of it; this is a hit region and nothing else.
+    get spot() { const c = cctvOf(); const p = c && c.spot && c.spot.panel; return p || null; },
     get cop() { const a = agentsOf(); return a ? a.cop.position : { x: 0, z: 0 }; },
   };
 
@@ -304,23 +373,73 @@ export function createGame(hudEl, deps = {}) {
         line: L.pick(L.BEHAVIOUR_BENIGN), lineT: rr(0, 3), flagged: false,
         dwell: (Math.random() * 300) | 0, aisle: null, lastA: -1,
         item: L.ITEMS[(s.id * 5) % L.ITEMS.length], announced: false,
+        // channel state — see camForZone()'s note. cam is null until a monitor
+        // has actually seen him; lost is seconds since the last one did.
+        cam: null, lost: 0, pend: -1, pendT: 0, lostSaid: false,
       };
       recs.set(s.id, r);
     }
     return r;
   }
+  // FALSE POSITIVES ARE THE OTHER HALF OF THE PACING, AND I NEARLY MISSED IT.
+  //
+  // Serialising the shift to one live thief made the guesser BETTER: 28.2% catch
+  // under round-5 supply, 35.2% under round-6. It is a COVERAGE effect, not a
+  // discrimination one — catch rate is over all thieves, and one guard against
+  // three simultaneous cases loses two of them without being wrong about
+  // anything. Take it down to one case and his single stab in the dark is
+  // usually pointed at the only thief in the building. Reading the roster
+  // stopped being worth much for CATCHES — separation fell to +3.2pp — even
+  // though it stayed worth everything for keeping the job (0 demotions a shift
+  // against 1.64, 3.1x the points).
+  //
+  // That is not a reason to give the client back his firehose. It says the
+  // difficulty was never really "how many thieves", it was HOW MANY CANDIDATES,
+  // and the round-5 wall got its candidates for free by running three incidents
+  // at once. Take the incidents away and the false positives have to carry the
+  // discrimination on their own — which is the better game anyway, because a
+  // trap is a person behaving oddly and a second thief is just more work.
+  //
+  // So the trap rate is the inverse of the pace: fewest real incidents, most
+  // things that look like one. The player's job stays "tell them apart" at every
+  // point in the shift; only the volume changes.
+  const TRAP_RATE = [0.50, 0.36, 0.26];
+  function trapRate() {
+    if (!FIX.pace) return 0.26;
+    const i = PACE.indexOf(pace());
+    return TRAP_RATE[i < 0 ? TRAP_RATE.length - 1 : i];
+  }
   function newLine(s, r) {
     r.lineT = rr(3.2, 6.4);
     if (s.guilty && s.stole) { r.line = L.pick(L.BEHAVIOUR_GUILTY); r.flagged = true; return; }
     if (s.guilty) { r.line = L.pick(L.BEHAVIOUR_GUILTY_PRE); r.flagged = false; return; }
-    if (r.trap && Math.random() < 0.26) {
+    if (r.trap && Math.random() < trapRate()) {
       r.line = L.pick(L.BEHAVIOUR_TRAP); r.flagged = true;
       if (r.aisle != null) raiseSoft(r);
       return;
     }
     r.line = L.pick(L.BEHAVIOUR_BENIGN); r.flagged = false;
   }
-  function raiseSoft(r) {
+  // The full-width amber alarm bar. It has to stay a JOLT, and raising the trap
+  // rate for phase 0 (see newLine) would otherwise have parked it permanently
+  // open: ~2.1 flagged traps at any moment, each refreshing a 5.5 s banner every
+  // 5 s, is a banner that is simply always there. Ambiguity belongs in the roster
+  // text where you have to read it; a light that never goes out teaches nothing.
+  // Concealment tells ignore the cooldown — that one is not noise.
+  //
+  // 24 s, and the number is arithmetic rather than taste: the banner holds for
+  // 5.5 s, so a cooldown of N caps ITS duty cycle at 5.5/N. At the 9 s I first
+  // tried, measurement said something soft was on the bar 42% of the shift and
+  // the bar itself was lit 58% — a warning light that is on more than it is off
+  // is not a warning light. 24 s caps the trap share at 23%; the other soft
+  // banner is the merchandise-loss notice, which is about one a minute for
+  // another ~8%, and the rest of what you see up there is the vestibule
+  // countdown, which is real and is not on a cooldown for anything.
+  const SOFT_COOL = 24.0;
+  let softAt = -99;
+  function raiseSoft(r, force) {
+    if (!force && G.now - softAt < SOFT_COOL) return;
+    softAt = G.now;
     const cam = r.cam == null ? 0 : r.cam;
     softAlarm = {
       text: `${L.pick(L.ALERT_FALSE)} — ${CAMERAS[cam].id}${r.aisle == null ? '' : ` / AISLE ${r.aisle + 1}`}`,
@@ -328,29 +447,100 @@ export function createGame(hudEl, deps = {}) {
     };
   }
 
+  // Which monitor is this man ACTUALLY on. Ask the wall; keep the answer stable.
+  // Falls all the way back to the zone table only when there is no cctv to ask.
+  function channelFor(s, r, dt) {
+    const c = cctvOf();
+    const x = s.position.x, z = s.position.z;
+    if (!FIX.chan || !c || !c.channelsFor) {
+      r.cam = camForZone(x, z); r.lost = 0; r.pend = -1; return;
+    }
+    const seen = c.channelsFor(x, z, 1.7);
+    r.chans = seen;
+    if (!seen.length) {                       // in a blind spot, or behind glass
+      r.lost += dt; r.pend = -1;
+      if (r.cam == null) r.cam = camForZone(x, z);
+      return;
+    }
+    r.lost = 0; r.lostSaid = false;
+    if (r.cam == null || !seen.includes(r.cam)) {
+      r.cam = seen[0]; r.pend = -1; r.pendT = 0; return;
+    }
+    const best = seen[0];
+    if (best === r.cam || camDist(best, x, z) > camDist(r.cam, x, z) - CHAN_MARGIN) {
+      r.pend = -1; r.pendT = 0; return;
+    }
+    if (r.pend !== best) { r.pend = best; r.pendT = 0; }
+    r.pendT += dt;
+    if (r.pendT >= CHAN_DWELL) { r.cam = best; r.pend = -1; r.pendT = 0; }
+  }
+
   function updateSubjects(dt) {
     const out = [];
+    const marks = [];
     for (const s of shoppersOf()) {
       if (s.escaped || s.caught || !s.mesh.visible) continue;
       const r = recOf(s);
       const a = inAisle(s.position.z) ? aisleIdx(s.position.x) : null;
       if (a !== r.lastA) { r.lastA = a; r.dwell = 0; } else r.dwell += dt;
       r.aisle = a;
-      r.cam = camFor(s.position.x, s.position.z);
-      r.lineT -= dt;
+      channelFor(s, r, dt);
+      // Everything below this line is what a MOTION DETECTOR reported, so none
+      // of it may happen while no detector can see him. The behaviour line
+      // freezes and the concealment tell waits for him to walk back into a
+      // frustum.
+      //
+      // I expected that to be the expensive part of this round and measured it
+      // before defending it: across a five-minute shift the tell was delayed by
+      // ZERO seconds, every time (n=5, median 0, max 0). Thieves conceal in the
+      // middle of an aisle, which is precisely where the aisle domes are
+      // pointed, so the case where the DVR misses the moment barely arises. The
+      // blind spots are real — they are just not where people steal.
+      const blind = r.lost > 0;
+      if (!blind) r.lineT -= dt;
       const wantGuilty = s.guilty && s.stole;
-      if (wantGuilty && !r.announced) {          // the concealment tell arrives
-        r.announced = true; newLine(s, r); raiseSoft(r);
+      if (wantGuilty && !r.announced && !blind) {   // the concealment tell arrives
+        r.announced = true; newLine(s, r); raiseSoft(r, true);
         logLine(`${CAMERAS[r.cam].id} — ANALYTICS EVENT LOGGED`);
-      } else if (r.lineT <= 0) newLine(s, r);
+      } else if (!blind && r.lineT <= 0) newLine(s, r);
+      // He is always a subject as far as the picture-to-row cross-reference is
+      // concerned — cctv renames its blob T19 to SUBJ-19 off this list, and a
+      // blob it can see is by definition not in a blind spot.
+      marks.push({ code: r.code, x: s.position.x, z: s.position.z, flagged: r.flagged });
+      if (r.lost > LOST_HOLD) {
+        if (r.flagged && !r.lostSaid) { r.lostSaid = true; logLine(`${r.code} — TRACK LOST`, true); }
+        continue;                              // off every monitor: off the list
+      }
       const post = FIX.post ? postOf(s.position.x, s.position.z)
         : (r.aisle == null ? null : { kind: 'aisle', i: r.aisle });
-      out.push({
+      const row = {
         id: s.id, cam: r.cam, aisle: r.aisle, code: r.code,
-        line: r.line, dwell: r.dwell | 0, flagged: r.flagged,
+        line: r.line, dwell: r.dwell | 0, flagged: r.flagged, lost: r.lost,
         post, where: postLabel(post), held: held != null && held.id === s.id,
-      });
+        // How many monitors have him. Two channels on one man is a real thing
+        // and it is worth saying, because it is the player's cheapest second
+        // angle on somebody he cannot read.
+        chans: (r.chans && r.chans.length) || 0,
+      };
+      // ONE ROW PER MONITOR HE IS ON, not one row per man.
+      //
+      // The first cut of this filed each subject under his NEAREST channel, and
+      // it reintroduced the bug from the other end: press [C], the dome locks on
+      // to a man plainly boxed in the middle of CAM 02, and the CAM 02 roster
+      // does not contain him — because CAM 03 happened to be two metres nearer.
+      // A list titled MOTION ANALYTICS — CAM 02 has exactly one correct
+      // definition, which is everything CAM 02 can see, and that is a set, not a
+      // choice. Duplication across channels is not a defect in the list; it is a
+      // man standing where two cameras overlap. cctv's own boxes come off the
+      // same visibility test, so the rows and the rectangles now agree by
+      // construction and not by coincidence.
+      if (!FIX.chan || !r.chans || !r.chans.length) out.push(row);
+      else for (const ch of r.chans) out.push(ch === r.cam ? row : { ...row, cam: ch });
     }
+    // ONE CALL A FRAME, and the whole point of it: the box on the spot monitor
+    // said T19 while the roster said SUBJ-03/04/10, so the two halves of the
+    // desk could not be cross-referenced at all. Now the box says SUBJ-19.
+    { const c = cctvOf(); if (c && c.setSubjects) c.setSubjects(marks); }
     out.sort((a, b) => (b.flagged - a.flagged) || (a.id - b.id));
     G.desk.subjects = out;
     if (G.desk.sel != null && !out.some((s) => s.id === G.desk.sel && s.cam === G.desk.cam)) {
@@ -430,13 +620,57 @@ export function createGame(hudEl, deps = {}) {
   }
 
   // ------------------------------------------------------------ thief supply
+  //
+  // ROUND 6 — ONE INCIDENT AT A TIME
+  // Client: "The number of incidents happening is kinda high. That all happens
+  // quick. It should take a minute. Maybe you could slow it down. Make it so,
+  // like, one incident at a time."
+  //
+  // He is right and the old numbers say why. `live < 2` plus a 12-22 s rearm is
+  // a standing order to keep TWO open cases on the wall at all times and to
+  // replace either one within twenty seconds of it resolving. On a four-minute
+  // shift that is a thief every ~18 s with two overlapping for most of it — the
+  // player never finishes reading one roster before the next tell fires, which
+  // is exactly the firehose he described.
+  //
+  // So density is a RAMP and phase 0 is serial: one live case, and the next one
+  // is not armed until the shift has had a breath. Note this is density only —
+  // the chase builder owns the difficulty ramp in agents.js and the two are
+  // deliberately different axes, so say which you are changing before you touch
+  // either.
+  const PACE = [
+    { at: 0, live: 1, gap: [26, 38] },      // learn the wall on one man at a time
+    { at: 150, live: 2, gap: [18, 28] },    // a second case can now overlap
+    { at: 330, live: 3, gap: [12, 20] },    // roughly the old round-5 pressure
+  ];
+  const PACE_R5 = { at: 0, live: 2, gap: [12, 22] };   // what round 5 shipped
+  function pace() {
+    if (!FIX.pace) return PACE_R5;
+    let p = PACE[0];
+    for (const q of PACE) if (st.clock >= q.at) p = q;
+    return p;
+  }
+  const armGap = (k = 1) => { const g = pace().gap; return rr(g[0] * k, g[1] * k); };
   function armThief() {
     const a = agentsOf(); if (!a) return;
     const cop = a.cop.position;
     const pool = a.shoppers.filter((s) => !s.guilty && !s.escaped && !s.caught && s.mesh.visible
       && s.angry <= 0 && d2(s.position.x, s.position.z, cop.x, cop.z) > 9);
     if (!pool.length) return;
-    const s = pool[(Math.random() * pool.length) | 0];
+    // "It should take a minute." The tell-to-door window is route metres from
+    // wherever he conceals to a way out, over a walk speed this file does not
+    // own — but WHICH CUSTOMER GETS ARMED is entirely this file's, and it moves
+    // the same number. A tournament of FOUR on route distance to the nearest
+    // exit picks a man deeper in the store without ever making it deterministic
+    // (a pure max would arm the back-left corner every single time).
+    const far = (s) => (a.toExit ? a.toExit(s.position.x, s.position.z)
+      : d2(s.position.x, s.position.z, EXIT.x, EXIT.z));
+    let s = pool[(Math.random() * pool.length) | 0];
+    for (let k = 0; k < 3; k++) {
+      const c = pool[(Math.random() * pool.length) | 0];
+      const dc = far(c), ds = far(s);
+      if (isFinite(dc) && (!isFinite(ds) || dc > ds)) s = c;
+    }
     s.guilty = true; s.stole = false; s.bolted = false;
     s.concealT = rr(10, 22); s.state = 'walk'; s.timer = rr(1, 3);
     s.path = []; s.target = null; s.held.visible = false;
@@ -465,7 +699,7 @@ export function createGame(hudEl, deps = {}) {
       s.__stall = (s.__stall || 0) + dt;
       if (s.__stall > 16 && st.mode === 'desk') {
         G.dbg.stallPutBack++;
-        putBack(s); rearmT = Math.min(rearmT, 4);
+        putBack(s); rearmT = Math.min(rearmT, armGap(0.25));
       }
     }
   }
@@ -483,17 +717,33 @@ export function createGame(hudEl, deps = {}) {
 
   function ensureThieves(dt) {
     rearmT -= dt;
+    const p = pace();
     const live = shoppersOf().filter((s) => s.guilty && !s.escaped && !s.caught && s.mesh.visible).length;
-    if (live < 2 && rearmT <= 0) { armThief(); rearmT = rr(12, 22); }
+    if (live >= p.live || rearmT > 0) return;
+    // Serialisation, and it is a stronger claim than "one live thief". A case is
+    // not over when the man is caught, it is over when you are back at the desk:
+    // arming the next one while the write-up is on screen is how the player ends
+    // up reading a tell he was never shown the wall for.
+    if (FIX.pace && p.live <= 1 && st.mode !== 'desk') return;
+    armThief();
+    rearmT = armGap();
   }
-  // agents.js arms both openers with a 2.5-7s fuse, so they conceal and walk out
-  // together before you have read one roster. Space them out.
+  // agents.js arms its openers with a 2.5-7s fuse, so they conceal and walk out
+  // together before you have read one roster. Space them out — and in phase 0,
+  // where the budget is ONE live case, hand the surplus openers back their lives.
+  // agents.js arms them at reset and has no idea what this shift's pacing is.
   let staggered = false;
   function stagger() {
     const list = shoppersOf();
     if (!list.length) return;
     staggered = true;
-    list.filter((s) => s.guilty && !s.stole).forEach((s, i) => { s.concealT = 9 + i * 17 + rr(0, 6); });
+    const budget = pace().live;
+    list.filter((s) => s.guilty && !s.stole).forEach((s, i) => {
+      if (i < budget || !FIX.pace) { s.concealT = 7 + i * 24 + rr(0, 5); return; }
+      s.guilty = false; s.concealT = 0;
+      const r = recOf(s); r.announced = false; newLine(s, r);
+    });
+    rearmT = Math.max(rearmT, armGap(0.8));
   }
   function putBack(s) {
     const i = (Math.random() * AISLE_COUNT) | 0;
@@ -822,7 +1072,11 @@ export function createGame(hudEl, deps = {}) {
       if (st.mode === 'demoted') return;
       recs.delete(s.id);
       score('escape', s);
-      rearmT = Math.min(rearmT, 5);
+      // A LOSS IS NOT A CUE TO DEAL ANOTHER HAND. This used to cut the rearm to
+      // five seconds, which meant the punishment for missing one was the next one
+      // arriving before you had read the log line about the first. Give the shift
+      // a beat; the ramp decides how long a beat is.
+      rearmT = FIX.pace ? armGap(0.6) : Math.min(rearmT, 5);
     },
     onHarass(s) {
       if (st.mode !== 'floor' || !G.floor || G.floor.t < 0.8) return;
@@ -867,7 +1121,46 @@ export function createGame(hudEl, deps = {}) {
     const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
     const hot = on.find((s) => s.flagged) || on[0];
     G.desk.sel = hot ? hot.id : null;
+    showSel();
   }
+  // Scroll the three-row window onto whatever is selected. cycleSel() has always
+  // done this for itself; nothing else did, so selecting a subject any OTHER way
+  // could highlight a row the panel was not showing. Caught it in the round-6
+  // capture: [C] locked the dome on SUBJ-10, DISPATCH read AISLE 2, and the
+  // roster listed 02/03/04 with "1 MORE" — the row it was acting on was the one
+  // row you could not see.
+  function showSel() {
+    if (G.desk.sel == null) return;
+    const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
+    const i = on.findIndex((s) => s.id === G.desk.sel);
+    if (i < 0) return;
+    G.desk.scroll = clamp(G.desk.scroll, Math.max(0, i - ROWS + 1), i);
+  }
+  // Hand the dome to the next subject on this channel. The spot monitor's PTZ
+  // auto-track picks the strongest motion, which is guilt-blind and correct —
+  // but it is still a machine choosing for you, and the one thing this game is
+  // about is who you decide to spend your good monitor on. This gives the choice
+  // back. It cannot be a guilt oracle: cctv.cycleTrack() steps through the blobs
+  // its detector already found, in the order they happen to be in, and returns
+  // the same thing whether the man is stealing or reading a label.
+  //
+  // Also drag the roster selection onto whoever the dome landed on, when the
+  // wall can name him — that is the whole point of setSubjects: the box says
+  // SUBJ-19 and now so does the highlighted row.
+  function cycleTrack() {
+    const c = cctvOf();
+    if (!c || !c.cycleTrack) return false;
+    const tr = c.cycleTrack();
+    if (!tr) return false;
+    const lab = c.detector && c.detector.labelFor ? c.detector.labelFor(tr) : null;
+    const code = (lab && lab.code) || null;
+    if (code) {
+      const row = G.desk.subjects.find((s) => s.code === code && s.cam === G.desk.cam);
+      if (row) { G.desk.sel = row.id; showSel(); }
+    }
+    return true;
+  }
+
   // The roster window is three rows because three rows is what fits. Before, the
   // other rows simply did not exist — with seven shoppers on one camera the game
   // could be hiding the row you needed. Now the window scrolls and follows the
@@ -895,7 +1188,8 @@ export function createGame(hudEl, deps = {}) {
     if (!r) return;
     ev.preventDefault();
     if (r.id === 'cam') selectCam(r.data);
-    else if (r.id === 'subj') G.desk.sel = r.data;
+    else if (r.id === 'subj') { G.desk.sel = r.data; showSel(); }
+    else if (r.id === 'track') cycleTrack();
     else if (r.id === 'dispatch') dispatch();
     else if (r.id === 'hold') callHold();
     else if (r.id === 'scroll') { G.desk.scroll = clamp(G.desk.scroll + r.data, 0, Math.max(0, G.desk.rows - ROWS)); }
@@ -909,6 +1203,7 @@ export function createGame(hudEl, deps = {}) {
         if (n >= 1 && n <= CAMERAS.length) { selectCam(n - 1); ev.preventDefault(); }
       } else if (c === 'ArrowDown') { cycleSel(1); ev.preventDefault(); }
       else if (c === 'ArrowUp') { cycleSel(-1); ev.preventDefault(); }
+      else if (c === 'KeyC') { cycleTrack(); ev.preventDefault(); }
       else if (c === 'KeyF') { callHold(); ev.preventDefault(); }
       else if (c === 'Space' || c === 'Enter') { dispatch(); ev.preventDefault(); }
     } else if (st.mode === 'floor') {
@@ -942,7 +1237,7 @@ export function createGame(hudEl, deps = {}) {
       if (G.desk.sel == null) {
         const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
         const hot = on.find((s) => s.flagged);
-        if (hot) G.desk.sel = hot.id;
+        if (hot) { G.desk.sel = hot.id; showSel(); }
       }
     } else if (st.mode === 'floor') updateFloor(dt);
     else if (st.mode === 'writeup') updateWriteup(dt);
@@ -967,7 +1262,8 @@ export function createGame(hudEl, deps = {}) {
   // the surface ./game/eval.js drives; it deliberately goes through the same
   // functions the real input handlers call, so a bench measures the real game.
   const bot = {
-    selectCam, cycleSel, dispatch, callHold, wuAdvance, restart,
+    selectCam, cycleSel, cycleTrack, dispatch, callHold, wuAdvance, restart,
+    get pace() { return pace(); },
     select(id) { G.desk.sel = id; },
     scroll(d) { G.desk.scroll = clamp(G.desk.scroll + d, 0, Math.max(0, G.desk.rows - ROWS)); },
     target: targetShopper,

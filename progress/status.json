@@ -202,8 +202,8 @@
    "verdict": "R5 shadow collapsed: 55 getters onto one spelling, 57 constants in K, 45 backed by config.js, 0 shadowing it. Value-preserving confirmed byte-identical across always/ration/chase/camp (46.0 / 74.7 / 43.3 / 21.3)."
   },
   "game": {
-   "round": 5,
-   "state": "passed",
+   "round": 6,
+   "state": "building",
    "shots": [
     {
      "round": 0,
@@ -229,6 +229,11 @@
      "round": 5,
      "path": "../shots/game_r5_floor.png",
      "t": 1787434127.967762
+    },
+    {
+     "round": 6,
+     "path": "../shots/game_r6_desk.png",
+     "t": 1787500954.7197928
     }
    ],
    "gaps": [
@@ -245,8 +250,8 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787434185.339201,
-   "note": "THE FINDING: with the sprint key held, desk separation collapses from +20.1pp to +3.8pp. A player who cannot hold his wind loses the chases he earned at the desk, so reading the roster stops paying at all - the desk read is worth nothing without the lungs to cash it. Independently measured rationing at +28.3pp against the chase builder's 28.7 from a completely different instrument. Eval driver rewritten to plan THEN ration (35.4% sprint duty cycle) because rationing needs something to ration against. WIND panel: 3 fat bursts sized off burstMax, READY/RECOVERING/WINDED/SPRINTING, and 'LET GO' flashing when the key is held because windIn is Infinity - a stalled countdown teaches it faster than any tooltip. Nothing in the HUD points at a powerup, deliberately: in hand it is +13, fetching it is worth nothing, so a locator would sell a losing plan.",
+   "updated": 1787500954.71979,
+   "note": "ROSTER NOW AGREES WITH THE PICTURES. camFor()'s zone table is gone; every roster row's channel comes from cctv.channelsFor() (frustum + real LOS through the store colliders), with 4.0m/0.7s hysteresis so rows do not chatter between overlapping domes. Measured BEFORE: roster named a channel that could not see the subject for 7 of 13 subjects, 54%. AFTER: 100% agreement over 1176 subject-seconds, 0 false positives. One row PER MONITOR he is on, not one per man - the first cut filed each man under his nearest channel and that reintroduced the bug from the other end (press [C], dome locks a man boxed in the middle of CAM 02, CAM 02's roster does not contain him). setSubjects() called once a frame so the box says SUBJ-04 instead of T19 and the roster row is selectable from the picture. Two clocks now identical to the second. Per-tile overlay resized for 138x104: no N SUBJ badge except on the active tile, 7px flag pip instead of a 44px word, corner marker instead of a 15px footer. [C] and a click on the spot monitor drive cctv.cycleTrack().",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
    "verdict": "PASS. Observer 56.7% catch / 1002 pts / 0.00 demotions vs random 36.6% / 239 / 1.20. Separation +20.1pp and 4.2x points, intact after the chase got much harder (median 3.03s -> 5.83s). Observer spread across 3 seeds is 1.1pp."
   },
@@ -279,9 +284,56 @@
    "updated": 1787499641.854621,
    "note": "Four written tunes as note data (Checkout Lane Three, Eleven Items Or Fewer, Frozen Foods, Produce (Waltz)), 32-bar AABA played twice with an ornamented reprise, voice-led Rhodes comping. Ceiling speaker modelled as an 8-inch coax: bass fundamental down 12dB while its 2nd and 3rd harmonics are not, so the ear reconstructs the missing fundamental - which is what actually happens in a store. The score IS the tape: pa.setIntensity() pushes drums/bass/comp at bar lines only. Proof it works - under a chase the strongest self-similarity moves from 11.75s (the phrase) to 1.25s (the bar), the mathematical signature of ceasing to hear the melody and starting to hear the beat. Lungs rebuilt as PAIRS after the first pass fused them: setTargetAtTime with tau 0.05 takes 0.2s to reach silence, so two huffs became one 0.9s rasp.",
    "verdict": "PASS on the music note. Round 1 HAD music and it was inaudible - measured: PA soloed at -38.8 dBFS RMS against an ambience bed at -34.1, i.e. five decibels UNDER the air conditioning, with 70.4% of its energy in one octave at 2kHz and 0.0% below 180Hz. Now -29.5 dBFS spread properly across 90-2800Hz."
+  },
+  "camera": {
+   "round": 1,
+   "state": "passed",
+   "shots": [
+    {
+     "round": 1,
+     "path": "../shots/cam_r1_walk.png",
+     "t": 1787499713.8825579
+    }
+   ],
+   "gaps": [],
+   "updated": 1787501422.379344,
+   "note": "THE FINDING: the old rig sat at 6.4m, ABOVE the 5.2m ceiling \u2014 the camera was outside the room, which is why the store read as a floor plan instead of a place. Now 2.36m: 31cm over the gondola decks, 11cm under the signage, so gondolas become walls and signs pass overhead. Yaw snaps to the store's grid bearings rather than the cop's heading, deliberately: main.js rotates input by yaw, so a camera chasing the heading closes a loop (hold D, heading turns, camera turns, D means somewhere else, cop pirouettes). IT OVERTURNED ITS OWN DESIGN: a planned gap-driven height rise measured +6 points of thief visibility against shelves modelled as 2.05m boxes from SHELF_H, but a raycast against the real scene found the blocker at 3.8m \u2014 an uncollidered sign gantry. There is nothing to see over. Re-measured 10.7% -> 10.9%, and cut. 'Both of my first two occlusion models were made of config constants and both were confidently wrong.'",
+   "verdict": "PASS. Eye height 6.4m -> 2.36m. Yaw verified truthful end-to-end: I independently confirmed controls match the reported yaw at 90deg (forward -X, right -Z) and -178deg (forward -Z, right +X), exactly as main.js's basis predicts. Occlusion 1 frame in 3147 (0.03%) at 1.5us/frame."
   }
  },
  "log": [
+  {
+   "t": 1787501422.379345,
+   "piece": "camera",
+   "role": "builder",
+   "round": 1,
+   "state": "passed",
+   "text": "THE FINDING: the old rig sat at 6.4m, ABOVE the 5.2m ceiling \u2014 the camera was outside the room, which is why the store read as a floor plan instead of a place. Now 2.36m: 31cm over the gondola decks, 11cm under the signage, so gondolas become walls and signs pass overhead. Yaw snaps to the store's grid bearings rather than the cop's heading, deliberately: main.js rotates input by yaw, so a camera chasing the heading closes a loop (hold D, heading turns, camera turns, D means somewhere else, cop pirouettes). IT OVERTURNED ITS OWN DESIGN: a planned gap-driven height rise measured +6 points of thief visibility against shelves modelled as 2.05m boxes from SHELF_H, but a raycast against the real scene found the blocker at 3.8m \u2014 an uncollidered sign gantry. There is nothing to see over. Re-measured 10.7% -> 10.9%, and cut. 'Both of my first two occlusion models were made of config constants and both were confidently wrong.'"
+  },
+  {
+   "t": 1787501247.4074721,
+   "piece": "camera",
+   "role": "builder",
+   "round": 1,
+   "state": "building",
+   "text": "Corridor-aware spring camera replaces the placeholder rig (6.4m up, 7.6m back, dead flat, zero yaw). Rests at 2.36m \u2014 31cm over the gondola decks, 11cm under the signage. The old rig sat ABOVE the 5.2m ceiling, so the ceiling was never on screen on the floor. Yaw snaps to the store grid: position picks the axis, a velocity-dominance gate turns the corner (~0.8s for 90deg, 1.5s for 180). States: walk 2.36/5.55/57deg, sprint 2.20/5.94/64deg, gassed 2.14/4.60/51deg, pursuit widens on gap via distance+FOV. Over-the-shoulder dolly because dead centre put the cop's back on the vanishing point where the thief is. Boom collision against store.js's own Box3 colliders. VERIFIED: yaw truthful at 0/+90/-90/180 (D=+350px right, A=-350px, W=+3m depth); 3147 frames of aisle traversals and corner turns with the cop occluded in 1 frame (0.03%); 1.5us/frame. TWO CROSS-PIECE BUGS FOUND: game/hud.js carried a hardcoded copy of the old rig driving every world marker (lead landed the import fix); tools/serve.py POST /shot answered nothing, so snap() was a silent no-op for every agent (fixed). BIGGEST FINDING, and it overturned my own design: I planned a gap-driven height rise to see over the shelves, and measured it as +6 points of thief visibility using a 2.05m SHELF_H box model. A raycast against the real scene then showed a gondola carries a sign gantry to 3.8m, so there is nothing to see over. Re-measured against real geometry the rise is worth +0.2 points and makes keeping him in frame slightly WORSE. Cut it to zero. The camera now stays in the 2.05-2.47 slot permanently."
+  },
+  {
+   "t": 1787500954.7197928,
+   "piece": "game",
+   "role": "builder",
+   "round": 6,
+   "state": "building",
+   "text": "ROSTER NOW AGREES WITH THE PICTURES. camFor()'s zone table is gone; every roster row's channel comes from cctv.channelsFor() (frustum + real LOS through the store colliders), with 4.0m/0.7s hysteresis so rows do not chatter between overlapping domes. Measured BEFORE: roster named a channel that could not see the subject for 7 of 13 subjects, 54%. AFTER: 100% agreement over 1176 subject-seconds, 0 false positives. One row PER MONITOR he is on, not one per man - the first cut filed each man under his nearest channel and that reintroduced the bug from the other end (press [C], dome locks a man boxed in the middle of CAM 02, CAM 02's roster does not contain him). setSubjects() called once a frame so the box says SUBJ-04 instead of T19 and the roster row is selectable from the picture. Two clocks now identical to the second. Per-tile overlay resized for 138x104: no N SUBJ badge except on the active tile, 7px flag pip instead of a 44px word, corner marker instead of a 15px footer. [C] and a click on the spot monitor drive cctv.cycleTrack()."
+  },
+  {
+   "t": 1787499713.8825579,
+   "piece": "camera",
+   "role": "builder",
+   "round": 1,
+   "state": "building",
+   "text": "Replaced the placeholder rig (6.4m up, 7.6m back, dead flat, zero yaw) with a corridor-aware spring camera. Rests at 2.44m: 39cm over the gondolas, 6cm under the hanging signs \u2014 the old rig sat ABOVE the 5.2m ceiling, so the ceiling was never on screen on the floor. Reads DOWN the aisle or ACROSS the store by snapping yaw to the store grid (position picks the axis, a velocity-dominance gate turns the corner, ~0.8s for 90deg / 1.5s for 180). Four states: walk 2.44/5.55/57deg, sprint 2.28/5.94/64deg, gassed 2.22/4.60/51deg, pursuit rises to 3.3 and widens with the gap. Over-the-shoulder dolly because dead centre put the cop's back exactly on the vanishing point where the thief is. yaw verified truthful at 0/+90/-90: D moves him +350px right, A -350px, W +3m of camera depth. Costs 2us/frame. TWO CROSS-PIECE BUGS FOUND AND REPORTED: game/hud.js had its own hardcoded copy of the old rig driving every world marker (lead landed the import fix); tools/serve.py POST /shot answered nothing at all, so snap() was a silent no-op for every agent (fixed, server restarted)."
+  },
   {
    "t": 1787499641.854623,
    "piece": "audio",
@@ -779,5 +831,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787499641.854625
+ "updated": 1787501422.379346
 }

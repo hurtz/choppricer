@@ -113,10 +113,28 @@ export function createHUD(hudEl) {
 
   // ------------------------------------------------------------- shared chrome
   const two = (n) => String(n | 0).padStart(2, '0');
+  // THE SECOND CLOCK. For five rounds this band read a shift clock forty-three
+  // minutes fast off a fixed 08/22/26 — a nice joke about a power outage, and
+  // harmless while nothing else on screen printed a time. cctv.js now puts a
+  // 766px spot monitor next to it with the recorder's own OSD stamp burnt into
+  // it, straight off new Date(). shots/game_r6_before.png has the band saying
+  // 08/22/26 14:13:43 and the glass saying 08/23/2026 10:40:01, twenty hours
+  // apart, on one desk, in one photograph. Two clocks disagreeing is the roster
+  // bug again in a smaller font.
+  //
+  // The band is the one that moved, because the burn-in is ON THE FOOTAGE and
+  // footage is not a thing a terminal gets to overrule. `clockBase` is set once
+  // a frame from the live shift clock, so dvrClock(t) is exact wall time for the
+  // band and correct RELATIVE time for a log line stamped seconds ago.
+  let clockBase = Date.now();
+  function wallClock(t) { return new Date(clockBase + t * 1000); }
+  function dvrTime(t) {
+    const d = wallClock(t);
+    return `${two(d.getHours())}:${two(d.getMinutes())}:${two(d.getSeconds())}`;
+  }
   function dvrClock(t) {
-    // The DVR clock has been forty-three minutes fast since the power outage.
-    const s = 51123 + t;
-    return `08/22/26 ${two((s / 3600) % 24)}:${two((s / 60) % 60)}:${two(s % 60)}`;
+    const d = wallClock(t);
+    return `${two(d.getMonth() + 1)}/${two(d.getDate())}/${d.getFullYear()} ${dvrTime(t)}`;
   }
   function burnIn() {
     // Ghosts of a channel layout this DVR has not used since 2019.
@@ -134,7 +152,7 @@ export function createHUD(hudEl) {
     tx(label, 82, h / 2 - 1, { s: 14, w: 'bold', c: AMB, ls: 2.2 });
     tx(dvrClock(G.st.clock), W - 14, h / 2 - 2, { s: 16, w: 'bold', c: GRN, a: 'right', ls: 1.4 });
     if (h > 60) {
-      tx('16-CH DVR / 8 CH ACTIVE / MOTION ANALYTICS: ON', 82, h - 14, { s: 11, c: DIM });
+      tx(`16-CH DVR / ${G.cams.length} CH ACTIVE / MOTION ANALYTICS: ON`, 82, h - 14, { s: 11, c: DIM });
       tx(`SHIFT ${G.st.shift}  ·  ${two(G.st.clock / 60)}:${two(G.st.clock % 60)} ELAPSED`,
         W - 14, h - 14, { s: 11, c: DIM, a: 'right' });
     }
@@ -157,7 +175,7 @@ export function createHUD(hudEl) {
     for (let i = 0; i < Math.min(3, G.log.length); i++) {
       const e = G.log[i];
       ctx.globalAlpha = Math.max(0, Math.min(1, (8 - (G.now - e.t)) / 2.5)) * (1 - i * 0.28);
-      tx(`${dvrClock(e.clock).slice(9)}  ${e.text}`, x, y + i * 15,
+      tx(`${dvrTime(e.clock)}  ${e.text}`, x, y + i * 15,
         { s: 11, c: e.bad ? RED : DIM, max: w });
     }
     ctx.globalAlpha = 1;
@@ -166,38 +184,77 @@ export function createHUD(hudEl) {
   // ------------------------------------------------------------------ DESK
   function drawDesk(G) {
     const tiles = G.tiles;
-    // Per-tile overlay only — cctv.js owns the bezels and the picture.
+    // ------------------------------------------------------------------------
+    // PER-TILE OVERLAY, RESIZED FOR A BANK OF MOTION DETECTORS
+    // ------------------------------------------------------------------------
+    // These rects used to be 190-416 px wide and this overlay was written for
+    // that. Round 4 demoted them to 138x104 and everything here became furniture
+    // sitting on the picture: a `0 SUBJ` badge fifty pixels wide is 36% of the
+    // tile, the active tile's 15px amber footer plus 16px corner brackets left a
+    // 106px-wide hole to see an aisle through, and the `[7]` key hint duplicated
+    // a channel number cctv.js already burns into the top-left corner AND the
+    // one silkscreened on the chin below.
+    //
+    // The bank's job is now "something moved over there". Everything that is not
+    // that comes off the small tiles. What survives, and why:
+    //   ACTIVE FRAME  which monitor the spot is showing. Non-negotiable.
+    //   FLAG PIP      a 7px blinking square, top-right, where cctv.js leaves a
+    //                 gap between its channel number and its REC dot. It replaces
+    //                 a 44px word. It is still guilt-blind: traps flag too.
+    //   COUNT         on the ACTIVE tile only, because that is the one whose
+    //                 roster is open underneath. On the other eight, the count
+    //                 was answering a question the pictures now answer better.
+    // Sizes are derived from the rect, so a wall that changes again scales.
     tiles.forEach((t, i) => {
       if (!t) return;
       reg('cam', t.x, t.y, t.w, t.h, i);
       const subs = G.desk.subjects.filter((s) => s.cam === i);
       const flagged = subs.some((s) => s.flagged);
       const act = i === G.desk.cam;
+      const small = t.w < 200;
       box(t.x, t.y, t.w, t.h, act ? AMB : 'rgba(120,170,130,0.16)', act ? 2 : 1);
       if (act) {
-        const k = 16;
-        ctx.strokeStyle = AMB; ctx.lineWidth = 3;
+        const k = Math.max(7, Math.min(16, t.w * 0.085));
+        ctx.strokeStyle = AMB; ctx.lineWidth = small ? 2 : 3;
         [[0, 0, 1, 1], [1, 0, -1, 1], [0, 1, 1, -1], [1, 1, -1, -1]].forEach(([cx, cy, sx, sy]) => {
           const px = t.x + cx * t.w, py = t.y + cy * t.h;
           ctx.beginPath(); ctx.moveTo(px + sx * k, py); ctx.lineTo(px, py);
           ctx.lineTo(px, py + sy * k); ctx.stroke();
         });
-        ctx.fillStyle = AMB; ctx.fillRect(t.x, t.y + t.h - 15, t.w, 15);
-        tx(`▶ ${G.cams[i]?.id || 'CAM'} — ${G.cams[i]?.label || ''}`,
-          t.x + 6, t.y + t.h - 4, { s: 10, w: 'bold', c: '#07100a', ls: 1.1, max: t.w - 60 });
-        tx(`${subs.length} SUBJ`, t.x + t.w - 6, t.y + t.h - 4,
-          { s: 10, w: 'bold', c: '#07100a', a: 'right' });
-      } else {
+        if (small) {
+          // A corner marker, not a footer. Bottom-LEFT: cctv.js parks its REC
+          // pip bottom-right and its motion meter up the left edge above it.
+          const bw = 13 + String(subs.length).length * 7, bh = 13;
+          ctx.fillStyle = AMB; ctx.fillRect(t.x, t.y + t.h - bh, bw, bh);
+          tx(`▶${subs.length}`, t.x + 3, t.y + t.h - 3,
+            { s: 10, w: 'bold', c: '#07100a', ls: 0.4 });
+        } else {
+          ctx.fillStyle = AMB; ctx.fillRect(t.x, t.y + t.h - 15, t.w, 15);
+          tx(`▶ ${G.cams[i]?.id || 'CAM'} — ${G.cams[i]?.label || ''}`,
+            t.x + 6, t.y + t.h - 4, { s: 10, w: 'bold', c: '#07100a', ls: 1.1, max: t.w - 60 });
+          tx(`${subs.length} SUBJ`, t.x + t.w - 6, t.y + t.h - 4,
+            { s: 10, w: 'bold', c: '#07100a', a: 'right' });
+          tx(`[${i + 1}]`, t.x + 5, t.y + t.h - 21, { s: 10, c: 'rgba(190,230,200,0.45)' });
+        }
+      } else if (!small) {
         ctx.fillStyle = 'rgba(2,5,3,0.7)'; ctx.fillRect(t.x + t.w - 54, t.y + 4, 50, 14);
         tx(`${subs.length} SUBJ`, t.x + t.w - 7, t.y + 15, { s: 10, c: DIM, a: 'right' });
+        tx(`[${i + 1}]`, t.x + 5, t.y + t.h - 6, { s: 10, c: 'rgba(190,230,200,0.45)' });
       }
       if (flagged && (G.now % 0.8) < 0.5) {
-        ctx.fillStyle = RED; ctx.fillRect(t.x + 4, t.y + 4, 44, 15);
-        tx('FLAG', t.x + 8, t.y + 15, { s: 10, w: 'bold', c: '#1a0402' });
+        if (small) {
+          ctx.fillStyle = RED; ctx.fillRect(t.x + t.w - 11, t.y + 4, 7, 7);
+        } else {
+          ctx.fillStyle = RED; ctx.fillRect(t.x + 4, t.y + 4, 44, 15);
+          tx('FLAG', t.x + 8, t.y + 15, { s: 10, w: 'bold', c: '#1a0402' });
+        }
       }
-      tx(`[${i + 1}]`, t.x + 5, t.y + t.h - (i === G.desk.cam ? 21 : 6),
-        { s: 10, c: 'rgba(190,230,200,0.45)' });
     });
+    // The spot monitor is cctv.js's panel and its chrome, but it is the thing the
+    // player is looking at, so clicking it has to do something. It steps the PTZ
+    // lock to the next subject on this channel — the same thing [C] does.
+    const spot = G.spot;
+    if (spot) reg('track', spot.x, spot.y, spot.w, spot.h, 1);
 
     topBand(G, 74, 'CHOP FOODS #4417  ·  LOSS PREVENTION TERMINAL');
     // The alarm eats the DVR status line rather than the top row of monitors —
@@ -248,9 +305,32 @@ export function createHUD(hudEl) {
       }
       tx(sel ? '▶' : ' ', ax + 11, ry + 15, { s: 12, w: 'bold', c: AMB });
       tx(s.code, ax + 24, ry + 15, { s: 12, w: 'bold', c: sel ? AMB : GRN });
+      // He is on more than one monitor. Worth two characters, because a second
+      // angle on a man you cannot read is the cheapest thing this desk sells.
+      if (s.chans > 1) tx(`·${s.chans}`, ax + 84, ry + 15, { s: 11, c: GRN_D, ls: 0 });
       tx(shortWhere(s), ax + 100, ry + 15, { s: 12, c: s.aisle == null ? AMB : DIM });
-      tx(s.line, ax + 152, ry + 15,
-        { s: 12, c: s.flagged ? RED : (sel ? '#e9f6ec' : DIM), max: 306, w: s.flagged ? 'bold' : '' });
+      // A row for a man no camera can currently see. He is in one of this
+      // store's blind spots — 13% of subject-seconds are — and the last channel
+      // that had him is the last channel that had him, which is a different
+      // claim from "he is in this picture". The behaviour text goes with the
+      // signal, because everything in that column is something a motion
+      // detector reported and no detector is reporting anything.
+      //
+      // The FLAG does not go with it. Losing the picture does not un-log the
+      // event: a recorder that dropped its alarm the moment a man stepped behind
+      // an end-cap would be worse than useless, and the player would watch his
+      // one open case turn into a beige row for no reason he could see. So the
+      // row stays red and stays the one you are chasing; it just stops
+      // pretending to know what he is doing right now.
+      if (s.lost > 0) {
+        ctx.globalAlpha = s.flagged ? 0.8 : 0.55;
+        tx(`SIGNAL LOST — LAST SEEN ${s.lost.toFixed(1)}s`, ax + 152, ry + 15,
+          { s: 12, c: s.flagged ? RED : AMB, max: 306, w: s.flagged ? 'bold' : '' });
+        ctx.globalAlpha = 1;
+      } else {
+        tx(s.line, ax + 152, ry + 15,
+          { s: 12, c: s.flagged ? RED : (sel ? '#e9f6ec' : DIM), max: 306, w: s.flagged ? 'bold' : '' });
+      }
       if (s.held) {
         ctx.fillStyle = 'rgba(255,227,106,0.16)'; ctx.fillRect(ax + aw - 96, ry + 3, 44, 15);
         tx('HOLD', ax + aw - 92, ry + 15, { s: 10, w: 'bold', c: '#ffe36a' });
@@ -264,6 +344,10 @@ export function createHUD(hudEl) {
     const sel = G.desk.subjects.find((s) => s.id === G.desk.sel);
     const can = sel && (sel.post || sel.aisle != null);
     panel(dx, by, dw, bh, 'DISPATCH', { accent: can ? AMB : '#4d5f52' });
+    // The joke moved to the title row. It used to share the bottom line with the
+    // key hints, and the round-6 hint line — which had to grow by one key — ran
+    // straight into it and printed "TRACKUNMANNED".
+    if (can) tx('POST UNMANNED', dx + dw - 8, by + 12, { s: 10, w: 'bold', c: 'rgba(255,74,58,0.8)', a: 'right', ls: 0.6 });
     if (can) {
       const hot = (G.now % 1.1) < 0.75;
       const bw = 212;
@@ -273,12 +357,13 @@ export function createHUD(hudEl) {
       tx('▶ DISPATCH', dx + 8 + bw / 2, by + 41, { s: 15, w: 'bold', c: '#07100a', a: 'center', ls: 1.4 });
       tx(dest, dx + 8 + bw / 2, by + 57, { s: 13, w: 'bold', c: '#07100a', a: 'center', ls: 1.2, max: bw - 12 });
       holdBtn(G, dx + 230, by + 22, dw - 238, 40);
-      tx('[SPACE] DISPATCH   [F] PA', dx + 12, by + 78, { s: 11, c: DIM });
-      tx('POST UNMANNED', dx + dw - 12, by + 78, { s: 11, c: 'rgba(255,74,58,0.75)', a: 'right' });
+      tx('[SPACE] DISPATCH   [F] PA   [C] TRACK', dx + 12, by + 78, { s: 11, c: DIM });
     } else {
       tx('SELECT A SUBJECT ROW', dx + 12, by + 42, { s: 14, w: 'bold', c: '#6f8a77' });
-      tx('CLICK A MONITOR OR PRESS [1]-[8]', dx + 12, by + 62, { s: 11, c: '#5d7364' });
-      tx('[↑/↓] ROSTER   [TAB] LEAVE POST', dx + 12, by + 78, { s: 11, c: '#5d7364' });
+      // [1]-[8] was wrong from the frame config.js added CAM 09, and [TAB] was
+      // never bound to anything. Derive the range; name the keys that exist.
+      tx(`CLICK A MONITOR OR PRESS [1]-[${G.cams.length}]`, dx + 12, by + 62, { s: 11, c: '#5d7364' });
+      tx('[↑/↓] ROSTER   [C] TRACK NEXT SUBJECT', dx + 12, by + 78, { s: 11, c: '#5d7364' });
     }
     burnIn();
   }
@@ -550,9 +635,23 @@ export function createHUD(hudEl) {
       : '[SHIFT] SPRINT   [WASD] MOVE';
     tx(hint, sx + 16, sy + 92,
       { s: 12, w: gassed ? 'bold' : '', c: gassed && held ? RED : gassed ? '#ff9a2e' : DIM, ls: 1 });
+    // ROUND 6: the cop is a real body now, and PULSE is the element that has to
+    // agree with it. It already does at source — agents.js integrates `fatigue`
+    // once, in updateCop, and BOTH the heave and this number read that one
+    // value, so there is no second derivation to drift. Checked the two states
+    // where they could still look like they are arguing:
+    //   WINDED  gassed pins fatigue >= 0.92, so the word and the heaving agree.
+    //   READY   fatigue falls at 0.9/s against a 0.81 s refill, so for about two
+    //           seconds the bar is green and the man is still visibly blowing.
+    //           That is not a contradiction, it is the whole point of a lagging
+    //           signal, and PULSE is the only element on the panel that carries
+    //           it. So the READ has to be there in peripheral vision —
+    // the red threshold is now 0.55, which is exactly where animateCop() starts
+    // putting his hands on his knees. The number turns red on the same frame the
+    // body gives up on standing. It used to be 0.66 and it went red a beat late.
     const fat = Math.max(0, Math.min(1, t.fatigue == null ? 1 - frac : t.fatigue));
     tx(`PULSE ${Math.round(96 + fat * 88)}`, sx + 16 + bw2, sy + 92,
-      { s: 12, w: 'bold', c: fat > 0.66 ? RED : fat > 0.33 ? '#ff9a2e' : DIM, a: 'right' });
+      { s: 12, w: 'bold', c: fat > 0.55 ? RED : fat > 0.30 ? '#ff9a2e' : DIM, a: 'right' });
 
     if (gassed) { // red frame creep, so you feel it without reading anything
       const a = 0.12 + 0.1 * Math.sin(G.now * 8);
@@ -716,6 +815,8 @@ export function createHUD(hudEl) {
   hud.render = function render(G) {
     regions = [];
     ctx.clearRect(0, 0, W, H);
+    // Re-anchor the DVR stamp to wall time, once, before anything prints it.
+    clockBase = Date.now() - G.st.clock * 1000;
     try {
       if (G.st.mode === 'desk') drawDesk(G);
       else if (G.st.mode === 'floor') drawFloor(G);
@@ -727,6 +828,10 @@ export function createHUD(hudEl) {
       if (!render._logged) { render._logged = 1; console.error('[game/hud]', e); }
     }
   };
+
+  // The clock cctv.setClock() is handed, if it ever ships. Same function the
+  // band prints from, so there is exactly one clock on this desk.
+  hud.wallClock = wallClock;
 
   // Viewport px -> 1280x720 HUD space, matching object-fit: contain.
   hud.toLocal = function (ev) {
