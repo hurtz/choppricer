@@ -103,6 +103,31 @@ export const TUNING = {
   rampRun: 1.00, rampWalk: 0.88, rampReact: 2.40, rampAdren: 0.55,
   rampTell: 1.35, rampNerve: 1.55, rampStagger: 0.40,
 
+  // --- Round 7: "hey, put that back" — deterrence at range, at a chosen subject.
+  // Guilty 63.3% comply / innocent 32.5% comply. Likelihood ratio on a put-back is
+  // 1.95: one call moves a 50/50 suspicion to 66%, a shrug to 35%. A read, not a test.
+  // Four things hold that line: a third of thieves brazen it out; innocents put
+  // things back too, using the IDENTICAL putback clip; everyone within annSpill
+  // looks up, because a PA is a loudspeaker and not a laser; and annFade makes
+  // repeat shouts converge at ~78% rather than 100%.
+  // The row that proves it hardest is annHeedHot — once it is already in his coat,
+  // 35.0% against the innocent 32.5% means the call carries NO information at all.
+  // The information only exists in the window where the payout is zero anyway.
+  // A PA-spam player earns 0 pts/shift AND loses 1.67 items: strictly worse than the
+  // camper, who at least stops the goods leaving. Zero complaints on this path by
+  // construction — it is the safe alternative to walking up to him.
+  annHeed: 0.62,       // P(comply) — guilty, has not concealed yet
+  annHeedHot: 0.34,    // ...and once it is already in his coat
+  annSpook: 0.30,      // P(an INNOCENT sheepishly puts back what is in his hand)
+  annNerve: 0.45,      // how much per-subject nerve tilts the roll
+  annFade: 0.45,       // x per previous shout at the same body — stops the slot machine
+  annSpillMul: 0.45,   // bystanders take it less personally
+  annSpill: 7.0,       // m — everyone this close to the subject looks up too
+  annLagLo: 0.35, annLagHi: 0.95,   // s before he reacts
+  annCool: 6.0,        // s between PA calls (game.js's button cooldown is the real gate)
+  annHold: 4.5,        // s a 'hold' call pins him for
+  annHuff: 0.55,       // x remaining shopT — a customer shouted at in public shops less
+
   // --- Round 4: two doors, and going through a man ---
   // One door made the thief's destination public knowledge, and public knowledge
   // beats a scouting report — a camper scored 80.7% at wrong-aisle-by-1. Two doors

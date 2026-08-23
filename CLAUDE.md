@@ -58,3 +58,15 @@ with a comment explaining itself is how every one of these starts.
 Rule: exactly one piece of code owns a derivation, and everyone else calls it. If a
 second copy is genuinely unavoidable, it needs an assertion that fails loudly when
 the two disagree — see `lungCheck()` in `src/agents.js` for the pattern.
+
+
+## Committing while builders are live
+
+Several commits in this repo were made with `git add -A` while other agents had
+in-flight edits in the tree. Nothing was lost, but a builder's work landed inside an
+unrelated commit under someone else's message, and `git checkout HEAD -- <their file>`
+stopped reverting to a clean baseline for them.
+
+Rule for the lead: while any builder is running, commit **only the paths that round
+touched**, named explicitly. `git add -A` is for a quiet tree. If a sweep is
+unavoidable, say so in the commit message so the owner can find their change later.

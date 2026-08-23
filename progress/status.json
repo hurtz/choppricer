@@ -131,7 +131,7 @@
   },
   "agents": {
    "round": 7,
-   "state": "building",
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -216,10 +216,10 @@
      "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
     }
    ],
-   "updated": 1787522906.628927,
+   "updated": 1787523772.4811578,
    "note": "announce evidence sheet",
    "gap": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it.",
-   "verdict": "PASS. One exit shipped and the camper is dead by INCOME, not catch rate: 0 pts/shift in every shift sampled, 4.17 thefts started and 4.83 balked, 91% of his time on the door. The desk player earns 250. Rationing still beats always-sprint 77.0 vs 53.0. Median chase 6.22s, catchUnder1s 11.7%, lungCheck passes."
+   "verdict": "CORRECTION to the round-6 record. Its report quoted desk 250.0 pts / 4.50 thefts / 2.50 caught. Round 7 restored the round-6 commit's agents.js, figures.js and decoy.js and re-ran benchShift: the round-6 build actually prints 383.33 / 4.33 / 3.83 / 0.50 with 9.17 complaints, character for character with today's build. config.js has not changed since that commit either. The original table was mis-transcribed; these are the numbers that reproduce."
   },
   "game": {
    "round": 8,
@@ -352,6 +352,14 @@
   }
  },
  "log": [
+  {
+   "t": 1787523772.481159,
+   "piece": "agents",
+   "role": "lead",
+   "round": 6,
+   "state": "passed",
+   "text": "CORRECTION to the round-6 record. Its report quoted desk 250.0 pts / 4.50 thefts / 2.50 caught. Round 7 restored the round-6 commit's agents.js, figures.js and decoy.js and re-ran benchShift: the round-6 build actually prints 383.33 / 4.33 / 3.83 / 0.50 with 9.17 complaints, character for character with today's build. config.js has not changed since that commit either. The original table was mis-transcribed; these are the numbers that reproduce."
+  },
   {
    "t": 1787523687.246093,
    "piece": "game",
@@ -1057,5 +1065,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787523687.2460952
+ "updated": 1787523772.4811609
 }
