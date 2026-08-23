@@ -52,13 +52,18 @@
 // ---------------------------------------------------------------------------
 
 // Neutral. Anything a clip does not mention returns to this.
-// Coordinates are root-local, in the READABLE convention: +x is the side of the
-// hand doing the work (his right), +y up, +z in front of him. agents.js negates
-// x once when it writes the prop, because figures.js hangs armR at local -x and
-// armL at +x — see the note at the write site. Author to the hand, not to the
-// axis.
+//
+// THERE IS NO ABSOLUTE POSITION CHANNEL, and that is deliberate. A clip drives
+// ARMS; agents.js solves where the hand ends up and puts the prop there. Round
+// 5 authored the item's position directly and the two drifted half a metre
+// apart — a box floating beside his left ear while his right arm reached — and
+// you cannot argue that innocent and guilty footage is indistinguishable using
+// a shot with a floating box in it. `off` is a small correction from the solved
+// hand, in RIG-LOCAL metres, for the beats where the item is pressed against
+// the body: +x is across his chest, +z is out in front of him.
 export const POSE = {
-  off: [0, 0, 0],             // prop offset FROM THE WORKING HAND, rig-local
+  off: [0, 0, 0],             // prop offset from the SOLVED hand, RIG-LOCAL
+                              // (+x is toward his left, i.e. across the chest)
   vis: 0,
   armR: -0.95, armRz: -0.16,  // the cart-bar pose is the rest state in this store
   armL: -0.95, armLz: 0.16,
@@ -98,8 +103,8 @@ export const GESTURES = [
       kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, chest: 0.05, neck: 0.22 }),
       kf(0.22, { vis: 1, armR: -1.92, armRz: -0.20, look: 0.72, neck: 0.10 }),
       kf(0.42, { vis: 1, armR: -2.05, armRz: 0.10, look: -0.55 }),
-      kf(0.60, { vis: 1, armR: -1.62, armRz: 0.34, off: [-0.06, -0.02, -0.20], look: 0.30 }),
-      kf(0.66, { vis: 0, armR: -1.50, armRz: 0.30, off: [-0.06, -0.02, -0.22], look: 0.45 }),
+      kf(0.60, { vis: 1, armR: -1.55, armRz: 0.88, off: [0.0, -0.02, -0.24], look: 0.30 }),
+      kf(0.66, { vis: 0, armR: -1.45, armRz: 0.95, off: [0.0, -0.02, -0.26], look: 0.45 }),
       kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
     ],
   },
@@ -110,8 +115,8 @@ export const GESTURES = [
     keys: [
       kf(0.00, { vis: 1, armR: -1.45, armRz: -0.26, chest: 0.08, neck: 0.26 }),
       kf(0.26, { vis: 1, armR: -1.70, armRz: -0.14, look: -0.62 }),
-      kf(0.52, { vis: 1, armR: -1.05, armRz: 0.22, off: [-0.04, 0.0, -0.14], look: 0.50, chest: 0.10 }),
-      kf(0.60, { vis: 0, armR: -0.92, armRz: 0.18, off: [-0.04, 0.0, -0.16], look: 0.34 }),
+      kf(0.52, { vis: 1, armR: -0.72, armRz: 0.46, off: [0.0, 0.0, -0.10], look: 0.50, chest: 0.10 }),
+      kf(0.60, { vis: 0, armR: -0.58, armRz: 0.44, off: [0.0, 0.0, -0.12], look: 0.34 }),
       kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
     ],
   },
@@ -138,7 +143,7 @@ export const GESTURES = [
   {
     id: 'putback', tell: 'putback', dur: 1.60, item: BOX,
     keys: [
-      kf(0.00, { vis: 0, armR: -1.40, armRz: 0.32, off: [-0.06, 0.0, -0.20], look: 0.55 }),
+      kf(0.00, { vis: 0, armR: -1.45, armRz: 0.92, off: [0.0, 0.0, -0.24], look: 0.55 }),
       kf(0.16, { vis: 1, armR: -1.62, armRz: 0.10, look: -0.40 }),
       kf(0.52, { vis: 1, armR: -1.80, armRz: -0.30, neck: 0.08 }),
       kf(0.80, { vis: 1, armR: -1.70, armRz: -0.40, neck: 0.22, chest: 0.10 }),
@@ -163,7 +168,7 @@ export const GESTURES = [
       kf(0.30, { vis: 1, armR: -1.62, armRz: 0.14, neck: 0.30 }),
       kf(0.52, { vis: 1, armR: -2.10, armRz: 0.30, neck: 0.16, look: 0.30 }),
       kf(0.72, { vis: 1, armR: -1.02, armRz: 0.14, look: -0.45 }),
-      kf(0.80, { vis: 0, armR: -0.86, armRz: 0.08, off: [-0.04, 0.0, -0.12] }),
+      kf(0.80, { vis: 0, armR: -0.62, armRz: 0.30, off: [0.0, 0.0, -0.08] }),
       kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
     ],
   },
@@ -240,8 +245,8 @@ export const GESTURES = [
     keys: [
       kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, neck: 0.22 }),
       kf(0.18, { vis: 1, armR: -1.78, armRz: -0.10, look: -0.55 }),
-      kf(0.34, { vis: 1, armR: -1.02, armRz: 0.24, off: [-0.04, 0.0, -0.12], chest: 0.10 }),
-      kf(0.40, { vis: 0, armR: -0.90, armRz: 0.20, off: [-0.04, 0.0, -0.14], look: 0.40 }),
+      kf(0.34, { vis: 1, armR: -0.74, armRz: 0.48, off: [0.0, 0.0, -0.10], chest: 0.10 }),
+      kf(0.40, { vis: 0, armR: -0.60, armRz: 0.44, off: [0.0, 0.0, -0.12], look: 0.40 }),
       kf(0.58, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
       kf(0.66, { vis: 1, armR: -1.04, armRz: 0.18 }),
       kf(0.84, { vis: 1, armR: -1.62, armRz: -0.06, neck: 0.18 }),

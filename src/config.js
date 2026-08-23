@@ -79,6 +79,30 @@ export const TUNING = {
   grabSlack: 0.45, bargeGrace: 0.50, stumbleT: 0.28, stumbleMul: 0.72,
   nerveLo: 0.55, nerveHi: 1.55,
 
+  // --- Round 6: one exit, and a reason not to stand on it ---
+  // The client asked for a single exit so the player knows where they're going and
+  // gets a chance to cut them off. Measured with round-5 rules that is a disaster:
+  // a door-camper scores 91% and the aisle number is worth EXACTLY ZERO (82.0 at
+  // off0, 82.0 at off1). Four mechanics pay for it, none of them geometry: he won't
+  // commit with a uniform on the door, he won't walk into one either (ditches the
+  // goods after dumpT), he only bolts from a man coming AT him (boltNear), and
+  // innocents leave by the same door so "heading for the exit" isn't a confession.
+  // Camper income is now zero pts/shift in every shift sampled — his 27% catch rate
+  // describes nothing, because the denominator is what he destroyed.
+  deterR: 8.5, deterSpeed: 1.35, deterT: 2.20, deterSight: 26.0,
+  deterBalk: 3.00, chillLo: 14.0, chillHi: 30.0, dumpT: 11.0,
+  raceEdge: 0.98, raceSlack: 3.20, boltNear: 9.00,
+  identR: 12.0, identT: 0.45, identPick: 2.30, identCool: 1.10,
+  shopLo: -14.0, shopHi: 165.0, decoyLo: 9.0, decoyHi: 22.0,
+
+  // --- Round 6: difficulty ramp. Level-0 multipliers; 1.0 = level 1 = round 5. ---
+  // rampRun stays 1.00 deliberately: "make the thief slower early" makes the game
+  // HARDER by 27 points, because a slower man is still walking out when the dispatch
+  // lands, so the cop arrives BEHIND him — and behind is a verdict, not a position.
+  // rampWalk is the real lever: tell-to-door window 14% longer, near-free on the floor.
+  rampRun: 1.00, rampWalk: 0.88, rampReact: 2.40, rampAdren: 0.55,
+  rampTell: 1.35, rampNerve: 1.55, rampStagger: 0.40,
+
   // --- Round 4: two doors, and going through a man ---
   // One door made the thief's destination public knowledge, and public knowledge
   // beats a scouting report — a camper scored 80.7% at wrong-aisle-by-1. Two doors

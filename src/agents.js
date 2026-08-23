@@ -54,6 +54,211 @@
 // the report. Nothing below is a mean without its shape attached.
 //
 // ===========================================================================
+// ROUND 6 — ONE WAY OUT, AND A REASON NOT TO STAND ON IT
+// ===========================================================================
+// The client asked for one exit: "I think you should kind of have a clue where
+// they're going. The cop should kind of have a chance to get there."
+//
+// Round 4 had already proved that one exit is a design disaster, and killed it
+// by HIDING THE DESTINATION behind a second door. That fix worked and it was
+// the cheap one: it also hid the destination from the PLAYER, so the reason to
+// leave the desk stopped being "I know where he is going" and became "I cannot
+// know, so I had better follow him". The client's instinct is better. Measured
+// on this build before any of this round's changes, n=120:
+//
+//                        cut off0   cut off1   camp off0   chase off0
+//   two doors (round 5)     76.7      34.7        23.3        38.3
+//   one door                76.7      73.3        71.7        24.2
+//
+// One door hands a door-camping bot 48 points and flattens the misaim table
+// from 40 points to 3.4 — at n=100 it is flatter still, 82.0 / 82.0, i.e. being
+// sent to the wrong aisle costs EXACTLY NOTHING. Both of those are the same
+// fact: with one way out, WHERE he is going is public, so the only things the
+// aisle number can still be worth are WHO he is and WHEN he moves.
+//
+// ---- WHAT PAYS FOR THE ONE EXIT. Four mechanics, none of them geometry -----
+//  1. HE DOES NOT COMMIT WITH A UNIFORM ON THE DOOR. A subject who has not yet
+//     concealed anything, and who can see the guard posted on the only way out,
+//     balks: he puts it back and shops honestly for chillLo..chillHi seconds.
+//     Second balk and he leaves the store a customer. Camping therefore
+//     produces a shift with NO CRIME IN IT — punished by income, not by catch
+//     rate. See benchShift()/benchIncome(): a camper's CATCH RATE is a
+//     percentage of a numerator he has driven to zero.
+//  2. AND HE DOES NOT WALK INTO ONE EITHER. A subject who already has it turns
+//     back into the aisles, waits you out, and after dumpT ditches the goods on
+//     a shelf and leaves clean: no arrest, no loss, no points. This is the half
+//     that beats an incident already in flight, and it is why `ditched` is a
+//     fourth outcome in bench() rather than being pooled into "escaped".
+//  3. HE ONLY RUNS FROM A MAN COMING AT HIM. Round 3 made any uniform on his
+//     line inside 17 m a bolt. With one exit every route out passes the front
+//     end, so a cop merely WALKING TOWARDS THE DOORS was on every thief's line
+//     and the thief set off sprinting into the arms of the man about to stand
+//     on the only door. Nobody does that; you keep strolling and you hope. The
+//     sighting still fires at 17 m if he is being closed on — the aisle-mouth
+//     case, unchanged, which is the one worth 1.13 s -> 3.03 s — and otherwise
+//     not until boltNear (9 m). This one is worth 22 points of door-camper.
+//  4. INNOCENTS CHECK OUT AND LEAVE, through the same door. Before this the
+//     only body that ever walked at the exit was the thief, so "subject moving
+//     toward the doors" was a confession. Now the door is a crowd. The cost is
+//     real and it is paid by the player too: the competent bot loses ~5 points
+//     to bodies in the way.
+//
+// ---- THE TABLE, n=100, maxT 45, this build. -------------------------------
+// Round 5's rules are reproduced on the same instrument with useDoors(2) plus
+// deterR=-1 and boltNear=99, so the only thing that differs is the bundle above
+// (the store population is the same in both columns, which is why the round-5
+// column reads 69 where round 5's own report said 74.7).
+//
+//                       ROUND 5 RULES   ONE DOOR,      ROUND 6
+//                       (2 doors)       ROUND 5 RULES  SHIPPED
+//   cut  off0              69.0            82.0           77.0
+//   cut  off1              36.0            82.0           69.0
+//   cut  off2              25.0             --            71.0
+//   cut  off4              24.0             --            60.0
+//   camp off0              25.0            91.0           27.0
+//   camp off1               --             81.0           22.0
+//   chase off0             33.0             --            27.0
+//   always-sprint off0     47.0             --            53.0
+//
+// The wind ladder survives intact, which was the no-regression bar: rationing
+// 77.0 against always-sprint 53.0, +24.0 (round 5 reported +28.7 on its own
+// instrument, 74.7 vs 46.0). lungCheck() still passes and nothing in the lung
+// was touched this round.
+//
+// THE MIDDLE COLUMN IS THE PROBLEM STATEMENT AND IT IS WORSE THAN ROUND 4
+// FEARED. One door under round 5's rules: a bot that ignores the dispatch,
+// walks to the only exit and stands on it scores 91.0%, beating the bot that
+// reads the aisle number and goes and chases the man (82.0%) by nine points —
+// and the aisle number is worth LITERALLY ZERO to the chaser (82.0 at off0,
+// 82.0 at off1). The whole desk phase is decoration in that column.
+//
+// The right-hand column is the same store with the four mechanics above. The
+// camper goes 91.0 -> 27.0 and SEVENTY of his hundred trials end with the item
+// back on a shelf; the chaser keeps 77.0, which is round 5's own headline
+// (74.7 as reported, 69.0 on today's instrument with today's store population);
+// and the misaim table has a 17-point slope in it again where it had none.
+//
+// ---- AND THE NUMBER A CATCH RATE CANNOT SHOW ------------------------------
+// A camper's 27% is a percentage of the thefts that still happen while he is
+// stood there, and the point of deterrence is that almost none do. benchShift()
+// runs a whole four-minute shift on game.js's own PACE cadence and counts what
+// the scoreboard counts (a catch is 100 points; an escape and a ditched item
+// are both zero):
+//
+//   benchIncome(6, { minutes: 4 }), one exit, ramped difficulty:
+//     desk    250.0 pts   4.50 thefts   2.50 caught  2.00 lost  0.00 balked
+//     naive   183.3 pts   4.67 thefts   1.83 caught  2.83 lost  0.00 balked
+//     camper    0.0 pts   4.17 thefts   0.00 caught  0.00 lost  4.83 balked
+//                                                      ...91% of the shift
+//                                                      stood on the door
+//
+// A CAMPER EARNS NOTHING. Not "less" — zero, across every shift in the sample.
+// Four thefts still start while he is walking to his post, and every one of
+// them ends with the item back on a shelf: nothing is stolen, nobody is
+// arrested, and the shift produces no incidents to write up. Meanwhile five
+// more subjects balk before they ever conceal. His CATCH RATE in the table
+// above is 27%, and that number describes nothing, which is exactly the trap
+// the brief warned about: a rate whose denominator you have driven to zero.
+//
+// That is the answer to "does camping pay" in the only currency the player has.
+//
+// ---- A FLAG FOR game.js, FOUND BY THIS INSTRUMENT AND NOT MINE TO FIX ------
+// The same run says the DESK player takes 7.0 harassment complaints in a
+// four-minute shift and the naive one 9.8. THREE IS A DEMOTION. My first
+// thought was that this round caused it — innocents walk at the exit now, so
+// there are more bodies on the cop's route — so I measured it instead of
+// assuming, with shopLo/shopHi pushed past the end of the shift so nobody ever
+// leaves:
+//     nobody leaves     11.25 complaints   450 pts   7.75 thefts
+//     shipped            8.25 complaints   275 pts   4.75 thefts
+// It is NOT the leavers: the absolute number falls with them in. Per incident
+// it is 1.45 -> 1.74, which is a real but small effect of a busier front end.
+// The bulk of it is that `copClosingOn` fires on approach rather than contact,
+// and a bot (or a player) sprinting through a crowded aisle is pointed at
+// somebody almost continuously. It is game.js's rule and game.js's number —
+// agents.js only reports when it fires — but at 7-10 per shift against a
+// three-strike demotion, a player who reads every tell correctly still gets
+// walked down to traffic duty. Worth harassAim/harassSpeed, or making a
+// complaint need CONTACT.
+//
+// ---- THE DIFFICULTY RAMP, AND THE LEVER THAT POINTED BACKWARDS ------------
+// setDifficulty(0..1); 1 IS ROUND 5'S GAME EXACTLY, so the top of the ramp is
+// the identity and this cannot silently re-tune anything. Entry point for
+// game.js, once a frame, idempotent:
+//     a.setDifficulty(a.difficultyForClock(st.clock));
+// The breakpoints (0 / 150 / 330 s) are game.js's own PACE breakpoints, so the
+// shift reads as one curve. DENSITY IS NOT ON THIS DIAL — game.js owns how many
+// cases are open, this owns how hard one of them is.
+//
+//   competent bot, one exit, n=100          d0      d0.5     d1
+//     catch rate                           87.0     78.0     77.0
+//     median chase                         6.23 s   6.15 s   6.22 s
+//     catches inside 1 s                    9.2%    10.3%    11.7%
+//   naive pursuit, n=80                     40.0      --      27.5
+// Monotone, and the chase stays a chase at every level rather than turning into
+// a collection at the easy end — which is the failure mode an "easier" setting
+// normally has, and the one round 3 shipped by accident.
+//
+// THE FINDING WORTH MORE THAN THE RAMP: "make the thief slower early" is the
+// obvious lever and it makes the game HARDER, by 27 points. It is written up
+// against `rampRun` in the K block. Every other difficulty lever in this file
+// is a gift; that one is a trap, and it is a trap for a reason that generalises
+// — anything which leaves the subject deeper in the store when the dispatch
+// lands converts the cop from in-front to behind, and behind is a verdict.
+//
+// ---- THE HONEST WEAKNESS, STATED PLAINLY ----------------------------------
+// 17 points is not the 45-point slope two doors bought. It cannot be. With one
+// exit the whole building funnels past one place, so a cop sent to the wrong
+// aisle still gets a look at his man on the way — `madePct` is 93% at off0 and
+// 95% at off1, where under two doors it fell 88% -> 54%. Knowing WHICH AISLE is
+// worth less when you no longer need to know WHERE HE IS GOING; that is the
+// price of the client's ask and it should be paid consciously rather than
+// hidden. What the aisle number buys instead, and it is the bigger number, is
+// the 50 points between chasing (77) and camping (27).
+// THE LEVER FOR WHOEVER TAKES THIS NEXT, measured-adjacent but not measured:
+// the drift out is still a beeline down the exit field, so his position is a
+// pure function of the door. Give him a STAGING LEG — a real shoplifter leaves
+// through the aisles, not across an open front end — and the dead-reckoning a
+// wrong-aisle cop is doing becomes wrong for a reason that is not the door.
+// That is a route change, it re-opens the median-chase numbers, and it is a
+// round, not an afternoon.
+//
+// ---- THE DECOYS — src/agents/decoy.js -------------------------------------
+// The CCTV builder made the monitors legible this round and then flagged,, and
+// against its own interest, that legibility had become PROOF: "the footage is
+// not ambiguous, because agents.js has no innocent behaviour that produces a
+// reach-with-an-object". A picture you cannot be wrong about kills the best
+// idea in this game and makes the harassment complaint unfireable by a
+// reasonable player.
+//
+// So there is one keyframe table, and the steal is IN IT. Eleven clips — three
+// steals, one put-back and seven innocent behaviours — all sampled by one
+// applyGesture() and drawn by one branch of animateShopper(). There is no code
+// path a thief takes that an innocent does not, which is the only version of
+// this claim that cannot rot: the next person to tune the thief's arm tunes
+// seven innocents' arms with it. The clip's `tell` never reaches a material, a
+// scale or a duration; the durations overlap deliberately (steals 1.75-2.60 s,
+// decoys 1.60-2.70 s, and the shortest AND longest clips in the file are both
+// decoys) so a player with a stopwatch cannot beat it.
+// Evidence: shots/agents_r6.png is six unlabelled strips of five frames; two of
+// them are steals. shots/agents_r6_key.png is the same sheet with the answers.
+//
+// The decoy scheduler does not look at `s.guilty` — every browsing body in the
+// store rolls one every 9-22 s, so at fourteen shoppers there is a reach-with-
+// an-object somewhere in the building roughly every 1.1 s. A guilty subject
+// does them too, before and after his steal, so "the man doing something with
+// his hands" is never the answer.
+//
+// AND ONE BUG FOUND BY LOOKING AT IT BIG. Round 5 authored the concealment's
+// item as absolute rig-local coordinates while the ARM was driven separately;
+// the two disagreed by 0.50 m, so the box hung in the air beside his left ear
+// while his right arm reached. Invisible at 431 px down a 26 m aisle, obvious
+// the moment the spot monitor pushes in. The prop is solved from the arm now —
+// Euler XYZ on the shoulder pivot, shoulder read off the rig so girth and
+// height come out right per body — and clips carry only a small `off` for the
+// beats where it is pressed against the coat.
+//
+// ===========================================================================
 // ROUND 5 — DOES MANAGING YOUR WIND PAY? IT DOES NOW. THAT IS THE HEADLINE.
 // ===========================================================================
 // Round 4 reported, honestly, that stamina management paid NOTHING: holding
@@ -770,15 +975,31 @@ const K = {
   // What is ramped, and why each one is a DIFFICULTY change and not a DENSITY
   // change (game.js owns density — see its PACE table, and the note below
   // about sharing the breakpoints):
-  //   run    5.35 -> 4.60 m/s at level 0. He is slower than you for the first
-  //          few minutes, so a stern chase is winnable while you are learning
-  //          that a stern chase is not the plan.
-  //   walk   the DRIFT. 1.25 -> 1.00 m/s, i.e. the window between the tell on
-  //          the monitor and his shoulder on the door is 25% longer. This is
-  //          the one the client actually described ("it should take a minute")
-  //          and it is the cheapest difficulty in the file, because it costs
-  //          the player nothing to use and buys him the only thing he is short
-  //          of at the start, which is time to read.
+  //   run    1.00. NOT RAMPED, AND THAT IS THE MOST USEFUL THING THIS ROUND
+  //          MEASURED. "Make the thief slower early" is the obvious first
+  //          difficulty lever and IT MAKES THE GAME HARDER. n=80-100, competent
+  //          bot, one exit, everything else ramped:
+  //             rampRun 0.86 -> 50.0%     rampRun 0.75 -> 47.5%
+  //             rampRun 0.65 -> 70.0%     rampRun 1.00 -> 86.3%
+  //          against 77.0% at level 1. A slower man is still walking out when
+  //          the cop is dispatched, so the cop arrives BEHIND HIM instead of in
+  //          front of him — and this file's own header has said since round 5
+  //          that being behind him is a verdict, not a position (the legacy
+  //          'behind' spawn scores 4.7%). Slowing the thief converts the good
+  //          geometry into the unwinnable one. The median chase collapses from
+  //          6.22 s to 1.98 s and catches-inside-a-second triple, which is the
+  //          signature: the bot either lands on top of him or never sees him
+  //          again. Do not re-add it without re-reading this paragraph.
+  //   walk   the DRIFT, and the one lever the game builder asked for by name:
+  //          the tell-to-door window is route metres over thiefWalk, so 0.88
+  //          makes it 14% longer while the player is still learning to read the
+  //          wall. That is the client's "it should take a minute", bought on
+  //          the difficulty axis where it belongs rather than on game.js's
+  //          density axis. It is nearly free on the floor — see the table
+  //          above: 1.00 measures 86.3% and 0.80 measures 78.8%, both against
+  //          77.0% at level 1, so the drift ramp costs the early player some of
+  //          his advantage for the same geometric reason `run` costs him all of
+  //          it. 0.88 is the measured compromise.
   //   react  0.22 -> 0.53 s. The "oh shit" freeze before the bolt. A third of a
   //          second of a man standing still staring at you is a beat a new
   //          player can see and act on; at 0.22 it is a frame and a half.
@@ -792,11 +1013,36 @@ const K = {
   //          line "to make it easier" is the round-3 pathology: he bolts later,
   //          the cop is already on top of him, and the catch lands inside a
   //          second. Easier must never mean shorter.
-  get rampRun()       { return t('rampRun',   0.86); }, // x thiefRun at level 0
-  get rampWalk()      { return t('rampWalk',  0.80); }, // x thiefWalk (the drift)
+  get rampRun()       { return t('rampRun',   1.00); }, // x thiefRun — NOT RAMPED, see above
+  get rampWalk()      { return t('rampWalk',  0.88); }, // x thiefWalk (the drift)
   get rampReact()     { return t('rampReact', 2.40); }, // x thiefReact
   get rampAdren()     { return t('rampAdren', 0.55); }, // x thiefAdren
   get rampTell()      { return t('rampTell',  1.35); }, // x gesture duration
+  // ROUND 6, ADDED AFTER MEASURING, because the first five made the game HARDER
+  // at level 0 and the bench said so: 49.0% at difficulty 0 against 77.0% at
+  // difficulty 1, with the median chase down at 2.00 s and 30.6% of catches
+  // inside a second. A slower drift (rampWalk) is exactly what the game builder
+  // asked for and it is right for the DESK — the tell-to-door window is 25%
+  // longer — but on the FLOOR it changes the encounter geometry: the cop
+  // arrives while the man is still deep in his aisle, so the bolt happens
+  // inside jukeRange (5.20 m), so far more chases start as a SHOULDER BARGE.
+  // And getting through the cop is nearly a win in this game (round 5: barged
+  // and still caught, 18%). "Easier" was quietly handing the naive player the
+  // hardest single interaction in the file, every time.
+  //   rampNerve   scales the per-subject nerve roll UP at level 0, so an early
+  //               shift gets timid shoplifters who want no part of you and run
+  //               AROUND rather than THROUGH. Fiction-exact and it moves the
+  //               flee field too, since copThreatW is scaled by nerve.
+  //   rampStagger cuts what a barge that does get through actually costs you.
+  // Neither of these fixed the inversion on its own (50.0% -> 51.0%), which is
+  // what sent me to ablate `rampRun` and find the real cause. They are kept
+  // because they are directionally right and cost nothing at level 1, where
+  // both are the identity, but do not credit them with the ramp working.
+  get rampNerve()     { return t('rampNerve',   1.55); }, // x the nerve roll
+  get rampStagger()   { return t('rampStagger', 0.40); }, // x bargeStagger
+  get nerveLoD()      { return K.nerveLo * dlerp(K.rampNerve, 1); },
+  get nerveHiD()      { return K.nerveHi * dlerp(K.rampNerve, 1); },
+  get bargeStaggerD() { return K.bargeStagger * dlerp(K.rampStagger, 1); },
 
   // The ramped reads. EVERYTHING that touches a thief's speed goes through
   // these, including the pursuit bot's model of him (`tSpd` in botGoal and the
@@ -1746,7 +1992,7 @@ export function createAgents(THREE, scene, world) {
     s.adren = 1; s.shoveT = 0; s.exitI = 0; s.viaBack = false;
     s.doorPref = EXITS.length > 1 ? ri(0, EXITS.length - 1) : 0;
     s.stumble = 0; s.bargeT = 0; s.bargeN = 0; s.bargeStam = null;
-    s.nerve = rr(K.nerveLo, K.nerveHi);
+    s.nerve = rr(K.nerveLoD, K.nerveHiD);
     s.hasCart = true; s.cart.visible = true; s.mesh.visible = true;
     s.held.visible = false; s.bang.visible = false; s.target = null;
     s.stole = false;
@@ -2442,9 +2688,14 @@ export function createAgents(THREE, scene, world) {
 
     // ---- guilty timeline: browse -> conceal -> drift -> bolt
     if (s.guilty && !s.bolted) {
-      // Computed once, at the top, because THREE separate decisions below read
-      // it and a one-frame-stale copy of it made him oscillate on the boundary
-      // between drifting out and turning back.
+      // CAN HE STILL BEAT YOU TO IT. Route metres, both of you, off the same
+      // field, computed once at the top of the frame. This is the client's
+      // sentence turned into a comparison:
+      //   "I think you should kind of have a clue where they're going. The cop
+      //    should kind of have a chance to get there."
+      // With one exit you always have the clue; what you have to do with it is
+      // GET THERE FIRST. Kept on the subject as well as inside heldOff() so a
+      // critic can read it off a live thief — see agents.shoppers[i].beatable.
       s.beatable = beatsCopToDoor(s);
       if (!s.stole) {
         // ROUND 6 — HE DOES NOT COMMIT WITH A UNIFORM ON THE ONLY WAY OUT.
@@ -2478,11 +2729,7 @@ export function createAgents(THREE, scene, world) {
       } else if (s.state === 'walk' || s.state === 'browse') {
         // STALLED. He has it in his coat and there is a uniform on the only
         // door, so he is hanging back in the aisles doing an extremely good
-        // impression of a man choosing a pasta sauce. He resumes the moment the
-        // door clears — no range test on the way out, deliberately: once he has
-        // decided to wait you out, he waits until you MOVE, not until he
-        // wanders far enough away to forget. Hysteresis, or he oscillates on
-        // the deterSight boundary and it reads as a twitch.
+        // impression of a man choosing a pasta sauce.
         // The resume test has to be the SAME test that made him turn back, or
         // he flips between drifting and waiting every other frame on the
         // boundary. Either you are posted on the door, or you are simply closer
@@ -2520,14 +2767,6 @@ export function createAgents(THREE, scene, world) {
       // It is also the intended counterplay to your own post: leave the door
       // and go and get him.
       const stalling = s.stole && !s.bolted && (s.state === 'walk' || s.state === 'browse');
-      // CAN HE STILL BEAT YOU TO IT. Route metres, both of you, off the same
-      // field. This is the client's sentence turned into a comparison:
-      //   "I think you should kind of have a clue where they're going. The cop
-      //    should kind of have a chance to get there."
-      // With one exit you always have the clue. What you have to do with it is
-      // GET THERE FIRST, and this is the line that decides whether getting
-      // there first was worth anything.
-      s.beatable = beatsCopToDoor(s);
       if ((s.state === 'drift' || stalling) && copD < T.suspicionRadius) { s.state = 'react'; s.timer = K.thiefReactD; }
       // ROUND 6 — AND HE ONLY RUNS FROM A MAN WHO IS COMING AT HIM. Round 3
       // made any uniform on his line inside 17 m a bolt, which was the right
@@ -3040,7 +3279,7 @@ export function createAgents(THREE, scene, world) {
     const m = Math.hypot(dx, dz) || 1; dx /= m; dz /= m;
     cop.position.x -= dx * 0.34; cop.position.z -= dz * 0.34;
     cop.userData.vel.multiplyScalar(0.15);
-    cop.userData.stagger = K.bargeStagger;
+    cop.userData.stagger = K.bargeStaggerD;
     // ...AND HIS WIND. Round 4's second pass: the knockback alone was worth two
     // metres, and a cop whose sprint is 64% faster than the thief's cruise
     // reclaims two metres in one second — which is why the first version of
@@ -3410,7 +3649,12 @@ export function createAgents(THREE, scene, world) {
       // him. After it: the door is still the last place he has to be.
       // Measured, n=120, one door, this build: leaving the old fallback in
       // costs the `cut` bot 12 points, all of them to `ditched` trials.
-      if (thief.bolted) {
+      // ...and the gate is only right for a ONE-EXIT store. With two doors,
+      // standing on one was never a losing line — the man simply takes the
+      // other one and you have lost nothing by waiting — so under useDoors(2)
+      // this bot must behave exactly as it did in round 5 or the one-door
+      // ablation is measuring a bot change as if it were a design change.
+      if (thief.bolted || EXITS.length > 1) {
         const cD = nav.at(st.copF, door.x, door.z);
         const tT = rTot / tSpd, cT = arrive(cD);
         if (isFinite(cD) && cT < tT + 1.2) return { x: door.x, z: door.z, sprint: true };

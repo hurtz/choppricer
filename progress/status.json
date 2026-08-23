@@ -125,7 +125,7 @@
    "verdict": "PASS on the client's core complaint. A 766x431 spot monitor with PTZ push-in makes the subject ~138px instead of 14px; a five-frame capture shows a concealment legibly (item out, raised, at chest, gone, hands back on cart). Desk frame 2.76 -> 4.08ms, and scene renders per frame went DOWN (1.12 vs 1.65)."
   },
   "agents": {
-   "round": 5,
+   "round": 6,
    "state": "passed",
    "shots": [
     {
@@ -172,6 +172,11 @@
      "round": 5,
      "path": "../shots/agents_r5.png",
      "t": 1787433223.680049
+    },
+    {
+     "round": 6,
+     "path": "../shots/agents_r6.png",
+     "t": 1787503339.293308
     }
    ],
    "gaps": [
@@ -196,10 +201,10 @@
      "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
     }
    ],
-   "updated": 1787434055.528398,
-   "note": "Added lungCheck(): asserts gassed-and-holding < copWalk at module load AND per bench run, naming the fix in the failure message. Turns the four-round inversion into an executable invariant instead of a comment. bench() now stamps any non-empty override onto its own result, so a swept number can no longer be quoted as the shipped build - a direct fix for the round-2 methodology failure. Declined the stern chase but mapped it: bargeStagger is spent, thiefTired is POISONED because the bot reads the same constant to predict the thief, so changing it measures the bot rather than the game.",
+   "updated": 1787503587.4081259,
+   "note": "With round-5 rules and one door a camper scores 91% and the aisle number is worth EXACTLY ZERO (82.0 at off0, 82.0 at off1). Four mechanics pay for it, none geometry: he won't commit with a uniform on the door, he won't walk into one either (ditches after 11s - new 'ditched' outcome), he only bolts from a man coming AT him, and innocents leave by the same door so heading for the exit is no longer a confession. THE RAMP FINDING: 'make the thief slower early' makes the game HARDER by 27 points - rampRun 0.65 gives 70.0% vs 1.00 giving 86.3% - because a slower man is still walking out when the dispatch lands, so the cop arrives BEHIND him, and behind is a verdict not a position. Median chase collapsed 6.22 -> 1.98s. rampWalk 0.88 is the real lever. Bug found by looking at it big: round 5 authored the concealment item in absolute rig coordinates while the arm was driven separately - they disagreed by 0.50m, so the box hung beside his LEFT ear while his RIGHT arm reached. Invisible at 431px, obvious on the new spot monitor.",
    "gap": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it.",
-   "verdict": "R5 shadow collapsed: 55 getters onto one spelling, 57 constants in K, 45 backed by config.js, 0 shadowing it. Value-preserving confirmed byte-identical across always/ration/chase/camp (46.0 / 74.7 / 43.3 / 21.3)."
+   "verdict": "PASS. One exit shipped and the camper is dead by INCOME, not catch rate: 0 pts/shift in every shift sampled, 4.17 thefts started and 4.83 balked, 91% of his time on the door. The desk player earns 250. Rationing still beats always-sprint 77.0 vs 53.0. Median chase 6.22s, catchUnder1s 11.7%, lungCheck passes."
   },
   "game": {
    "round": 6,
@@ -307,6 +312,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787503587.408127,
+   "piece": "agents",
+   "role": "builder",
+   "round": 6,
+   "state": "passed",
+   "text": "With round-5 rules and one door a camper scores 91% and the aisle number is worth EXACTLY ZERO (82.0 at off0, 82.0 at off1). Four mechanics pay for it, none geometry: he won't commit with a uniform on the door, he won't walk into one either (ditches after 11s - new 'ditched' outcome), he only bolts from a man coming AT him, and innocents leave by the same door so heading for the exit is no longer a confession. THE RAMP FINDING: 'make the thief slower early' makes the game HARDER by 27 points - rampRun 0.65 gives 70.0% vs 1.00 giving 86.3% - because a slower man is still walking out when the dispatch lands, so the cop arrives BEHIND him, and behind is a verdict not a position. Median chase collapsed 6.22 -> 1.98s. rampWalk 0.88 is the real lever. Bug found by looking at it big: round 5 authored the concealment item in absolute rig coordinates while the arm was driven separately - they disagreed by 0.50m, so the box hung beside his LEFT ear while his RIGHT arm reached. Invisible at 431px, obvious on the new spot monitor."
+  },
+  {
+   "t": 1787503339.293309,
+   "piece": "agents",
+   "role": "builder",
+   "round": 6,
+   "state": "building",
+   "text": "ONE EXIT (client ask) + deterrence, difficulty ramp, decoy behaviours. One door under r5 rules: camper 91.0% vs chaser 82.0%, misaim table dead flat (82.0/82.0). Round 6 shipped: cut 77/69/71/60 by misaim, camp 27/22/33/18, chase 27, always-sprint 53 (ration +24). Camper income = 0 pts/shift vs desk 250: 70 of 100 incidents end with the item back on a shelf. Ramp monotone 87/78/77 at d0/d0.5/d1; 'slower thief early' measured 27 points HARDER and was cut. 11 keyframed gesture clips, 3 steals + 7 innocent decoys, one code path. lungCheck passes."
+  },
   {
    "t": 1787501983.058054,
    "piece": "game",
@@ -860,5 +881,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787501983.058055
+ "updated": 1787503587.408128
 }

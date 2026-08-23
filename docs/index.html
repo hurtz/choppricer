@@ -54306,6 +54306,30 @@ const TUNING = {
   grabSlack: 0.45, bargeGrace: 0.50, stumbleT: 0.28, stumbleMul: 0.72,
   nerveLo: 0.55, nerveHi: 1.55,
 
+  // --- Round 6: one exit, and a reason not to stand on it ---
+  // The client asked for a single exit so the player knows where they're going and
+  // gets a chance to cut them off. Measured with round-5 rules that is a disaster:
+  // a door-camper scores 91% and the aisle number is worth EXACTLY ZERO (82.0 at
+  // off0, 82.0 at off1). Four mechanics pay for it, none of them geometry: he won't
+  // commit with a uniform on the door, he won't walk into one either (ditches the
+  // goods after dumpT), he only bolts from a man coming AT him (boltNear), and
+  // innocents leave by the same door so "heading for the exit" isn't a confession.
+  // Camper income is now zero pts/shift in every shift sampled — his 27% catch rate
+  // describes nothing, because the denominator is what he destroyed.
+  deterR: 8.5, deterSpeed: 1.35, deterT: 2.20, deterSight: 26.0,
+  deterBalk: 3.00, chillLo: 14.0, chillHi: 30.0, dumpT: 11.0,
+  raceEdge: 0.98, raceSlack: 3.20, boltNear: 9.00,
+  identR: 12.0, identT: 0.45, identPick: 2.30, identCool: 1.10,
+  shopLo: -14.0, shopHi: 165.0, decoyLo: 9.0, decoyHi: 22.0,
+
+  // --- Round 6: difficulty ramp. Level-0 multipliers; 1.0 = level 1 = round 5. ---
+  // rampRun stays 1.00 deliberately: "make the thief slower early" makes the game
+  // HARDER by 27 points, because a slower man is still walking out when the dispatch
+  // lands, so the cop arrives BEHIND him — and behind is a verdict, not a position.
+  // rampWalk is the real lever: tell-to-door window 14% longer, near-free on the floor.
+  rampRun: 1.00, rampWalk: 0.88, rampReact: 2.40, rampAdren: 0.55,
+  rampTell: 1.35, rampNerve: 1.55, rampStagger: 0.40,
+
   // --- Round 4: two doors, and going through a man ---
   // One door made the thief's destination public knowledge, and public knowledge
   // beats a scouting report — a camper scored 80.7% at wrong-aisle-by-1. Two doors
@@ -65836,8 +65860,18 @@ const M_src_agents_decoy_js = (() => {
 // ---------------------------------------------------------------------------
 
 // Neutral. Anything a clip does not mention returns to this.
+//
+// THERE IS NO ABSOLUTE POSITION CHANNEL, and that is deliberate. A clip drives
+// ARMS; agents.js solves where the hand ends up and puts the prop there. Round
+// 5 authored the item's position directly and the two drifted half a metre
+// apart — a box floating beside his left ear while his right arm reached — and
+// you cannot argue that innocent and guilty footage is indistinguishable using
+// a shot with a floating box in it. `off` is a small correction from the solved
+// hand, in RIG-LOCAL metres, for the beats where the item is pressed against
+// the body: +x is across his chest, +z is out in front of him.
 const POSE = {
-  hand: [0.20, 1.02, 0.16],   // root-local position of the held prop
+  off: [0, 0, 0],             // prop offset from the SOLVED hand, RIG-LOCAL
+                              // (+x is toward his left, i.e. across the chest)
   vis: 0,
   armR: -0.95, armRz: -0.16,  // the cart-bar pose is the rest state in this store
   armL: -0.95, armLz: 0.16,
@@ -65870,15 +65904,16 @@ const GESTURES = [
     id: 'conceal', tell: 'steal', dur: 1.90, item: BOX,
     // Round 5's concealment, keyframed rather than lerped inline, and
     // deliberately UNCHANGED in shape: item off the lip, up past the sternum,
-    // into the coat, gone, hands back on the bar. The brief was explicit that
-    // the thief's tell must not get louder to pay for the decoys.
+    // into the coat, gone, hands back on the bar, with the shoulder checks on
+    // the same beats. The brief was explicit that the thief's tell must not get
+    // louder to pay for the decoys, so it did not.
     keys: [
-      kf(0.00, { hand: [0.32, 1.24, 0.30], vis: 1, armR: -1.55, chest: 0.05, neck: 0.22 }),
-      kf(0.22, { hand: [0.24, 1.46, 0.26], vis: 1, armR: -1.92, look: 0.72, neck: 0.10 }),
-      kf(0.42, { hand: [0.12, 1.40, 0.20], vis: 1, armR: -2.05, look: -0.55 }),
-      kf(0.60, { hand: [0.03, 1.33, 0.13], vis: 1, armR: -2.02, look: 0.30 }),
-      kf(0.66, { hand: [0.02, 1.30, 0.11], vis: 0, armR: -1.90, look: 0.45 }),
-      kf(1.00, { hand: [0.16, 1.04, 0.14], vis: 0, armR: -0.95, look: 0.0 }),
+      kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, chest: 0.05, neck: 0.22 }),
+      kf(0.22, { vis: 1, armR: -1.92, armRz: -0.20, look: 0.72, neck: 0.10 }),
+      kf(0.42, { vis: 1, armR: -2.05, armRz: 0.10, look: -0.55 }),
+      kf(0.60, { vis: 1, armR: -1.55, armRz: 0.88, off: [0.0, -0.02, -0.24], look: 0.30 }),
+      kf(0.66, { vis: 0, armR: -1.45, armRz: 0.95, off: [0.0, -0.02, -0.26], look: 0.45 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
     ],
   },
   {
@@ -65886,11 +65921,11 @@ const GESTURES = [
     // Low and quick. Never gets above the sternum, which is why it needs the
     // decoy `restash` to exist — that one is the same move and gives it back.
     keys: [
-      kf(0.00, { hand: [0.30, 1.18, 0.28], vis: 1, armR: -1.45, chest: 0.08, neck: 0.26 }),
-      kf(0.26, { hand: [0.26, 1.34, 0.22], vis: 1, armR: -1.70, look: -0.62 }),
-      kf(0.52, { hand: [0.19, 1.06, 0.16], vis: 1, armR: -1.05, look: 0.50, chest: 0.10 }),
-      kf(0.60, { hand: [0.17, 0.98, 0.14], vis: 0, armR: -0.88, look: 0.34 }),
-      kf(1.00, { hand: [0.17, 1.00, 0.14], vis: 0, armR: -0.95, look: 0.0 }),
+      kf(0.00, { vis: 1, armR: -1.45, armRz: -0.26, chest: 0.08, neck: 0.26 }),
+      kf(0.26, { vis: 1, armR: -1.70, armRz: -0.14, look: -0.62 }),
+      kf(0.52, { vis: 1, armR: -0.72, armRz: 0.46, off: [0.0, 0.0, -0.10], look: 0.50, chest: 0.10 }),
+      kf(0.60, { vis: 0, armR: -0.58, armRz: 0.44, off: [0.0, 0.0, -0.12], look: 0.34 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
     ],
   },
   {
@@ -65898,37 +65933,37 @@ const GESTURES = [
     // Into a tote at the off hip, both hands, with a long turn away from the
     // aisle first. The slowest steal in the file, and slower than four decoys.
     keys: [
-      kf(0.00, { hand: [0.34, 1.30, 0.30], vis: 1, armR: -1.60, neck: 0.20 }),
-      kf(0.18, { hand: [0.30, 1.44, 0.24], vis: 1, armR: -1.86, turn: -0.35, look: 0.60 }),
-      kf(0.40, { hand: [0.02, 1.36, 0.10], vis: 1, armR: -1.95, armL: -1.30, turn: -0.95 }),
-      kf(0.58, { hand: [-0.14, 1.10, 0.06], vis: 1, armR: -1.20, armL: -1.35, turn: -1.05, chest: 0.14 }),
-      kf(0.66, { hand: [-0.18, 1.02, 0.04], vis: 0, armR: -1.02, armL: -1.10, turn: -0.95 }),
-      kf(1.00, { hand: [0.14, 1.02, 0.12], vis: 0, armR: -0.95, armL: -0.95, turn: 0.0 }),
+      kf(0.00, { vis: 1, armR: -1.60, armRz: -0.28, neck: 0.20 }),
+      kf(0.18, { vis: 1, armR: -1.86, armRz: -0.12, turn: -0.35, look: 0.60 }),
+      kf(0.40, { vis: 1, armR: -1.55, armRz: 0.46, armL: -1.30, turn: -0.95 }),
+      kf(0.58, { vis: 1, armR: -1.05, armRz: 0.56, armL: -1.35, turn: -1.05, chest: 0.14 }),
+      kf(0.66, { vis: 0, armR: -0.98, armRz: 0.52, armL: -1.10, turn: -0.95 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, turn: 0.0 }),
     ],
   },
 
   // =========================================================================
   // THE PUT-BACK. Not a decoy: this is what a deterred thief does, and it is
   // the only clip in the file that ENDS with the item back on the shelf. It is
-  // also the picture that tells a watching player his post at the door worked,
+  // also the picture that tells a watching player his post on the door worked,
   // which is the whole feedback loop of the one-exit design in one gesture.
   // =========================================================================
   {
     id: 'putback', tell: 'putback', dur: 1.60, item: BOX,
     keys: [
-      kf(0.00, { hand: [0.10, 1.24, 0.12], vis: 0, armR: -1.30, look: 0.55 }),
-      kf(0.16, { hand: [0.14, 1.30, 0.16], vis: 1, armR: -1.62, look: -0.40 }),
-      kf(0.52, { hand: [0.30, 1.36, 0.30], vis: 1, armR: -1.80, neck: 0.08 }),
-      kf(0.80, { hand: [0.36, 1.28, 0.34], vis: 1, armR: -1.70, neck: 0.22, chest: 0.10 }),
-      kf(0.86, { hand: [0.36, 1.26, 0.34], vis: 0, armR: -1.55, neck: 0.20 }),
-      kf(1.00, { hand: [0.18, 1.02, 0.14], vis: 0, armR: -0.95 }),
+      kf(0.00, { vis: 0, armR: -1.45, armRz: 0.92, off: [0.0, 0.0, -0.24], look: 0.55 }),
+      kf(0.16, { vis: 1, armR: -1.62, armRz: 0.10, look: -0.40 }),
+      kf(0.52, { vis: 1, armR: -1.80, armRz: -0.30, neck: 0.08 }),
+      kf(0.80, { vis: 1, armR: -1.70, armRz: -0.40, neck: 0.22, chest: 0.10 }),
+      kf(0.86, { vis: 0, armR: -1.55, armRz: -0.38, neck: 0.20 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16 }),
     ],
   },
 
   // =========================================================================
-  // THE DECOYS. Six innocent behaviours, every one of which a person actually
+  // THE DECOYS. Seven innocent behaviours, every one of which a person actually
   // does in a supermarket, every one of which produces the concealment
-  // signature on a $60 camera at 431 px.
+  // signature on a $60 camera.
   // =========================================================================
   {
     // A PHONE OUT OF A HIP POCKET. Object appears at the hip, goes to the
@@ -65936,13 +65971,13 @@ const GESTURES = [
     // Against `concealPocket` this is the same five frames in the same order.
     id: 'phone', tell: 'decoy', dur: 2.35, item: FLAT,
     keys: [
-      kf(0.00, { hand: [0.20, 0.98, 0.12], vis: 0, armR: -0.80, look: -0.25 }),
-      kf(0.12, { hand: [0.22, 1.02, 0.16], vis: 1, armR: -0.98 }),
-      kf(0.30, { hand: [0.18, 1.34, 0.26], vis: 1, armR: -1.62, neck: 0.30 }),
-      kf(0.52, { hand: [0.14, 1.44, 0.22], vis: 1, armR: -1.90, neck: 0.26, look: 0.30 }),
-      kf(0.72, { hand: [0.20, 1.06, 0.16], vis: 1, armR: -1.02, look: -0.45 }),
-      kf(0.80, { hand: [0.20, 0.98, 0.12], vis: 0, armR: -0.86 }),
-      kf(1.00, { hand: [0.20, 1.00, 0.14], vis: 0, armR: -0.95, look: 0.0 }),
+      kf(0.00, { vis: 0, armR: -0.80, armRz: 0.10, look: -0.25 }),
+      kf(0.12, { vis: 1, armR: -0.98, armRz: 0.06 }),
+      kf(0.30, { vis: 1, armR: -1.62, armRz: 0.14, neck: 0.30 }),
+      kf(0.52, { vis: 1, armR: -2.10, armRz: 0.30, neck: 0.16, look: 0.30 }),
+      kf(0.72, { vis: 1, armR: -1.02, armRz: 0.14, look: -0.45 }),
+      kf(0.80, { vis: 0, armR: -0.62, armRz: 0.30, off: [0.0, 0.0, -0.08] }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
     ],
   },
   {
@@ -65951,13 +65986,13 @@ const GESTURES = [
     // object back inside the bag. This is `concealBag` with a different reason.
     id: 'wallet', tell: 'decoy', dur: 2.70, item: SMALL,
     keys: [
-      kf(0.00, { hand: [-0.10, 1.06, 0.08], vis: 0, armR: -1.15, armL: -1.25, turn: -0.55, chest: 0.12 }),
-      kf(0.20, { hand: [-0.12, 1.08, 0.06], vis: 0, armR: -1.30, armL: -1.35, turn: -0.85, neck: 0.34 }),
-      kf(0.34, { hand: [-0.02, 1.18, 0.12], vis: 1, armR: -1.45, armL: -1.20, turn: -0.80, neck: 0.30 }),
-      kf(0.54, { hand: [0.12, 1.40, 0.22], vis: 1, armR: -1.88, turn: -0.40, neck: 0.18, look: 0.50 }),
-      kf(0.74, { hand: [-0.06, 1.12, 0.08], vis: 1, armR: -1.22, armL: -1.28, turn: -0.80, neck: 0.32 }),
-      kf(0.82, { hand: [-0.14, 1.04, 0.06], vis: 0, armR: -1.10, armL: -1.20, turn: -0.70 }),
-      kf(1.00, { hand: [0.14, 1.02, 0.12], vis: 0, armR: -0.95, armL: -0.95, turn: 0.0 }),
+      kf(0.00, { vis: 0, armR: -1.15, armRz: 0.50, armL: -1.25, turn: -0.55, chest: 0.12 }),
+      kf(0.20, { vis: 0, armR: -1.30, armRz: 0.58, armL: -1.35, turn: -0.85, neck: 0.34 }),
+      kf(0.34, { vis: 1, armR: -1.45, armRz: 0.40, armL: -1.20, turn: -0.80, neck: 0.30 }),
+      kf(0.54, { vis: 1, armR: -1.88, armRz: 0.08, turn: -0.40, neck: 0.18, look: 0.50 }),
+      kf(0.74, { vis: 1, armR: -1.22, armRz: 0.48, armL: -1.28, turn: -0.80, neck: 0.32 }),
+      kf(0.82, { vis: 0, armR: -1.10, armRz: 0.54, armL: -1.20, turn: -0.70 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, turn: 0.0 }),
     ],
   },
   {
@@ -65965,30 +66000,30 @@ const GESTURES = [
     // AWAY from the shelf to get the light on it — the same turn-and-check
     // silhouette a thief makes, for the most boring reason in the store. The
     // item stays visible the whole way, which is what makes it different, and
-    // the item is only visible if the camera has an angle on his front.
+    // only if the camera has an angle on his front.
     id: 'label', tell: 'decoy', dur: 2.45, item: BOX,
     keys: [
-      kf(0.00, { hand: [0.34, 1.30, 0.32], vis: 1, armR: -1.62, neck: 0.24, chest: 0.06 }),
-      kf(0.22, { hand: [0.24, 1.42, 0.26], vis: 1, armR: -1.90, turn: -0.50, look: 0.35 }),
-      kf(0.46, { hand: [0.16, 1.38, 0.24], vis: 1, armR: -1.86, turn: -1.10, neck: 0.30 }),
-      kf(0.68, { hand: [0.20, 1.40, 0.26], vis: 1, armR: -1.88, turn: -0.95, neck: 0.28, look: -0.40 }),
-      kf(0.88, { hand: [0.34, 1.30, 0.32], vis: 1, armR: -1.66, turn: -0.20, neck: 0.20 }),
-      kf(0.94, { hand: [0.36, 1.28, 0.34], vis: 0, armR: -1.55 }),
-      kf(1.00, { hand: [0.18, 1.02, 0.14], vis: 0, armR: -0.95, turn: 0.0 }),
+      kf(0.00, { vis: 1, armR: -1.62, armRz: -0.34, neck: 0.24, chest: 0.06 }),
+      kf(0.22, { vis: 1, armR: -1.90, armRz: -0.10, turn: -0.50, look: 0.35 }),
+      kf(0.46, { vis: 1, armR: -1.86, armRz: 0.16, turn: -1.10, neck: 0.30 }),
+      kf(0.68, { vis: 1, armR: -1.88, armRz: 0.20, turn: -0.95, neck: 0.28, look: -0.40 }),
+      kf(0.88, { vis: 1, armR: -1.66, armRz: -0.30, turn: -0.20, neck: 0.20 }),
+      kf(0.94, { vis: 0, armR: -1.55, armRz: -0.36 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, turn: 0.0 }),
     ],
   },
   {
     // ADJUSTING A JACKET. No object at all, and it is still a false positive:
     // both hands go inside the coat line at chest height and come out empty,
-    // with a hitch of the shoulders. On a graded 431 px feed the hands ARE the
-    // object — the tracker's own token for this is a hand at chest height.
+    // with a hitch of the shoulders. On a graded feed the hands ARE the object
+    // — the tracker's own token for this is a hand at chest height.
     id: 'jacket', tell: 'decoy', dur: 1.60, item: BOX,
     keys: [
-      kf(0.00, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -0.95, armL: -0.95 }),
-      kf(0.22, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -1.70, armL: -1.70, armRz: -0.34, armLz: 0.34, look: 0.55 }),
-      kf(0.46, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -1.95, armL: -1.95, armRz: -0.10, armLz: 0.10, chest: 0.16 }),
-      kf(0.70, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -1.50, armL: -1.50, armRz: -0.40, armLz: 0.40, look: -0.48 }),
-      kf(1.00, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -0.95, armL: -0.95 }),
+      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95 }),
+      kf(0.22, { vis: 0, armR: -1.70, armL: -1.70, armRz: 0.34, armLz: -0.34, look: 0.55 }),
+      kf(0.46, { vis: 0, armR: -1.95, armL: -1.95, armRz: 0.10, armLz: -0.10, chest: 0.16 }),
+      kf(0.70, { vis: 0, armR: -1.50, armL: -1.50, armRz: 0.40, armLz: -0.40, look: -0.48 }),
+      kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16 }),
     ],
   },
   {
@@ -65999,12 +66034,12 @@ const GESTURES = [
     // this from a coat pocket, and there is no child either.
     id: 'handoff', tell: 'decoy', dur: 2.20, item: BOX,
     keys: [
-      kf(0.00, { hand: [0.32, 1.28, 0.30], vis: 1, armR: -1.58, neck: 0.22 }),
-      kf(0.24, { hand: [0.26, 1.40, 0.26], vis: 1, armR: -1.86, look: 0.60 }),
-      kf(0.46, { hand: [0.30, 1.16, 0.30], vis: 1, armR: -1.30, neck: 0.40, chest: 0.18 }),
-      kf(0.64, { hand: [0.36, 0.80, 0.30], vis: 1, armR: -0.70, neck: 0.52, chest: 0.26 }),
-      kf(0.72, { hand: [0.38, 0.70, 0.28], vis: 0, armR: -0.58, neck: 0.50, chest: 0.24 }),
-      kf(1.00, { hand: [0.18, 1.00, 0.14], vis: 0, armR: -0.95, neck: 0.0, chest: 0.0 }),
+      kf(0.00, { vis: 1, armR: -1.58, armRz: -0.30, neck: 0.22 }),
+      kf(0.24, { vis: 1, armR: -1.86, armRz: -0.10, look: 0.60 }),
+      kf(0.46, { vis: 1, armR: -1.30, armRz: -0.34, neck: 0.40, chest: 0.18 }),
+      kf(0.64, { vis: 1, armR: -0.70, armRz: -0.46, neck: 0.52, chest: 0.26 }),
+      kf(0.72, { vis: 0, armR: -0.58, armRz: -0.48, neck: 0.50, chest: 0.24 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, neck: 0.0, chest: 0.0 }),
     ],
   },
   {
@@ -66016,15 +66051,15 @@ const GESTURES = [
     // the actual thief two aisles over is spending walking at the door.
     id: 'restash', tell: 'decoy', dur: 2.60, item: SMALL,
     keys: [
-      kf(0.00, { hand: [0.32, 1.24, 0.30], vis: 1, armR: -1.55, neck: 0.22 }),
-      kf(0.18, { hand: [0.24, 1.36, 0.22], vis: 1, armR: -1.78, look: -0.55 }),
-      kf(0.34, { hand: [0.18, 1.04, 0.16], vis: 1, armR: -1.02, chest: 0.10 }),
-      kf(0.40, { hand: [0.17, 0.99, 0.14], vis: 0, armR: -0.90, look: 0.40 }),
-      kf(0.58, { hand: [0.17, 0.99, 0.14], vis: 0, armR: -0.95, look: 0.0 }),
-      kf(0.66, { hand: [0.19, 1.04, 0.16], vis: 1, armR: -1.04 }),
-      kf(0.84, { hand: [0.28, 1.30, 0.28], vis: 1, armR: -1.62, neck: 0.18 }),
-      kf(0.92, { hand: [0.30, 1.16, 0.34], vis: 0, armR: -1.30, neck: 0.30 }),   // into the cart
-      kf(1.00, { hand: [0.18, 1.02, 0.14], vis: 0, armR: -0.95 }),
+      kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, neck: 0.22 }),
+      kf(0.18, { vis: 1, armR: -1.78, armRz: -0.10, look: -0.55 }),
+      kf(0.34, { vis: 1, armR: -0.74, armRz: 0.48, off: [0.0, 0.0, -0.10], chest: 0.10 }),
+      kf(0.40, { vis: 0, armR: -0.60, armRz: 0.44, off: [0.0, 0.0, -0.12], look: 0.40 }),
+      kf(0.58, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
+      kf(0.66, { vis: 1, armR: -1.04, armRz: 0.18 }),
+      kf(0.84, { vis: 1, armR: -1.62, armRz: -0.06, neck: 0.18 }),
+      kf(0.92, { vis: 0, armR: -1.30, armRz: -0.34, neck: 0.30 }),   // into the cart
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16 }),
     ],
   },
   {
@@ -66032,11 +66067,11 @@ const GESTURES = [
     // file, and it is a decoy — see the note at the top about durations.
     id: 'strap', tell: 'decoy', dur: 1.65, item: SMALL,
     keys: [
-      kf(0.00, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -0.95, armL: -0.95 }),
-      kf(0.26, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -2.25, armRz: -0.52, look: -0.60, chest: 0.10 }),
-      kf(0.50, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -2.40, armRz: -0.20, armL: -1.20, chest: 0.18 }),
-      kf(0.76, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -1.60, armRz: -0.44, look: 0.52 }),
-      kf(1.00, { hand: [0.16, 1.02, 0.12], vis: 0, armR: -0.95, armL: -0.95 }),
+      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95 }),
+      kf(0.26, { vis: 0, armR: -2.25, armRz: 0.52, look: -0.60, chest: 0.10 }),
+      kf(0.50, { vis: 0, armR: -2.40, armRz: 0.20, armL: -1.20, chest: 0.18 }),
+      kf(0.76, { vis: 0, armR: -1.60, armRz: 0.44, look: 0.52 }),
+      kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16 }),
     ],
   },
 ];
@@ -66053,7 +66088,7 @@ function pickGesture(rng, kind) {
 
 const lerp = (a, b, t) => a + (b - a) * t;
 const _out = {
-  hand: [0, 0, 0], vis: 0, armR: 0, armRz: 0, armL: 0, armLz: 0,
+  off: [0, 0, 0], vis: 0, armR: 0, armRz: 0, armL: 0, armLz: 0,
   chest: 0, neck: 0, look: 0, turn: 0, item: [1, 1, 1], id: '', tell: '',
 };
 
@@ -66075,10 +66110,10 @@ function applyGesture(g, u) {
   const e = f * f * (3 - 2 * f);
   const get = (k, key) => (key[k] !== undefined ? key[k] : POSE[k]);
   const mix = (k) => lerp(get(k, a), get(k, b), e);
-  const ha = get('hand', a), hb = get('hand', b);
-  _out.hand[0] = lerp(ha[0], hb[0], e);
-  _out.hand[1] = lerp(ha[1], hb[1], e);
-  _out.hand[2] = lerp(ha[2], hb[2], e);
+  const oa = get('off', a), ob = get('off', b);
+  _out.off[0] = lerp(oa[0], ob[0], e);
+  _out.off[1] = lerp(oa[1], ob[1], e);
+  _out.off[2] = lerp(oa[2], ob[2], e);
   _out.vis = get('vis', a);                 // STEP, not a fade
   _out.armR = mix('armR'); _out.armRz = mix('armRz');
   _out.armL = mix('armL'); _out.armLz = mix('armLz');
@@ -66152,6 +66187,211 @@ const { GESTURES, BY_ID, pickGesture, applyGesture } = M_src_agents_decoy_js;
 // is a collection, and my own bench had been printing `catchUnder1s: 120/200`
 // on the object I was quoting from. Read the whole instrument before you write
 // the report. Nothing below is a mean without its shape attached.
+//
+// ===========================================================================
+// ROUND 6 — ONE WAY OUT, AND A REASON NOT TO STAND ON IT
+// ===========================================================================
+// The client asked for one exit: "I think you should kind of have a clue where
+// they're going. The cop should kind of have a chance to get there."
+//
+// Round 4 had already proved that one exit is a design disaster, and killed it
+// by HIDING THE DESTINATION behind a second door. That fix worked and it was
+// the cheap one: it also hid the destination from the PLAYER, so the reason to
+// leave the desk stopped being "I know where he is going" and became "I cannot
+// know, so I had better follow him". The client's instinct is better. Measured
+// on this build before any of this round's changes, n=120:
+//
+//                        cut off0   cut off1   camp off0   chase off0
+//   two doors (round 5)     76.7      34.7        23.3        38.3
+//   one door                76.7      73.3        71.7        24.2
+//
+// One door hands a door-camping bot 48 points and flattens the misaim table
+// from 40 points to 3.4 — at n=100 it is flatter still, 82.0 / 82.0, i.e. being
+// sent to the wrong aisle costs EXACTLY NOTHING. Both of those are the same
+// fact: with one way out, WHERE he is going is public, so the only things the
+// aisle number can still be worth are WHO he is and WHEN he moves.
+//
+// ---- WHAT PAYS FOR THE ONE EXIT. Four mechanics, none of them geometry -----
+//  1. HE DOES NOT COMMIT WITH A UNIFORM ON THE DOOR. A subject who has not yet
+//     concealed anything, and who can see the guard posted on the only way out,
+//     balks: he puts it back and shops honestly for chillLo..chillHi seconds.
+//     Second balk and he leaves the store a customer. Camping therefore
+//     produces a shift with NO CRIME IN IT — punished by income, not by catch
+//     rate. See benchShift()/benchIncome(): a camper's CATCH RATE is a
+//     percentage of a numerator he has driven to zero.
+//  2. AND HE DOES NOT WALK INTO ONE EITHER. A subject who already has it turns
+//     back into the aisles, waits you out, and after dumpT ditches the goods on
+//     a shelf and leaves clean: no arrest, no loss, no points. This is the half
+//     that beats an incident already in flight, and it is why `ditched` is a
+//     fourth outcome in bench() rather than being pooled into "escaped".
+//  3. HE ONLY RUNS FROM A MAN COMING AT HIM. Round 3 made any uniform on his
+//     line inside 17 m a bolt. With one exit every route out passes the front
+//     end, so a cop merely WALKING TOWARDS THE DOORS was on every thief's line
+//     and the thief set off sprinting into the arms of the man about to stand
+//     on the only door. Nobody does that; you keep strolling and you hope. The
+//     sighting still fires at 17 m if he is being closed on — the aisle-mouth
+//     case, unchanged, which is the one worth 1.13 s -> 3.03 s — and otherwise
+//     not until boltNear (9 m). This one is worth 22 points of door-camper.
+//  4. INNOCENTS CHECK OUT AND LEAVE, through the same door. Before this the
+//     only body that ever walked at the exit was the thief, so "subject moving
+//     toward the doors" was a confession. Now the door is a crowd. The cost is
+//     real and it is paid by the player too: the competent bot loses ~5 points
+//     to bodies in the way.
+//
+// ---- THE TABLE, n=100, maxT 45, this build. -------------------------------
+// Round 5's rules are reproduced on the same instrument with useDoors(2) plus
+// deterR=-1 and boltNear=99, so the only thing that differs is the bundle above
+// (the store population is the same in both columns, which is why the round-5
+// column reads 69 where round 5's own report said 74.7).
+//
+//                       ROUND 5 RULES   ONE DOOR,      ROUND 6
+//                       (2 doors)       ROUND 5 RULES  SHIPPED
+//   cut  off0              69.0            82.0           77.0
+//   cut  off1              36.0            82.0           69.0
+//   cut  off2              25.0             --            71.0
+//   cut  off4              24.0             --            60.0
+//   camp off0              25.0            91.0           27.0
+//   camp off1               --             81.0           22.0
+//   chase off0             33.0             --            27.0
+//   always-sprint off0     47.0             --            53.0
+//
+// The wind ladder survives intact, which was the no-regression bar: rationing
+// 77.0 against always-sprint 53.0, +24.0 (round 5 reported +28.7 on its own
+// instrument, 74.7 vs 46.0). lungCheck() still passes and nothing in the lung
+// was touched this round.
+//
+// THE MIDDLE COLUMN IS THE PROBLEM STATEMENT AND IT IS WORSE THAN ROUND 4
+// FEARED. One door under round 5's rules: a bot that ignores the dispatch,
+// walks to the only exit and stands on it scores 91.0%, beating the bot that
+// reads the aisle number and goes and chases the man (82.0%) by nine points —
+// and the aisle number is worth LITERALLY ZERO to the chaser (82.0 at off0,
+// 82.0 at off1). The whole desk phase is decoration in that column.
+//
+// The right-hand column is the same store with the four mechanics above. The
+// camper goes 91.0 -> 27.0 and SEVENTY of his hundred trials end with the item
+// back on a shelf; the chaser keeps 77.0, which is round 5's own headline
+// (74.7 as reported, 69.0 on today's instrument with today's store population);
+// and the misaim table has a 17-point slope in it again where it had none.
+//
+// ---- AND THE NUMBER A CATCH RATE CANNOT SHOW ------------------------------
+// A camper's 27% is a percentage of the thefts that still happen while he is
+// stood there, and the point of deterrence is that almost none do. benchShift()
+// runs a whole four-minute shift on game.js's own PACE cadence and counts what
+// the scoreboard counts (a catch is 100 points; an escape and a ditched item
+// are both zero):
+//
+//   benchIncome(6, { minutes: 4 }), one exit, ramped difficulty:
+//     desk    250.0 pts   4.50 thefts   2.50 caught  2.00 lost  0.00 balked
+//     naive   183.3 pts   4.67 thefts   1.83 caught  2.83 lost  0.00 balked
+//     camper    0.0 pts   4.17 thefts   0.00 caught  0.00 lost  4.83 balked
+//                                                      ...91% of the shift
+//                                                      stood on the door
+//
+// A CAMPER EARNS NOTHING. Not "less" — zero, across every shift in the sample.
+// Four thefts still start while he is walking to his post, and every one of
+// them ends with the item back on a shelf: nothing is stolen, nobody is
+// arrested, and the shift produces no incidents to write up. Meanwhile five
+// more subjects balk before they ever conceal. His CATCH RATE in the table
+// above is 27%, and that number describes nothing, which is exactly the trap
+// the brief warned about: a rate whose denominator you have driven to zero.
+//
+// That is the answer to "does camping pay" in the only currency the player has.
+//
+// ---- A FLAG FOR game.js, FOUND BY THIS INSTRUMENT AND NOT MINE TO FIX ------
+// The same run says the DESK player takes 7.0 harassment complaints in a
+// four-minute shift and the naive one 9.8. THREE IS A DEMOTION. My first
+// thought was that this round caused it — innocents walk at the exit now, so
+// there are more bodies on the cop's route — so I measured it instead of
+// assuming, with shopLo/shopHi pushed past the end of the shift so nobody ever
+// leaves:
+//     nobody leaves     11.25 complaints   450 pts   7.75 thefts
+//     shipped            8.25 complaints   275 pts   4.75 thefts
+// It is NOT the leavers: the absolute number falls with them in. Per incident
+// it is 1.45 -> 1.74, which is a real but small effect of a busier front end.
+// The bulk of it is that `copClosingOn` fires on approach rather than contact,
+// and a bot (or a player) sprinting through a crowded aisle is pointed at
+// somebody almost continuously. It is game.js's rule and game.js's number —
+// agents.js only reports when it fires — but at 7-10 per shift against a
+// three-strike demotion, a player who reads every tell correctly still gets
+// walked down to traffic duty. Worth harassAim/harassSpeed, or making a
+// complaint need CONTACT.
+//
+// ---- THE DIFFICULTY RAMP, AND THE LEVER THAT POINTED BACKWARDS ------------
+// setDifficulty(0..1); 1 IS ROUND 5'S GAME EXACTLY, so the top of the ramp is
+// the identity and this cannot silently re-tune anything. Entry point for
+// game.js, once a frame, idempotent:
+//     a.setDifficulty(a.difficultyForClock(st.clock));
+// The breakpoints (0 / 150 / 330 s) are game.js's own PACE breakpoints, so the
+// shift reads as one curve. DENSITY IS NOT ON THIS DIAL — game.js owns how many
+// cases are open, this owns how hard one of them is.
+//
+//   competent bot, one exit, n=100          d0      d0.5     d1
+//     catch rate                           87.0     78.0     77.0
+//     median chase                         6.23 s   6.15 s   6.22 s
+//     catches inside 1 s                    9.2%    10.3%    11.7%
+//   naive pursuit, n=80                     40.0      --      27.5
+// Monotone, and the chase stays a chase at every level rather than turning into
+// a collection at the easy end — which is the failure mode an "easier" setting
+// normally has, and the one round 3 shipped by accident.
+//
+// THE FINDING WORTH MORE THAN THE RAMP: "make the thief slower early" is the
+// obvious lever and it makes the game HARDER, by 27 points. It is written up
+// against `rampRun` in the K block. Every other difficulty lever in this file
+// is a gift; that one is a trap, and it is a trap for a reason that generalises
+// — anything which leaves the subject deeper in the store when the dispatch
+// lands converts the cop from in-front to behind, and behind is a verdict.
+//
+// ---- THE HONEST WEAKNESS, STATED PLAINLY ----------------------------------
+// 17 points is not the 45-point slope two doors bought. It cannot be. With one
+// exit the whole building funnels past one place, so a cop sent to the wrong
+// aisle still gets a look at his man on the way — `madePct` is 93% at off0 and
+// 95% at off1, where under two doors it fell 88% -> 54%. Knowing WHICH AISLE is
+// worth less when you no longer need to know WHERE HE IS GOING; that is the
+// price of the client's ask and it should be paid consciously rather than
+// hidden. What the aisle number buys instead, and it is the bigger number, is
+// the 50 points between chasing (77) and camping (27).
+// THE LEVER FOR WHOEVER TAKES THIS NEXT, measured-adjacent but not measured:
+// the drift out is still a beeline down the exit field, so his position is a
+// pure function of the door. Give him a STAGING LEG — a real shoplifter leaves
+// through the aisles, not across an open front end — and the dead-reckoning a
+// wrong-aisle cop is doing becomes wrong for a reason that is not the door.
+// That is a route change, it re-opens the median-chase numbers, and it is a
+// round, not an afternoon.
+//
+// ---- THE DECOYS — src/agents/decoy.js -------------------------------------
+// The CCTV builder made the monitors legible this round and then flagged,, and
+// against its own interest, that legibility had become PROOF: "the footage is
+// not ambiguous, because agents.js has no innocent behaviour that produces a
+// reach-with-an-object". A picture you cannot be wrong about kills the best
+// idea in this game and makes the harassment complaint unfireable by a
+// reasonable player.
+//
+// So there is one keyframe table, and the steal is IN IT. Eleven clips — three
+// steals, one put-back and seven innocent behaviours — all sampled by one
+// applyGesture() and drawn by one branch of animateShopper(). There is no code
+// path a thief takes that an innocent does not, which is the only version of
+// this claim that cannot rot: the next person to tune the thief's arm tunes
+// seven innocents' arms with it. The clip's `tell` never reaches a material, a
+// scale or a duration; the durations overlap deliberately (steals 1.75-2.60 s,
+// decoys 1.60-2.70 s, and the shortest AND longest clips in the file are both
+// decoys) so a player with a stopwatch cannot beat it.
+// Evidence: shots/agents_r6.png is six unlabelled strips of five frames; two of
+// them are steals. shots/agents_r6_key.png is the same sheet with the answers.
+//
+// The decoy scheduler does not look at `s.guilty` — every browsing body in the
+// store rolls one every 9-22 s, so at fourteen shoppers there is a reach-with-
+// an-object somewhere in the building roughly every 1.1 s. A guilty subject
+// does them too, before and after his steal, so "the man doing something with
+// his hands" is never the answer.
+//
+// AND ONE BUG FOUND BY LOOKING AT IT BIG. Round 5 authored the concealment's
+// item as absolute rig-local coordinates while the ARM was driven separately;
+// the two disagreed by 0.50 m, so the box hung in the air beside his left ear
+// while his right arm reached. Invisible at 431 px down a 26 m aisle, obvious
+// the moment the spot monitor pushes in. The prop is solved from the arm now —
+// Euler XYZ on the shoulder pivot, shoulder read off the rig so girth and
+// height come out right per body — and clips carry only a small `off` for the
+// beats where it is pressed against the coat.
 //
 // ===========================================================================
 // ROUND 5 — DOES MANAGING YOUR WIND PAY? IT DOES NOW. THAT IS THE HEADLINE.
@@ -66864,15 +67104,31 @@ const K = {
   // What is ramped, and why each one is a DIFFICULTY change and not a DENSITY
   // change (game.js owns density — see its PACE table, and the note below
   // about sharing the breakpoints):
-  //   run    5.35 -> 4.60 m/s at level 0. He is slower than you for the first
-  //          few minutes, so a stern chase is winnable while you are learning
-  //          that a stern chase is not the plan.
-  //   walk   the DRIFT. 1.25 -> 1.00 m/s, i.e. the window between the tell on
-  //          the monitor and his shoulder on the door is 25% longer. This is
-  //          the one the client actually described ("it should take a minute")
-  //          and it is the cheapest difficulty in the file, because it costs
-  //          the player nothing to use and buys him the only thing he is short
-  //          of at the start, which is time to read.
+  //   run    1.00. NOT RAMPED, AND THAT IS THE MOST USEFUL THING THIS ROUND
+  //          MEASURED. "Make the thief slower early" is the obvious first
+  //          difficulty lever and IT MAKES THE GAME HARDER. n=80-100, competent
+  //          bot, one exit, everything else ramped:
+  //             rampRun 0.86 -> 50.0%     rampRun 0.75 -> 47.5%
+  //             rampRun 0.65 -> 70.0%     rampRun 1.00 -> 86.3%
+  //          against 77.0% at level 1. A slower man is still walking out when
+  //          the cop is dispatched, so the cop arrives BEHIND HIM instead of in
+  //          front of him — and this file's own header has said since round 5
+  //          that being behind him is a verdict, not a position (the legacy
+  //          'behind' spawn scores 4.7%). Slowing the thief converts the good
+  //          geometry into the unwinnable one. The median chase collapses from
+  //          6.22 s to 1.98 s and catches-inside-a-second triple, which is the
+  //          signature: the bot either lands on top of him or never sees him
+  //          again. Do not re-add it without re-reading this paragraph.
+  //   walk   the DRIFT, and the one lever the game builder asked for by name:
+  //          the tell-to-door window is route metres over thiefWalk, so 0.88
+  //          makes it 14% longer while the player is still learning to read the
+  //          wall. That is the client's "it should take a minute", bought on
+  //          the difficulty axis where it belongs rather than on game.js's
+  //          density axis. It is nearly free on the floor — see the table
+  //          above: 1.00 measures 86.3% and 0.80 measures 78.8%, both against
+  //          77.0% at level 1, so the drift ramp costs the early player some of
+  //          his advantage for the same geometric reason `run` costs him all of
+  //          it. 0.88 is the measured compromise.
   //   react  0.22 -> 0.53 s. The "oh shit" freeze before the bolt. A third of a
   //          second of a man standing still staring at you is a beat a new
   //          player can see and act on; at 0.22 it is a frame and a half.
@@ -66886,11 +67142,36 @@ const K = {
   //          line "to make it easier" is the round-3 pathology: he bolts later,
   //          the cop is already on top of him, and the catch lands inside a
   //          second. Easier must never mean shorter.
-  get rampRun()       { return t('rampRun',   0.86); }, // x thiefRun at level 0
-  get rampWalk()      { return t('rampWalk',  0.80); }, // x thiefWalk (the drift)
+  get rampRun()       { return t('rampRun',   1.00); }, // x thiefRun — NOT RAMPED, see above
+  get rampWalk()      { return t('rampWalk',  0.88); }, // x thiefWalk (the drift)
   get rampReact()     { return t('rampReact', 2.40); }, // x thiefReact
   get rampAdren()     { return t('rampAdren', 0.55); }, // x thiefAdren
   get rampTell()      { return t('rampTell',  1.35); }, // x gesture duration
+  // ROUND 6, ADDED AFTER MEASURING, because the first five made the game HARDER
+  // at level 0 and the bench said so: 49.0% at difficulty 0 against 77.0% at
+  // difficulty 1, with the median chase down at 2.00 s and 30.6% of catches
+  // inside a second. A slower drift (rampWalk) is exactly what the game builder
+  // asked for and it is right for the DESK — the tell-to-door window is 25%
+  // longer — but on the FLOOR it changes the encounter geometry: the cop
+  // arrives while the man is still deep in his aisle, so the bolt happens
+  // inside jukeRange (5.20 m), so far more chases start as a SHOULDER BARGE.
+  // And getting through the cop is nearly a win in this game (round 5: barged
+  // and still caught, 18%). "Easier" was quietly handing the naive player the
+  // hardest single interaction in the file, every time.
+  //   rampNerve   scales the per-subject nerve roll UP at level 0, so an early
+  //               shift gets timid shoplifters who want no part of you and run
+  //               AROUND rather than THROUGH. Fiction-exact and it moves the
+  //               flee field too, since copThreatW is scaled by nerve.
+  //   rampStagger cuts what a barge that does get through actually costs you.
+  // Neither of these fixed the inversion on its own (50.0% -> 51.0%), which is
+  // what sent me to ablate `rampRun` and find the real cause. They are kept
+  // because they are directionally right and cost nothing at level 1, where
+  // both are the identity, but do not credit them with the ramp working.
+  get rampNerve()     { return t('rampNerve',   1.55); }, // x the nerve roll
+  get rampStagger()   { return t('rampStagger', 0.40); }, // x bargeStagger
+  get nerveLoD()      { return K.nerveLo * dlerp(K.rampNerve, 1); },
+  get nerveHiD()      { return K.nerveHi * dlerp(K.rampNerve, 1); },
+  get bargeStaggerD() { return K.bargeStagger * dlerp(K.rampStagger, 1); },
 
   // The ramped reads. EVERYTHING that touches a thief's speed goes through
   // these, including the pursuit bot's model of him (`tSpd` in botGoal and the
@@ -67840,7 +68121,7 @@ function createAgents(THREE, scene, world) {
     s.adren = 1; s.shoveT = 0; s.exitI = 0; s.viaBack = false;
     s.doorPref = EXITS.length > 1 ? ri(0, EXITS.length - 1) : 0;
     s.stumble = 0; s.bargeT = 0; s.bargeN = 0; s.bargeStam = null;
-    s.nerve = rr(K.nerveLo, K.nerveHi);
+    s.nerve = rr(K.nerveLoD, K.nerveHiD);
     s.hasCart = true; s.cart.visible = true; s.mesh.visible = true;
     s.held.visible = false; s.bang.visible = false; s.target = null;
     s.stole = false;
@@ -68536,9 +68817,14 @@ function createAgents(THREE, scene, world) {
 
     // ---- guilty timeline: browse -> conceal -> drift -> bolt
     if (s.guilty && !s.bolted) {
-      // Computed once, at the top, because THREE separate decisions below read
-      // it and a one-frame-stale copy of it made him oscillate on the boundary
-      // between drifting out and turning back.
+      // CAN HE STILL BEAT YOU TO IT. Route metres, both of you, off the same
+      // field, computed once at the top of the frame. This is the client's
+      // sentence turned into a comparison:
+      //   "I think you should kind of have a clue where they're going. The cop
+      //    should kind of have a chance to get there."
+      // With one exit you always have the clue; what you have to do with it is
+      // GET THERE FIRST. Kept on the subject as well as inside heldOff() so a
+      // critic can read it off a live thief — see agents.shoppers[i].beatable.
       s.beatable = beatsCopToDoor(s);
       if (!s.stole) {
         // ROUND 6 — HE DOES NOT COMMIT WITH A UNIFORM ON THE ONLY WAY OUT.
@@ -68572,11 +68858,7 @@ function createAgents(THREE, scene, world) {
       } else if (s.state === 'walk' || s.state === 'browse') {
         // STALLED. He has it in his coat and there is a uniform on the only
         // door, so he is hanging back in the aisles doing an extremely good
-        // impression of a man choosing a pasta sauce. He resumes the moment the
-        // door clears — no range test on the way out, deliberately: once he has
-        // decided to wait you out, he waits until you MOVE, not until he
-        // wanders far enough away to forget. Hysteresis, or he oscillates on
-        // the deterSight boundary and it reads as a twitch.
+        // impression of a man choosing a pasta sauce.
         // The resume test has to be the SAME test that made him turn back, or
         // he flips between drifting and waiting every other frame on the
         // boundary. Either you are posted on the door, or you are simply closer
@@ -68614,14 +68896,6 @@ function createAgents(THREE, scene, world) {
       // It is also the intended counterplay to your own post: leave the door
       // and go and get him.
       const stalling = s.stole && !s.bolted && (s.state === 'walk' || s.state === 'browse');
-      // CAN HE STILL BEAT YOU TO IT. Route metres, both of you, off the same
-      // field. This is the client's sentence turned into a comparison:
-      //   "I think you should kind of have a clue where they're going. The cop
-      //    should kind of have a chance to get there."
-      // With one exit you always have the clue. What you have to do with it is
-      // GET THERE FIRST, and this is the line that decides whether getting
-      // there first was worth anything.
-      s.beatable = beatsCopToDoor(s);
       if ((s.state === 'drift' || stalling) && copD < T.suspicionRadius) { s.state = 'react'; s.timer = K.thiefReactD; }
       // ROUND 6 — AND HE ONLY RUNS FROM A MAN WHO IS COMING AT HIM. Round 3
       // made any uniform on his line inside 17 m a bolt, which was the right
@@ -68941,7 +69215,33 @@ function createAgents(THREE, scene, world) {
       r.neck.rotation.x = lerp(r.neck.rotation.x, p.neck, ed(9));
       r.neck.rotation.y = lerp(r.neck.rotation.y, p.look, ed(9));
       s.held.visible = !!p.vis;
-      s.held.position.set(p.hand[0], p.hand[1], p.hand[2]);
+      // THE PROP RIDES THE HAND. It is not authored as an absolute point any
+      // more, it is SOLVED from the arm the clip is driving, plus a small
+      // offset for the beats where it is pressed against the body.
+      //
+      // Round 5 authored the concealment's item as absolute rig-local
+      // coordinates and got away with it because at 431 px down a 26 m aisle a
+      // half-metre error is two pixels. The spot monitor pushes a subject to a
+      // large fraction of frame height now, and at that size the same clip
+      // showed a box hanging in the air beside his LEFT ear while his RIGHT arm
+      // reached — 0.50 m from the hand that was supposed to be holding it. An
+      // ambiguity argument cannot be made out of a floating box, so the arm is
+      // the source of truth and the prop is derived.
+      //
+      // Euler XYZ on the shoulder pivot, arm hanging down its local -Y:
+      //   v = Rx(ax) * Rz(az) * (0,-L,0)
+      //     = ( L sin az, -L cos az cos ax, -L cos az sin ax )
+      // The shoulder itself is read off the rig, so girth, build and height all
+      // come out correct per body instead of being assumed.
+      const AL = FIG.armLen;
+      const shX = r.armR.position.x, shY = r.hipY + r.armR.position.y;
+      const cz = Math.cos(p.armRz), sz = Math.sin(p.armRz);
+      const cx = Math.cos(p.armR), sx = Math.sin(p.armR);
+      s.held.position.set(
+        shX + AL * sz + p.off[0],
+        shY - AL * cz * cx + p.off[1],
+        -AL * cz * sx + p.off[2],
+      );
       s.held.scale.set(p.item[0], p.item[1], p.item[2]);
       // The cart is parked where he stopped, hands OFF the bar. Half the
       // picture is the two seconds his hands are not on it.
@@ -69108,7 +69408,7 @@ function createAgents(THREE, scene, world) {
     const m = Math.hypot(dx, dz) || 1; dx /= m; dz /= m;
     cop.position.x -= dx * 0.34; cop.position.z -= dz * 0.34;
     cop.userData.vel.multiplyScalar(0.15);
-    cop.userData.stagger = K.bargeStagger;
+    cop.userData.stagger = K.bargeStaggerD;
     // ...AND HIS WIND. Round 4's second pass: the knockback alone was worth two
     // metres, and a cop whose sprint is 64% faster than the thief's cruise
     // reclaims two metres in one second — which is why the first version of
@@ -69478,7 +69778,12 @@ function createAgents(THREE, scene, world) {
       // him. After it: the door is still the last place he has to be.
       // Measured, n=120, one door, this build: leaving the old fallback in
       // costs the `cut` bot 12 points, all of them to `ditched` trials.
-      if (thief.bolted) {
+      // ...and the gate is only right for a ONE-EXIT store. With two doors,
+      // standing on one was never a losing line — the man simply takes the
+      // other one and you have lost nothing by waiting — so under useDoors(2)
+      // this bot must behave exactly as it did in round 5 or the one-door
+      // ablation is measuring a bot change as if it were a design change.
+      if (thief.bolted || EXITS.length > 1) {
         const cD = nav.at(st.copF, door.x, door.z);
         const tT = rTot / tSpd, cT = arrive(cD);
         if (isFinite(cD) && cT < tT + 1.2) return { x: door.x, z: door.z, sprint: true };
@@ -69577,7 +69882,24 @@ function createAgents(THREE, scene, world) {
         // dead-reckoning collapsed the skill ladder into one rung: chase went
         // from 60% to 70% and its misaim table went flat with it, which made
         // the ladder useless for saying how much the dispatch is worth TO WHOM.
-        if (st.bot !== 'cut') { tx = st.seen.x; tz = st.seen.z; }
+        // ROUND 6 — HE IS NOT COMING, AND THE BOT HAS TO LEARN THAT.
+        // The dead-reckoning walks the last sighting DOWN THE EXIT FIELD, which
+        // is right for a man who is leaving and exactly wrong for a man who has
+        // seen a uniform parked on the only way out and turned back into the
+        // aisles. Left alone it walks a phantom into the doorway and the cop
+        // stands there waiting for it: measured, that is 60% for the competent
+        // bot against 74% for the same bot that goes and looks, and all 14
+        // points are trials ending with the item back on a shelf.
+        // Latched, because without the latch it oscillates — stepping off the
+        // door un-posts him, the phantom resumes walking at the door, and he
+        // turns round again. Two seconds of a quiet doorway and he goes back to
+        // the last place the man was actually seen; a sighting clears it.
+        if (doorPosted() && st.seenT > 0.8) {
+          st.dry = (st.dry || 0) + dt;
+          if (st.dry > 2.0) st.sweep = true;
+        } else if (st.seenT <= 0.8) { st.dry = 0; st.sweep = false; }
+
+        if (st.bot !== 'cut' || st.sweep) { tx = st.seen.x; tz = st.seen.z; st.lost = null; }
         else {
           if (!st.lost) st.lost = { x: st.seen.x, z: st.seen.z };
           let step = K.thiefRun * K.thiefTired * dt;
@@ -69654,7 +69976,18 @@ function createAgents(THREE, scene, world) {
     const n = opts.n ?? 200;
     const mode = opts.mode ?? 'none';       // 'none' | 'ignore' | 'pickup' | 'boost'
     const spawn = opts.spawn ?? 'aisle';    // 'aisle' | 'back' | 'front' | 'behind'
-    const dt = 1 / 60, maxT = opts.maxT ?? 30;
+    // ROUND 6 — 30 -> 45 s. Not a difficulty change: it is the trial cap, and
+    // this round added an ENDING THAT TAKES LONGER THAN A CHASE. A stand-off at
+    // the door (he turns back, you wait, he ditches it) resolves around 25-30 s,
+    // so at the old cap 8 of 40 camper trials timed out as `stalled` — an
+    // unresolved trial, counted as a non-catch, which is a silent lie in the
+    // direction of whatever you were hoping for. At 45 s every trial in every
+    // scenario resolves and `stalled` is 0. Cost to the numbers it does not
+    // affect: the competent bot on a plain chase goes 70.0 -> 75.0 because five
+    // truncated trials became two catches and three escapes, and round 5's own
+    // build measures the same 5 points higher on the same cap — so the
+    // like-for-like comparison in this round's report is taken at 45 on BOTH.
+    const dt = 1 / 60, maxT = opts.maxT ?? 45;
     const crowd = opts.crowd !== false;
     const gapMul = opts.gapMul ?? 0.96;
     const traceK = opts.trace == null ? -1 : (opts.trace | 0);
@@ -69813,6 +70146,10 @@ function createAgents(THREE, scene, world) {
       // short bursts"), and seconds-of-sprint cannot see it: 3.4 s in one go
       // and 3.4 s in four goes are the same sprintFrac and a different game.
       let bursts = 0, wasSprint = false, usedBand = null, wentBack = false;
+      // ROUND 6 — how much of this trial the cop spent parked on the only way
+      // out. The single most useful diagnostic in the file right now: a trial
+      // that ends `ditched` and reports postedT 0 is a bug, not a design.
+      let postedTrial = 0, heldTrial = 0;
       const api = {
         onBolt() {}, onHarass() {},
         // ROUND 6 — a fourth ending. He waited you out and ditched the goods in
@@ -69832,6 +70169,8 @@ function createAgents(THREE, scene, world) {
         if (identCool > 0) identCool -= dt;
         tick(dt, botInput(thief, mode, st, dt), api);
         time += dt;
+        if (doorPosted()) postedTrial += dt;
+        if (thief.stall > 0) heldTrial += dt;
         const g = dist2d(thief.position.x, thief.position.z, cop.position.x, cop.position.z);
         if (!isFinite(tBolt) && thief.bolted) {
           tBolt = time; gapAtBolt = g;
@@ -69902,6 +70241,7 @@ function createAgents(THREE, scene, world) {
         // how many bodies were inside grabbing range when he committed, and how
         // many times he came away with a stranger's arm (= a complaint).
         made: !!st.made, falseGrabs, crowdAtGrab,
+        postedT: postedTrial, heldT: heldTrial,
         bargeStam: thief.bargeStam,
         atCop: atCop === true, doorT, exitUsed,
         caughtShoving: done === 1 && isFinite(doorT),
@@ -70054,6 +70394,11 @@ function createAgents(THREE, scene, world) {
       // Biggest crowd inside grabbing range at the moment he committed.
       crowdAtGrab_median: _f2(_q(R.map((r) => r.crowdAtGrab), 0.5)),
       ident: opts.ident !== false,
+      // Seconds per trial the cop spent parked on the only way out, and seconds
+      // the subject spent hanging back because of it. If `ditched` is non-zero
+      // and these are zero, something other than the design is ending trials.
+      postedT_median: _f2(_q(R.map((r) => r.postedT), 0.5)),
+      heldT_median: _f2(_q(R.map((r) => r.heldT), 0.5)),
     };
     if (opts.raw) res.raw = R;
     if (traceK >= 0) res.trace = trace;
@@ -71737,7 +72082,10 @@ function createHUD(hudEl) {
       if (!t) return;
       reg('cam', t.x, t.y, t.w, t.h, i);
       const subs = G.desk.subjects.filter((s) => s.cam === i);
-      const flagged = subs.some((s) => s.flagged);
+      // The pip fires on the subject's PRIMARY channel only — see updateSubjects.
+      // A man in the middle of the store is genuinely on four monitors and gets
+      // four rows, but only one of them is the one to switch to.
+      const flagged = subs.some((s) => s.flagged && s.primary !== false);
       const act = i === G.desk.cam;
       const small = t.w < 200;
       box(t.x, t.y, t.w, t.h, act ? AMB : 'rgba(120,170,130,0.16)', act ? 2 : 1);
@@ -72918,6 +73266,7 @@ function createGame(hudEl, deps = {}) {
         // and it is worth saying, because it is the player's cheapest second
         // angle on somebody he cannot read.
         chans: (r.chans && r.chans.length) || 0,
+        primary: true,
       };
       // ONE ROW PER MONITOR HE IS ON, not one row per man.
       //
@@ -72931,13 +73280,42 @@ function createGame(hudEl, deps = {}) {
       // man standing where two cameras overlap. cctv's own boxes come off the
       // same visibility test, so the rows and the rectangles now agree by
       // construction and not by coincidence.
+      //
+      // `primary` is the one channel out of those that is worth SWITCHING to:
+      // the nearest, which is where he is biggest and where the PTZ has the most
+      // to push into. The roster is a set — who can this camera see — but the
+      // red flag pip on the bank is a POINTER, and a pointer that names six
+      // monitors at once names none. Measured on the round-6 capture: four
+      // flagged subjects were lighting six of the nine tiles.
       if (!FIX.chan || !r.chans || !r.chans.length) out.push(row);
-      else for (const ch of r.chans) out.push(ch === r.cam ? row : { ...row, cam: ch });
+      else for (const ch of r.chans) out.push(ch === r.cam ? row : { ...row, cam: ch, primary: false });
     }
     // ONE CALL A FRAME, and the whole point of it: the box on the spot monitor
     // said T19 while the roster said SUBJ-03/04/10, so the two halves of the
     // desk could not be cross-referenced at all. Now the box says SUBJ-19.
     { const c = cctvOf(); if (c && c.setSubjects) c.setSubjects(marks); }
+
+    // THE LAST HOLE, AND IT IS THE ONE THE PLAYER CAN SEE.
+    //
+    // channelsFor() rejects a point outside 0.94 of normalised frame; cctv's own
+    // box test keeps anything whose head OR feet land inside 1.0. That sliver at
+    // the very edge of a wide feed is 1 subject-channel pair in 18, and I would
+    // leave it alone — except that [C] makes the PTZ lock STICKY, so a man the
+    // dome is following out of frame can end up boxed in the picture with no row
+    // under it. Measured 0 in 51 samples under auto-track; reproduced on the
+    // first try by pressing [C] and waiting.
+    //
+    // So the wall gets the last word about its own picture. If cctv says it is
+    // tracking somebody on the channel that is up, he is on that channel's list,
+    // full stop. This is not a second visibility test — it is deferring to the
+    // only one that renders.
+    if (FIX.chan) {
+      const code = trackedCode();
+      if (code && !out.some((s) => s.cam === G.desk.cam && s.code === code)) {
+        const him = out.find((s) => s.code === code);
+        if (him) out.push({ ...him, cam: G.desk.cam });
+      }
+    }
     out.sort((a, b) => (b.flagged - a.flagged) || (a.id - b.id));
     G.desk.subjects = out;
     if (G.desk.sel != null && !out.some((s) => s.id === G.desk.sel && s.cam === G.desk.cam)) {
@@ -73023,12 +73401,15 @@ function createGame(hudEl, deps = {}) {
   // quick. It should take a minute. Maybe you could slow it down. Make it so,
   // like, one incident at a time."
   //
-  // He is right and the old numbers say why. `live < 2` plus a 12-22 s rearm is
-  // a standing order to keep TWO open cases on the wall at all times and to
-  // replace either one within twenty seconds of it resolving. On a four-minute
-  // shift that is a thief every ~18 s with two overlapping for most of it — the
-  // player never finishes reading one roster before the next tell fires, which
-  // is exactly the firehose he described.
+  // He is right and the bench agrees. `live < 2` plus a 12-22 s rearm is a
+  // standing order to keep two open cases on the wall and to replace either one
+  // within twenty seconds of it resolving. Measured over 144 shift-minutes it
+  // ran at 3.0 incidents a minute — one every twenty seconds — with two or more
+  // live 10.3% of the time for a competent player and 17.9% for a poor one, and
+  // only 30% of the shift quiet. The round-6 numbers below measure 1.5 a minute,
+  // 0.7% overlap and 59% quiet: half the volume, essentially never two at once,
+  // and the majority of the shift is you watching a store where nothing has
+  // happened yet, which is the job.
   //
   // So density is a RAMP and phase 0 is serial: one live case, and the next one
   // is not armed until the shift has had a breath. Note this is density only —
@@ -73515,10 +73896,16 @@ function createGame(hudEl, deps = {}) {
     G.desk.scroll = 0;
     const c = cctvOf();
     if (c && c.setActiveCam) c.setActiveCam(G.desk.cam);
+    // Pick from the rows the panel is ABOUT TO SHOW, not from the whole list.
+    // Preferring the dome's subject is right, but only if he is already in the
+    // window: reaching for him further down would open a freshly-switched
+    // channel scrolled into the middle of its own roster, past the flagged rows
+    // that sort to the top, which is the row you switched channels to read.
     const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
-    const hot = on.find((s) => s.flagged) || on[0];
+    const win = on.slice(0, ROWS);
+    const code = trackedCode();
+    const hot = (code && win.find((s) => s.code === code)) || win.find((s) => s.flagged) || win[0];
     G.desk.sel = hot ? hot.id : null;
-    showSel();
   }
   // Scroll the three-row window onto whatever is selected. cycleSel() has always
   // done this for itself; nothing else did, so selecting a subject any OTHER way
@@ -73547,14 +73934,38 @@ function createGame(hudEl, deps = {}) {
   function cycleTrack() {
     const c = cctvOf();
     if (!c || !c.cycleTrack) return false;
-    const tr = c.cycleTrack();
-    if (!tr) return false;
-    const lab = c.detector && c.detector.labelFor ? c.detector.labelFor(tr) : null;
-    const code = (lab && lab.code) || null;
-    if (code) {
-      const row = G.desk.subjects.find((s) => s.code === code && s.cam === G.desk.cam);
-      if (row) { G.desk.sel = row.id; showSel(); }
-    }
+    if (!c.cycleTrack()) return false;
+    selectTracked(true);
+    return true;
+  }
+  // WHO IS THE BIG MONITOR ON. cctv's PTZ holds a lock of its own — its
+  // auto-track picks the strongest motion, and [C] makes that lock sticky — so
+  // the dome has an opinion about who matters whether or not this file asked.
+  // Both halves of the desk pointing at the same man is the whole cross-
+  // reference, and it drifted apart in testing: [C] put the dome on SUBJ-12,
+  // SUBJ-12 flickered off CAM 02's channel list for one frame, the selection
+  // reset, and the auto-pick handed the highlight to SUBJ-01 while the picture
+  // still had SUBJ-12 boxed in the middle of it. So the dome's pick is now what
+  // the roster falls back to, ahead of the first flagged row.
+  function trackedCode() {
+    const c = cctvOf();
+    const tr = c && c.spot && c.spot.track;
+    if (!tr || !c.detector || !c.detector.labelFor) return null;
+    const lab = c.detector.labelFor(tr);
+    return (lab && lab.code) || null;
+  }
+  // `scroll` true means this was an explicit act — [C], or a click on the big
+  // monitor — and the window should go and find him wherever he is in the list.
+  // The idle fallback does not scroll, for the reason in selectCam().
+  function selectTracked(scroll) {
+    const code = trackedCode();
+    if (!code) return false;
+    const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
+    const row = scroll ? on.find((s) => s.code === code)
+      : on.slice(G.desk.scroll, G.desk.scroll + ROWS).find((s) => s.code === code);
+    if (!row) return false;
+    G.desk.sel = row.id;
+    if (scroll) showSel();
     return true;
   }
 
@@ -73631,7 +74042,7 @@ function createGame(hudEl, deps = {}) {
     if (st.mode === 'desk') {
       const a = agentsOf();
       if (a) { a.cop.position.set(POST.x, 0, POST.z); a.cop.userData.vel.set(0, 0, 0); }
-      if (G.desk.sel == null) {
+      if (G.desk.sel == null && !selectTracked()) {
         const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
         const hot = on.find((s) => s.flagged);
         if (hot) { G.desk.sel = hot.id; showSel(); }
