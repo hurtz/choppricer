@@ -84,7 +84,7 @@
    "verdict": "Edge density mean 41.0 -> 44.2, spread 5.6 -> 7.0. Warm-band pixels 37.7-40.7% -> 7.7-11.3% (references 5.6-11.4%). Mean saturation 0.33-0.35 -> 0.23-0.25 (references 0.27-0.32)."
   },
   "cctv": {
-   "round": 3,
+   "round": 4,
    "state": "passed",
    "shots": [
     {
@@ -106,6 +106,11 @@
      "round": 3,
      "path": "../shots/cctv_r3_wall.png",
      "t": 1787431977.303798
+    },
+    {
+     "round": 4,
+     "path": "../shots/cctv_r4_desk.png",
+     "t": 1787499192.5492291
     }
    ],
    "gaps": [
@@ -114,10 +119,10 @@
      "text": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
     }
    ],
-   "updated": 1787432064.598946,
-   "note": "New src/cctv/layout.js owns all wall geometry. Irregular accreted layout instead of 3x3 (which would have given 157x118 screens, too small for the roster overlay): 416x234 primary carrying FRONT END, a 2011 2x2 whose bottom pair are 16:10 replacements on old brackets so the rows do not line up, door cameras paired in the right column by label match. Deliberately did NOT make the hero panel follow selection because tiles stability is a documented contract two other agents depend on. Unclaimed slots stay physical monitors: slot 8 showed a blue NO SIGNAL card reading DOOR 2 NOT WIRED, and adding CAM 09 flips it to DOOR 2 NEW. Grade re-judged over the new store - chroma .60->.74 because colour packaging is what makes 4:2:0 visible at all; there was nothing to smear before.",
+   "updated": 1787499446.944247,
+   "note": "The arithmetic WAS the problem: a subject 12m down an aisle through a 98-degree dome is 8.3 degrees tall = 14px on a 190px panel. No grade fixes 14px. New track.js NEVER sees agents.js - pure kinematics, so a concealment and a woman reading a jar of sauce emit the identical token; the wall says WHERE, only your eyes say WHAT. Key measurement that made the big monitor affordable: a scene render costs 2.0-2.7ms at EVERY resolution from 190x143 to 1664x936 - the store is draw-call bound, not fill bound, so a 4x bigger picture is free. Bug: Box3.setFromObject walks INVISIBLE children, and a hidden anger sprite at y=2.05 made every shopper measure 2.38m instead of 1.75 - which broke box heights, under-zoomed every PTZ, and drew green boxes over empty shelf tops because the occlusion test cleared a 2.05m gondola.",
    "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself.",
-   "verdict": "Wall is N-camera driven; verified boot-clean at 1,2,4,6,7,8,9,10,11,16 cameras with no degenerate tiles and nothing outside the HUD-safe band. CAM 09 DOOR 2 now added and live."
+   "verdict": "PASS on the client's core complaint. A 766x431 spot monitor with PTZ push-in makes the subject ~138px instead of 14px; a five-frame capture shows a concealment legibly (item out, raised, at chest, gone, hands back on cart). Desk frame 2.76 -> 4.08ms, and scene renders per frame went DOWN (1.12 vs 1.65)."
   },
   "agents": {
    "round": 5,
@@ -262,6 +267,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787499446.944248,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 4,
+   "state": "passed",
+   "text": "The arithmetic WAS the problem: a subject 12m down an aisle through a 98-degree dome is 8.3 degrees tall = 14px on a 190px panel. No grade fixes 14px. New track.js NEVER sees agents.js - pure kinematics, so a concealment and a woman reading a jar of sauce emit the identical token; the wall says WHERE, only your eyes say WHAT. Key measurement that made the big monitor affordable: a scene render costs 2.0-2.7ms at EVERY resolution from 190x143 to 1664x936 - the store is draw-call bound, not fill bound, so a 4x bigger picture is free. Bug: Box3.setFromObject walks INVISIBLE children, and a hidden anger sprite at y=2.05 made every shopper measure 2.38m instead of 1.75 - which broke box heights, under-zoomed every PTZ, and drew green boxes over empty shelf tops because the occlusion test cleared a 2.05m gondola."
+  },
+  {
+   "t": 1787499192.54923,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 4,
+   "state": "building",
+   "text": "Rebuilt the desk around readability: one 766x431 SPOT monitor showing the selected channel with a PTZ push-in that frames a tracked subject at 32% of frame height (55px -> 138px), plus a 3x3 bank of 138x104 motion thumbnails. Guilt-blind motion analytics (src/cctv/track.js) boxes every moving blob from the scene graph alone, with store-collider line-of-sight so nothing gets boxed through a gondola; tokens are kinematics only (MOTION / STOPPED m:ss / LOITER), so a concealment and a browse flag identically. Per-panel OSD canvases replace the shared 1280x720 burn-in. Concealment is now visible on the monitor: see cctv_r4_conceal_strip.png. Desk frame cost 2.76ms -> 4.08ms."
+  },
   {
    "t": 1787499089.46126,
    "piece": "cop",
@@ -727,5 +748,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787499089.461261
+ "updated": 1787499446.94425
 }

@@ -220,8 +220,19 @@ const T = {
   // horizontal move instead of four vertical ones. It also widens the shoulder
   // parallax exactly when the gap is widest, which is when you most need to see
   // past the man's back.
+  // 1.20 m is what it takes to MISS a sign, and missing it is not enough: it
+  // leaves the panel edge 0.21 m off the lens, and a 1.86 x 1.64 m board at
+  // 0.21 m is most of the screen. shots/cam_sw_clear120.png is that frame. 1.72
+  // puts it at 0.71 m, where it sweeps the edge of frame the way signage does
+  // when you walk under it — see cam_sw_clear172.png for the same instant.
+  //
+  // The other way out was to climb OVER them (4.20+). Measured and rejected:
+  // cam_sw_high.png at 4.37 m still has a sign filling the corner, because you
+  // pass just as close on the way up, and the store underneath has gone back to
+  // being the floor plan this file exists to stop it being.
   signLo: 2.46,        // sign panels start at 2.50 (SIGN_Y 3.32 - SIGN_H/2)
-  signClear: 1.20,     // half of SIGN_W 1.86 is 0.93; the rail takes it to 1.01
+  signClear: 1.72,     // half of SIGN_W 1.86 is 0.93; the rail takes it to 1.01
+  signRamp: 0.50,      // metres of height over which the dolly widens
 
   // --- lane framing --------------------------------------------------------
   // The lens rides the AISLE centreline, not the cop's x. He is 4 m of walkable
@@ -516,20 +527,50 @@ export function createCamera(THREE, cam) {
 
       // ---- place it ---------------------------------------------------------
       // Shoulder dolly, widened to clear the hanging signs once the gap rise
-      // takes the lens over their bottom edge. Same offset on the lens and on
-      // the aim, so the forward vector — and therefore `yaw` — is untouched.
-      const over = axisX ? 0 : clamp((h - T.signLo) / 0.30, 0, 1);
-      const sh = lerp(T.shoulder, Math.max(T.shoulder, T.signClear), over) * T.shoulderSide;
-      aimX += rx * sh; aimZ += rz * sh;
-      const jx = sk * Math.sin(shake * 41) + sh;
-      let px = eyeX - bx * d + rx * jx;
-      let pz = eyeZ - bz * d + rz * jx;
+      // takes the lens over their bottom edge.
+      //
+      // It has to be measured FROM THE AISLE, not added as an offset. First
+      // version added `signClear` to the lens and still put a full-screen
+      // SPAGHETTI / SAUCES banner in the middle of the wide-gap frame: the lane
+      // blend only pulls the lens 62% of the way onto the centreline, so a cop
+      // hugging the far shelf leaves it up to 0.6 m off on its own, and when
+      // that offset ran against the dolly the two cancelled to 0.63 m — inside
+      // the 1.01 m the panel and its rail occupy. Logged over a chase, the lens
+      // wandered between 0.63 and 2.15 m off the lane while the constant that
+      // was supposed to be holding it clear never changed.
+      // So: work out where the lens is ACTUALLY going to sit relative to the
+      // aisle it is looking down, and dolly by whatever it takes.
+      const over = axisX ? 0 : clamp((h - T.signLo) / T.signRamp, 0, 1);
+      const sgx = rx * T.shoulderSide, sgz = rz * T.shoulderSide;
+      const pre = (eyeX - L.cx) * sgx;              // lane offset already in hand
+      const need = lerp(T.shoulder, Math.max(T.shoulder, T.signClear), over);
+      const sh = Math.max(T.shoulder, need - pre);
+      // Lens and aim get the same push, so the forward vector — and therefore
+      // `yaw` — is untouched by any of it.
+      aimX += sgx * sh; aimZ += sgz * sh;
+      const jx = sk * Math.sin(shake * 41);
+      let px = eyeX + sgx * sh - bx * d + rx * jx;
+      let pz = eyeZ + sgz * sh - bz * d + rz * jx;
       y += sk * 0.5 * Math.sin(shake * 53);
       // Walls. Clamping the lens rather than the aim means the shot tips down
       // and closes in when you run into the front end instead of the cop sliding
       // to the edge of frame — the aim is still on him either way.
       px = clamp(px, STORE.minX + 1.1, STORE.maxX - 1.1);
       pz = clamp(pz, STORE.minZ + 1.1, STORE.maxZ - 1.1);
+
+      // Sign guard, belt and braces. The dolly above holds the lens clear while
+      // the camera is settled on an axis, but it pushes along the camera's OWN
+      // right vector — and halfway through a swing that vector points down the
+      // aisle instead of across it, so the push stops being lateral at all and
+      // the lens can cross the centreline while it is still up in the sign band.
+      // Logged over a chase, the closest it came was 0.08 m off the lane at 3.2 m
+      // high, which only missed a sign because it was not at a sign's z.
+      // This measures the clearance it ACTUALLY ended up with and caps the height
+      // if it is not enough. Cheap, smooth, and it can only ever lower the lens
+      // under 2.46 — where nothing hangs.
+      const laneRel = Math.abs(px - lane(px).cx);
+      const clear = smoothstep((laneRel - 0.78) / (T.signClear - 0.78));
+      y = Math.min(y, lerp(T.signLo, 99, clear));
       // Never inside the shelving, never through the ceiling.
       y = clamp(y, SHELF_H + 0.30, CEIL_H - 0.55);
 

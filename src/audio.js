@@ -25,6 +25,7 @@
 //
 // The signal path, and the reason for it:
 //
+//   muzak ──► pa (the ceiling speaker) ─┐
 //   bed / pa / foley ──dry──►  storeDry ─┐
 //                    └─send──►  room.input ──► [AISLE conv | OPEN conv] ──┤
 //                                                                          ├─► room.storeIn
@@ -46,11 +47,43 @@
 //     a 2.3-second tail, because it starts eight centimetres from his ears.
 //
 // Cost: see stats(). The DSP runs on the audio thread; what shows up in the
-// game's frame budget is only the JavaScript in update(), which is measured:
-// ~0.033 ms a frame, 0.7 ms worst case, two live convolvers in either mode.
+// game's frame budget is only the JavaScript in update(), which is measured on
+// the bench at 0.11-0.16 ms a frame, 1.3 ms worst case, 634 persistent nodes
+// and two live convolvers in either mode. The worst case is a beat of the tape
+// landing in the same frame as a checkout burst; it is a bar-scheduler spike,
+// not a floor, and it is why muzak.js schedules a BEAT at a time and not a bar.
 //
 // ---------------------------------------------------------------------------
-// TWO THINGS THE HARNESS PROMISES THAT DO NOT ARRIVE (as of this round)
+// ROUND 2 — WHAT CHANGED AND WHY
+//
+// The client heard round 1: "there needs to be music, and it needs to be
+// better." Two things came out of that, and they are the two headlines:
+//
+//  THE MUSIC (src/audio/muzak.js — new). Round 1 HAD music and he did not hear
+//  it, which is a measurement, not an opinion: the PA soloed at -38.8 dBFS RMS
+//  against an ambience bed at -34.1 — five decibels under the air conditioning
+//  — with 70% of its energy inside one octave at 2 kHz, nothing at all below
+//  180 Hz, and a melody generated as a random walk. No bass, so no groove; no
+//  repeated phrase, so no tune. It is now a small easy-listening band playing
+//  four written tunes out of the ceiling, and the ceiling speaker got bigger
+//  and much more honest. See muzak.js and pa.js.
+//
+//  THE LUNGS (src/audio/foley.js). "He pants... you should see that in his
+//  huff-huff... and then it lets up right as he gets his breath back." Round 1
+//  ran one symmetrical breath cycle at a rate that scaled with effort, which at
+//  speed reads as a man doing breathing exercises. It is now PAIRS of short
+//  hard mouth-breaths with a real gap between them and a longer one after, all
+//  driven off cop.userData.fatigue rather than off the tank, plus a dedicated
+//  one-shot RELIEF breath on the way out of winded — which is the reward for
+//  letting go of the sprint key and the half he asked for twice.
+//
+// Everything else got the broadband texture it was missing: cart traffic across
+// the whole store, somebody putting stock out, an air curtain at the chilled
+// run, the back room through a swing door, and traffic through the front glass.
+// See the ROUND 2 section in bed.js for the measurements that motivated each.
+//
+// ---------------------------------------------------------------------------
+// TWO THINGS THE HARNESS PROMISES THAT DO NOT ARRIVE (still true in round 2)
 //
 //   state.report   main.js passes `agents.report && agents.report()`, but
 //                  agents.js has no `report` export — it CALLS api.report() into
@@ -58,12 +91,24 @@
 //   state.chasing  main.js passes `game.st.chasing`, and game.st has no such
 //                  field, so it is always false.
 //
-// Neither is a problem here and nothing needs to change on my account: the wind
-// state is on `cop.userData` (stamina / gassed / boost / stagger / speed) which
-// is the thing agents.js actually writes, and "is a chase happening" is derived
-// from the shoppers' own `bolted` flags. Both are read defensively, so if the
+// Neither is a problem here and nothing needs to change on my account. The wind
+// state is on `cop.userData` — and specifically `cop.userData.fatigue`, which
+// agents.js writes inside telemetry() and which is the signal the breathing and
+// the duck are both built on. "Is a chase happening" is derived from the
+// shoppers' own `bolted` flags, which is what drives the music's intensity.
+// Both are read defensively (`state.report` first, userData second), so if the
 // lead wires the promised fields up later this file will simply prefer them.
 // Flagging it because anyone else reading main.js will assume they work.
+//
+// ---------------------------------------------------------------------------
+// TESTING IT WITHOUT THE GAME
+//
+//   http://127.0.0.1:8171/src/audio/bench.html
+//
+// The graph on its own, with a fake cop and no store, no CCTV and no agents.
+// It drives the same update(dt, state) main.js does. Twice this round a syntax
+// error in a file I do not own stopped me measuring a file I do; it also puts
+// the listener at the dairy in one assignment instead of twenty seconds of sim.
 
 import { createRoom } from './audio/room.js';
 import { createBed } from './audio/bed.js';

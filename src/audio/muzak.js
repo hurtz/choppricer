@@ -653,10 +653,17 @@ export function createMuzak(ctx, dest, noiseBuf, seed = 4711) {
         if (beat === 3 && bars % 4 === 3) A(0.75, 'snare', 0.4);
         break;
       case 'waltz':
-        if (beat === 0) { A(0, 'kick', 0.8); A(0, 'brush', 0.14); }
-        else A(0, 'rim', 0.32 + iv * 0.2);
-        A(0, 'shaker', beat === 0 ? 0.22 : 0.13);
-        if (iv > 0.35) A(0.5, 'shaker', 0.10);
+        // Measured at 0.138 pulse strength with a kick, a rim and a shaker,
+        // i.e. under the line where you can find the beat. A jazz waltz is a
+        // quiet groove and it is still a groove: the hat rides all three beats
+        // and the brush marks the bar.
+        if (beat === 0) { A(0, 'kick', 0.85); A(0, 'brush', 0.16); }
+        else A(0, 'rim', 0.36 + iv * 0.2);
+        if (beat === 2 && bars % 2 === 1) A(0.5, 'kick', 0.45);
+        A(0, 'hat', beat === 0 ? 0.26 : 0.19);
+        A(0.5, 'hat', 0.11);
+        A(0, 'shaker', beat === 0 ? 0.24 : 0.14);
+        if (iv > 0.35) A(0.5, 'shaker', 0.12);
         break;
     }
   }

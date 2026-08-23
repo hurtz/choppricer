@@ -29,7 +29,12 @@
 //                   Detection does not depend on it; without it you get T-codes.
 //   cycleTrack()    step the spot monitor's auto-track onto the next subject
 //   tracks          the motion detector's live blobs (see cctv/track.js)
-//   stats           { renders, spotRenders } render counters, for the budget
+//   detector        the detector itself, for critics and the harness
+//   channelsFor(x,z,h)             which channels can ACTUALLY see that point,
+//                   nearest first — frustum plus line of sight through the
+//                   store's colliders. Offered to builder-game to replace the
+//                   zone table in camFor(); see the note on the method.
+//   stats           { renders, spotRenders, thumbRenders } counters, for budget
 //
 // ===========================================================================
 // ROUND 4 — THE MONITORS ARE THE GAME AGAIN
