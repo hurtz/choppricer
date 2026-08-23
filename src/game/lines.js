@@ -245,7 +245,64 @@ export const AISLE_CLEAR = [
   'AISLE CLEAR. THE FEED WAS FOUR SECONDS OLD.',
 ];
 
+// ---------------------------------------------------- ROUND 7: the quiet shift
+// agents.js's one-exit design punishes camping the door by REMOVING THE CRIME:
+// stand on the way out long enough and nobody commits, so the shift produces no
+// incidents and the player earns nothing. That is the correct punishment and it
+// works — but a player punished by an absence has to be TOLD, or a shift with
+// no income reads as a broken game rather than as a consequence.
+//
+// The register is the fiction, never the mechanic. Not "deterrence active", not
+// "thieves suppressed" — the store noticing that nothing is happening, in the
+// voice of a man who has been stood in a doorway for a while. If the player
+// works out the rule from this, he worked it out; nobody told him.
+export const POSTED_QUIET = [
+  "FLOOR IS QUIET — NOBODY'S GOING TO TRY IT WITH YOU STOOD THERE",
+  'NOBODY IS SHOPLIFTING IN FRONT OF THE DOOR YOU ARE STANDING IN',
+  'NOTHING IS HAPPENING. THAT IS BECAUSE OF WHERE YOU ARE STANDING.',
+  'EVERYONE IS BEHAVING BEAUTIFULLY. YOU ARE VERY VISIBLE.',
+];
+// He had it in his hand and put it back rather than walk past you. No arrest,
+// no loss, no points. The log has to make it sound like a win, because it is
+// one — it is just a win that pays nothing, which is the joke.
+export const ABORT_BALK = [
+  '%S PUT IT BACK. HE HAD A LOOK AT THE DOOR FIRST.',
+  '%S RETURNED THE ITEM TO THE SHELF. UNPROMPTED.',
+  '%S CHANGED HIS MIND ABOUT SOMETHING.',
+  'ATTEMPTED CONCEALMENT ABANDONED — %S. NO OFFENCE COMMITTED.',
+];
+// He waited you out, you did not move, so it went on a shelf and he left.
+export const ABORT_DUMP = [
+  '%S LEFT IT ON THE WRONG SHELF AND WALKED OUT A CUSTOMER.',
+  '%S DITCHED THE ITEM. RECOVERY LOGGED AS RESTOCK. NO POINTS.',
+  '%S GAVE UP WAITING FOR YOU TO MOVE.',
+];
+export const ABORT_STAMP = 'HE PUT IT BACK';
+export const ABORT_SUB = 'NO OFFENCE. NO ARREST. NO POINTS.';
+
+// ---------------------------------------------- ROUND 7: the beat before a form
+// A guest who has been crowded turns and says something. He does not reach for
+// a complaint form in the same instant — he waits to see whether you are going
+// to keep standing there. That gap is the only place in the game where a
+// misread can be UNMADE, so the HUD names it plainly rather than in character:
+// it is an instruction, and it has about a second and a half to be obeyed.
+//
+// It does NOT name a key. Movement is WASD relative to a chase camera that
+// yaws, so which key walks the cop away from this particular guest depends on
+// where the camera happens to be pointing — and a HUD that confidently says [S]
+// while [S] walks you further into him is worse than one that says nothing.
+export const BACK_OFF = 'GET OUT OF HIS FACE — BACK AWAY';
+// He got out of the way in time. Ticker only, and deliberately not a
+// congratulation: nothing happened, which is the best outcome available.
+export const BACK_OFF_OK = [
+  '%S — NO COMPLAINT FILED. GUEST RESUMED SHOPPING.',
+  '%S DECLINED TO MAKE A THING OF IT.',
+  'GUEST RELATIONS EVENT DE-ESCALATED — %S. NOT LOGGED.',
+];
+
 export const pick = (a, r) => a[Math.floor((r === undefined ? Math.random() : r) * a.length) % a.length];
 // %D is the door somebody actually used. There are two of them now; a log line
 // that always says DOOR 1 is a log line that is wrong half the time.
 export const fill = (s, door) => String(s).replace(/%D/g, door || 'DOOR 1');
+// %S is a subject code — SUBJ-04. Same shape as fill(), different hole.
+export const fillS = (s, code) => String(s).replace(/%S/g, code || 'SUBJECT');

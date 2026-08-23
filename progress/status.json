@@ -207,7 +207,7 @@
    "verdict": "PASS. One exit shipped and the camper is dead by INCOME, not catch rate: 0 pts/shift in every shift sampled, 4.17 thefts started and 4.83 balked, 91% of his time on the door. The desk player earns 250. Rationing still beats always-sprint 77.0 vs 53.0. Median chase 6.22s, catchUnder1s 11.7%, lungCheck passes."
   },
   "game": {
-   "round": 6,
+   "round": 7,
    "state": "passed",
    "shots": [
     {
@@ -244,6 +244,11 @@
      "round": 6,
      "path": "../shots/game_r6_wind.png",
      "t": 1787501853.750732
+    },
+    {
+     "round": 7,
+     "path": "../shots/game_r7_backoff.png",
+     "t": 1787505637.882664
     }
    ],
    "gaps": [
@@ -260,10 +265,10 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787501983.058053,
-   "note": "THE TRAP DISCOVERY, which matters more than the ramp: serialising incidents made the GUESSER BETTER (28.2% -> 35.2%) and nearly killed the desk read at +3.2pp. A coverage effect - one guard against three simultaneous cases loses two without being wrong. The difficulty was never how many THIEVES, it was how many CANDIDATES, and round 5 was getting its candidates free by running three cases at once. Trap rate is now the inverse of pace (0.50/0.36/0.26): fewest real incidents, most things that look like one. Also: filed each man under his NEAREST channel first and that reintroduced the bug from the other end - a list titled MOTION ANALYTICS - CAM 02 means everything CAM 02 can see, which is a set, not a nearest-match. Blind spots now read SIGNAL LOST - LAST SEEN 5.7s rather than silently vanishing.",
+   "updated": 1787505751.060597,
+   "note": "Round-2's gate was already refusing 265-448 onHarass calls per run, so approach-firing was NOT the cause. Every complaint that landed came from the subject the player deliberately dispatched to. Two real causes: a single confrontation was billed 1.73 times because harassCool is a global 5s while agents re-arms a shopper after 1.6m of backing off - one sidestep in a 4m aisle; and there was no beat before the form. HARASS_GRACE 1.6s now lets you get out of his face, which ADDS a skill rather than removing a punishment. Three strikes stays because the fiction is good. Also proved the camper loop end to end: 0.08 incidents/min against a normal 1.5, 3.67 aborts/shift, zero points.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
-   "verdict": "PASS on the reconciliation. Roster/picture agreement went from 54% of subjects named on a channel that could not see them, to 100% over 1176 subject-seconds with zero false positives, costing 0.022ms/frame. Pacing: 3.00 -> 1.51 incidents/min, overlap 10-18% -> 0.4%, quiet 30% -> 58%. Observer 36.9% / 298 pts / 0 demotions vs random 32.1% / 87 / 1.94 demotions = +4.8pp and 3.43x points."
+   "verdict": "PASS. The 7.0 complaints figure was a GUESSER's rate, not a reader's - the observer takes 0.00 by construction because it only dispatches on a GUILTY line, so it could never be the instrument for that question. Built the missing bot ('reader': full scan-switch-read loop plus 35% impatience once per read). Reader goes 3.25 -> 0.00 complaints, 0.75 -> 0.00 demotions, 240 -> 386 pts."
   },
   "cop": {
    "round": 1,
@@ -312,6 +317,38 @@
   }
  },
  "log": [
+  {
+   "t": 1787505751.0605981,
+   "piece": "game",
+   "role": "builder",
+   "round": 7,
+   "state": "passed",
+   "text": "Round-2's gate was already refusing 265-448 onHarass calls per run, so approach-firing was NOT the cause. Every complaint that landed came from the subject the player deliberately dispatched to. Two real causes: a single confrontation was billed 1.73 times because harassCool is a global 5s while agents re-arms a shopper after 1.6m of backing off - one sidestep in a 4m aisle; and there was no beat before the form. HARASS_GRACE 1.6s now lets you get out of his face, which ADDS a skill rather than removing a punishment. Three strikes stays because the fiction is good. Also proved the camper loop end to end: 0.08 incidents/min against a normal 1.5, 3.67 aborts/shift, zero points."
+  },
+  {
+   "t": 1787505637.882664,
+   "piece": "game",
+   "role": "builder",
+   "round": 7,
+   "state": "building",
+   "text": "COMPLAINT FIX MEASURED, PAIRED A/B, 20 shifts x 240s per policy. BEFORE (both rules off = what shipped): observer 0.00 complaints/shift and 0 demotions; READER 3.25 and 0.75; random 7.10 and 2.00. AFTER: observer 0/0; READER 0.00 complaints and 0.00 DEMOTIONS with points UP 240 -> 386; random still 5.65 complaints and 1.40 demotions per shift. So three strikes is now survivable for a competent player and still fires the guesser 1.4x a shift - the fail state is intact, it just stopped punishing the wrong person. CAVEAT STATED PLAINLY: the reader's 0.00 is a bot that reacts in exactly 0.55s every single time; a human who is slower or does not look up will still file, and random is the proof the punishment still lands. Also: eval patches Math.random, so any change in RNG draw count re-rolls the stream - only within-pair comparisons are meaningful and the reader's rate swung 3.25/3.92/7.21/10.7 across differently-shaped runs. THE RAMP IS WIRED: agents.setDifficulty(agents.difficultyForClock(st.clock)) once a frame from update(), behind FIX.ramp, and confirmed live (difficulty 0.77 at clock 247s, breakpoints 0/150/330 matching PACE exactly). CASE LENGTH IS STILL ~16s AND rampWalk WILL NOT REACH A MINUTE: 16.1-16.8s median / 23.7-25.2s p90 against round 6's 16.5/22.2. A 12% walk cut on a 16s case buys about two seconds at the median and three at p90. The incident is 16s because that is how long it takes to walk from mid-store to the one exit; no speed multiplier that keeps the chase a chase will make that 60s. If a minute is the goal it needs a different mechanism - the thief doing something ELSE after concealing before he heads for the door - and that is agents.js's behaviour tree, not a speed dial. ONE-EXIT FEEDBACK: built a  policy that walks to the door on nav.steer and stands there. It measures 0.08 incidents/min against a normal 1.5, 3.67 aborts/shift, and ZERO points - the punishment works exactly as designed, and onAbort now fires often enough to be worth narrating."
+  },
+  {
+   "t": 1787505317.108136,
+   "piece": "game",
+   "role": "builder",
+   "round": 7,
+   "state": "building",
+   "text": "PA HOLD-TO-TALK, GAME HALF. [F] is unchanged on a tap - the measured, neutral price-check path is untouched - and the microphone rides on top of it rather than beside it. keydown opens the channel if the handset is free (paReady: desk mode, off cooldown, nothing already held); keyup, blur and a denied permission all close it. talkStart() is a Promise so it is fired and forgotten, and a player who lets go while the browser prompt is still up gets the channel closed on arrival rather than a mic that opens behind him. THE RAMBLE IS WORTH SOMETHING: while you are on the air the subject is standing there listening, so his nine seconds has not started - held.until is pushed forward every frame, capped at HOLD.talkMax 8s so the joke cannot become a strategy. HUD: the PA button goes hot red with a blinking ON AIR pip, a 12-cell level meter off talkLevel(), and a seconds-on-air readout; the meter is the only proof the player has that the store can hear him. Discovery: one ticker line the first time he is at the desk with a working handset ('PA HANDSET LIVE ON THIS TERMINAL - HOLD [F] AND SPEAK'), and the DISPATCH hint reads '[F] HOLD TO TALK' only while the feature is actually available. REFUSAL IS AN ORDINARY ANSWER: denied and unsupported both set talk.denied, the hint reverts to '[F] PA', the discovery line never fires, and he is never asked again for the session. audio.js has not shipped talkStart yet, so today every one of those paths resolves to 'unavailable' and the game is byte-identical to what it was - which is the degraded mode working. PRIVACY: this file never sees a sample. It calls talkStart/talkStop and reads one 0..1 float for the meter; there is deliberately no code path here that could record, store or transmit anything. NO SPEECH RECOGNITION, by design and by instruction."
+  },
+  {
+   "t": 1787504893.378518,
+   "piece": "game",
+   "role": "builder",
+   "round": 7,
+   "state": "building",
+   "text": "COMPLAINT RATE: THE 7.0 FIGURE IS NOT A READER'S RATE, IT IS A GUESSER'S. Instrumented which branch of targetShopper() lets a complaint through and counted the ones my round-2 gate refuses. Result: the OBSERVER takes 0.00 complaints per shift and 0 demotions, because it dispatches only on a BEHAVIOUR_GUILTY line and therefore never confronts an innocent by construction - it cannot be the instrument for this question. My random guesser takes 7.04/shift, which matches the chase builder's 7.0 almost exactly, so the bot they measured is a guesser. My gate is already refusing 265-448 approach-fired onHarass calls per run; every complaint that lands comes from hSubj, i.e. the subject the player DELIBERATELY DISPATCHED TO. It is not bystanders and it is not copClosingOn leaking through. Built a third policy, : the full scan-switch-read loop, plus 35% impatience ONCE PER READ on a channel that is flashing red and whose rows do not explain it. That is the bot the demotion economy has to survive, and it takes 3.92 complaints and 0.92 demotions per 4-min shift - fired every ~4 minutes for playing well. Two fixes, both ablatable (FIX.once, FIX.grace). ONE GUEST ONE COMPLAINT: measured 1.73 complaints per distinct complainant, so a single confrontation was being billed twice (global 5s cooldown vs agents re-arming a shopper after 1.6m of backing off - one sidestep in a 4m aisle). THE BEAT BEFORE A FORM: crowding somebody no longer files anything. He turns round and says something immediately, and has HARASS_GRACE 1.6s to see whether you keep standing there. Step out of his face and no complaint exists. This adds a skill rather than removing a punishment, and it is the one moment where a misread can be unmade - so the eval driver learned the same skill (back off when he turned round and is NOT running; a thief bolts, a shopper complains). Three strikes stays: it is the fiction and the fiction is good."
+  },
   {
    "t": 1787503587.408127,
    "piece": "agents",
@@ -881,5 +918,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787503587.408128
+ "updated": 1787505751.060599
 }

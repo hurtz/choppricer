@@ -8,7 +8,21 @@
 //     resume(),                // browsers block audio until a user gesture
 //     update(dt, state),       // state: { mode, cop, shoppers, chasing, gassed, boost, viaBack }
 //     setMix(name, gain),      // 'ambience' | 'pa' | 'foley' | 'ui'
+//
+//     // ---- PUSH TO TALK (round 3). Hold a key, talk, hear yourself in the
+//     // ceiling. game.js binds a key to start/stop and may draw talkLevel().
+//     talkStart(),             // -> Promise<boolean>. Call on KEYDOWN: getUserMedia
+//                              //   needs the gesture. false = denied/unavailable,
+//                              //   which is a normal outcome and never an error.
+//     talkStop(),              // call on keyup. Safe to call when nothing is live.
+//     talkState(),             // 'off' | 'requesting' | 'live' | 'denied' | 'unsupported'
+//     talkLevel(),             // 0..1 smoothed input level, for a HUD meter
 //   }
+//
+// NOTHING about the game changes if the player has no microphone or says no.
+// talkStart() resolves false, talkState() reads 'denied' or 'unsupported', and
+// every other sound in the building carries on exactly as before. Do not gate
+// anything on it succeeding.
 //
 // Browsers will not start an AudioContext without a user gesture. index.html's start
 // card gives us one — main.js calls resume() on that click.
@@ -25,7 +39,8 @@
 //
 // The signal path, and the reason for it:
 //
-//   muzak ──► pa (the ceiling speaker) ─┐
+//   muzak ────────────────────┐
+//   MICROPHONE ─► talk ─► speech ─► pa (the ceiling speaker) ─┐
 //   bed / pa / foley ──dry──►  storeDry ─┐
 //                    └─send──►  room.input ──► [AISLE conv | OPEN conv] ──┤
 //                                                                          ├─► room.storeIn
@@ -81,6 +96,30 @@
 // the whole store, somebody putting stock out, an air curtain at the chilled
 // run, the back room through a swing door, and traffic through the front glass.
 // See the ROUND 2 section in bed.js for the measurements that motivated each.
+//
+// ---------------------------------------------------------------------------
+// ROUND 3 — THE HANDSET
+//
+//  "Somebody can hit and hold down a button and then speak and say, 'I need a
+//   price check on aisle five'... and then you hear your voice in the game."
+//
+// One new file, src/audio/talk.js, and about forty lines in pa.js. That ratio is
+// the whole story: the PA chain was already a model of an 8-inch coax ceiling
+// can forty metres away in a 4000 m2 concrete box, so pointing a live microphone
+// at the top of it does the joke for free. No effect was written for this. The
+// player's voice comes back thin, honking at 1.6 k, missing everything under
+// 125 Hz, smeared by a 2.35-second tail and arriving from four cans none of
+// which he is standing under, because that is what the building does to sound.
+//
+// Read the top of talk.js before touching it. Two things in there are not
+// preferences: microphone audio never leaves the Web Audio graph, and the
+// feedback defences (browser AEC, the tape ducking to 0.18, the howl watchdog,
+// and conservative gain staging) are what stop a player on laptop speakers
+// getting a howl instead of a joke.
+//
+// There is deliberately NO speech recognition. Web Speech is a network call, and
+// this game makes no network requests at runtime — but the better reason is that
+// the game not understanding you is funnier than the game understanding you.
 //
 // ---------------------------------------------------------------------------
 // TWO THINGS THE HARNESS PROMISES THAT DO NOT ARRIVE (still true in round 2)
@@ -331,9 +370,19 @@ export function createAudio(THREE, camera) {
   // things worth measuring at the top end (the 15.7 kHz CRT line, the scanner's
   // second harmonic). This is the same tap — audio.master — written losslessly,
   // so a probe number is a number about the signal and not about the codec.
+  //
+  // AND IT WILL NOT RECORD A MICROPHONE. This is the only capture path in the
+  // codebase and it closes the mic gate for the length of the take, so a live
+  // voice physically cannot reach the file — the click, the hiss and the duck
+  // still do, which is everything a critic needs to measure. The shipped build
+  // has no /audio endpoint to POST to at all.
   const sink = gain(ctx, 0); sink.connect(ctx.destination);
   async function recordWav(seconds = 12, name = 'clip') {
     resume();
+    pa.talk.muteCapture(true);
+    try { return await capture(seconds, name); } finally { pa.talk.muteCapture(false); }
+  }
+  async function capture(seconds, name) {
     const sp = ctx.createScriptProcessor ? ctx.createScriptProcessor(4096, 2, 2) : null;
     if (!sp) throw new Error('no ScriptProcessor; use recordAudio()');
     const L = [], R = [];
@@ -373,8 +422,16 @@ export function createAudio(THREE, camera) {
   }
 
   function stats() {
-    const n = bed.nodes.length + pa.nodes.length + pa.muzak.nodes.length + foley.nodes.length + desk.nodes.length;
+    const n = bed.nodes.length + pa.nodes.length + pa.muzak.nodes.length
+      + foley.nodes.length + desk.nodes.length + pa.talk.nodes.length;
     return {
+      talk: {
+        state: pa.talk.state, level: +pa.talk.level.toFixed(3),
+        // <1 means the howl watchdog has pulled the handset down
+        guard: +pa.talk.guard.toFixed(2),
+        // is the capture device claimed right now
+        holding: pa.talk.holding,
+      },
       buildMs: +buildMs.toFixed(1),
       updateMs: +perf.ema.toFixed(3),
       peakMs: +perf.peak.toFixed(3),
@@ -404,8 +461,33 @@ export function createAudio(THREE, camera) {
       wetB[name].gain.value = CAL[name] * g;
     },
     getMix(name) { return mix[name]; },
+
+    // ---- PUSH TO TALK -------------------------------------------------------
+    // The whole feature lives in src/audio/talk.js and src/audio/pa.js; these
+    // four lines are the contract game.js binds a key to.
+    //
+    // THE DATA PATH, END TO END: getUserMedia -> MediaStreamAudioSourceNode ->
+    // a highpass and a compressor -> the PA's speech bus -> the ceiling can ->
+    // four panners and the room convolver -> outSum -> the limiter -> master ->
+    // ctx.destination. It is a Web Audio graph on the player's machine and
+    // there is no branch off it. Nothing is buffered, nothing is written, and
+    // this game makes no network requests at runtime — which is still true with
+    // the microphone open, and is the reason there is no speech recognition in
+    // here either.
+    talkStart() { resume(); return pa.talk.start(); },
+    talkStop() { pa.talk.stop(); },
+    talkState() { return pa.talk.state; },
+    talkLevel() { return pa.talk.level; },
+    // Hands the capture device back immediately instead of after the idle
+    // timeout. game.js can call it on pause or on game over; it is not required.
+    talkRelease() { pa.talk.release(); },
+
     // ---- agent-facing, same spirit as main.js's snap()/run()
     recordWav, stats, room, bed, pa, foley, desk,
+    // Opens the PA channel with NO microphone — click, hiss, duck, gate, can,
+    // room. Connect a signal to audio.pa.talk.micIn and record master to prove
+    // the chain without speaking into it. Debug only; game.js never calls this.
+    talkTest(on) { return on === false ? (pa.talk.stop(), false) : pa.talk.testOpen(); },
     get zone() { return zn; },
     get started() { return started; },
   };

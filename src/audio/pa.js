@@ -49,10 +49,29 @@
 //
 // Most of what you actually hear is `paWet`: the room's opinion of the music,
 // which at forty metres is louder than the music.
+//
+// ---------------------------------------------------------------------------
+// ROUND 3 — THE HANDSET
+//
+// "Somebody can hit and hold down a button and then speak and say, 'I need a
+// price check on aisle five'... and then you hear your voice in the game."
+//
+// It cost almost nothing, and that is the point: everything below the `speech`
+// bus was already a model of a ceiling can in a hard room, so a live microphone
+// pointed at `speech` comes back thin, honking at 1.6 k, smeared by two and a
+// half seconds of concrete, arriving from four cans none of which you are under.
+// The joke is the building, not an effect. See src/audio/talk.js — which is
+// where the privacy and feedback rules live, and both of those are load-bearing.
+//
+// The one thing that had to change on this side is the music duck. Round 2
+// scheduled the un-duck inside announce() at a future time; with two things able
+// to pull the tape down that is a race, so it is now decided once a frame by
+// duckMusic() from the two states. Same sound, and it composes.
 
 import { gain, filt, shaper, panner, mulberry, clamp, to } from './dsp.js';
 import { createVoiceBank } from './voice.js';
 import { createMuzak } from './muzak.js';
+import { createTalk } from './talk.js';
 
 const mtof = (m) => 440 * Math.pow(2, (m - 69) / 12);
 
@@ -98,6 +117,61 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   const voices = createVoiceBank(ctx, noiseBuf, 777);
   const muzak = createMuzak(ctx, music, noiseBuf, 4711);
 
+  // When somebody next picks up the handset (annAt), when the announcement's
+  // audio actually ends (annUntil), and when the channel is free for the next
+  // one (annBlock). Declared up here because the duck arbiter and the handset
+  // both read them.
+  //
+  // THE LAST TWO ARE NOT THE SAME NUMBER and round 3 shipped a bug for an hour
+  // by pretending they were. `annUntil` drives the music duck; `annBlock` is
+  // etiquette. The handset needs to push the second without pushing the first —
+  // it books five seconds of "nobody else talks" after the player lets go — and
+  // when those shared one variable the tape came back to 0.30 instead of 1.0 and
+  // sat there for five seconds after every key-up. Measured on duck_on.wav:
+  // music.gain read 0.297 two and a half seconds after the key came up, where
+  // the release curve says it should have been at 0.98.
+  let annAt = 26 + rnd() * 44;
+  let annUntil = -1;
+  let annBlock = -1;
+
+  // ---- the tape duck ------------------------------------------------------
+  // ONE arbiter for the music level, because two things pull the tape down: the
+  // store's own announcer, and — round 3 — the player holding the handset. They
+  // overlap. Round 2 scheduled the release inside announce() with a
+  // setTargetAtTime in the future, which is correct for one ducker and wrong
+  // for two: whoever keyed up FIRST brought the music back under the one still
+  // talking. Deciding it once a frame off the two states is a comparison and a
+  // branch, and it cannot get out of order.
+  //
+  // The handset ducks deeper than the announcer (0.18 vs 0.30). Two reasons, and
+  // only the first is aesthetic: the player's voice is the event, and the tape
+  // is the loudest thing the microphone can hear.
+  let duckCur = 1;
+  function duckMusic(t, live) {
+    const want = live ? 0.18 : (t < annUntil ? 0.30 : 1.0);
+    if (Math.abs(want - duckCur) < 0.001) return;
+    music.gain.cancelScheduledValues(t);
+    music.gain.setTargetAtTime(want, t, want < duckCur ? 0.20 : 0.70);
+    duckCur = want;
+  }
+
+  // ---- the handset --------------------------------------------------------
+  // Live microphone into `speech`, i.e. into the same 8-inch can and the same
+  // forty metres of room as everything else that comes out of the ceiling. See
+  // talk.js for the privacy and feedback notes; the only PA-side business is
+  // that nobody else picks up the handset while the player is holding it.
+  const talk = createTalk(ctx, speech, noiseBuf, {
+    seed: 5501,
+    onOpen(t) {
+      annBlock = Math.max(annBlock, t + 3);
+      annAt = Math.max(annAt, 20 + rnd() * 30);
+    },
+    // A beat of quiet after he lets go before the store's own announcer is
+    // allowed back in. Real, and it also stops a scheduled announcement landing
+    // on the tail of the key-up click. `annBlock`, NOT `annUntil` — see above.
+    onClose(t) { annBlock = Math.max(annBlock, t + 5); },
+  });
+
   // ---- the chime ----------------------------------------------------------
   // Two struck bars, inharmonic, in the room. A real building sound, not a
   // stinger: it is the thing that happens before somebody talks.
@@ -118,9 +192,6 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   }
 
   // ---- announcements ------------------------------------------------------
-  let annAt = 26 + rnd() * 44;
-  let annUntil = -1;
-
   function announce(t, kind) {
     // key-up: a real PA clicks and hisses before it speaks, and the click is
     // the part everyone in the building has learned to turn their head for
@@ -145,12 +216,15 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
       tense: rnd() < 0.55 ? 1.0 : 1.14,
       rate: 3.5 + rnd() * 1.2,
     });
-    // duck the music under it, the way a real PA does because it is one amp.
+    // The music ducks under it, the way a real PA does because it is one amp.
     // Not all the way: the amp has a priority input with a fixed depth on it,
-    // so the band keeps going quietly behind the announcement.
+    // so the band keeps going quietly behind the announcement. The duck itself
+    // is applied by duckMusic() off `annUntil`, so it composes with the
+    // handset's instead of fighting it.
     const end = t0 + dur + 0.35;
-    music.gain.setTargetAtTime(0.30, t, 0.22);
-    music.gain.setTargetAtTime(1.0, end, 0.7);
+    annUntil = Math.max(annUntil, end);
+    annBlock = Math.max(annBlock, end);
+    duckMusic(t, talk.live);
     return end;
   }
 
@@ -161,6 +235,8 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   function update(dt, t, zn) {
     if (!paOn) return;
     muzak.update(dt, t);
+    talk.update(dt, t);
+    duckMusic(t, talk.live);
 
     // The front end is where the amp is and where the ceiling is lowest, so
     // the direct-to-room balance changes even though the level does not. The
@@ -171,7 +247,10 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
     to(paLvl.gain, 0.42 * (1 + 0.14 * iv), t, 0.9);
 
     annAt -= dt;
-    if (annAt <= 0 && t > annUntil) {
+    // `!talk.live` is the one that matters — a hold can outlast the three
+    // seconds onOpen books — but annBlock carries the tail after key-up so the
+    // announcer does not answer him.
+    if (annAt <= 0 && t > annBlock && !talk.live) {
       const short = rnd() < 0.45;
       annUntil = announce(t + 0.2, short ? 'short' : 'full');
       annAt = short ? 42 + rnd() * 55 : 75 + rnd() * 95;
@@ -179,7 +258,7 @@ export function createPA(ctx, room, out, wetOut, noiseBuf) {
   }
 
   return {
-    update, nodes, paLvl, music, speech, muzak,
+    update, nodes, paLvl, music, speech, muzak, talk,
     // debug handle: an announcement is a once-a-minute event, so a twelve second
     // clip will not contain one unless you ask for one.
     say(kind) { return announce(ctx.currentTime + 0.05, kind || 'full'); },

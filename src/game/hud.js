@@ -360,7 +360,11 @@ export function createHUD(hudEl) {
       tx('▶ DISPATCH', dx + 8 + bw / 2, by + 41, { s: 15, w: 'bold', c: '#07100a', a: 'center', ls: 1.4 });
       tx(dest, dx + 8 + bw / 2, by + 57, { s: 13, w: 'bold', c: '#07100a', a: 'center', ls: 1.2, max: bw - 12 });
       holdBtn(G, dx + 230, by + 22, dw - 238, 40);
-      tx('[SPACE] DISPATCH   [F] PA   [C] TRACK', dx + 12, by + 78, { s: 11, c: DIM });
+      // The discovery affordance, and the reason it is conditional. A player who
+      // has declined the microphone gets '[F] PA' — today's game, today's key,
+      // and no reminder of a thing he already said no to.
+      tx((G.hold && G.hold.can) ? '[SPACE] DISPATCH   [F] HOLD TO TALK   [C] TRACK'
+        : '[SPACE] DISPATCH   [F] PA   [C] TRACK', dx + 12, by + 78, { s: 11, c: DIM });
     } else {
       tx('SELECT A SUBJECT ROW', dx + 12, by + 42, { s: 14, w: 'bold', c: '#6f8a77' });
       // [1]-[8] was wrong from the frame config.js added CAM 09, and [TAB] was
@@ -377,11 +381,43 @@ export function createHUD(hudEl) {
     if (!H2.on) return;
     const live = H2.live, cool = H2.cool || 0;
     const ready = !live && cool <= 0;
-    ctx.fillStyle = live ? 'rgba(255,227,106,0.22)' : ready ? 'rgba(255,180,58,0.14)' : 'rgba(255,255,255,0.05)';
+    // ROUND 7 — THE CHANNEL IS OPEN AND THAT HAS TO BE UNMISTAKABLE.
+    // An open microphone is the one piece of state in this game that exists
+    // outside the game, so it gets the treatment a real desk gives it: the
+    // button goes hot red, it says ON AIR rather than anything about a price
+    // check, and a level meter moves with the player's own voice. The meter is
+    // the part that matters — it is the only proof he has that the store can
+    // hear him, and without it a quiet mic is indistinguishable from a broken
+    // feature.
+    const air = !!H2.talk;
+    const RED_AIR = '#ff4a3a';
+    ctx.fillStyle = air ? 'rgba(255,74,58,0.24)'
+      : live ? 'rgba(255,227,106,0.22)' : ready ? 'rgba(255,180,58,0.14)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(x, y, w, h);
-    box(x, y, w, h, live ? '#ffe36a' : ready ? AMB : '#3c4a40');
+    box(x, y, w, h, air ? RED_AIR : live ? '#ffe36a' : ready ? AMB : '#3c4a40', air ? 2 : 1);
     if (ready) reg('hold', x, y, w, h, 1);
-    const c = live ? '#ffe36a' : ready ? AMB : '#5d7364';
+    const c = air ? RED_AIR : live ? '#ffe36a' : ready ? AMB : '#5d7364';
+    if (air) {
+      // blinking ON AIR pip, the way every studio on earth does it
+      const blink = (G.now % 0.9) < 0.55;
+      ctx.fillStyle = blink ? RED_AIR : 'rgba(255,74,58,0.35)';
+      ctx.beginPath(); ctx.arc(x + 11, y + 12, 4, 0, 7); ctx.fill();
+      tx('ON AIR', x + w / 2 + 6, y + 16, { s: 11, w: 'bold', c, a: 'center', ls: 1.4 });
+      // level meter — 12 cells, so it reads as a meter and not as a progress bar
+      const mx = x + 8, mw = w - 16, cells = 12;
+      const lit = Math.round(clampN(H2.talkLevel || 0, 0, 1) * cells);
+      for (let i = 0; i < cells; i++) {
+        const cw = mw / cells;
+        ctx.fillStyle = i < lit
+          ? (i > cells - 3 ? RED_AIR : i > cells - 6 ? '#ffb43a' : '#7fe0a0')
+          : 'rgba(255,255,255,0.09)';
+        ctx.fillRect(mx + i * cw, y + 23, cw - 1.5, 9);
+      }
+      // how long he has been rambling, because the ramble is worth something
+      tx(`${(H2.talkFor || 0).toFixed(1)}s`, x + w - 6, y + h - 3,
+        { s: 10, w: 'bold', c: 'rgba(255,138,124,0.8)', a: 'right' });
+      return;
+    }
     tx('PA', x + w / 2, y + 17, { s: 12, w: 'bold', c, a: 'center', ls: 1.6 });
     tx(live ? 'HOLDING' : ready ? 'PRICE CHK' : `${Math.ceil(cool)}s`,
       x + w / 2, y + 32, { s: 11, w: 'bold', c, a: 'center', max: w - 6 });
@@ -390,6 +426,7 @@ export function createHUD(hudEl) {
       ctx.fillRect(x, y + h - 3, w * (1 - cool / H2.max), 3);
     }
   }
+  const clampN = (v, a, b) => (v < a ? a : v > b ? b : v);
   // "A4" / "FRONT" / "BACK" — where the terminal will send you, not where he is.
   function shortWhere(s) {
     if (s.aisle != null) return `A${s.aisle + 1}`;
@@ -677,25 +714,60 @@ export function createHUD(hudEl) {
     tx('[Q] RETURN TO POST', 1010, 700, { s: 11, c: '#5d7364' });
 
     // --- centre prompt / dialogue
+    // ROUND 7 — THE WARNING HAS TO SURVIVE THE THING THAT CAUSED IT.
+    // The guest yelling at you IS a dialogue, and the dialogue panel occupies
+    // exactly the band the prompt uses, so the first cut of the back-off
+    // warning was drawn and then immediately hidden behind the shout that
+    // triggered it — a countdown nobody could see. They are two different
+    // messages: the yell is him, the warning is the game, and during the grace
+    // window BOTH are on screen with the warning parked above the panel.
+    let promptY = 540;
     if (f && f.dialogue) {
       const d = f.dialogue, bx = 300, bw = 680, bhh = 34 + d.shown.length * 26;
       const byy = 590 - bhh;
       panel(bx, byy, bw, bhh, d.speaker, { accent: d.bad ? RED : '#9bb9a4' });
       d.shown.forEach((ln, i) => tx(ln, bx + 16, byy + 40 + i * 26,
         { s: 17, c: '#e8f4ea', ls: 0.4, max: bw - 32 }));
-    } else if (f && f.prompt) {
-      const w2 = f.prompt.length * 9 + 40;
-      ctx.fillStyle = 'rgba(3,7,4,0.86)'; ctx.fillRect(W / 2 - w2 / 2, 540, w2, 34);
-      box(W / 2 - w2 / 2, 540, w2, 34, AMB);
-      tx(f.prompt, W / 2, 563, { s: 15, w: 'bold', c: AMB, a: 'center', ls: 1.4 });
+      promptY = byy - 44;
+    }
+    if (f && f.prompt && (!f.dialogue || f.backOff)) {
+      // ROUND 7: the quiet line is the one prompt in the game that is not an
+      // instruction, and an amber alert box reading NOTHING IS HAPPENING is a
+      // contradiction in its own frame. Same band, same place, no border, and
+      // the store's own dim green — it has to look like the absence of an
+      // order rather than another one.
+      const q = f.promptQuiet;
+      // ROUND 7: the back-off warning is the only prompt in the game with a
+      // clock on it, so it is the only one that is red and the only one that
+      // draws the clock. Everything else here is advice; this one expires.
+      const bo = f.backOff;
+      const w2 = f.prompt.length * (q ? 8.2 : 9) + 40;
+      const x2 = W / 2 - w2 / 2;
+      const py = bo ? promptY : 540;
+      const flash = bo && (G.now % 0.5) < 0.3;
+      ctx.fillStyle = bo ? (flash ? 'rgba(90,12,8,0.92)' : 'rgba(48,8,6,0.9)')
+        : q ? 'rgba(3,7,4,0.62)' : 'rgba(3,7,4,0.86)';
+      ctx.fillRect(x2, py, w2, 34);
+      if (bo) box(x2, py, w2, 34, RED, 2);
+      else if (!q) box(x2, py, w2, 34, AMB);
+      tx(f.prompt, W / 2, py + 23, {
+        s: q ? 14 : 15, w: q ? '' : 'bold',
+        c: bo ? (flash ? '#ffd9d3' : RED) : q ? '#8fae97' : AMB,
+        a: 'center', ls: q ? 1 : 1.4,
+      });
+      if (bo) {                       // the deadline, draining right to left
+        ctx.fillStyle = RED;
+        ctx.fillRect(x2, py + 34, w2 * (f.backOffLeft || 0), 3);
+      }
     }
     if (f && f.stampT > 0) {
       ctx.globalAlpha = Math.min(1, f.stampT * 2.2);
-      stamp(f.stampText, W / 2, 236, { s: 38, c: RED });
+      const sc = f.stampTone === 'flat' ? AMB : RED;
+      stamp(f.stampText, W / 2, 236, { s: 38, c: sc });
       if (f.stampSub) {
         const sw2 = f.stampSub.length * 9 + 28;
         ctx.fillStyle = 'rgba(3,6,4,0.82)'; ctx.fillRect(W / 2 - sw2 / 2, 268, sw2, 22);
-        tx(f.stampSub, W / 2, 284, { s: 13, w: 'bold', c: RED, a: 'center', ls: 1 });
+        tx(f.stampSub, W / 2, 284, { s: 13, w: 'bold', c: sc, a: 'center', ls: 1 });
       }
       ctx.globalAlpha = 1;
     }

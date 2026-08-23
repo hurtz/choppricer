@@ -140,7 +140,51 @@ function postSpawn(p) {
 // it buys him is somebody standing still for a few seconds. It reads identically
 // on a thief and on a shopper — it must, or it would be a guilt oracle and the
 // whole trap/tell ambiguity would collapse into a button you press to cheat.
-const HOLD = { dur: 9.0, cool: 21.0 };
+// ROUND 7 — AND NOW IT IS YOUR ACTUAL VOICE.
+// Client: "Can we make it so that maybe I can actually go over the PA system?
+// Somebody can hit and hold down a button and then speak... you say it and then
+// you hear your voice in the game. I just think it sounds funny as shit."
+//
+// Correct instinct, and the important part of building it is what it is NOT: it
+// is not a second mechanic. [F] already opens the PA and already stalls a
+// subject for nine seconds, and it already reads identically on a thief and on
+// a shopper, which is the property the whole trap/tell ambiguity rests on. The
+// microphone is a SKIN ON THAT, not a new verb. Tap it and you get exactly the
+// game that shipped; hold it and the same announcement goes out in your voice.
+//
+// `talkMax` is why a rambling price check is worth making: the nine seconds
+// starts counting when you STOP talking, so the subject stands there for as
+// long as you are on the air plus the usual nine. Capped, because a player who
+// discovers he can hold a man in place by reading the phone book at him has
+// found a bug rather than a joke.
+const HOLD = { dur: 9.0, cool: 21.0, talkMax: 8.0 };
+// Seconds stood on the way out before the store remarks on it. See updateFloor.
+const QUIET_AT = 6.0;
+// ---- ROUND 7: THE BEAT BEFORE A COMPLAINT ---------------------------------
+// Measured, and it is the number that made this round necessary: a competent
+// player who occasionally acts on an unexplained red flag — `reader` in
+// ./game/eval.js, which does the full scan-switch-read loop and then goes
+// anyway on 35% of the channels it cannot explain — takes 4.83 complaints and
+// 1.13 DEMOTIONS per four-minute shift. He is fired roughly every three and a
+// half minutes for playing well. That is not a difficulty setting, it is the
+// game refusing to be played.
+//
+// The fix is not a bigger allowance, because three strikes is the fiction and
+// the fiction is good. It is that WALKING UP TO SOMEONE IS NOT YET AN OFFENCE.
+// A guest you have crowded turns round and says something; he decides whether
+// to make it a formal complaint based on what you do NEXT. Stand there and he
+// files. Get out of his face inside HARASS_GRACE and nothing happened.
+//
+// This turns the one unrecoverable mistake in the game into a recoverable one,
+// and it does it by adding a skill rather than removing a punishment: you have
+// to look at the person you walked up to and decide, in about a second and a
+// half, whether you were wrong. Which is the entire game the client described,
+// happening at the one moment it was previously impossible to play.
+const HARASS_GRACE = 1.6;
+// How far out of his face counts as out of his face. TUNING.suspicionRadius is
+// where agents.js decides you are crowding him; leaving needs to be a real step
+// back rather than a jitter across the boundary, so it is that plus a margin.
+const HARASS_CLEAR = 1.4;
 
 // Sub-fixes, individually switchable so the bench in ./game/eval.js can attribute
 // the change instead of guessing. Ship values are all true.
@@ -151,6 +195,17 @@ const HOLD = { dur: 9.0, cool: 21.0 };
 const FIX = {
   post: true, hold: true, roster: true, harass: true, close: true,
   chan: true, pace: true,
+  // ROUND 7. `ramp` drives agents.setDifficulty off the shift clock; false
+  // pins it at 1.0, which agents.js documents as round 5's game exactly, so
+  // the ablation is a true identity rather than an approximation.
+  ramp: true,
+  // `grace` is round 7's back-off window. Off = a complaint files the instant
+  // you crowd somebody, which is what shipped through round 6.
+  grace: true,
+  // `once` is round 7's complaint rule: one guest files at most one complaint.
+  // Separate from `harass` so the bench can price it against the round-2 gate
+  // rather than reporting one number for two rules.
+  once: true,
 };
 const ROWS = 3;                 // roster rows the analytics panel can physically fit
 
@@ -163,6 +218,7 @@ export function createGame(hudEl, deps = {}) {
   const cctvOf = () => deps.cctv || ext().cctv || null;
   const agentsOf = () => deps.agents || ext().agents || null;
   const shoppersOf = () => (agentsOf() ? agentsOf().shoppers : []);
+  const audioOf = () => deps.audio || ext().audio || null;
 
   // cctv.js burns a REC pip, a "CAM 09 FLOOR PATROL" label and a timestamp into
   // the on-foot view. The HUD's top band draws all three, better and on purpose,
@@ -196,9 +252,35 @@ export function createGame(hudEl, deps = {}) {
   let softAlarm = null;
   let rearmT = 8;
   let harassCool = 0;
+  let pending = null;         // { id, until, code } — a complaint not yet filed
   let recycle = [];           // shoppers to quietly put back on the floor
   let held = null;            // { id, until } — the one live PA price check
   let holdCool = 0;
+  // THE OPEN CHANNEL. Everything the microphone touches lives in this object and
+  // nowhere else, so what this file does and does not do with a live mic is one
+  // paragraph rather than a hunt.
+  //
+  // PRIVACY, AND IT IS A DESIGN CONSTRAINT NOT A DISCLAIMER: this file never
+  // sees a sample. It calls talkStart/talkStop and reads a single 0..1 number
+  // off talkLevel() for a meter. The capture lives entirely inside audio.js's
+  // Web Audio graph on the player's own machine — nothing here records it,
+  // stores it, serialises it or sends it anywhere, and there is deliberately no
+  // code path in this file that could.
+  //
+  // NO SPEECH RECOGNITION, ALSO DELIBERATELY. The announcement is the mechanic;
+  // the words are the player's own business, and a game that does not
+  // understand you is funnier than one that does.
+  const talk = {
+    down: false,        // is [F] physically held
+    live: false,        // is the channel actually open
+    since: 0,           // G.now when the channel opened
+    held: 0,            // seconds of air on this announcement
+    level: 0,           // smoothed talkLevel(), for the meter
+    state: 'off',       // mirrors audio.talkState()
+    offered: false,     // have we ever asked for the mic
+    denied: false,      // ...and were we told no. We do not ask twice.
+    told: false,        // have we mentioned the handset exists. Once a session.
+  };
   const tel = {
     stamina: TUNING.staminaMax, staminaMax: TUNING.staminaMax,
     boost: 0, gassed: false, speed: 0, nearest: null, chase: null,
@@ -319,11 +401,27 @@ export function createGame(hudEl, deps = {}) {
   const G = {
     st, tel, now: 0, log: [], alarm: null, cams: CAMERAS,
     desk: { cam: 0, sel: null, subjects: [], scroll: 0, rows: 0 },
-    get hold() { return { live: held, cool: holdCool, max: HOLD.cool, on: FIX.hold }; },
+    get hold() {
+      return {
+        live: held, cool: holdCool, max: HOLD.cool, on: FIX.hold,
+        // The microphone half. `can` is "is this worth advertising", and it is
+        // false in three cases that are all the same case: the player declined,
+        // the browser cannot do it, or audio.js has not shipped the entry point
+        // yet. Nagging a man who already said no is the rudest thing a HUD can
+        // do, and promising a key that does nothing is the second rudest.
+        talk: talk.live, talkLevel: talk.level, talkFor: talk.held,
+        talkState: talk.state, can: talkAvailable(),
+      };
+    },
     floor: null, wu: null, hr: null,
     // Is the round 1 wedge watchdog still earning its keep? agents.js rebuilt
     // its navigation this round and claims the wedge is gone at source.
-    dbg: { stallEscape: 0, stallPutBack: 0 },
+    // ROUND 7: which branch of targetShopper() let a complaint through. The
+    // chase builder measured 7.0 complaints a shift against a three-strike
+    // demotion; this says WHICH of my own rules is the leak rather than making
+    // me guess at it.
+    dbg: { stallEscape: 0, stallPutBack: 0, harass: { chase: 0, dialogue: 0, subj: 0, zone: 0 },
+      blocked: 0, reharass: 0, subjects: new Set() },
     get rankName() { return RANKS[clamp(st.rank | 0, 0, RANKS.length - 1)].toUpperCase(); },
     get tiles() { const c = cctvOf(); const t = c && c.tiles; return (t && t.length) ? t : FALLBACK; },
     // The big monitor's glass rect, so the HUD can make it clickable. cctv.js
@@ -373,6 +471,7 @@ export function createGame(hudEl, deps = {}) {
         line: L.pick(L.BEHAVIOUR_BENIGN), lineT: rr(0, 3), flagged: false,
         dwell: (Math.random() * 300) | 0, aisle: null, lastA: -1,
         item: L.ITEMS[(s.id * 5) % L.ITEMS.length], announced: false,
+        complained: false,          // he has already filed one. See onHarass.
         // channel state — see camForZone()'s note. cam is null until a monitor
         // has actually seen him; lost is seconds since the last one did.
         cam: null, lost: 0, pend: -1, pendT: 0, lostSaid: false,
@@ -592,8 +691,16 @@ export function createGame(hudEl, deps = {}) {
     }
     held = null;
   }
+  // Is the handset free. The ANNOUNCEMENT additionally needs somebody selected
+  // to stall, but the microphone does not — a PA is a microphone, and being
+  // able to talk into it with nobody highlighted is both correct and funnier.
+  // Both halves read this, so the key and the button can never disagree about
+  // whether the channel is available.
+  function paReady() {
+    return !!FIX.hold && st.mode === 'desk' && holdCool <= 0 && !held;
+  }
   function callHold() {
-    if (!FIX.hold || st.mode !== 'desk' || holdCool > 0 || held) return false;
+    if (!paReady()) return false;
     const sel = G.desk.subjects.find((s) => s.id === G.desk.sel);
     const s = sel && shopperById(sel.id);
     if (!s || s.caught || s.escaped || s.bolted || s.state === 'react') return false;
@@ -604,7 +711,91 @@ export function createGame(hudEl, deps = {}) {
     logLine(`PA — PRICE CHECK, ${(r.aisle == null ? 'FRONT END' : `AISLE ${r.aisle + 1}`)}`);
     return true;
   }
+  // ---- hold to talk --------------------------------------------------------
+  // Fire and forget: talkStart() is a Promise and a keydown handler is not the
+  // place to wait on a permission prompt. If the player is still deciding when
+  // he lets go, talkStop() below closes a channel that never opened, which
+  // audio.js is expected to treat as a no-op.
+  function talkAvailable() {
+    const a = audioOf();
+    if (!a || typeof a.talkStart !== 'function') return false;
+    if (talk.denied) return false;
+    // audio.js is the authority on 'unsupported' — it knows whether the browser
+    // has getUserMedia long before we ask for a permission we cannot get.
+    if (a.talkState) { try { if (a.talkState() === 'unsupported') return false; } catch { return false; } }
+    return true;
+  }
+  function talkOpen() {
+    const a = audioOf();
+    if (!talkAvailable() || talk.live) return;
+    // Not while the handset is recovering. The button is visibly on a cooldown;
+    // opening a channel it says is unavailable would make the readout a liar.
+    if (!paReady() && !held) return;
+    talk.offered = true;
+    talk.state = 'requesting';
+    Promise.resolve(a.talkStart()).then((ok) => {
+      if (!ok) {
+        talk.state = (a.talkState && a.talkState()) || 'denied';
+        // 'denied' and 'unsupported' are ordinary answers, not failures. The
+        // player gets exactly today's game with today's [F] and is never asked
+        // again for the rest of the session.
+        talk.denied = true;
+        return;
+      }
+      if (!talk.down) { talkClose(); return; }     // let go while we were asking
+      talk.live = true; talk.since = G.now; talk.held = 0;
+      talk.state = 'live';
+    }).catch(() => { talk.denied = true; talk.state = 'denied'; });
+  }
+  function talkClose() {
+    const a = audioOf();
+    if (a && a.talkStop) { try { a.talkStop(); } catch { /* already shut */ } }
+    if (talk.live && FIX.hold) holdCool = HOLD.cool;   // the clock starts at release
+    talk.live = false; talk.level = 0;
+    if (talk.state === 'live' || talk.state === 'requesting') talk.state = 'off';
+  }
+  function talkTick(dt) {
+    const a = audioOf();
+    if (talk.live && a && a.talkLevel) {
+      let v = 0;
+      try { v = a.talkLevel() || 0; } catch { v = 0; }
+      talk.level += (clamp(v, 0, 1) - talk.level) * Math.min(1, dt * 12);
+    } else if (!talk.live) talk.level *= Math.exp(-6 * dt);
+    if (!talk.live) return;
+    talk.held = Math.min(HOLD.talkMax, talk.held + dt);
+    // THE RAMBLE BONUS. While you are on the air the subject is standing there
+    // listening, so his nine seconds has not started yet — it starts when you
+    // stop. Capped at talkMax so the joke cannot become a strategy.
+    if (held && talk.held < HOLD.talkMax) held.until = G.now + HOLD.dur;
+  }
+
+  // Does the guest actually file? Called every frame while one is hanging. Three
+  // ways out: he is gone or the case ended (drop it), the cop got out of his
+  // face in time (drop it, and say so in the ticker so the player learns the
+  // rule from the game rather than from a manual), or the timer runs out with
+  // the cop still crowding him (file it).
+  function settleHarass() {
+    if (!pending) return;
+    const s = shopperById(pending.id);
+    if (!s || s.caught || s.escaped || !s.mesh.visible || st.mode !== 'floor') { pending = null; return; }
+    const cop = G.cop;
+    const d = d2(s.position.x, s.position.z, cop.x, cop.z);
+    if (d > TUNING.suspicionRadius + HARASS_CLEAR) {
+      logLine(L.fillS(L.pick(L.BACK_OFF_OK), pending.code));
+      pending = null;
+      return;
+    }
+    if (G.now < pending.until) return;
+    const r = recOf(s);
+    r.complained = true;
+    G.dbg.harass[pending.why]++;
+    G.dbg.subjects.add(s.id);
+    pending = null;
+    score('harass', s);
+  }
+
   function updateHold(dt) {
+    talkTick(dt);
     if (holdCool > 0) holdCool = Math.max(0, holdCool - dt);
     if (!held) return;
     const s = shopperById(held.id);
@@ -799,19 +990,19 @@ export function createGame(hudEl, deps = {}) {
       if (s.escaped || s.caught || !s.guilty) continue;
       if (s.state === 'bolt' || s.state === 'react') chase = s;
     }
-    if (chase) { f.closed = null; return chase; }
+    if (chase) { f.closed = null; f.tgtWhy = 'chase'; return chase; }
     // THE CASE IS OVER. Reported twice by the chase critic and it was the worst
     // thing on this screen: your man goes out the door, and the HUD quietly
     // re-points the reticle at the nearest STRANGER in the aisle you were sent
     // to, still saying PROCEED. Obeying your own HUD then files a complaint
     // against you. Nothing is your objective until dispatch says so again.
-    if (f.closed) return null;
+    if (f.closed) { f.tgtWhy = null; return null; }
     if (f.dialogue && f.dialogueId != null) {          // look at whoever is yelling
       const d = list.find((s) => s.id === f.dialogueId && !s.escaped && s.mesh.visible);
-      if (d) return d;
+      if (d) { f.tgtWhy = 'dialogue'; return d; }
     }
     const sel = list.find((s) => s.id === f.subjId && !s.escaped && !s.caught && s.mesh.visible);
-    if (sel) return sel;
+    if (sel) { f.tgtWhy = 'subj'; return sel; }
     const cop = G.cop;
     let best = null, bd = Infinity;
     for (const s of list) {
@@ -824,6 +1015,7 @@ export function createGame(hudEl, deps = {}) {
       const d = d2(s.position.x, s.position.z, cop.x, cop.z);
       if (d < bd) { bd = d; best = s; }
     }
+    f.tgtWhy = best ? 'zone' : null;
     return best;
   }
 
@@ -834,9 +1026,14 @@ export function createGame(hudEl, deps = {}) {
     };
     G.floor.dialogueId = who == null ? null : who;
   }
-  function stampIt(text, sub) {
+  // `tone` is 'bad' (default) or 'flat'. An abort is not a loss and must not be
+  // stamped in the same red as one — he put it back, which is a non-event that
+  // happens to pay nothing, and the HUD saying it in complaint-red would tell
+  // the player he had been penalised for the thing he did right.
+  function stampIt(text, sub, tone) {
     if (!G.floor) return;
-    G.floor.stampText = text; G.floor.stampSub = sub || ''; G.floor.stampT = 2.6;
+    G.floor.stampText = text; G.floor.stampSub = sub || '';
+    G.floor.stampTone = tone || 'bad'; G.floor.stampT = 2.6;
   }
 
   function updateFloor(dt) {
@@ -908,12 +1105,52 @@ export function createGame(hudEl, deps = {}) {
     if (f.stampT > 0) f.stampT -= dt;
 
     // prompt
+    // ---- ROUND 7: BEING PUNISHED BY AN ABSENCE --------------------------
+    // agents.js's one-exit design makes camping the way out remove the crime
+    // rather than lower your catch rate. That is the right punishment and it
+    // works — nobody commits while a uniform is stood in the doorway — but the
+    // player experiences it as a shift where the game stopped producing
+    // thieves. An absence has to be narrated or it reads as a bug.
+    //
+    // Two rules about how. It is on the PROMPT band and nowhere louder, because
+    // this is the quietest thing that ever happens in this game and a klaxon
+    // about nothing happening would be absurd. And the line is the fiction, not
+    // the mechanic: the store noticing, never "deterrence active". A player who
+    // works the rule out from this worked it out; nobody told him.
+    //
+    // QUIET_AT is 6 s against agents' deterT of ~2.2 s, deliberately later than
+    // the mechanic — the shoplifters have to have been reading the room for a
+    // while before the room says anything back, or the line fires every time
+    // you jog past the front end.
+    const ag = agentsOf();
+    f.postedFor = (ag && ag.postedFor) || 0;
+    if (f.postedFor < 1) f.quietLine = null;
+    else if (!f.quietLine) f.quietLine = L.pick(L.POSTED_QUIET);
+
+    // Standing on the door with no live case is not "aisle clear", and it is
+    // certainly not PROCEED TO FRONT END — which is what the zone branch was
+    // telling a man already standing in the front end, because there is nearly
+    // always SOME shopper in the busiest part of the store and the reticle will
+    // happily point at a stranger. A nearest-stranger-in-zone is not a case, so
+    // it does not get to outrank this.
+    const quiet = f.postedFor > QUIET_AT && f.quietLine
+      && f.tgtWhy !== 'chase' && f.tgtWhy !== 'subj';
+
     f.prompt = '';
+    f.promptQuiet = false;
+    f.backOff = !!pending;
+    // 1 -> 0 across the window, so the HUD can show the deadline rather than
+    // just assert one. A warning with an invisible timer is a jump scare.
+    f.backOffLeft = pending ? clamp((pending.until - G.now) / HARASS_GRACE, 0, 1) : 0;
+    // The one prompt that outranks the dialogue, because it is the only one
+    // with a deadline on it and the dialogue is what caused it.
+    if (pending) { f.prompt = L.BACK_OFF; return; }
     if (!f.dialogue) {
       if (f.closed) f.prompt = L.STAND_DOWN;
       else if (f.target && f.target.state === 'flee') {
         f.prompt = f.viaBack ? L.VIA_BACK_PROMPT : 'PURSUE — DO NOT LOSE HIM';
-      } else if (!f.target) f.prompt = f.clearLine;
+      } else if (quiet) { f.prompt = f.quietLine; f.promptQuiet = true; }
+      else if (!f.target) f.prompt = f.clearLine;
       else if (f.dist > 9) f.prompt = `PROCEED TO ${f.where || `AISLE ${f.aisle + 1}`}`;
       else f.prompt = 'ESTABLISH CONTACT';
     }
@@ -1025,6 +1262,7 @@ export function createGame(hudEl, deps = {}) {
       // two doors: which one he is running at, and how sure the box is
       door: null, doorI: null, dEma: null, eta: 0,
       viaBack: false, backT: 0, backSaid: false, closed: null,
+      postedFor: 0, quietLine: null,
       standDown: L.STAND_DOWN_DEST, backLine: L.VIA_BACK, backSub: L.VIA_BACK_SUB,
     };
     st.mode = 'floor';
@@ -1044,6 +1282,9 @@ export function createGame(hudEl, deps = {}) {
   }
   function enterDesk() {
     if (st.mode === 'demoted') return;
+    // Walking back to the desk is the most complete form of getting out of
+    // somebody's face there is.
+    pending = null;
     st.mode = 'desk'; G.floor = null;
     const a = agentsOf();
     if (a) {
@@ -1111,6 +1352,50 @@ export function createGame(hudEl, deps = {}) {
       // a beat; the ramp decides how long a beat is.
       rearmT = FIX.pace ? armGap(0.6) : Math.min(rearmT, 5);
     },
+    // ROUND 7 — A CUSTOMER WHO FINISHED HIS SHOP IS NOT A MERCHANDISE LOSS.
+    // Innocents use the one exit now. agents.js routes them here instead of to
+    // onEscape, so the ONLY thing this has to do is not score a loss — and the
+    // most important line in it is the one that is missing. What it does do is
+    // tidy up after him, and close the case if he happened to be the man you
+    // were sent to look at, because "your subject walked out of the building"
+    // and "the aisle is clear" are different sentences and the second one is
+    // the wrong one.
+    onLeave(s) {
+      recs.delete(s.id);
+      const f = G.floor;
+      if (st.mode === 'floor' && f && !f.closed
+        && (f.subjId === s.id || f.tgtId === s.id || f.chaseId === s.id)) {
+        logLine(`${recOf(s).code} CHECKED OUT. NOTHING IN HIS BAGS THAT ISN'T PAID FOR.`);
+        closeCase(L.STAND_DOWN);
+      }
+    },
+    // HE PUT IT BACK. This is the one-exit design's whole feedback loop and it
+    // is the only event in the game that is GOOD NEWS THAT PAYS NOTHING: you
+    // stood on the door, so he never committed the offence, so there is nothing
+    // to arrest him for. If the HUD stays silent here the player experiences it
+    // as a shift where the game stopped producing thieves — which is exactly
+    // what it looks like from the inside, and exactly the wrong lesson.
+    //
+    // Announced on three channels, none of which explains the mechanic: the log
+    // says what he did, the floor gets a stamp because it is the payoff for
+    // where the player is standing, and the roster tell is retracted.
+    onAbort(s, why) {
+      const r = recOf(s);
+      // RETRACT THE TELL. `announced` and a BEHAVIOUR_GUILTY line are a claim
+      // that an item left the frame and did not arrive in a cart. He put it
+      // back; the claim is no longer true, and a roster still flashing red for
+      // a man holding nothing is the round-6 bug wearing a different hat.
+      r.announced = false;
+      newLine(s, r);
+      logLine(L.fillS(L.pick(why === 'dump' ? L.ABORT_DUMP : L.ABORT_BALK), r.code));
+      const f = G.floor;
+      if (st.mode === 'floor' && f) {
+        stampIt(L.ABORT_STAMP, L.ABORT_SUB, 'flat');
+        if (!f.closed && (f.subjId === s.id || f.tgtId === s.id || f.chaseId === s.id)) {
+          closeCase(L.STAND_DOWN);
+        }
+      }
+    },
     onHarass(s) {
       if (st.mode !== 'floor' || !G.floor || G.floor.t < 0.8) return;
       // A complaint is for a CONTACT — you walked up to this person because you
@@ -1122,13 +1407,37 @@ export function createGame(hudEl, deps = {}) {
       // Whoever the reticle is on is who you are confronting. Nobody else.
       if (FIX.harass) {
         const t = targetShopper();
-        if (!t || t.id !== s.id) return;
+        if (!t || t.id !== s.id) { G.dbg.blocked++; return; }
       }
-      if (G.floor.dialogue || G.now < harassCool) return;
-      harassCool = G.now + (FIX.harass ? 5 : 12);
+      if (G.floor.dialogue || G.now < harassCool) { G.dbg.blocked++; return; }
       const r = recOf(s);
+      // ---- ROUND 7: ONE GUEST, ONE COMPLAINT --------------------------------
+      // The round-2 gate stopped bystanders filing. It did not stop the SAME
+      // person filing over and over: `harassCool` is a global five seconds and
+      // agents.js re-arms a shopper as soon as the cop backs off 1.6 m, which in
+      // a 4 m aisle is one sidestep. So a single confrontation — walk up, get
+      // yelled at, shuffle, still be standing there — was billed two and three
+      // times over. Measured below.
+      //
+      // A guest complains about being followed round the shop ONCE. He does not
+      // file a second form because you were still there ten seconds later. The
+      // rec is dropped when he leaves the building, so the next customer through
+      // the door has his own complaint to give.
+      if (FIX.once && r.complained) { G.dbg.blocked++; G.dbg.reharass++; return; }
+      harassCool = G.now + (FIX.harass ? 5 : 12);
+      // HE TURNS ROUND AND SAYS SOMETHING. That happens immediately — it is the
+      // feedback, and it is the only warning the player gets. The FORM does not
+      // exist yet; see settleHarass(). If the player steps out of his face
+      // inside HARASS_GRACE, it never will.
       say(`${r.name} — GUEST`, L.pick(L.INNOCENT), true, 2.4, s.id);
-      score('harass', s);
+      if (!FIX.grace) {
+        r.complained = true;
+        G.dbg.harass[G.floor.tgtWhy || 'zone']++;
+        G.dbg.subjects.add(s.id);
+        score('harass', s);
+        return;
+      }
+      pending = { id: s.id, until: G.now + HARASS_GRACE, code: r.code, why: G.floor.tgtWhy || 'zone' };
     },
     // agents.js does not report the sprint key itself; speed is the honest tell.
     report(t) {
@@ -1258,6 +1567,14 @@ export function createGame(hudEl, deps = {}) {
     else if (r.id === 'scroll') { G.desk.scroll = clamp(G.desk.scroll + r.data, 0, Math.max(0, G.desk.rows - ROWS)); }
   });
 
+  addEventListener('keyup', (ev) => {
+    if (ev.code !== 'KeyF') return;
+    talk.down = false;
+    talkClose();
+  });
+  // Alt-tabbing away with the key down must not leave the microphone open.
+  addEventListener('blur', () => { talk.down = false; talkClose(); });
+
   addEventListener('keydown', (ev) => {
     const c = ev.code;
     if (st.mode === 'desk') {
@@ -1267,7 +1584,14 @@ export function createGame(hudEl, deps = {}) {
       } else if (c === 'ArrowDown') { cycleSel(1); ev.preventDefault(); }
       else if (c === 'ArrowUp') { cycleSel(-1); ev.preventDefault(); }
       else if (c === 'KeyC') { cycleTrack(); ev.preventDefault(); }
-      else if (c === 'KeyF') { callHold(); ev.preventDefault(); }
+      else if (c === 'KeyF') {
+        // Tap fires the announcement exactly as it always has — that path is
+        // measured and neutral and must not move. The microphone rides on top:
+        // if it opens, the same announcement goes out in the player's voice; if
+        // it never opens, this key is the key that shipped.
+        if (!ev.repeat) { talk.down = true; callHold(); talkOpen(); }
+        ev.preventDefault();
+      }
       else if (c === 'Space' || c === 'Enter') { dispatch(); ev.preventDefault(); }
     } else if (st.mode === 'floor') {
       if (c === 'KeyQ') { enterDesk(); ev.preventDefault(); }
@@ -1284,6 +1608,30 @@ export function createGame(hudEl, deps = {}) {
     G.now += dt;
     if (st.mode !== 'demoted') st.clock += dt;
 
+    // ---- ROUND 7: THE RAMP, AND THE LEVER I ASKED FOR BACKWARDS -------------
+    // I asked the chase builder for a SLOWER DRIFT SPEED early in the shift, on
+    // the theory that the tell-to-door window is route metres over walk speed
+    // and I only own the numerator. They measured it and it goes the wrong way:
+    // rampRun 0.86 costs 50.0%, 0.65 costs 70.0% against 86.3% at 1.00. A
+    // slower man is still walking out when the dispatch lands, so the cop
+    // arrives BEHIND him, and behind is a verdict rather than a position.
+    // Median chase collapsed 6.22 s -> 1.98 s: it does not make the chase
+    // longer, it deletes it.
+    //
+    // `rampWalk` is the lever that does what I wanted — the drift, not the run.
+    // It is theirs and it is already in their K block; all this does is tell
+    // them where in the shift we are. Idempotent and free, and level 1 is round
+    // 5 exactly, so a build that never called this changed nothing. Their
+    // breakpoints are deliberately MY PACE breakpoints, so density and
+    // difficulty move on the same three beats instead of beating against each
+    // other.
+    {
+      const a = agentsOf();
+      if (FIX.ramp && a && a.setDifficulty && a.difficultyForClock) {
+        a.setDifficulty(a.difficultyForClock(st.clock));
+      } else if (a && a.setDifficulty) a.setDifficulty(1);
+    }
+
     if (st.mode === 'demoted') { G.hr.t += dt; return; }
     if (!staggered) stagger();
 
@@ -1295,6 +1643,15 @@ export function createGame(hudEl, deps = {}) {
     ensureThieves(dt);
 
     if (st.mode === 'desk') {
+      // FIRST-RUN AFFORDANCE. A feature nobody knows about is a feature nobody
+      // has. One line, in the ticker, in the DVR's own voice, the first time the
+      // player is at the desk with a working handset — and never again, and
+      // never at all if the microphone is unavailable or was declined. It says
+      // what the key does and not what the feature is called.
+      if (!talk.told && talkAvailable()) {
+        talk.told = true;
+        logLine('PA HANDSET LIVE ON THIS TERMINAL — HOLD [F] AND SPEAK.');
+      }
       const a = agentsOf();
       if (a) { a.cop.position.set(POST.x, 0, POST.z); a.cop.userData.vel.set(0, 0, 0); }
       if (G.desk.sel == null && !selectTracked()) {
@@ -1302,7 +1659,7 @@ export function createGame(hudEl, deps = {}) {
         const hot = on.find((s) => s.flagged);
         if (hot) { G.desk.sel = hot.id; showSel(); }
       }
-    } else if (st.mode === 'floor') updateFloor(dt);
+    } else if (st.mode === 'floor') { updateFloor(dt); settleHarass(); }
     else if (st.mode === 'writeup') updateWriteup(dt);
   }
 

@@ -101,7 +101,7 @@ function makeDriver(ctx, opts = {}) {
   // plan it is made against.
   const always = opts.wind === 'always';
   const st = {
-    path: [], repath: 0, gx: 0, gz: 0, dry: 0, leash: 0, was: 'desk',
+    path: [], repath: 0, gx: 0, gz: 0, dry: 0, leash: 0, was: 'desk', boT: 0,
     navRef: null, copF: null, copBuf: null, cfT: 0, planT: 0, route: [],
   };
 
@@ -165,6 +165,37 @@ function makeDriver(ctx, opts = {}) {
     st.dry = 0;
     const gap = d2(cop.x, cop.z, t.position.x, t.position.z);
     const running = t.state === 'bolt' || t.state === 'react';
+
+    // ---- ROUND 7: GET OUT OF HIS FACE ---------------------------------------
+    // A complaint no longer files the instant you crowd somebody; the guest
+    // turns round, says something, and gives you about a second and a half to
+    // step back before he makes it formal. That is a SKILL, so the bench has to
+    // have it or it measures a player who does not.
+    //
+    // AND IT IS A SKILL, SO IT IS NOT FREE AND NOT UNIVERSAL. Handing it to
+    // every policy took ALL THREE bots to zero complaints a shift — including
+    // the guesser, which is a game with no fail state left in it. Two things
+    // fix that and both are true of people:
+    //   `backOff`  — noticing that the man you walked up to has turned round and
+    //                is shouting is the same kind of attention as reading the
+    //                roster. A bot that reads nothing does not have it.
+    //   `boReact`  — and nobody reacts instantly. The clock is 1.6 s; spending
+    //                the first half of it realising is what makes the window a
+    //                window rather than a formality.
+    if (game._g.floor && game._g.floor.backOff && !running && opts.backOff !== false) {
+      st.boT += dt;
+      if (st.boT < (opts.boReact ?? 0.55)) {
+        input.x = 0; input.z = 0; input.sprint = false;   // frozen, working it out
+        return;
+      }
+      const dx = cop.x - t.position.x, dz = cop.z - t.position.z;
+      const m = Math.hypot(dx, dz) || 1;
+      input.x = dx / m; input.z = -(dz / m);
+      input.sprint = false;
+      st.leash += dt;
+      return;
+    }
+    st.boT = 0;
     // Nobody stands in an aisle following a stranger for a minute. If the read
     // was wrong the subject never runs, and the player goes back to post.
     if (!running && st.leash > 14) {
@@ -283,6 +314,14 @@ function observer(ctx, opts) {
         }
         // Nothing readable on this channel: park it and stop coming back for a
         // while, the way you stop chasing a camera that cried wolf.
+        //
+        // ROUND 7 — this exact moment is where a human differs from this bot.
+        // A flag is lit, the rows do not explain it, and the disciplined move is
+        // to walk away. `onPark` is the hook where a less disciplined policy
+        // gets to go anyway; see reader(). It fires ONCE per read, which is the
+        // whole point — an impatience rolled every frame is not impatience, it
+        // is a coin that always comes up heads within a second.
+        if (opts.onPark && opts.onPark(rows, game)) { phase = 'scan'; return; }
         ignore.set(cam, G.now + 6);
         phase = 'scan'; return;
       }
@@ -323,6 +362,9 @@ function camUrgency(ctx, game, i) {
 
 // Reacts to the badge, not the text. The terminal flags traps in exactly the
 // same red, so this is not a strawman — it is the obvious way to play.
+// Reacts to the badge, and to nothing else — including the man shouting at him.
+// makeDriver reads opts.backOff, so this is the policy declaring that it does
+// not have the skill rather than the driver deciding for it.
 function random(ctx, opts) {
   const rnd = opts.rnd;
   let wait = 2 + rnd() * 6;
@@ -349,7 +391,108 @@ function random(ctx, opts) {
 // round 1 note put at one loss every 27 seconds.
 function idle() { return { name: 'idle', desk() {} }; }
 
-const POLICIES = { observer, random, idle };
+// ---------------------------------------------------------------- ROUND 7
+// A COMPETENT PLAYER IS NOT A PERFECT ONE, AND THAT IS THE WHOLE QUESTION.
+//
+// The round-7 note says a player who reads every tell correctly still gets
+// demoted at 7 complaints a shift against three strikes. Measured on this
+// bench, `observer` takes ZERO complaints a shift — but that is not the good
+// news it looks like, it is the instrument being wrong. `observer` dispatches
+// only on a line from BEHAVIOUR_GUILTY, so it never confronts an innocent by
+// construction: it cannot be harassed into a demotion because it never makes
+// the mistake that causes one. `random` takes 7.5, but it reads nothing at all.
+//
+// Neither is a person. `reader` is: it does the same scan-switch-read loop as
+// observer, and then, `slip` of the time that it has switched to a channel
+// because something was flashing red and found nothing legible in the window,
+// it goes anyway — because a red badge and no explanation is exactly the state
+// a human walks into. Every one of those is a confrontation with an innocent
+// and therefore a complaint. This is the bot the demotion economy has to be
+// survivable for.
+function reader(ctx, opts) {
+  const slip = opts.slip ?? 0.35;
+  const rnd = opts.rnd;
+  // Identical to observer in every respect except what it does when a channel
+  // is flashing red and the roster does not say why: `slip` of those, it goes
+  // and has a look. Every one of those is a confrontation with an innocent and
+  // therefore a complaint, which makes this the bot the demotion economy has to
+  // be survivable for.
+  const base = observer(ctx, {
+    ...opts,
+    onPark(rows, game) {
+      if (rnd() > slip) return false;
+      const lit = rows.find((r) => r.flagged);
+      if (!lit) return false;
+      game.bot.select(lit.id);
+      return game.bot.dispatch();
+    },
+  });
+  return { name: 'reader', desk: base.desk };
+}
+
+// THE MAN WHO STANDS ON THE DOOR. agents.js's one-exit design punishes camping
+// by removing the crime; this measures whether that is true and what it costs.
+// It never reads anything: it gets onto the floor by any means, walks to the
+// exit, and stands there for the rest of the shift.
+function camper(ctx, opts) {
+  const { agents, input } = ctx;
+  let fld = null, navRef = null;
+  const exitAt = () => {
+    const e = agents.exits && agents.exits[0];
+    return e ? { x: e.x, z: e.z } : { x: EXIT.x, z: EXIT.z };
+  };
+  return {
+    name: 'camper',
+    desk(dt, game) {
+      // Any row with a destination will do — he is not going to look at the
+      // subject anyway, he just needs to be let out onto the floor.
+      const row = game._g.desk.subjects.find((r) => r.post || r.aisle != null);
+      if (!row) return;
+      game.bot.selectCam(row.cam);
+      game.bot.select(row.id);
+      game.bot.dispatch();
+    },
+    // Walk to the way out on agents' OWN steering, and this took two wrong
+    // turns worth writing down. Descending agents.toExit() by sampling a ring
+    // around the cop wedges at 29 route metres: that field is priced over the
+    // colliders too, so it has local minima against a gondola end. Swapping it
+    // for a clean flood from the door fixes the minima and still wedges — at
+    // (17.0, -12.4), pushing -X into a shelf forever — because a ring sample at
+    // 1.4 m reads a cell on the far side of a collider the cop cannot walk
+    // through. The field says go left; the wall says no.
+    //
+    // nav.steer() is the function that already knows this. It string-pulls to
+    // the furthest VISIBLE point on the route, which is the whole difference
+    // between a direction that is downhill and one that is walkable.
+    floor(dt, game) {
+      const cop = agents.cop.position;
+      const goal = exitAt();
+      const nav = agents.nav;
+      if (nav && (!fld || navRef !== nav)) {
+        try { fld = nav.field(goal.x, goal.z); navRef = nav; }
+        catch { fld = null; }
+      }
+      const here = (fld && nav) ? nav.at(fld, cop.x, cop.z) : d2(cop.x, cop.z, goal.x, goal.z);
+      if (!isFinite(here) || here < 1.3) {           // posted. Do nothing at all.
+        input.x = 0; input.z = 0; input.sprint = false;
+        if (opts.trace) opts.trace.push([+cop.x.toFixed(1), +cop.z.toFixed(1), +here.toFixed(1), 0, 0]);
+        return;
+      }
+      let dx = goal.x - cop.x, dz = goal.z - cop.z;
+      if (fld && nav && nav.steer) {
+        const d = nav.steer(fld, cop.x, cop.z, { look: 6.0 });
+        if (d) { dx = d.tx - cop.x; dz = d.tz - cop.z; }
+      }
+      const m = Math.hypot(dx, dz) || 1;
+      input.x = dx / m; input.z = -(dz / m);
+      input.sprint = false;
+      if (opts.trace) opts.trace.push([+cop.x.toFixed(1), +cop.z.toFixed(1), +here.toFixed(1), input.x, input.z]);
+      void game;
+    },
+  };
+}
+
+const POLICIES = { observer, reader, random, camper, idle };
 
 // ------------------------------------------------------------------- the shift
 export async function run(ctx, opts = {}) {
@@ -373,6 +516,8 @@ export async function run(ctx, opts = {}) {
       // describing when he said one at a time. A thief whose tell has not fired
       // yet is not an incident; he is a shopper.
       liveT: [0, 0, 0, 0, 0, 0],
+      hChase: 0, hDialogue: 0, hSubj: 0, hZone: 0, hBlocked: 0, hRepeat: 0, hPeople: 0,
+      leaves: 0, aborts: 0, balks: 0, dumps: 0,
     };
     let windows = [], cases = [];
     for (let k = 0; k < shifts; k++) {
@@ -405,6 +550,10 @@ export async function run(ctx, opts = {}) {
     agg.soloPct = +(100 * agg.liveT[1] / tot).toFixed(1);
     agg.overlapPct = +(100 * (tot - agg.liveT[0] - agg.liveT[1]) / tot).toFixed(1);
     agg.catchPerShift = +(agg.caught / shifts).toFixed(2);
+    agg.complaintsPerShift = +(agg.complaints / shifts).toFixed(2);
+    agg.repeatsPerShift = +(agg.hRepeat / shifts).toFixed(2);
+    agg.abortsPerShift = +(agg.aborts / shifts).toFixed(2);
+    agg.leavesPerShift = +(agg.leaves / shifts).toFixed(2);
     out[name] = agg;
   }
   Object.assign(game.bot.FIX, fixWas);
@@ -419,16 +568,22 @@ async function shift(ctx, policyName, opts) {
   const rnd = mulberry32(opts.seed);
   Math.random = rnd;
 
-  const drive = makeDriver(ctx, opts);
+  // A policy may declare that it does not have a floor skill; see random().
+  const skills = { random: { backOff: false } }[policyName] || {};
+  const drive = makeDriver(ctx, { ...opts, ...skills });
   const bot = POLICIES[policyName](ctx, { ...opts, rnd });
 
   agents.reset();
   game._restart();
-  game._g.dbg.stallEscape = 0; game._g.dbg.stallPutBack = 0;
+  game._g.dbg.stallEscape = 0; game._g.dbg.stallPutBack = 0; game._g.dbg.blocked = 0;
+  game._g.dbg.reharass = 0; game._g.dbg.subjects.clear();
+  for (const k of Object.keys(game._g.dbg.harass)) game._g.dbg.harass[k] = 0;
 
   const r = {
     thieves: 0, caught: 0, escaped: 0, complaints: 0, demotions: 0, points: 0,
     dispatches: 0, deadZone: 0, holds: 0, floorTime: 0, deskTime: 0, wuTime: 0,
+    hChase: 0, hDialogue: 0, hSubj: 0, hZone: 0, hBlocked: 0, hRepeat: 0, hPeople: 0,
+    leaves: 0, aborts: 0, balks: 0, dumps: 0,
     windows: [],            // seconds from the concealment tell to the door
     cases: [],              // ...to the door OR the cuffs. How long one takes.
     liveT: [0, 0, 0, 0, 0, 0],
@@ -446,12 +601,22 @@ async function shift(ctx, policyName, opts) {
     onBolt(s) { gapi.onBolt(s); },
     onCatch(s) { r.caught++; closeOut(s, false); gapi.onCatch(s); },
     onEscape(s) { r.escaped++; closeOut(s, true); gapi.onEscape(s); },
-    onHarass(s) {
-      const before = game.st.complaints;
-      gapi.onHarass(s);
-      if (game.st.complaints > before) r.complaints++;
-    },
+    // ROUND 7: a complaint no longer lands inside this callback. onHarass() now
+    // only OPENS a confrontation; whether it becomes a form is decided up to
+    // 1.6 s later in settleHarass(), by which time nothing is calling us. So the
+    // count comes off the scoreboard in the step loop instead — see `filed`.
+    onHarass(s) { gapi.onHarass(s); },
     report(t) { gapi.report(t); },
+    // ROUND 7's two additive callbacks. A leaver is a customer who finished his
+    // shop, not a loss; an abort is a theft that did not happen because the
+    // player was stood on the door. Both are counted here because a shift with
+    // no income has to be distinguishable from a shift where nothing works.
+    onLeave(s) { r.leaves++; gapi.onLeave && gapi.onLeave(s); },
+    onAbort(s, why) {
+      r.aborts++;
+      if (why === 'dump') r.dumps++; else r.balks++;
+      gapi.onAbort && gapi.onAbort(s, why);
+    },
   };
   // On an escape the elapsed time IS the window: tell on the wall to body
   // through the doors. That is the number the whole desk phase is played inside.
@@ -469,6 +634,7 @@ async function shift(ctx, policyName, opts) {
 
   let wasHeld = null;
   let clock = 0;
+  let prevComplaints = game.st.complaints;
   for (let i = 0; i < steps; i++) {
     clock += dt;
     const mode = game.st.mode;
@@ -483,7 +649,7 @@ async function shift(ctx, policyName, opts) {
       wasHeld = h;
     } else if (mode === 'floor') {
       r.floorTime += dt;
-      drive(dt, game);
+      (bot.floor || drive)(dt, game);
     } else if (mode === 'writeup') {
       r.wuTime += dt;
       input.x = 0; input.z = 0; input.sprint = false;
@@ -495,6 +661,12 @@ async function shift(ctx, policyName, opts) {
     }
     agents.update(dt, input, api);
     game.update(dt);
+    // Count filed complaints off st.complaints. It only ever rises, except at a
+    // demotion which resets it to zero — that is a fall, so it is ignored here
+    // and the demotion itself is counted in the 'demoted' branch above.
+    const filed = game.st.complaints - prevComplaints;
+    if (filed > 0) r.complaints += filed;
+    prevComplaints = game.st.complaints;
 
     // dead-zone census: an announced, still-flagged thief standing somewhere the
     // old terminal refused to dispatch to.
@@ -520,6 +692,18 @@ async function shift(ctx, policyName, opts) {
   r.points = game.st.points;
   r.stallEscape = game._g.dbg.stallEscape;
   r.stallPutBack = game._g.dbg.stallPutBack;
+  // ROUND 7: a complaint is the fail state, so where they come from is worth
+  // counting rather than inferring. hChase/hSubj/hZone are which branch of
+  // targetShopper() had the reticle when the complaint landed.
+  r.hChase = game._g.dbg.harass.chase;
+  r.hDialogue = game._g.dbg.harass.dialogue;
+  r.hSubj = game._g.dbg.harass.subj;
+  r.hZone = game._g.dbg.harass.zone;
+  r.hBlocked = game._g.dbg.blocked;
+  // Complaints vs DISTINCT people who complained. If the second is much smaller
+  // than the first, one confrontation is being billed several times over.
+  r.hRepeat = game._g.dbg.reharass;
+  r.hPeople = game._g.dbg.subjects.size;
   Math.random = realRandom;
   return r;
 }
