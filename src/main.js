@@ -5,6 +5,7 @@ import { createCCTV } from './cctv.js';
 import { createAgents } from './agents.js';
 import { createGame } from './game.js';
 import { createAudio } from './audio.js';
+import { createCamera } from './camera.js';
 
 const app = document.getElementById('app');
 const hud = document.getElementById('hud');
@@ -32,6 +33,7 @@ const game = createGame(hud, { cctv, agents, world, THREE });
 const floorCam = new THREE.PerspectiveCamera(58, RENDER_W / RENDER_H, 0.1, 160);
 // Audio is created after floorCam so it can position its listener from the real camera.
 const audio = createAudio(THREE, floorCam);
+const chaseCam = createCamera(THREE, floorCam);
 
 const input = { x: 0, z: 0, sprint: false };
 const keys = new Set();
@@ -44,14 +46,26 @@ addEventListener('keyup', (e) => keys.delete(e.code));
 addEventListener('resize', () => cctv.resize(RENDER_W, RENDER_H));
 
 function readInput() {
-  // The floor camera sits BEHIND the cop looking down +Z, so its screen-right is
-  // world -X. Pressing D therefore has to drive x negative or the controls read
-  // mirrored — which is exactly how they shipped until a playtest caught it.
-  input.x = (keys.has('KeyA') ? 1 : 0) - (keys.has('KeyD') ? 1 : 0);
-  input.z = (keys.has('KeyS') ? 1 : 0) - (keys.has('KeyW') ? 1 : 0);
+  // Screen-space intent first: right-handed, +sx = screen right, +sz = away from camera.
+  const sx = (keys.has('KeyD') ? 1 : 0) - (keys.has('KeyA') ? 1 : 0);
+  const sz = (keys.has('KeyW') ? 1 : 0) - (keys.has('KeyS') ? 1 : 0);
+  const l = Math.hypot(sx, sz) || 1;
+  // Rotate into world by the camera's own yaw, so WASD always means what the player
+  // SEES no matter where the camera builder puts it. The base camera looks down +Z,
+  // whose screen-right is world -X — the sign below is that, generalised.
+  const y = chaseCam.yaw || 0;
+  const cs = Math.cos(y), sn = Math.sin(y);
+  // World basis for what the player sees. At yaw 0 the camera sits behind the cop
+  // looking down +Z, so screen-forward is world +Z and screen-right is world -X.
+  const fwdX = -sn, fwdZ = cs;
+  const rgtX = -cs, rgtZ = -sn;
+  const wx = (sx / l) * rgtX + (sz / l) * fwdX;
+  const wz = (sx / l) * rgtZ + (sz / l) * fwdZ;
+  // agents.js consumes x directly but NEGATES z, so convert into its convention here
+  // rather than leaving a sign trap for whoever moves this camera next.
+  input.x = wx;
+  input.z = -wz;
   input.sprint = keys.has('ShiftLeft') || keys.has('ShiftRight');
-  const l = Math.hypot(input.x, input.z) || 1;
-  input.x /= l; input.z /= l;
 }
 
 // One simulation + render step. Never depends on requestAnimationFrame, so it
@@ -66,9 +80,10 @@ function step(dt) {
   if (game.mode === 'desk') {
     cctv.renderWall(dt);
   } else {
-    const c = agents.cop.position;
-    floorCam.position.set(c.x, 6.4, c.z - 7.6);
-    floorCam.lookAt(c.x, 1.0, c.z + 2.5);
+    chaseCam.update(dt, {
+      cop: agents.cop, chasing: !!(game.st && game.st.chasing),
+      report: agents.report && agents.report(), dt,
+    });
     cctv.renderFloor(dt, floorCam);
   }
   game.render();
@@ -165,7 +180,7 @@ async function recordAudio(seconds = 12, name = 'clip') {
 function resumeLoop() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } }
 
 window.__CHOP = {
-  audio, recordAudio,
+  audio, recordAudio, chaseCam,
   THREE, scene, renderer, agents, game, cctv, world, input, keys, snap, run, step,
   snapClean, probeCam,
   pause() { rafOn = false; }, resume() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } },
