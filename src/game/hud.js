@@ -209,7 +209,10 @@ export function createHUD(hudEl) {
       if (!t) return;
       reg('cam', t.x, t.y, t.w, t.h, i);
       const subs = G.desk.subjects.filter((s) => s.cam === i);
-      const flagged = subs.some((s) => s.flagged);
+      // The pip fires on the subject's PRIMARY channel only — see updateSubjects.
+      // A man in the middle of the store is genuinely on four monitors and gets
+      // four rows, but only one of them is the one to switch to.
+      const flagged = subs.some((s) => s.flagged && s.primary !== false);
       const act = i === G.desk.cam;
       const small = t.w < 200;
       box(t.x, t.y, t.w, t.h, act ? AMB : 'rgba(120,170,130,0.16)', act ? 2 : 1);

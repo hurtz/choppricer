@@ -203,7 +203,7 @@
   },
   "game": {
    "round": 6,
-   "state": "building",
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -234,6 +234,11 @@
      "round": 6,
      "path": "../shots/game_r6_desk.png",
      "t": 1787500954.7197928
+    },
+    {
+     "round": 6,
+     "path": "../shots/game_r6_wind.png",
+     "t": 1787501853.750732
     }
    ],
    "gaps": [
@@ -250,10 +255,10 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787500954.71979,
-   "note": "ROSTER NOW AGREES WITH THE PICTURES. camFor()'s zone table is gone; every roster row's channel comes from cctv.channelsFor() (frustum + real LOS through the store colliders), with 4.0m/0.7s hysteresis so rows do not chatter between overlapping domes. Measured BEFORE: roster named a channel that could not see the subject for 7 of 13 subjects, 54%. AFTER: 100% agreement over 1176 subject-seconds, 0 false positives. One row PER MONITOR he is on, not one per man - the first cut filed each man under his nearest channel and that reintroduced the bug from the other end (press [C], dome locks a man boxed in the middle of CAM 02, CAM 02's roster does not contain him). setSubjects() called once a frame so the box says SUBJ-04 instead of T19 and the roster row is selectable from the picture. Two clocks now identical to the second. Per-tile overlay resized for 138x104: no N SUBJ badge except on the active tile, 7px flag pip instead of a 44px word, corner marker instead of a 15px footer. [C] and a click on the spot monitor drive cctv.cycleTrack().",
+   "updated": 1787501983.058053,
+   "note": "THE TRAP DISCOVERY, which matters more than the ramp: serialising incidents made the GUESSER BETTER (28.2% -> 35.2%) and nearly killed the desk read at +3.2pp. A coverage effect - one guard against three simultaneous cases loses two without being wrong. The difficulty was never how many THIEVES, it was how many CANDIDATES, and round 5 was getting its candidates free by running three cases at once. Trap rate is now the inverse of pace (0.50/0.36/0.26): fewest real incidents, most things that look like one. Also: filed each man under his NEAREST channel first and that reintroduced the bug from the other end - a list titled MOTION ANALYTICS - CAM 02 means everything CAM 02 can see, which is a set, not a nearest-match. Blind spots now read SIGNAL LOST - LAST SEEN 5.7s rather than silently vanishing.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
-   "verdict": "PASS. Observer 56.7% catch / 1002 pts / 0.00 demotions vs random 36.6% / 239 / 1.20. Separation +20.1pp and 4.2x points, intact after the chase got much harder (median 3.03s -> 5.83s). Observer spread across 3 seeds is 1.1pp."
+   "verdict": "PASS on the reconciliation. Roster/picture agreement went from 54% of subjects named on a channel that could not see them, to 100% over 1176 subject-seconds with zero false positives, costing 0.022ms/frame. Pacing: 3.00 -> 1.51 incidents/min, overlap 10-18% -> 0.4%, quiet 30% -> 58%. Observer 36.9% / 298 pts / 0 demotions vs random 32.1% / 87 / 1.94 demotions = +4.8pp and 3.43x points."
   },
   "cop": {
    "round": 1,
@@ -302,6 +307,30 @@
   }
  },
  "log": [
+  {
+   "t": 1787501983.058054,
+   "piece": "game",
+   "role": "builder",
+   "round": 6,
+   "state": "passed",
+   "text": "THE TRAP DISCOVERY, which matters more than the ramp: serialising incidents made the GUESSER BETTER (28.2% -> 35.2%) and nearly killed the desk read at +3.2pp. A coverage effect - one guard against three simultaneous cases loses two without being wrong. The difficulty was never how many THIEVES, it was how many CANDIDATES, and round 5 was getting its candidates free by running three cases at once. Trap rate is now the inverse of pace (0.50/0.36/0.26): fewest real incidents, most things that look like one. Also: filed each man under his NEAREST channel first and that reintroduced the bug from the other end - a list titled MOTION ANALYTICS - CAM 02 means everything CAM 02 can see, which is a set, not a nearest-match. Blind spots now read SIGNAL LOST - LAST SEEN 5.7s rather than silently vanishing."
+  },
+  {
+   "t": 1787501853.7507331,
+   "piece": "game",
+   "role": "builder",
+   "round": 6,
+   "state": "building",
+   "text": "WIND panel vs the cop's new body: they do not compete, and they cannot drift, because agents.js integrates fatigue once in updateCop and BOTH the heave and my PULSE readout read that one value. Verified the two states where they could look like they are arguing. WINDED: gassed pins fatigue >= 0.92, word and heaving agree. READY: fatigue falls slower than the 0.81s refill, so measured at t=0.8s after the key comes up the panel says READY in green while fatigue is 0.70 and PULSE reads 158 in red - the tank is back and the man is still blowing, and the panel says both. Moved PULSE's red threshold from 0.66 to 0.55, which is exactly where animateCop() starts putting his hands on his knees, so the number goes red on the same frame the body gives up on standing. Also fixed while in there: DISPATCH's key hints ran into POST UNMANNED and printed TRACKUNMANNED once [C] was added (the joke moved to the title row); the panel advertised [1]-[8] on a nine-camera store and [TAB] which was never bound; the status line said 8 CH ACTIVE. All three now derive from G.cams.length or name keys that exist."
+  },
+  {
+   "t": 1787501842.550993,
+   "piece": "game",
+   "role": "builder",
+   "round": 6,
+   "state": "building",
+   "text": "ROSTER AND PICTURES NOW AGREE, AND THE SHIFT IS HALF AS BUSY. (1) camFor()'s zone table is gone. Every roster row's channel comes from cctv.channelsFor() - frustum plus real LOS through the store colliders - with 4.0m/0.7s hysteresis. BEFORE: the roster named a channel that could not see the subject for 7 of 13 subjects (54%), incl. the CAM 06 'NO SUBJECTS IN FRAME' over a man boxed on the spot monitor. AFTER: 100% agreement over 1176 subject-seconds, zero false positives, 2.19 channel changes per subject-minute. Costs 0.022ms/frame. (2) ONE ROW PER MONITOR HE IS ON, not one per man - filing each man under his nearest channel reintroduced the bug from the other end ([C] locks a man boxed on CAM 02, CAM 02's roster lacks him). cctv's boxes and my rows now come off the same visibility test. Residual 1-in-18 frame-edge gap closed by deferring to cctv.spot.track for the channel that is actually up. (3) setSubjects() once a frame: box says SUBJ-13, roster row says SUBJ-13, and they select together. (4) Blind spots are real - 13.2% of subject-seconds are on no channel - so a row can say SIGNAL LOST - LAST SEEN 6.5s. Held 8s not 4s: at 4s a FLAGGED subject had no row for 8.3% of his announced life. The concealment tell waits for a camera to see it; measured cost ZERO seconds (n=5, med 0, max 0) because people conceal mid-aisle where the domes point. (5) PACING, measured on 144 shift-min per condition: round-5 supply ran 3.0 incidents/min, 10-18% overlap, 30% quiet. Now 1.51/min, 0.4% overlap, 58% quiet - phase 0 is ONE live case and will not arm the next while you are off the desk; ramps to 2 at 150s and 3 at 330s. (6) Serialising made the GUESSER better (28.2 -> 35.2% catch, a coverage effect) and nearly killed the desk read (+3.2pp). Fixed by ramping the TRAP rate inverse to the pace (0.50/0.36/0.26): fewest real incidents, most things that look like one. Final: observer 36.9% catch / 298 pts-shift / 0 complaints / 0 demotions; random 32.1% / 87 / 1.73 / 1.94. +4.8pp, 3.43x points. Baseline with today's agents.js and round-5 game code is +6.1pp and 2.0x - separation is flat, points ratio and guesser firings are up, at half the incident volume. (7) Per-tile overlay resized for 138x104: no SUBJ badge except on the active tile, 7px flag pip on the PRIMARY channel only (4 flagged subjects were lighting 6 of 9 tiles), corner marker instead of a 15px footer. (8) Two clocks became one, to the second. (9) [C] and a click on the spot monitor drive cctv.cycleTrack()."
+  },
   {
    "t": 1787501422.379345,
    "piece": "camera",
@@ -831,5 +860,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787501422.379346
+ "updated": 1787501983.058055
 }

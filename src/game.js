@@ -521,6 +521,7 @@ export function createGame(hudEl, deps = {}) {
         // and it is worth saying, because it is the player's cheapest second
         // angle on somebody he cannot read.
         chans: (r.chans && r.chans.length) || 0,
+        primary: true,
       };
       // ONE ROW PER MONITOR HE IS ON, not one row per man.
       //
@@ -534,13 +535,42 @@ export function createGame(hudEl, deps = {}) {
       // man standing where two cameras overlap. cctv's own boxes come off the
       // same visibility test, so the rows and the rectangles now agree by
       // construction and not by coincidence.
+      //
+      // `primary` is the one channel out of those that is worth SWITCHING to:
+      // the nearest, which is where he is biggest and where the PTZ has the most
+      // to push into. The roster is a set — who can this camera see — but the
+      // red flag pip on the bank is a POINTER, and a pointer that names six
+      // monitors at once names none. Measured on the round-6 capture: four
+      // flagged subjects were lighting six of the nine tiles.
       if (!FIX.chan || !r.chans || !r.chans.length) out.push(row);
-      else for (const ch of r.chans) out.push(ch === r.cam ? row : { ...row, cam: ch });
+      else for (const ch of r.chans) out.push(ch === r.cam ? row : { ...row, cam: ch, primary: false });
     }
     // ONE CALL A FRAME, and the whole point of it: the box on the spot monitor
     // said T19 while the roster said SUBJ-03/04/10, so the two halves of the
     // desk could not be cross-referenced at all. Now the box says SUBJ-19.
     { const c = cctvOf(); if (c && c.setSubjects) c.setSubjects(marks); }
+
+    // THE LAST HOLE, AND IT IS THE ONE THE PLAYER CAN SEE.
+    //
+    // channelsFor() rejects a point outside 0.94 of normalised frame; cctv's own
+    // box test keeps anything whose head OR feet land inside 1.0. That sliver at
+    // the very edge of a wide feed is 1 subject-channel pair in 18, and I would
+    // leave it alone — except that [C] makes the PTZ lock STICKY, so a man the
+    // dome is following out of frame can end up boxed in the picture with no row
+    // under it. Measured 0 in 51 samples under auto-track; reproduced on the
+    // first try by pressing [C] and waiting.
+    //
+    // So the wall gets the last word about its own picture. If cctv says it is
+    // tracking somebody on the channel that is up, he is on that channel's list,
+    // full stop. This is not a second visibility test — it is deferring to the
+    // only one that renders.
+    if (FIX.chan) {
+      const code = trackedCode();
+      if (code && !out.some((s) => s.cam === G.desk.cam && s.code === code)) {
+        const him = out.find((s) => s.code === code);
+        if (him) out.push({ ...him, cam: G.desk.cam });
+      }
+    }
     out.sort((a, b) => (b.flagged - a.flagged) || (a.id - b.id));
     G.desk.subjects = out;
     if (G.desk.sel != null && !out.some((s) => s.id === G.desk.sel && s.cam === G.desk.cam)) {
@@ -626,12 +656,15 @@ export function createGame(hudEl, deps = {}) {
   // quick. It should take a minute. Maybe you could slow it down. Make it so,
   // like, one incident at a time."
   //
-  // He is right and the old numbers say why. `live < 2` plus a 12-22 s rearm is
-  // a standing order to keep TWO open cases on the wall at all times and to
-  // replace either one within twenty seconds of it resolving. On a four-minute
-  // shift that is a thief every ~18 s with two overlapping for most of it — the
-  // player never finishes reading one roster before the next tell fires, which
-  // is exactly the firehose he described.
+  // He is right and the bench agrees. `live < 2` plus a 12-22 s rearm is a
+  // standing order to keep two open cases on the wall and to replace either one
+  // within twenty seconds of it resolving. Measured over 144 shift-minutes it
+  // ran at 3.0 incidents a minute — one every twenty seconds — with two or more
+  // live 10.3% of the time for a competent player and 17.9% for a poor one, and
+  // only 30% of the shift quiet. The round-6 numbers below measure 1.5 a minute,
+  // 0.7% overlap and 59% quiet: half the volume, essentially never two at once,
+  // and the majority of the shift is you watching a store where nothing has
+  // happened yet, which is the job.
   //
   // So density is a RAMP and phase 0 is serial: one live case, and the next one
   // is not armed until the shift has had a breath. Note this is density only —
@@ -1118,10 +1151,16 @@ export function createGame(hudEl, deps = {}) {
     G.desk.scroll = 0;
     const c = cctvOf();
     if (c && c.setActiveCam) c.setActiveCam(G.desk.cam);
+    // Pick from the rows the panel is ABOUT TO SHOW, not from the whole list.
+    // Preferring the dome's subject is right, but only if he is already in the
+    // window: reaching for him further down would open a freshly-switched
+    // channel scrolled into the middle of its own roster, past the flagged rows
+    // that sort to the top, which is the row you switched channels to read.
     const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
-    const hot = on.find((s) => s.flagged) || on[0];
+    const win = on.slice(0, ROWS);
+    const code = trackedCode();
+    const hot = (code && win.find((s) => s.code === code)) || win.find((s) => s.flagged) || win[0];
     G.desk.sel = hot ? hot.id : null;
-    showSel();
   }
   // Scroll the three-row window onto whatever is selected. cycleSel() has always
   // done this for itself; nothing else did, so selecting a subject any OTHER way
@@ -1150,14 +1189,38 @@ export function createGame(hudEl, deps = {}) {
   function cycleTrack() {
     const c = cctvOf();
     if (!c || !c.cycleTrack) return false;
-    const tr = c.cycleTrack();
-    if (!tr) return false;
-    const lab = c.detector && c.detector.labelFor ? c.detector.labelFor(tr) : null;
-    const code = (lab && lab.code) || null;
-    if (code) {
-      const row = G.desk.subjects.find((s) => s.code === code && s.cam === G.desk.cam);
-      if (row) { G.desk.sel = row.id; showSel(); }
-    }
+    if (!c.cycleTrack()) return false;
+    selectTracked(true);
+    return true;
+  }
+  // WHO IS THE BIG MONITOR ON. cctv's PTZ holds a lock of its own — its
+  // auto-track picks the strongest motion, and [C] makes that lock sticky — so
+  // the dome has an opinion about who matters whether or not this file asked.
+  // Both halves of the desk pointing at the same man is the whole cross-
+  // reference, and it drifted apart in testing: [C] put the dome on SUBJ-12,
+  // SUBJ-12 flickered off CAM 02's channel list for one frame, the selection
+  // reset, and the auto-pick handed the highlight to SUBJ-01 while the picture
+  // still had SUBJ-12 boxed in the middle of it. So the dome's pick is now what
+  // the roster falls back to, ahead of the first flagged row.
+  function trackedCode() {
+    const c = cctvOf();
+    const tr = c && c.spot && c.spot.track;
+    if (!tr || !c.detector || !c.detector.labelFor) return null;
+    const lab = c.detector.labelFor(tr);
+    return (lab && lab.code) || null;
+  }
+  // `scroll` true means this was an explicit act — [C], or a click on the big
+  // monitor — and the window should go and find him wherever he is in the list.
+  // The idle fallback does not scroll, for the reason in selectCam().
+  function selectTracked(scroll) {
+    const code = trackedCode();
+    if (!code) return false;
+    const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
+    const row = scroll ? on.find((s) => s.code === code)
+      : on.slice(G.desk.scroll, G.desk.scroll + ROWS).find((s) => s.code === code);
+    if (!row) return false;
+    G.desk.sel = row.id;
+    if (scroll) showSel();
     return true;
   }
 
@@ -1234,7 +1297,7 @@ export function createGame(hudEl, deps = {}) {
     if (st.mode === 'desk') {
       const a = agentsOf();
       if (a) { a.cop.position.set(POST.x, 0, POST.z); a.cop.userData.vel.set(0, 0, 0); }
-      if (G.desk.sel == null) {
+      if (G.desk.sel == null && !selectTracked()) {
         const on = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
         const hot = on.find((s) => s.flagged);
         if (hot) { G.desk.sel = hot.id; showSel(); }

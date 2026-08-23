@@ -2847,7 +2847,33 @@ export function createAgents(THREE, scene, world) {
       r.neck.rotation.x = lerp(r.neck.rotation.x, p.neck, ed(9));
       r.neck.rotation.y = lerp(r.neck.rotation.y, p.look, ed(9));
       s.held.visible = !!p.vis;
-      s.held.position.set(p.hand[0], p.hand[1], p.hand[2]);
+      // THE PROP RIDES THE HAND. It is not authored as an absolute point any
+      // more, it is SOLVED from the arm the clip is driving, plus a small
+      // offset for the beats where it is pressed against the body.
+      //
+      // Round 5 authored the concealment's item as absolute rig-local
+      // coordinates and got away with it because at 431 px down a 26 m aisle a
+      // half-metre error is two pixels. The spot monitor pushes a subject to a
+      // large fraction of frame height now, and at that size the same clip
+      // showed a box hanging in the air beside his LEFT ear while his RIGHT arm
+      // reached — 0.50 m from the hand that was supposed to be holding it. An
+      // ambiguity argument cannot be made out of a floating box, so the arm is
+      // the source of truth and the prop is derived.
+      //
+      // Euler XYZ on the shoulder pivot, arm hanging down its local -Y:
+      //   v = Rx(ax) * Rz(az) * (0,-L,0)
+      //     = ( L sin az, -L cos az cos ax, -L cos az sin ax )
+      // The shoulder itself is read off the rig, so girth, build and height all
+      // come out correct per body instead of being assumed.
+      const AL = FIG.armLen;
+      const shX = r.armR.position.x, shY = r.hipY + r.armR.position.y;
+      const cz = Math.cos(p.armRz), sz = Math.sin(p.armRz);
+      const cx = Math.cos(p.armR), sx = Math.sin(p.armR);
+      s.held.position.set(
+        shX + AL * sz + p.off[0],
+        shY - AL * cz * cx + p.off[1],
+        -AL * cz * sx + p.off[2],
+      );
       s.held.scale.set(p.item[0], p.item[1], p.item[2]);
       // The cart is parked where he stopped, hands OFF the bar. Half the
       // picture is the two seconds his hands are not on it.
@@ -3483,7 +3509,24 @@ export function createAgents(THREE, scene, world) {
         // dead-reckoning collapsed the skill ladder into one rung: chase went
         // from 60% to 70% and its misaim table went flat with it, which made
         // the ladder useless for saying how much the dispatch is worth TO WHOM.
-        if (st.bot !== 'cut') { tx = st.seen.x; tz = st.seen.z; }
+        // ROUND 6 — HE IS NOT COMING, AND THE BOT HAS TO LEARN THAT.
+        // The dead-reckoning walks the last sighting DOWN THE EXIT FIELD, which
+        // is right for a man who is leaving and exactly wrong for a man who has
+        // seen a uniform parked on the only way out and turned back into the
+        // aisles. Left alone it walks a phantom into the doorway and the cop
+        // stands there waiting for it: measured, that is 60% for the competent
+        // bot against 74% for the same bot that goes and looks, and all 14
+        // points are trials ending with the item back on a shelf.
+        // Latched, because without the latch it oscillates — stepping off the
+        // door un-posts him, the phantom resumes walking at the door, and he
+        // turns round again. Two seconds of a quiet doorway and he goes back to
+        // the last place the man was actually seen; a sighting clears it.
+        if (doorPosted() && st.seenT > 0.8) {
+          st.dry = (st.dry || 0) + dt;
+          if (st.dry > 2.0) st.sweep = true;
+        } else if (st.seenT <= 0.8) { st.dry = 0; st.sweep = false; }
+
+        if (st.bot !== 'cut' || st.sweep) { tx = st.seen.x; tz = st.seen.z; st.lost = null; }
         else {
           if (!st.lost) st.lost = { x: st.seen.x, z: st.seen.z };
           let step = K.thiefRun * K.thiefTired * dt;
@@ -3560,7 +3603,18 @@ export function createAgents(THREE, scene, world) {
     const n = opts.n ?? 200;
     const mode = opts.mode ?? 'none';       // 'none' | 'ignore' | 'pickup' | 'boost'
     const spawn = opts.spawn ?? 'aisle';    // 'aisle' | 'back' | 'front' | 'behind'
-    const dt = 1 / 60, maxT = opts.maxT ?? 30;
+    // ROUND 6 — 30 -> 45 s. Not a difficulty change: it is the trial cap, and
+    // this round added an ENDING THAT TAKES LONGER THAN A CHASE. A stand-off at
+    // the door (he turns back, you wait, he ditches it) resolves around 25-30 s,
+    // so at the old cap 8 of 40 camper trials timed out as `stalled` — an
+    // unresolved trial, counted as a non-catch, which is a silent lie in the
+    // direction of whatever you were hoping for. At 45 s every trial in every
+    // scenario resolves and `stalled` is 0. Cost to the numbers it does not
+    // affect: the competent bot on a plain chase goes 70.0 -> 75.0 because five
+    // truncated trials became two catches and three escapes, and round 5's own
+    // build measures the same 5 points higher on the same cap — so the
+    // like-for-like comparison in this round's report is taken at 45 on BOTH.
+    const dt = 1 / 60, maxT = opts.maxT ?? 45;
     const crowd = opts.crowd !== false;
     const gapMul = opts.gapMul ?? 0.96;
     const traceK = opts.trace == null ? -1 : (opts.trace | 0);
@@ -3719,6 +3773,10 @@ export function createAgents(THREE, scene, world) {
       // short bursts"), and seconds-of-sprint cannot see it: 3.4 s in one go
       // and 3.4 s in four goes are the same sprintFrac and a different game.
       let bursts = 0, wasSprint = false, usedBand = null, wentBack = false;
+      // ROUND 6 — how much of this trial the cop spent parked on the only way
+      // out. The single most useful diagnostic in the file right now: a trial
+      // that ends `ditched` and reports postedT 0 is a bug, not a design.
+      let postedTrial = 0, heldTrial = 0;
       const api = {
         onBolt() {}, onHarass() {},
         // ROUND 6 — a fourth ending. He waited you out and ditched the goods in
@@ -3738,6 +3796,8 @@ export function createAgents(THREE, scene, world) {
         if (identCool > 0) identCool -= dt;
         tick(dt, botInput(thief, mode, st, dt), api);
         time += dt;
+        if (doorPosted()) postedTrial += dt;
+        if (thief.stall > 0) heldTrial += dt;
         const g = dist2d(thief.position.x, thief.position.z, cop.position.x, cop.position.z);
         if (!isFinite(tBolt) && thief.bolted) {
           tBolt = time; gapAtBolt = g;
@@ -3808,6 +3868,7 @@ export function createAgents(THREE, scene, world) {
         // how many bodies were inside grabbing range when he committed, and how
         // many times he came away with a stranger's arm (= a complaint).
         made: !!st.made, falseGrabs, crowdAtGrab,
+        postedT: postedTrial, heldT: heldTrial,
         bargeStam: thief.bargeStam,
         atCop: atCop === true, doorT, exitUsed,
         caughtShoving: done === 1 && isFinite(doorT),
@@ -3960,6 +4021,11 @@ export function createAgents(THREE, scene, world) {
       // Biggest crowd inside grabbing range at the moment he committed.
       crowdAtGrab_median: _f2(_q(R.map((r) => r.crowdAtGrab), 0.5)),
       ident: opts.ident !== false,
+      // Seconds per trial the cop spent parked on the only way out, and seconds
+      // the subject spent hanging back because of it. If `ditched` is non-zero
+      // and these are zero, something other than the design is ending trials.
+      postedT_median: _f2(_q(R.map((r) => r.postedT), 0.5)),
+      heldT_median: _f2(_q(R.map((r) => r.heldT), 0.5)),
     };
     if (opts.raw) res.raw = R;
     if (traceK >= 0) res.trace = trace;
