@@ -45,11 +45,18 @@ def measure(path):
     hum_i = np.argmin(np.abs(freq - 120.0))
     lo, hi = max(0, hum_i - 40), hum_i + 40
     local = np.median(spec[lo:hi])
+    # Band-limit flatness to the AUDIBLE range. At 48kHz an rfft puts 8192 of 32769
+    # bins above 18kHz — a quarter of the measurement in a band nobody can hear — and
+    # flatness is a geometric mean, so it is dominated by whatever is quietest. The
+    # same file reads 0.032 counting to 24kHz and 0.110 stopping at 16kHz. Measuring
+    # the ultrasonic hole was my bug, not the audio's.
+    aud = (freq >= 20) & (freq <= 16000)
+    pa = p[aud]
     out = {
         "mains_hum_db":   20 * math.log10(spec[hum_i] / (local + 1e-12) + 1e-12),
         "lf_rumble_frac": band(20, 200) / tot,
         "hf_air_frac":    band(5000, sr / 2) / tot,
-        "flatness":       float(np.exp(np.mean(np.log(p))) / np.mean(p)),
+        "flatness":       float(np.exp(np.mean(np.log(pa))) / np.mean(pa)),
         "crest_db":       20 * math.log10((np.abs(mono).max() + 1e-12) / (np.sqrt((mono ** 2).mean()) + 1e-12)),
     }
     hop = sr // 10

@@ -101,47 +101,69 @@ function wrapPi(a) {
 }
 
 // ---------------------------------------------------------------------------
-// TUNING. Every number here was set by looking at the frame it produces; the
-// prose next to each block is what the sweep actually showed, including the
-// values that were tried and thrown away. `__CHOP.chaseCam.T` is live, so a
-// critic can sweep any of it from the console without editing this file.
+// TUNING. `__CHOP.chaseCam.T` is live, so any of it can be swept from the
+// console without editing this file — which is how the numbers below that cite
+// a measurement were arrived at.
+//
+// Where a comment says MEASURED it names the shot or the number it came from.
+// Where it does not, it is a judgement made by looking at the frame, and should
+// be treated as one. Round 1 did not have time to sweep everything, and an
+// invented measurement in this file would be worse than an admitted opinion.
 // ---------------------------------------------------------------------------
 const T = {
   // --- resting shot (walking the floor, no chase) --------------------------
-  // 2.44 is the slot: 39 cm over the gondolas, 6 cm under the sign edge. 2.9
-  // and 3.2 were both measured first and both put the lens through every
-  // hanging sign in the aisle — one frame of full-screen sign, four times per
-  // traverse. Under the line there is no guard needed at all, which is worth
-  // more than the 20 cm of extra sightline it costs.
+  // 2.44 is the slot: 39 cm over the gondolas, 6 cm under the sign edge.
+  // MEASURED: the first build let the pursuit rise carry the lens to 3.16 m and
+  // shots/cam_r1_gassed.png came back with a full-screen CRACKERS / NUTS banner
+  // across the middle of the frame. Under 2.46 no guard is needed at all.
   height: 2.44,
-  dist: 5.55,          // 4.6 hid the far half of the aisle behind the cop's back;
-                       // 7.0 put him back in the middle distance and read as the
-                       // old camera with the tilt taken out.
+  dist: 5.55,
   // Aim height. 1.30 (chest) was the first guess and it is wrong: aiming low
   // tips the frame DOWN, which parks the cop's head on the vanishing point —
-  // the one pixel a man running away down the aisle occupies. 1.55 tips it back
-  // up about 4 degrees, drops him into the lower third, and buys the ceiling at
-  // the same time. Measured side by side, this is the second-biggest playability
-  // number in the file after the shoulder dolly.
+  // the one pixel a man running away down the aisle occupies.
+  // MEASURED, 1.30 vs 1.65 on the same spawn: at 1.30 the subject at 6.9 m sat
+  // behind the cop's head; at 1.65 he was clear of it with the aisle open above.
+  // 1.55 keeps that and holds a little more floor, which is where the reference
+  // photography puts the specular smear.
   look: 1.55,
   fov: 57,
 
   // --- sprint (0..1 on speed above the walk) -------------------------------
-  // The speed cue is FOV and lag, not proximity. Closing the dolly at speed
-  // was tried and is actively bad here: at 4.5 m the cop's own back covers the
-  // end of the aisle, which is where the man you are chasing is.
+  // The speed cue is FOV and lag, not proximity. Closing the dolly at speed is
+  // the obvious move and it is wrong here: the cop's own back is what covers the
+  // end of the aisle, and the end of the aisle is where the man is. So it pulls
+  // slightly BACK and takes the speed out of the FOV instead.
   sprHeight: -0.16, sprDist: +0.40, sprFov: +7.0, sprLook: -0.08,
 
   // --- gassed (0..1, eased) ------------------------------------------------
   // The one place the camera is allowed to hurt you. It drops, pulls in and
-  // narrows: the aisle stops being a corridor you are travelling down and
-  // becomes a wall you are stuck against. No roll — see NO ROLL below.
+  // narrows — 2.22 m, 4.60 m back, 51 degrees — so the aisle stops being a
+  // corridor you are travelling down and becomes a wall you are stuck against.
+  // No roll: see NO ROLL below.
   gasHeight: -0.22, gasDist: -0.95, gasFov: -6.0, gasLook: -0.14,
 
   // --- pursuit + gap -------------------------------------------------------
-  // chase* is the flat lift the moment a man bolts. gap* is the part that
-  // scales, and it is the playability escape hatch: by 16 m of gap the lens is
-  // at ~3.5 m, which is over the 2.63 m needed to see a head in the next aisle.
+  // chase* is the flat lift the moment a man bolts. gap* is the part that scales
+  // with how far away he is, and it is the playability half of this whole file.
+  //
+  // MEASURED, and this is the number that decides whether the low camera is
+  // allowed to exist. One 420-frame chase was recorded as a tape of cop and
+  // thief positions and replayed under each rig, so the trajectory is identical
+  // and the camera is the only variable. "Visible" = the thief projects inside
+  // the frame AND the segment from lens to his chest clears every gondola:
+  //
+  //     no rise      lens avg 2.69 m     visible 63.8%
+  //     gapHeight 0.85   avg 3.22 m      visible 69.8%     <- shipped
+  //     gapHeight 1.60   avg 3.68 m      visible 71.2%
+  //
+  // So the rise is worth six points and the second half of it is worth 1.4 —
+  // it saturates just as the frame starts going back to being a floor plan.
+  // 0.85 takes nearly all of the benefit at the smallest cost to the shot.
+  //
+  // Do not trust an uncontrolled version of this test. Running it as three live
+  // chases instead of one replayed tape gave 20.4 / 45.8 / 54.2 for the same
+  // three rigs — chase-to-chase variance dwarfing the effect, and a number I
+  // nearly reported as a doubling.
   chaseHeight: +0.26, chaseLook: +0.05,
   gapHeight: +0.85, gapDist: +1.60, gapFov: +5.0, gapLook: +0.16,
   gapNear: 4.0, gapFar: 16.0,
@@ -159,17 +181,21 @@ const T = {
   // ANISOTROPIC, and this is most of what "fluid" means. The focus point chases
   // the cop slowly ALONG the camera axis (he pulls away from the lens when he
   // opens up, and the camera reels him back in) and fast ACROSS it (he never
-  // slides out of frame sideways). Isotropic at 6.0 felt rigid; isotropic at
-  // 3.5 felt like the soup the brief warned about. Split, it reads as weight.
+  // slides out of frame sideways). Not swept — set by eye, and the honest thing
+  // to say is that the SPLIT is the idea and the two rates are a first guess.
+  // A critic with time should sweep them; they are the most likely place a
+  // round-2 improvement is sitting.
   followAlong: 4.3, followCross: 9.5,
   rigRate: 5.0,        // how fast height/dist/fov/look chase their state targets
   lead: 1.15,          // metres of velocity lead-in at full sprint
 
   // --- yaw -----------------------------------------------------------------
-  // Critically damped, with a hard cap on angular rate. w0 6.2 turns a 90 deg
-  // corner in about 0.8 s, which is the single biggest feel number in the file:
-  // 9.0 is a whip and made the store swim, 3.5 arrives after you have already
-  // run into the shelf. The cap only ever binds on a 180.
+  // Critically damped, with a hard cap on angular rate. This is the single
+  // biggest feel decision in the file and it is deliberately on the slow side
+  // of decisive: MEASURED off the logs, w0 6.2 takes about 0.8 s to settle a 90
+  // degree corner and about 1.5 s for a 180 (yaw 0 -> 3.10 between t=2.0 and
+  // t=3.5 while holding S). A 180 in 1.5 s averages 2.1 rad/s, which is a turn
+  // you can follow rather than a whip. The rate cap only ever binds on a 180.
   yawW: 6.2, yawMax: 3.1,
   axisDwell: 0.26,     // sustained seconds of cross-axis motion before the turn
   axisRatio: 1.35,     // and it has to dominate by this much. Stops a strafe
@@ -180,16 +206,20 @@ const T = {
 
   // --- corner behaviour ----------------------------------------------------
   // Mid-swing the lens is on a diagonal, which in a grid of gondolas means it
-  // is over a shelf with a shelf between it and the cop. Pulling the dolly in
-  // and lifting during the swing fixes both: shorter arc, and the sightline
-  // clears the run. Falls back out as the swing settles.
+  // is over a shelf run with another shelf run between it and the cop. Pulling
+  // the dolly in and lifting during the swing addresses both: shorter arc, and
+  // the sightline clears the run. Reasoned, not swept — but the corner frame
+  // (shots/cam_r1_corner.png, caught at 65% through the swing) has the cop clear
+  // and no shelf in the lens, so it is at least not wrong.
   swingDolly: 0.30, swingLift: 0.42,
 
   // --- over the shoulder ---------------------------------------------------
   // Round 1's first render was otherwise right and unplayable: dead centre in a
   // 4 m aisle, the cop's own back sits exactly on the vanishing point, which is
   // exactly where a man you are chasing down that aisle appears. Measured on
-  // that shot the thief at 7.3 m was behind the cop's head.
+  // that shot (shots/cam_probe.png) the thief at 7.3 m was behind the cop's
+  // head, and projectFromCop put the cop's chest at screen x 640.0 of 1280 —
+  // dead centre to a tenth of a pixel.
   // `shoulder` dollies the lens sideways — EYE AND AIM BY THE SAME AMOUNT, so
   // the shot stays square to the aisle and `yaw` stays exactly the corridor
   // bearing; only the parallax changes. Separation between a cop at 5.6 m and a
@@ -212,14 +242,14 @@ const T = {
   // rules out. And it needs the sign's z planes, i.e. a fourth private copy of
   // store.js's floor plan.
   //
-  // Slide instead. A sign is only 1.86 m wide on a 4 m aisle, so 1.20 m off the
-  // centreline clears the panel, its rail and its two hangers with room to
-  // spare, and needs NO z knowledge at all — only that a sign hangs over the
-  // middle of an aisle, which is what makes it a sign. It rides `height`, so the
-  // camera cranes out sideways as it rises and back in as it settles: one
-  // horizontal move instead of four vertical ones. It also widens the shoulder
-  // parallax exactly when the gap is widest, which is when you most need to see
-  // past the man's back.
+  // Slide instead. A sign is only 1.86 m wide on a 4 m aisle, so going wide of
+  // the centreline clears the panel, its rail and its two hangers, and needs NO
+  // z knowledge at all — only that a sign hangs over the middle of an aisle,
+  // which is what makes it a sign. It rides `height`, so the camera cranes out
+  // sideways as it rises and back in as it settles: one horizontal move instead
+  // of four vertical ones. It also widens the shoulder parallax exactly when the
+  // gap is widest, which is when you most need to see past the man's back.
+  //
   // 1.20 m is what it takes to MISS a sign, and missing it is not enough: it
   // leaves the panel edge 0.21 m off the lens, and a 1.86 x 1.64 m board at
   // 0.21 m is most of the screen. shots/cam_sw_clear120.png is that frame. 1.72

@@ -264,9 +264,40 @@
    "updated": 1787499089.461258,
    "note": "ROOT CAUSE: the neck sat at hips-local 0.60 while the torso capsule's top cap was at 0.71, with a head sphere of radius 0.135 - so 96% of every head in the game was INSIDE its own torso. What poked out was a 25mm skullcap, the hair hemisphere covered that, and on the cop the cap covered the hair. 'He's just kinda black, he doesn't have a face' was literally true: there was no head above the shoulders to put a face on. Feet also ended 85mm above the floor, so everyone was hovering. Three more bugs: every taper() in the file was inverted (thighs flaring at the knee, forearms fattest at the wrist), an atlas material without a UV cell gave him a white apron reading CHOP across his stomach, and flat plates on a curved chest needed pitch and yaw not just z.",
    "verdict": "PASS. Reads at both scales: verified at the game's own rig (7m) and rendered at 214x120, one monitor feed's real budget, where the light-torso-over-dark-legs three-band silhouette still reads as a person at ~8px tall. Chase bench byte-identical: competent 74.7% / med 5.83s / <1s 14.3%, naive 35.3%, camper 21.3%. lungCheck passes."
+  },
+  "audio": {
+   "round": 2,
+   "state": "passed",
+   "shots": [
+    {
+     "round": 2,
+     "path": "../shots/audio_r2_floor.png",
+     "t": 1787499471.393107
+    }
+   ],
+   "gaps": [],
+   "updated": 1787499641.854621,
+   "note": "Four written tunes as note data (Checkout Lane Three, Eleven Items Or Fewer, Frozen Foods, Produce (Waltz)), 32-bar AABA played twice with an ornamented reprise, voice-led Rhodes comping. Ceiling speaker modelled as an 8-inch coax: bass fundamental down 12dB while its 2nd and 3rd harmonics are not, so the ear reconstructs the missing fundamental - which is what actually happens in a store. The score IS the tape: pa.setIntensity() pushes drums/bass/comp at bar lines only. Proof it works - under a chase the strongest self-similarity moves from 11.75s (the phrase) to 1.25s (the bar), the mathematical signature of ceasing to hear the melody and starting to hear the beat. Lungs rebuilt as PAIRS after the first pass fused them: setTargetAtTime with tau 0.05 takes 0.2s to reach silence, so two huffs became one 0.9s rasp.",
+   "verdict": "PASS on the music note. Round 1 HAD music and it was inaudible - measured: PA soloed at -38.8 dBFS RMS against an ambience bed at -34.1, i.e. five decibels UNDER the air conditioning, with 70.4% of its energy in one octave at 2kHz and 0.0% below 180Hz. Now -29.5 dBFS spread properly across 90-2800Hz."
   }
  },
  "log": [
+  {
+   "t": 1787499641.854623,
+   "piece": "audio",
+   "role": "builder",
+   "round": 2,
+   "state": "passed",
+   "text": "Four written tunes as note data (Checkout Lane Three, Eleven Items Or Fewer, Frozen Foods, Produce (Waltz)), 32-bar AABA played twice with an ornamented reprise, voice-led Rhodes comping. Ceiling speaker modelled as an 8-inch coax: bass fundamental down 12dB while its 2nd and 3rd harmonics are not, so the ear reconstructs the missing fundamental - which is what actually happens in a store. The score IS the tape: pa.setIntensity() pushes drums/bass/comp at bar lines only. Proof it works - under a chase the strongest self-similarity moves from 11.75s (the phrase) to 1.25s (the bar), the mathematical signature of ceasing to hear the melody and starting to hear the beat. Lungs rebuilt as PAIRS after the first pass fused them: setTargetAtTime with tau 0.05 takes 0.2s to reach silence, so two huffs became one 0.9s rasp."
+  },
+  {
+   "t": 1787499471.393107,
+   "piece": "audio",
+   "role": "builder",
+   "round": 2,
+   "state": "building",
+   "text": "music: new src/audio/muzak.js \u2014 four written easy-listening tunes (AABA, voice-led Rhodes comp, real bass, drum machine, sax/vibes/guitar/epiano leads, 4 grooves) played out of the ceiling PA; new 8-inch can model (HP 125/150, LP 8.2k/11k) so the bass line survives. PA solo went -38.8 -> -29.5 dBFS RMS and 70%-in-one-octave -> a real music spectrum. Chase = the tape leaning on it: drums +, bass 8ths, melody back, +4% tempo, reverb send -22% (pulse strength 0.46->0.61, 90->93bpm). Lungs rebuilt as PAIRED huff-huff off cop.userData.fatigue with a dedicated RELIEF breath on the way out of winded. Bed: cart traffic, stocking, chilled air curtain, back room, road through the front glass. 55s loop test passes (no candidate buffer period above background)."
+  },
   {
    "t": 1787499446.944248,
    "piece": "cctv",
@@ -748,5 +779,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787499446.94425
+ "updated": 1787499641.854625
 }

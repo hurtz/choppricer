@@ -24,6 +24,20 @@ for p in sys.argv[1:]:
     print(f"\n{p}")
     print(f"  peak {20*math.log10(pk+1e-12):6.2f} dBFS   rms {20*math.log10(rms+1e-12):6.2f} dBFS"
           f"   crest {20*math.log10(pk/(rms+1e-12)):5.2f} dB   pinned {flat*100:.2f}%")
+    # Spectral flatness, FULL BAND and AUDIBLE BAND. audioprobe.py reports the
+    # first; the gap between them is a property of the metric, not of the audio.
+    # An rfft at 48 kHz puts 8192 of its 32769 bins above 18 kHz — a quarter of
+    # the whole measurement, in a band nobody can hear — and because flatness is
+    # a geometric mean it is dominated by whatever is quietest. Round 2's bed
+    # measured 0.032 full-band and 0.110 below 16 kHz: the SAME AUDIO, inside
+    # the target range or a long way outside it depending only on whether the
+    # metric counts ultrasound. Filling that hole with inaudible hiss would
+    # "pass" and change nothing anyone can hear, which is precisely how
+    # edgedensity.py climbed 14 points without the blind test moving.
+    def sflat(pp):
+        return float(np.exp(np.mean(np.log(pp + 1e-30))) / (np.mean(pp) + 1e-30))
+    print(f"  flatness  full band {sflat(P):.4f}   below 16 kHz {sflat(P[f < 16000]):.4f}"
+          f"   (target 0.10-0.62; the gap is the metric, not the mix)")
     row=""
     for lo,hi in BANDS:
         e=P[(f>=lo)&(f<hi)].sum()/tot
