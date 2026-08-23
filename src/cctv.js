@@ -30,6 +30,21 @@
 //   cycleTrack()    step the spot monitor's auto-track onto the next subject
 //   tracks          the motion detector's live blobs (see cctv/track.js)
 //   detector        the detector itself, for critics and the harness
+//   warpFloor(p)    THE GRADE'S GEOMETRY, PUBLISHED — round 5. The floor view
+//                   is a screen-space post-process over a pinhole render, and
+//                   one term in it (the barrel in GradeShader) MOVES PIXELS: up
+//                   to 31 px at 1280x720, 1.1248x magnification at the centre,
+//                   zero at the corners. So a marker drawn where camera.js's
+//                   projectFromCop puts it is NOT where that world point appears
+//                   on screen. Feed the projection through this and it is:
+//                       warpFloor(projectFromCop(cop, x, 1.75, z))
+//                   Same {x,y,behind} shape in and out, 1280x720 design space,
+//                   top-left origin, nothing mutated, `behind` passed through.
+//                   Also unwarpFloor (screen -> pinhole, for picking),
+//                   floorMagAt (local magnification, for sizing a marker) and
+//                   floorLens (the live {k,w,h,aspect}). All four are re-exports
+//                   of src/cctv/warp.js, which is the ONLY JS definition of this
+//                   map — cctv.js's own analytics boxes go through it too.
 //   channelsFor(x,z,h)             which channels can ACTUALLY see that point,
 //                   nearest first — frustum plus line of sight through the
 //                   store's colliders. Offered to builder-game to replace the
@@ -86,6 +101,9 @@ import {
   makeCanvas, paintFurniture, paintFloorBurnIn, paintDeadCards,
   paintThumbOsd, paintSpotOsd,
 } from './cctv/overlay.js';
+import {
+  setFloorLens, floorLens, warpFloor, unwarpFloor, floorMagAt,
+} from './cctv/warp.js';
 
 // The wall is AUTHORED in 1280x720 design space and only ever drawn in it. Every
 // slot rect, every tile rect, and all three overlay canvases are design pixels;
@@ -540,6 +558,12 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   }
 
   const tintV = new THREE.Vector3();
+  // The one line that keeps cctv/warp.js honest. The floor grade's barrel and
+  // the render size are both live — setParams can dial the first, resize the
+  // second — so the published map is re-bound from the same two values the
+  // shader is about to be handed, never from a constant sitting next to it.
+  function syncFloorLens() { setFloorLens(params.floor.barrel, W, H); }
+
   function applyGrade(p, ch, res, seed, time, glitchY, over) {
     const u = gradeMat.uniforms;
     const o = over || {};
@@ -868,7 +892,17 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       return lock;
     },
 
-    setParams(view, patch) { Object.assign(params[view] || {}, patch || {}); },
+    setParams(view, patch) {
+      Object.assign(params[view] || {}, patch || {});
+      syncFloorLens();
+    },
+
+    // ---- THE GRADE'S GEOMETRY, FOR WHOEVER DRAWS OVER THE PICTURE ---------
+    // See src/cctv/warp.js. These are the same three functions the module
+    // exports, re-published on the instance for anyone holding `cctv` rather
+    // than importing. Both routes read the SAME live lens; there is no second
+    // copy of the map anywhere in JS.
+    warpFloor, unwarpFloor, floorMagAt, floorLens,
 
     setActiveCam(i) {
       const n = cams.length || 1;
@@ -889,6 +923,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       if (!w || !h || (w === W && h === H)) return;
       W = w; H = h;
       floorRaw.setSize(Math.round(W * FLOOR_SS), Math.round(H * FLOOR_SS));
+      syncFloorLens();
     },
 
     renderWall(dt) {
@@ -963,6 +998,10 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       renderer.render(scene, camera);
 
       applyGrade(params.floor, null, [W, H], floorFrames * 0.6180339, tFloor, -1);
+      // Publish this frame's lens BEFORE anyone draws over the picture. main.js
+      // runs renderFloor and then game.render(), so the HUD's warpFloor calls
+      // are always reading the barrel that graded the frame they are landing on.
+      syncFloorLens();
       gradeMat.uniforms.tDiffuse.value = floorRaw.texture;
       renderer.setRenderTarget(null);
       gradeQuad.render(renderer);
@@ -999,6 +1038,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   }
 
   snapSpot();
+  syncFloorLens();          // correct from construction, not from frame two
   api.setActiveCam(0);
   return api;
 }

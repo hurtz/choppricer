@@ -109,6 +109,16 @@ void main() {
   // --- 2. barrel / fisheye --------------------------------------------------
   // Normalised so the corners stay pinned: the centre magnifies instead of the
   // frame shrinking, which is what a wide lens on a small sensor actually does.
+  //
+  // ###  THIS IS THE ONLY BLOCK IN THE GRADE THAT MOVES A PIXEL.  ###
+  // Its inverse is PUBLISHED as warpFloor() in src/cctv/warp.js, and
+  // src/game/hud.js draws every world-locked marker on the on-foot view through
+  // it - bracket, door tag, chevron. cctv.js's own analytics boxes go through
+  // the same map (unbarrel -> boxOf). Change these four lines and warp.js is
+  // wrong in the same commit, and the brackets come off the men again. Measured
+  // at k=0.12, 16:9: centre magnifies 1.1248x, worst displacement 31 px at ~0.6
+  // of the corner radius, zero at the corners.
+  // (No backticks in here, ever: this whole shader is a JS template literal.)
   vec2 c = (uv - 0.5) * vec2(uAspect, 1.0);
   float r2 = dot(c, c);
   float rmax = 0.25 * uAspect * uAspect + 0.25;

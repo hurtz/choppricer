@@ -14,6 +14,21 @@ export const W = 1280, H = 720;
 // calls projectFromCop itself — so import it, then re-export the binding.
 import { projectFromCop } from '../camera.js';
 export { projectFromCop };
+// ...AND THE LENS THE GRADE PUTS IN FRONT OF IT (round 8, cctv's contract).
+// projectFromCop is a PINHOLE projection and it is correct for the raw render.
+// It is not correct for what the player is looking at: cctv.js's floor grade
+// ends in a barrel/fisheye that MOVES PIXELS — zero at the centre, ~31 px at
+// about 0.6 of the corner radius, back to zero at the corners — so a marker
+// drawn at the pinhole pixel sits beside the man rather than on him, and does
+// so worst exactly where a mid-glance subject is. Same class of bug as the
+// hand-copied camera rig this file used to carry, and it survived four rounds
+// for the same reason: it is only ever a few pixels wrong in the middle of the
+// frame, which is where you look when you are checking.
+//
+// One definition of the map, owned by the file that owns the shader. Never
+// re-derive it here; if the barrel changes, warp.js changes with it in the same
+// commit and this file is correct for free.
+import { warpFloor, floorMagAt } from '../cctv/warp.js';
 const MONO = 'ui-monospace, SFMono-Regular, Menlo, "DejaVu Sans Mono", monospace';
 
 export const AMB = '#ffb43a';
@@ -359,20 +374,58 @@ export function createHUD(hudEl) {
       const dest = sel.where || `AISLE ${sel.aisle + 1}`;
       tx('▶ DISPATCH', dx + 8 + bw / 2, by + 41, { s: 15, w: 'bold', c: '#07100a', a: 'center', ls: 1.4 });
       tx(dest, dx + 8 + bw / 2, by + 57, { s: 13, w: 'bold', c: '#07100a', a: 'center', ls: 1.2, max: bw - 12 });
-      holdBtn(G, dx + 230, by + 22, dw - 238, 40);
       // The discovery affordance, and the reason it is conditional. A player who
       // has declined the microphone gets '[F] PA' — today's game, today's key,
       // and no reminder of a thing he already said no to.
-      tx((G.hold && G.hold.can) ? '[SPACE] DISPATCH   [F] HOLD TO TALK   [C] TRACK'
-        : '[SPACE] DISPATCH   [F] PA   [C] TRACK', dx + 12, by + 78, { s: 11, c: DIM });
+      tx(paHint(G, '[SPACE] DISPATCH   '), dx + 12, by + 78, { s: 11, c: DIM, max: dw - 24 });
     } else {
-      tx('SELECT A SUBJECT ROW', dx + 12, by + 42, { s: 14, w: 'bold', c: '#6f8a77' });
+      tx('SELECT A SUBJECT ROW', dx + 12, by + 42, { s: 14, w: 'bold', c: '#6f8a77', max: 212 });
       // [1]-[8] was wrong from the frame config.js added CAM 09, and [TAB] was
       // never bound to anything. Derive the range; name the keys that exist.
-      tx(`CLICK A MONITOR OR PRESS [1]-[${G.cams.length}]`, dx + 12, by + 62, { s: 11, c: '#5d7364' });
-      tx('[↑/↓] ROSTER   [C] TRACK NEXT SUBJECT', dx + 12, by + 78, { s: 11, c: '#5d7364' });
+      // ROUND 8 shortened it: the PA button is drawn on this branch now too, so
+      // this row has 212 px instead of the whole panel, and the old wording
+      // ellipsed at "PRESS [1…", which names no key at all.
+      tx(`[1]-[${G.cams.length}] OR CLICK A MONITOR`, dx + 12, by + 62, { s: 11, c: '#5d7364', max: 212 });
+      tx(paHint(G, '[↑/↓] ROSTER   '), dx + 12, by + 78, { s: 11, c: '#5d7364', max: dw - 24 });
     }
+    // ---- ROUND 8: THE PA BUTTON LIVES OUTSIDE THE `if (can)` -----------------
+    // It used to be drawn inside the branch above, i.e. ONLY WHEN A SUBJECT ROW
+    // WAS SELECTED. Press [F] with nothing selected — which game.js explicitly
+    // supports and calls "both correct and funnier", because a PA is a
+    // microphone — and the channel opened, audio.js took the capture device,
+    // the browser lit its recording dot, and there was NOTHING WHATSOEVER on
+    // screen about it. No button, no ON AIR, no level meter. That is the most
+    // literal available reading of the client's "it looks like it's recording,
+    // but it doesn't do anything", and it was mine.
+    //
+    // One handset, one readout, drawn on every frame the desk is up. What it
+    // says varies; whether it is there does not.
+    holdBtn(G, dx + 230, by + 22, dw - 238, 40);
     burnIn();
+  }
+
+  // The key hint for [F], which now has to describe TWO clocks rather than one.
+  // The microphone is always live and the ANNOUNCEMENT recharges, so the hint
+  // names whichever half is the interesting one right now — and when the
+  // announcement is recharging it prints the actual number, because a key that
+  // silently does less than it did four seconds ago is the round-8 bug in
+  // miniature. A player who declined the microphone never sees TALK at all.
+  //
+  // The COUNT is not in here, deliberately — it is on the button, two rows up,
+  // where a number belongs and where it already has a drain bar under it. This
+  // line has about 45 monospace characters before it collides with the panel
+  // edge (the round-6 note above records what happened the last time it did),
+  // and the thing worth spending them on is not the digits. It is the word
+  // ONLY: the key still works, it just will not make an announcement yet.
+  function paHint(G, lead) {
+    const H2 = G.hold || {};
+    const tail = '   [C] TRACK';
+    const mic = H2.can;
+    if (H2.talk) return `${lead}[F] ON AIR${tail}`;
+    if (H2.on && !H2.live && (H2.cool || 0) > 0) {
+      return `${lead}[F] ${mic ? 'TALK ONLY' : 'PA — WAIT'}${tail}`;
+    }
+    return `${lead}[F] ${mic ? 'HOLD TO TALK' : 'PA'}${tail}`;
   }
 
   // The one power this job actually confers. Ready / counting down / live.
@@ -380,7 +433,15 @@ export function createHUD(hudEl) {
     const H2 = G.hold || {};
     if (!H2.on) return;
     const live = H2.live, cool = H2.cool || 0;
-    const ready = !live && cool <= 0;
+    // ROUND 8 — TWO CLOCKS, AND THE BUTTON HAS TO STOP CONFLATING THEM.
+    // `charged` is the handset's recharge; `armed` additionally means there is a
+    // roster row for an announcement to go to. Round 7 drew one `ready` off the
+    // recharge alone, and because the whole button was hidden without a
+    // selection the difference never showed. It shows now: the button is always
+    // up, so it has to be honest about which of the two is missing.
+    const charged = !live && cool <= 0;
+    const armed = charged && H2.ann !== false;
+    const ready = armed;
     // ROUND 7 — THE CHANNEL IS OPEN AND THAT HAS TO BE UNMISTAKABLE.
     // An open microphone is the one piece of state in this game that exists
     // outside the game, so it gets the treatment a real desk gives it: the
@@ -392,11 +453,17 @@ export function createHUD(hudEl) {
     const air = !!H2.talk;
     const RED_AIR = '#ff4a3a';
     ctx.fillStyle = air ? 'rgba(255,74,58,0.24)'
-      : live ? 'rgba(255,227,106,0.22)' : ready ? 'rgba(255,180,58,0.14)' : 'rgba(255,255,255,0.05)';
+      : live ? 'rgba(255,227,106,0.22)' : armed ? 'rgba(255,180,58,0.14)'
+      : charged ? 'rgba(125,253,160,0.07)' : 'rgba(255,255,255,0.05)';
     ctx.fillRect(x, y, w, h);
-    box(x, y, w, h, air ? RED_AIR : live ? '#ffe36a' : ready ? AMB : '#3c4a40', air ? 2 : 1);
+    box(x, y, w, h, air ? RED_AIR : live ? '#ffe36a' : armed ? AMB
+      : charged ? GRN_D : '#3c4a40', air ? 2 : 1);
+    // Only the ARMED button is a button. A charged handset with nothing selected
+    // is a readout — clicking it would call callHold(), which correctly refuses,
+    // and a control that refuses a click is the thing this round is fixing.
     if (ready) reg('hold', x, y, w, h, 1);
-    const c = air ? RED_AIR : live ? '#ffe36a' : ready ? AMB : '#5d7364';
+    const c = air ? RED_AIR : live ? '#ffe36a' : armed ? AMB
+      : charged ? DIM : '#5d7364';
     if (air) {
       // blinking ON AIR pip, the way every studio on earth does it
       const blink = (G.now % 0.9) < 0.55;
@@ -419,9 +486,22 @@ export function createHUD(hudEl) {
       return;
     }
     tx('PA', x + w / 2, y + 17, { s: 12, w: 'bold', c, a: 'center', ls: 1.6 });
-    tx(live ? 'HOLDING' : ready ? 'PRICE CHK' : `${Math.ceil(cool)}s`,
-      x + w / 2, y + 32, { s: 11, w: 'bold', c, a: 'center', max: w - 6 });
-    if (!ready && !live && H2.max) {                     // cooldown drains left to right
+    // ROUND 8 — FOUR STATES, AND THE TWO NEW ONES ARE THE POINT. `MIC ONLY` is
+    // a charged handset with no roster row to announce at: the key works, the
+    // channel opens, and there is simply nobody selected to stall. `RECHARGING`
+    // over the count is there because a bare `3s` never said 3 s of WHAT — and
+    // the answer used to be "of your microphone", which was the bug.
+    // The COUNT is the one thing on this button a player has to be able to read,
+    // because it is the answer to "why did nothing happen". Everything else in
+    // the recharging state is deliberately grey — the button is unavailable and
+    // should look it — but the number itself is warmed off that grey, or the
+    // state reads as DISABLED rather than as COMING BACK. Those are different
+    // sentences and only one of them is true.
+    const cc = (!charged && !live) ? '#c08a3e' : c;
+    tx(live ? 'HOLDING' : armed ? 'PRICE CHK' : charged ? 'MIC ONLY' : `${Math.ceil(cool)}s`,
+      x + w / 2, y + 32, { s: 11, w: 'bold', c: cc, a: 'center', max: w - 6 });
+    if (!charged && !live && H2.max) {                   // cooldown drains left to right
+      tx('RECHARGING', x + w / 2, y + h - 5, { s: 8, c: '#6b7d70', a: 'center', ls: 0.8 });
       ctx.fillStyle = 'rgba(255,180,58,0.35)';
       ctx.fillRect(x, y + h - 3, w * (1 - cool / H2.max), 3);
     }
@@ -439,18 +519,38 @@ export function createHUD(hudEl) {
     const f = G.floor;
     // objective / subject marker, projected onto the world
     if (f && f.target && f.target.state !== 'gone' && G.cop) {
-      const p = projectFromCop(G.cop, f.target.x, 1.75, f.target.z);
+      // Pinhole first, then through the grade's lens. Both are needed: `raw` is
+      // where the marker's SIZE heuristic is evaluated, `p` is where it is
+      // drawn. Everything downstream of here reads the warped point — including
+      // the off-screen test, because warp.js is explicit that the map pushes
+      // content off the frame at the edge midlines (raw x=1280 lands at 1295),
+      // so testing the pinhole would call a man on screen who is not.
+      const raw = projectFromCop(G.cop, f.target.x, 1.75, f.target.z);
+      const p = warpFloor(raw);
       const d = Math.hypot(f.target.x - G.cop.x, f.target.z - G.cop.z);
-      const cl = { x: Math.max(40, Math.min(W - 40, p.x)), y: Math.max(96, Math.min(560, p.y)) };
       const off = p.behind || p.x < 26 || p.x > W - 26;
+      // ROUND 8: the off-screen cluster is pulled further inboard than the
+      // round-1 clamp put it. That clamp centred a ~90 px subject label 40 px
+      // from the edge, i.e. with half of it off canvas — survivable while the
+      // marker was a 26 px bracket and nothing else was competing for the edge,
+      // and not survivable now that the chevron below wants the edge itself.
+      const edge = off ? 104 : 40;
+      const cl = { x: Math.max(edge, Math.min(W - edge, p.x)), y: Math.max(96, Math.min(560, p.y)) };
       // Orange brackets = he has broken for the rear. The cue that a man has
       // turned round belongs ON the man, not in a panel the player is not
       // looking at while chasing one.
       const c = f.target.state === 'flee' ? (f.viaBack ? '#ff7a2e' : RED)
         : (f.confronted ? '#8fa8ff' : AMB);
       ctx.strokeStyle = c; ctx.lineWidth = 2;
-      const bw = off ? 26 : Math.max(26, Math.min(150, 380 / Math.max(1.2, d))) ;
-      const bh2 = bw * 1.9;
+      // The bracket is a one-point marker with a size heuristic, which is the
+      // exact case warp.js publishes floorMagAt for: the lens does not scale a
+      // small square evenly, so the box round a man 2 m away at the centre of
+      // frame is 1.12x the box round the same man at the corner. Width takes
+      // the tangential factor and height the radial one, per its note.
+      const mag = off ? { tangential: 1, radial: 1 } : floorMagAt(raw.x, raw.y);
+      const bw0 = off ? 26 : Math.max(26, Math.min(150, 380 / Math.max(1.2, d)));
+      const bw = bw0 * mag.tangential;
+      const bh2 = bw0 * 1.9 * mag.radial;
       [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sy]) => {
         const px = cl.x + sx * bw / 2, py = cl.y + sy * bh2 / 2;
         ctx.beginPath(); ctx.moveTo(px - sx * bw * 0.28, py); ctx.lineTo(px, py);
@@ -463,6 +563,44 @@ export function createHUD(hudEl) {
       const zone = f.where || `AISLE ${f.aisle + 1}`;
       const who = f.target.code || zone;
       const lbl = off ? (p.x < W / 2 ? '◀ ' : '') + who : who;
+      // ---- ROUND 8: OFF-SCREEN IS A DIFFERENT PROBLEM NOW ------------------
+      // Round 1's off-screen treatment was a 26 px bracket with an arrow glyph
+      // in its label, and it was sized for a camera that could not be turned.
+      // With 110 degrees of mouse look the player can now put the subject off
+      // frame with his wrist, and the thing he has lost is not the man — it is
+      // which way round he is. So the edge marker is a real chevron, big enough
+      // to be caught in peripheral vision, and when the head is meaningfully
+      // deflected it says so, because "I cannot see him" and "my head is turned
+      // 70 degrees" are the same fact and the player has no other way to
+      // connect them mid-glance.
+      if (off) {
+        const left = p.x < W / 2;
+        const ex = left ? 24 : W - 24;
+        const tip = left ? ex - 13 : ex + 13, base = left ? ex + 13 : ex - 13;
+        const pulse = 0.55 + 0.45 * Math.sin(G.now * 6);
+        ctx.globalAlpha = pulse;
+        ctx.fillStyle = c;
+        ctx.beginPath();
+        ctx.moveTo(tip, cl.y);
+        ctx.lineTo(base, cl.y - 20);
+        ctx.lineTo(base, cl.y + 20);
+        ctx.closePath(); ctx.fill();
+        ctx.globalAlpha = 1;
+        // ...and whether his head is why. "I cannot see him" and "I am looking
+        // seventy degrees off my own course" are one fact, and mid-chase the
+        // player has no way to put the two together — the view simply does not
+        // contain the man any more. Only past a third of the budget, because
+        // under that the glance is not what lost him and saying so would be
+        // blaming the mouse for a wall.
+        const LK = G.look;
+        if (LK) {
+          const dg = Math.round(Math.abs(LK.yaw * 180 / Math.PI));
+          if (dg > Math.max(1, LK.max * 180 / Math.PI) * 0.33) {
+            tx(`HEAD ${dg}°`, left ? ex - 14 : ex + 14, cl.y + 38,
+              { s: 10, w: 'bold', c: '#ff9a2e', a: left ? 'left' : 'right', ls: 0.6 });
+          }
+        }
+      }
       const lw = lbl.length * 8 + 18;
       ctx.fillStyle = 'rgba(3,7,4,0.85)'; ctx.fillRect(cl.x - lw / 2, cl.y - bh2 / 2 - 24, lw, 18);
       box(cl.x - lw / 2, cl.y - bh2 / 2 - 24, lw, 18, c);
@@ -485,7 +623,11 @@ export function createHUD(hudEl) {
       dr.all.forEach((e, i) => {
         const his = i === dr.i;
         if (!his && dr.sure) return;
-        const p = projectFromCop(G.cop, e.x, 2.62, e.z);
+        // Through the lens, same as the brackets. These land forty metres away
+        // on the front wall, i.e. usually near the middle of frame where the
+        // barrel's displacement is smallest — which is why the door tags never
+        // looked obviously wrong and the subject brackets did.
+        const p = warpFloor(projectFromCop(G.cop, e.x, 2.62, e.z));
         const off = p.behind || p.x < 60 || p.x > W - 60;
         const cx = Math.max(56, Math.min(W - 56, p.x));
         const cy = Math.max(92, Math.min(524, p.y));
@@ -771,8 +913,143 @@ export function createHUD(hudEl) {
       }
       ctx.globalAlpha = 1;
     }
+    // 80 high, not 84: the ticker's backing plate starts at y=688 and the
+    // panel's bottom border was landing inside it.
+    paFloor(G, f, 492, 606, 498, 80);
+    lookGauge(G, 996, 62, 274, 50);
     ticker(G, 500, 700, 480, true);
     burnIn();
+  }
+
+  // ==========================================================================
+  // ROUND 8 — THE HANDSET, ON THE FLOOR
+  // ==========================================================================
+  // There was no PA readout on this screen at all, because until this round
+  // there was no PA on this screen: [F] was gated on `mode === 'desk'`. It is
+  // not any more — a man who has walked into the aisle and can see what the
+  // subject's hands are doing is the man with something to say — so the state
+  // has to be visible here for the same reason it has to be visible at the
+  // desk. An open microphone with nothing on screen is the client's complaint.
+  //
+  // ALWAYS DRAWN, in all three of its states, which is the actual lesson of
+  // this round: the desk button was hidden whenever no subject was selected and
+  // that is how a live capture device ended up with no pixels anywhere.
+  function paFloor(G, f, x, y, w, h) {
+    if (!f) return;
+    const H2 = G.hold || {};
+    const air = !!H2.talk;
+    const RED_AIR = '#ff4a3a';
+    const a = f.annAt;
+    const held = a && !a.out;                 // keyed, and he has not reacted yet
+    const acc = air ? RED_AIR : a ? (a.out === 'heed' ? GRN : AMB) : '#4d5f52';
+    panel(x, y, w, h, 'PA HANDSET', { accent: acc, line: air ? RED_D : LINE });
+
+    // Line 1 — WHO, or ON AIR. The two can be true together: keying the handset
+    // fires the announcement and opens the channel on the same keydown.
+    if (air) {
+      const blink = (G.now % 0.9) < 0.55;
+      ctx.fillStyle = blink ? RED_AIR : 'rgba(255,74,58,0.35)';
+      ctx.beginPath(); ctx.arc(x + 20, y + 34, 5, 0, 7); ctx.fill();
+      tx('ON AIR', x + 34, y + 39, { s: 16, w: 'bold', c: RED_AIR, ls: 1.8 });
+      // The level meter is the only proof the player has that the store can
+      // hear him. It is worth more than any label on this panel.
+      const mx = x + 130, mw = w - 200, cells = 16;
+      const lit = Math.round(clampN(H2.talkLevel || 0, 0, 1) * cells);
+      for (let i = 0; i < cells; i++) {
+        const cw = mw / cells;
+        ctx.fillStyle = i < lit
+          ? (i > cells - 4 ? RED_AIR : i > cells - 8 ? '#ffb43a' : '#7fe0a0')
+          : 'rgba(255,255,255,0.09)';
+        ctx.fillRect(mx + i * cw, y + 26, cw - 2, 16);
+      }
+      tx(`${(H2.talkFor || 0).toFixed(1)}s`, x + w - 14, y + 39,
+        { s: 13, w: 'bold', c: 'rgba(255,138,124,0.85)', a: 'right' });
+    } else {
+      tx(a ? a.label : (f.paLabel || 'PA'), x + 14, y + 39,
+        { s: 15, w: 'bold', c: a ? AMB : (f.paAim ? AMB : DIM), ls: 1, max: w - 28 });
+    }
+
+    // Line 2 — WHAT HE DID, and it is allowed to say "nothing yet".
+    //
+    // THE WAIT STATE IS NOT A GAP TO BE FILLED. agents.js rolls the reaction
+    // 0.35-0.95 s after the handset is keyed and delivers it through
+    // onAnnounce, explicitly so that no HUD line can get ahead of the picture.
+    // The honest readout for that second is that he has not reacted yet, and
+    // anything cleverer here — a prediction, an optimistic label, a probability
+    // — would be this file quietly answering a question the whole mechanic is
+    // built to make the player answer with his eyes.
+    if (a) {
+      const oc = a.out === 'heed' ? GRN : a.out === 'shrug' ? AMB : DIM;
+      const dots = held ? '.'.repeat(1 + (Math.floor(G.now * 3) % 3)) : '';
+      tx((a.line || '') + dots, x + 14, y + 62, { s: 13, w: 'bold', c: oc, ls: 0.8, max: w - 150 });
+      // ...AND EVERYBODY ELSE. The footnote is on the panel every single time,
+      // because it is the sentence that stops this being a guilt scanner: you
+      // did not speak to him, you spoke to the shop, and the four people who
+      // looked up are four people who looked up.
+      tx(a.sub || '', x + w - 14, y + 62, { s: 10, c: '#5d7364', a: 'right' });
+    } else {
+      // Idle. Name the key, and name the OTHER clock if it is running — agents
+      // owns the announcement cooldown out here, so this reads their number
+      // rather than a second copy of it. A key that says why it is unavailable
+      // is the entire fix this round is about.
+      const cd = !H2.pbReady && H2.pbIn > 0;
+      tx(cd ? `PA BUSY — ${H2.pbIn.toFixed(1)}s`
+        : H2.can ? '[F] HOLD TO TALK' : '[F] PA',
+        x + 14, y + 62, { s: 12, w: cd ? 'bold' : '', c: cd ? '#ff9a2e' : DIM, ls: 1 });
+      if (!cd && f.paAim) {
+        tx('SAYS IT OUT LOUD. EVERYONE HEARS IT.', x + w - 14, y + 62,
+          { s: 10, c: '#5d7364', a: 'right' });
+      }
+    }
+  }
+
+  // ==========================================================================
+  // ROUND 8 — WHICH WAY IS HE FACING (JOB 3)
+  // ==========================================================================
+  // camera.js landed 110 degrees of mouse look and main.js steers by `moveYaw`,
+  // so the head and the course have come apart deliberately: turning to look
+  // down a cross-aisle no longer changes where W walks you. That is the right
+  // decision and it introduces the one failure it implies — the player can now
+  // be walking one way and looking another, and the camera builder's standing
+  // caveat is that a thief who leaves your aisle is invisible about 89% of the
+  // time. Being turned the wrong way on top of that is disorienting rather than
+  // difficult, and disorienting is not a difficulty setting.
+  //
+  // So: a PAN readout, in the fiction the rest of this HUD is already in. Every
+  // dome in this store is a PTZ and every PTZ has one. Centre notch is the
+  // corridor — where your feet are going — and the tick is your head. It is
+  // drawn at all times rather than only when deflected, because a gauge that
+  // appears when you are already lost teaches nothing; this one is sitting
+  // there at zero, so the first time it moves the player knows what moved.
+  //
+  // NB the numbers are read off camera.js's live rig via game.js's G.look and
+  // nothing here re-derives them. This file has form on exactly that mistake —
+  // it used to carry its own hand-copied projection of a camera it did not own,
+  // correct only for as long as that camera never moved.
+  function lookGauge(G, x, y, w, h) {
+    const L2 = G.look;
+    if (!L2) return;                       // no camera to ask: round 7's HUD
+    const deg = L2.yaw * 180 / Math.PI;
+    const mag = Math.abs(deg);
+    const max = Math.max(1, L2.max * 180 / Math.PI);
+    // Amber past a third of the budget, red past two thirds. The thresholds are
+    // the point at which the aisle you walked in from has left the frame.
+    const c = mag > max * 0.66 ? '#ff9a2e' : mag > max * 0.33 ? AMB : DIM;
+    panel(x, y, w, h, 'PAN', { accent: mag > max * 0.33 ? c : '#4d5f52' });
+    const gx = x + 12, gw = w - 24, gy = y + 26, mid = gx + gw / 2;
+    // the sweep, with the corridor notched at dead centre
+    ctx.fillStyle = 'rgba(255,255,255,0.05)'; ctx.fillRect(gx, gy, gw, 12);
+    box(gx, gy, gw, 12, LINE);
+    ctx.fillStyle = 'rgba(125,253,160,0.35)'; ctx.fillRect(mid - 1, gy - 3, 2, 18);
+    // fill from the corridor out to where he is looking, so the deflection has
+    // a size and not just a position
+    const tick = mid + clampN(deg / max, -1, 1) * (gw / 2);
+    ctx.fillStyle = c;
+    ctx.fillRect(Math.min(mid, tick), gy + 3, Math.abs(tick - mid), 6);
+    ctx.fillRect(tick - 1.5, gy - 4, 3, 20);
+    tx('COURSE', mid, y + h - 4, { s: 8, c: '#4d5f52', a: 'center', ls: 0.6 });
+    tx(mag < 1 ? 'AHEAD' : `${Math.round(mag)}° ${deg < 0 ? 'LEFT' : 'RIGHT'}`,
+      x + w - 12, y + 20, { s: 12, w: 'bold', c, a: 'right', ls: 0.8 });
   }
 
   // --------------------------------------------------------------- WRITE-UP

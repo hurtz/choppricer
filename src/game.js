@@ -195,6 +195,35 @@ function postSpawn(p) {
 // duty cycle and a player who never leaves the desk can park a thief on a shelf
 // indefinitely. 12 s puts it at 43% and keeps the sentence honest — one
 // announcement every twelve seconds.
+//
+// MEASURED, both halves.
+//
+// The symptom, timed off bot.callHold() with the stall and the recharge sampled
+// at 10 Hz. The number the audio builder reported from the other side of the
+// wall was "roughly twelve seconds", and it is:
+//
+//                    stall ends   handset back   DEAD KEY
+//     cool 21 (r7)      9.0 s        20.9 s       11.9 s
+//     cool 12 (r8)      9.0 s        11.9 s        2.9 s
+//
+// and the microphone's own dead window goes to ZERO in both columns, because
+// that half is fixed by micReady() and not by this number at all.
+//
+// THE BALANCE HALF: 21 s was never load-bearing, and the clean way to see it is
+// that the recharge was not the binding constraint on either bench bot.
+// ./game/eval.js, 5 shifts x 240 s, seed 7717, cool 21 -> 12:
+//
+//     observer   32.3% -> 32.1% catch, 0/0 complaints/demotions, AND ZERO HOLDS
+//                IN BOTH RUNS — it never keys the PA, so this constant cannot
+//                reach it. The identity is exact, not approximate.
+//     random     31 -> 30 holds. Halve the recharge and the bot makes the same
+//                number of announcements, because its rate is set by its own
+//                dispatch cadence and not by the handset. Demotions 7 -> 7.
+//
+// Its catch rate swung 40.9% -> 25.0% on those unchanged 30 holds, which is the
+// noise floor at n=22-24 thieves rather than a result; the hold COUNT is the
+// number that would have had to move for this constant to be doing work, and it
+// did not move.
 const HOLD = { dur: 9.0, cool: 12.0, talkMax: 8.0 };
 // Seconds stood on the way out before the store remarks on it. See updateFloor.
 const QUIET_AT = 6.0;
@@ -874,7 +903,15 @@ export function createGame(hudEl, deps = {}) {
       // WHO it went to, and `heard` is the honest footnote: a loudspeaker is not
       // a laser and three other people in that aisle just looked up too. Saying
       // so out loud is what stops "somebody looked around" being worth anything.
-      f.annAt = { code: r.code, id: s.id, t: G.now, heard: res.heard | 0, out: null };
+      // Copy is composed here, not in hud.js — that file owns pixels and this
+      // one owns words, same as f.backLine and f.clearLine.
+      const heard = res.heard | 0;
+      f.annAt = {
+        code: r.code, id: s.id, t: G.now, heard, out: null,
+        label: L.fillS(L.PA_CHIP_AIM, r.code),
+        line: L.PA_CHIP_WAIT,
+        sub: heard ? L.fillN(L.PA_CHIP_HEARD, heard) : L.PA_CHIP_ALONE,
+      };
     }
     return true;
   }
@@ -1281,6 +1318,11 @@ export function createGame(hudEl, deps = {}) {
       } else if (d.t >= d.hold) f.dialogue = null;
     }
     if (f.stampT > 0) f.stampT -= dt;
+    // The announcement chip. It holds the aim from the moment you key the
+    // handset, through agents' 0.35-0.95 s reaction latency, to a beat after he
+    // has visibly done whatever he is going to do — then it goes, because a
+    // panel that stays up is a panel the player starts reading as state.
+    if (f.annAt && G.now - f.annAt.t > (f.annAt.out ? 2.8 : 4.5)) f.annAt = null;
 
     // prompt
     // ---- ROUND 7: BEING PUNISHED BY AN ABSENCE --------------------------
@@ -1314,6 +1356,15 @@ export function createGame(hudEl, deps = {}) {
     const quiet = f.postedFor > QUIET_AT && f.quietLine
       && f.tgtWhy !== 'chase' && f.tgtWhy !== 'subj';
 
+    // ROUND 8 — WHAT [F] WOULD DO IF YOU PRESSED IT, in words, every frame.
+    // The round-8 complaint was a key you had to press in order to find out it
+    // was dead. The cure is not only a shorter cooldown; it is a key that says
+    // what it is for before you touch it, and says who it is pointed at.
+    const pa = sh && !sh.caught && !sh.escaped && sh.mesh.visible
+      && !sh.bolted && sh.state !== 'react' && sh.state !== 'shove' ? sh : null;
+    f.paAim = pa ? recOf(pa).code : null;
+    f.paLabel = pa ? L.fillS(L.PA_AT, f.paAim) : L.PA_IDLE;
+
     f.prompt = '';
     f.promptQuiet = false;
     f.backOff = !!pending;
@@ -1343,6 +1394,7 @@ export function createGame(hudEl, deps = {}) {
     f.door = null; f.exitDist = 0; f.exitDist0 = 0; f.eta = 0;
     f.viaBack = false; f.backT = 0; f.dEma = null; f.doorI = null;
     f.dialogue = null; f.dialogueId = null;
+    f.annAt = null;               // the man you shouted at is not your business now
     f.prompt = L.STAND_DOWN;
   }
 
@@ -1440,7 +1492,7 @@ export function createGame(hudEl, deps = {}) {
       // two doors: which one he is running at, and how sure the box is
       door: null, doorI: null, dEma: null, eta: 0,
       viaBack: false, backT: 0, backSaid: false, closed: null,
-      postedFor: 0, quietLine: null,
+      postedFor: 0, quietLine: null, annAt: null,
       standDown: L.STAND_DOWN_DEST, backLine: L.VIA_BACK, backSub: L.VIA_BACK_SUB,
     };
     st.mode = 'floor';
@@ -1612,6 +1664,7 @@ export function createGame(hudEl, deps = {}) {
       if (!f || !f.annAt || f.annAt.id !== s.id) return;
       f.annAt.out = outcome;
       f.annAt.t = G.now;
+      f.annAt.line = outcome === 'heed' ? L.PA_CHIP_HEED : L.PA_CHIP_SHRUG;
       const r = recOf(s);
       const pool = outcome === 'heed' ? L.PA_HEED : L.PA_SHRUG;
       logLine(L.fillS(L.pick(pool), r.code));
@@ -1822,6 +1875,16 @@ export function createGame(hudEl, deps = {}) {
       else if (c === 'Space' || c === 'Enter') { dispatch(); ev.preventDefault(); }
     } else if (st.mode === 'floor') {
       if (c === 'KeyQ') { enterDesk(); ev.preventDefault(); }
+      // ROUND 8 — THE SAME HANDSET, OUT ON THE FLOOR. Two answers to the round-8
+      // question in one branch: the microphone opens (that is Job 1's answer —
+      // the mic was never a desk resource and gating it on one is what made the
+      // key look dead), and the announcement that rides out on it is the
+      // deterrence line at whoever the brackets are on, because on the floor
+      // you can see his hands and at the desk you cannot.
+      else if (c === 'KeyF') {
+        if (!ev.repeat) { talk.down = true; announce(); talkOpen(); }
+        ev.preventDefault();
+      }
     } else if (st.mode === 'writeup') {
       if (c === 'Space' || c === 'Enter') { wuAdvance(); ev.preventDefault(); }
     } else if (st.mode === 'demoted') {
@@ -1910,6 +1973,12 @@ export function createGame(hudEl, deps = {}) {
   // functions the real input handlers call, so a bench measures the real game.
   const bot = {
     selectCam, cycleSel, cycleTrack, dispatch, callHold, wuAdvance, restart,
+    // ROUND 8. `announce` is the floor's [F]; announceSubject reports who it
+    // WOULD go to without firing, so the bench can measure the aim separately
+    // from the roll.
+    announce, announceSubject,
+    get annReady() { return annReady(); },
+    get micReady() { return micReady(); },
     get pace() { return pace(); },
     select(id) { G.desk.sel = id; },
     scroll(d) { G.desk.scroll = clamp(G.desk.scroll + d, 0, Math.max(0, G.desk.rows - ROWS)); },

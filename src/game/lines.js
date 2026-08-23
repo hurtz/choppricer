@@ -300,9 +300,96 @@ export const BACK_OFF_OK = [
   'GUEST RELATIONS EVENT DE-ESCALATED — %S. NOT LOGGED.',
 ];
 
+// ================= ROUND 8: "HEY, PUT THAT BACK" =========================
+// Client: "If I see them doing something suspicious, I can go, 'Hey, put that
+// back,' and then they look around, like, 'What the fuck?' ... But if it's a
+// criminal doing it, they might reconsider, they might put it back, and then
+// just leave the store peacefully."
+//
+// THE WRITING PROBLEM IS THE WHOLE MECHANIC. Both populations produce both
+// visible outcomes on purpose — that is agents.js's anti-oracle guarantee and
+// it is worth more than any line in this file. Copy is the easiest place in the
+// project to give it away: one adjective that only fits a thief, one that only
+// fits a guest, and the player stops reading the man and starts reading me.
+//
+// So there are exactly two outcome pools and neither knows anything. Both are
+// written from the DVR's side of the glass, which can see a body and cannot see
+// an intention, and both had to survive the same test — read the line, then ask
+// whether it would be strange printed under the other kind of person. Anything
+// that failed is in the graveyard at the bottom.
+//
+// He keyed the handset. Store-wide, because a PA is a loudspeaker and not a
+// laser: everybody in that aisle heard it, which is exactly why "somebody
+// looked around" is worth nothing. The content is not logged because the
+// content is the player's own voice and this file has a standing position on
+// that (see game.js: no recognition, no storage, deliberately).
+//
+// LENGTH. The floor ticker is 480 px at 11 px mono and clips with an ellipsis,
+// which after the HH:MM:SS stamp leaves about 55 characters with %S expanded to
+// a real code. Every line below is measured against that with SUBJ-05 filled
+// in. (Round 7 left three over the limit — ABORT_DUMP's first two and
+// BACK_OFF_OK's third, at 61-64 — and they ellipse on the floor while reading
+// fine on the desk's 700 px band, which is why nobody caught them. Not touched
+// this round; flagged for whoever owns the next one.)
+export const PA_PUTBACK = [
+  'PA KEYED — DIRECTED AT %S. STORE-WIDE.',
+  'PA — ANNOUNCEMENT MADE. AUDIBLE IN %S\'S AISLE.',
+  'PA KEYED. CONTENT NOT LOGGED. SUBJECT %S.',
+  'ANNOUNCEMENT — %S AND EVERYONE IN EARSHOT.',
+];
+// HE PUT SOMETHING BACK. The identical clip plays on a thief ditching a steak
+// and on a man who was holding a jar when a voice told him off in public, so
+// the line has to be true of both and flattering to neither.
+export const PA_HEED = [
+  '%S PUT SOMETHING BACK.',
+  '%S PUT AN ITEM ON SOME SHELF OR OTHER.',
+  '%S PUT IT DOWN. ANALYTICS CANNOT SAY WHAT IT WAS.',
+  '%S COMPLIED WITH SOMETHING. UNCLEAR WHAT.',
+  'ITEM RETURNED TO SHELF — %S. NO OFFENCE ON FILE.',
+];
+// He heard it and he is carrying on. This is the "what the fuck?" the client
+// described, and it is the same shrug whether he has a chicken in his coat or a
+// list in his hand.
+export const PA_SHRUG = [
+  '%S LOOKED UP. %S LOOKED AT THE CEILING.',
+  '%S LOOKED AROUND FOR WHOEVER SAID THAT.',
+  '%S ACKNOWLEDGED THE PA. RESUMED SHOPPING.',
+  '%S CHECKED OVER HIS SHOULDER. CONTINUED.',
+  'NO BEHAVIOURAL CHANGE LOGGED — %S.',
+];
+// The floor chip. Three states, and the middle one is load-bearing: between
+// keying the handset and him reacting there is up to a second where the honest
+// readout is that nothing has happened yet. Filling it with a guess is the one
+// thing agents.js explicitly built its return value to prevent.
+export const PA_CHIP_AIM = 'ANNOUNCEMENT — %S';
+export const PA_CHIP_WAIT = 'WAITING FOR A REACTION';
+export const PA_CHIP_HEED = 'HE PUT SOMETHING BACK';
+export const PA_CHIP_SHRUG = 'HE LOOKED AROUND';
+// The footnote that keeps the whole thing honest, printed on the chip every
+// time. You did not speak to him. You spoke to the shop.
+export const PA_CHIP_HEARD = '%N OTHERS IN EARSHOT';
+export const PA_CHIP_ALONE = 'NOBODY ELSE IN EARSHOT';
+// What [F] does when there is nobody to say it to. Not an error — a PA with
+// nothing to announce is still a PA, and this is the funnier half of the key.
+export const PA_IDLE = 'PA — OPEN CHANNEL';
+export const PA_AT = 'PA — SAY SOMETHING TO %S';
+// REJECTED, and each of these is the same mistake:
+//   '%S PUT IT BACK AND THOUGHT BETTER OF IT'   — 'thought better of it' is only
+//     sayable about somebody who was doing something wrong. Guilt, in a verb.
+//   '%S DID NOT REACT. HE IS GOOD.'             — same in the other direction:
+//     'good' is a verdict on a man who might have been reading a soup label.
+//   '%S IS UNBOTHERED BY LOSS PREVENTION'       — funny, and it flatters the
+//     thief specifically. Innocent men are unbothered by loss prevention
+//     because they are shopping, which is a different joke and not this one.
+//   'SUBJECT COMPLIED'                          — 'complied' with the subject
+//     alone reads as an admission. Kept only in the form 'COMPLIED WITH
+//     SOMETHING. UNCLEAR WHAT.', where the box is admitting it cannot tell.
+
 export const pick = (a, r) => a[Math.floor((r === undefined ? Math.random() : r) * a.length) % a.length];
 // %D is the door somebody actually used. There are two of them now; a log line
 // that always says DOOR 1 is a log line that is wrong half the time.
 export const fill = (s, door) => String(s).replace(/%D/g, door || 'DOOR 1');
 // %S is a subject code — SUBJ-04. Same shape as fill(), different hole.
 export const fillS = (s, code) => String(s).replace(/%S/g, code || 'SUBJECT');
+// %N is a count. Round 8's chip needs one and there was no third hole.
+export const fillN = (s, n) => String(s).replace(/%N/g, String(n | 0));

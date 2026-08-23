@@ -38,6 +38,67 @@
 // the old rig also got wrong — its feet ended 85 mm above the floor and every
 // person in the store was quietly hovering.
 // ===========================================================================
+//
+// ===========================================================================
+// ROUND 7 — "HE SHOULD REALLY LOOK FAT AND BEATEN UP."
+// ===========================================================================
+// Round 1 made him a person. This round makes him a person who has been doing
+// this job for too long, and the note was specific: FAT AND BEATEN UP, not just
+// fat. Everything below was chosen against one filter — DOES IT CHANGE THE
+// SILHOUETTE — because he has to survive at 214x120 on a monitor tile, where a
+// three-band stack (dark cap / light torso / dark legs) is all that is left.
+// Detail that only exists at 3x focal length is decoration; detail that changes
+// his outline pays at both scales and is worth twice as much.
+//
+// WHAT CHANGED THE OUTLINE (these are the ones that mattered):
+//   1. A GUT THAT HANGS. Not a bigger sphere — a different shape. On a heavy
+//      man in a duty belt the strap goes UNDER the overhang, so the profile is
+//      narrow at the belt, widest 60 mm above it, and near-vertical in between.
+//      Round 6 had the apex 100 mm above the belt and 10 mm proud of it, which
+//      is a barrel with a band painted round it. The ring the belt now rides on
+//      (rx 0.220) is NARROWER THAN THE BELT (BELT_RX 0.238), so the strap
+//      disappears beneath him. At 214 px the light band goes from a rectangle
+//      to a pear: widest at the bottom, with the dark waist notch UNDER the
+//      widest point instead of through the middle of it.
+//   2. A ROUNDED UPPER BACK and a roll at the base of the neck, plus `stoop`
+//      0.09 -> 0.19 in agents.js, which drops his chin into his collar. The top
+//      of the light band stops being a square shelf and becomes a slump.
+//   3. THE SHIRT TAIL IS OUT at the back, over the hips. It puts a light spur
+//      down into the dark leg band, so the join between the two bands is ragged
+//      instead of ruled. It lives in copSeat (on `hips`) and NOT in copTorso,
+//      deliberately: parented to the chest it would swing up 100 mm every time
+//      he stooped for breath, and a shirt tail does not do that.
+//
+// WHAT ONLY EXISTS AT PORTRAIT RANGE, and is still worth having:
+//   the placket pulling open into three gaps with the vest showing through; a
+//   stain on the gut he has not noticed; a salt ring dried into the cap serge;
+//   a brim bent down AND sideways; bags under the eyes; broken capillaries; a
+//   nose that has been red for years; a moustache that needs a trim; a real
+//   HAIRLINE with bare temples instead of a dome under the cap; a sleeve hem
+//   that bites the arm; unpolished shoes; seven belt segments burnished at the
+//   wear points; and three fabrics that no longer match each other, because a
+//   uniform is replaced a piece at a time.
+//
+// TWO MISTAKES WORTH THE PARAGRAPH, both found by rendering it and looking:
+//   - THE BRIM PITCH IS SET AGAINST `stoop`, NOT IN ISOLATION. Bending it from
+//     0.24 to 0.32 on a head that was ALSO tipped 6 degrees further forward put
+//     it straight across his eye line and he had no face at all. It is 0.19
+//     now, with a 3-degree roll, and the read is the same. The eyes are what
+//     round 1 was fought over; do not spend them on a hat.
+//   - TEXTURE DETAIL IS MAGNIFIED BY THE HEAD, NOT BY THE CELL. The face cell
+//     is 128 px stretched over a skull that fills a 1280-wide portrait, so
+//     1.4 px stubble dots at 0.30 alpha arrived as mud splashes and 0.9 px
+//     capillaries at 0.42 arrived as two red slashes. Sub-pixel marks at a
+//     fifth of that alpha. The same trap will catch the next person who adds
+//     freckles, scars or a five o'clock shadow to anything in this file.
+//
+// LEDGER, and it is the reason to do it this way: 13 meshes, 3 materials, ONE
+// 512 px atlas — all three unchanged. 7,032 -> 7,816 triangles (+11%). No new
+// draw call and no new texture, because every part merges into a mesh that
+// already existed and every colour is a vertex colour on it. The scuffs are one
+// rewritten atlas cell (shared with the cap brim, which is correct: the same
+// man neglected both).
+// ===========================================================================
 
 // Skeleton, model units (before the per-person `height` multiplier).
 // Sole 0.00 -> crown 1.65, i.e. one model unit of person is a 1.65 m adult and

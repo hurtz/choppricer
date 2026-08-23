@@ -69,6 +69,125 @@
 // the report. Nothing below is a mean without its shape attached.
 //
 // ===========================================================================
+// ROUND 7 — "HEY, PUT THAT BACK." AND A MAN WHO LOOKS THE PART
+// ===========================================================================
+// The client, verbatim: "I'd like to make it so I could look at people
+// shopping... If I see them doing something suspicious, I can go, 'Hey, put
+// that back,' and then they look around, like, 'What the fuck?' ... But if it's
+// a criminal doing it, they might actually reconsider ... they might put it
+// back, and then just leave the store peacefully."
+//
+// This is round 6's deterrence on a SECOND TRIGGER. Everything behavioural
+// already existed — deterR/deterBalk/chillLo/dumpT, the `putback` clip, the
+// balk, the ditch, the `ditched` outcome — and all of it fired on PROXIMITY: a
+// uniform stood near the only door. announceAt() fires the same machinery at
+// RANGE, at a NAMED SUBJECT, and it ends in abortTheft()/dumpGoods(), which are
+// round 6's own two functions. Nothing new was built on the economics side and
+// nothing needed to be: a deterred thief is worth zero on the identical path a
+// ditched one is.
+//
+// ---- THE ONLY QUESTION THAT MATTERED: IS IT A GUILT ORACLE ----------------
+// If the guilty comply and the innocent do not, the button is a free scanner,
+// the desk phase is a spotting exercise again and the harassment complaint can
+// never fire on a reasonable read — which is exactly the failure the round-6
+// decoy table was built to prevent. So both populations produce BOTH visible
+// outcomes, and the rates are published rather than asserted.
+// benchAnnounceLine(120), cop parked at the service desk 40 m away:
+//
+//                        put it back   looked around   complaints
+//   guilty, pre-conceal      63.3%          36.7%           0
+//   guilty, already has it   35.0%          65.0%           0
+//   innocent                 32.5%          67.5%           0
+//   bystander in earshot     25.8%          60.0%           0
+//   guilty, three shouts     78.3%          21.7%           0
+//   innocent, three shouts   48.3%          51.7%           0
+//
+// Likelihood ratio on a put-back is 1.95, so ONE CALL MOVES A 50/50 SUSPICION
+// TO 66%, and a shrug moves it to 35%. That is a read. It is not a test, and
+// the row that proves it hardest is the second one: a subject who ALREADY HAS
+// IT IN HIS COAT complies 35.0% against an innocent's 32.5%, i.e. once he is
+// committed the announcement carries no information at all. The information
+// only exists in the window before he commits — which is the window where
+// deterrence is the point and the payout is zero anyway.
+//
+// Four independent things hold that line, and they are all cheap:
+//   1. A third of guilty subjects brazen it out (annHeed 0.62).
+//   2. A third of INNOCENT subjects sheepishly put back whatever is in their
+//      hand (annSpook 0.30) — and they play the SAME `putback` clip, so the
+//      picture is identical. shots/agents_r7_announce.png is four rows of five
+//      frames; rows 1 and 3 are the same five frames and so are rows 2 and 4.
+//   3. Everybody within annSpill (7 m) looks up too, because a PA is a
+//      loudspeaker and not a laser. "Somebody looked around" is worth nothing.
+//   4. annFade (0.45) makes the second and third shout at the same body worth
+//      steadily less, so the button is not a slot machine you pull until it
+//      pays: three calls converge at ~78% and not at 100%.
+// The three `react` clips live in decoy.js with tell:'react', which keeps them
+// OUT of the decoy pool — pickGesture's modulo over seven decoys is what round
+// 6's whole distribution was measured on and quietly making it eight would have
+// moved every number in this file.
+//
+// ---- DOES TALKING PAY? IT PAYS WHAT CAMPING PAYS, WHICH IS NOTHING --------
+// benchIncome(6, { minutes: 4 }), one exit, ramped difficulty. The `pa` policy
+// never leaves the desk and never dispatches: every time the handset comes off
+// cooldown he announces at whoever is doing something with their hands, which
+// is the honest maximal read because a player cannot tell a steal clip from a
+// decoy clip and neither can this bot.
+//
+//   desk    383.3 pts   4.33 thefts   3.83 caught   0.50 lost   0.00 balked
+//   naive   100.0 pts   4.67 thefts   1.00 caught   3.67 lost   0.00 balked
+//   camper    0.0 pts   4.00 thefts   0.00 caught   0.00 lost   4.67 balked
+//   pa        0.0 pts   1.67 thefts   0.00 caught   1.67 LOST   1.00 balked
+//
+// THE PA PLAYER EARNS ZERO AND IS ALSO ROBBED. He suppresses two thirds of the
+// thefts in the building — 4.33 down to 1.67 — and every one of the survivors
+// walks out, because he is at the desk with a microphone instead of on the
+// floor. That is strictly worse than the camper, who at least stops the goods
+// leaving. It is the right shape: the announcement is a way to make nothing
+// happen, and nothing happening pays nothing.
+// Complaints on the PA policy: ZERO, across every shift sampled. Nothing on
+// this path can reach onHarass() and that is the whole point of it — it is the
+// safe alternative to walking up to somebody. What it costs instead is annHuff:
+// a customer who has been shouted at in public finishes his shop early.
+//
+// ---- NO REGRESSION, AND ONE DISCREPANCY THAT IS NOT MINE ------------------
+// n=100 each, this build, against the round-6 header's own numbers:
+//   cut off0        77.0%   median chase 6.22 s   catches inside 1 s 11.7%
+//   cut off1        69.0%
+//   camp off0       27.0%   70 of 100 trials end with the item back on a shelf
+//   always-sprint   53.0%   so rationing is +24.0, unchanged
+//   lungCheck()     passes, 2.043 m/s gassed-and-holding vs a 2.35 m/s walk
+// Every one of those is the round-6 figure to the decimal.
+//
+// The income table above is NOT the one round 6 published (it said desk 250.0 /
+// 4.50 thefts / 2.50 caught / 2.00 lost). I did not take that on trust: I put
+// the round-6 commit's agents.js, figures.js and decoy.js back on disk and ran
+// benchShift on them. THE ROUND-6 BUILD PRINTS 383.33 / 4.33 / 3.83 / 0.50 AND
+// 9.17 COMPLAINTS, character for character with what this build prints. So the
+// difference is in round 6's report and not in round 7's code, and the numbers
+// above are the ones that reproduce. config.js has not changed since the round-6
+// commit either, so it is not a promoted-TUNING drift; most likely that table
+// was written from a run at a different n or seed. Quote these.
+//
+// ---- JOB 2: THE COP LOOKS WORSE ------------------------------------------
+// "He should really look fat and beaten up." The geometry is in figures.js and
+// the write-up is there; what lives in THIS file is the animation half:
+//   - `stoop` 0.09 -> 0.19, which is both the chest's resting slump and the
+//     neck's resting pitch, i.e. chin down into the collar before anything has
+//     happened. Round 6 could not afford that because the head was still half
+//     buried in the torso; round 6's own fix is what pays for it.
+//   - the shoulders ROUND FURTHER as fatigue rises, which the brief asked for
+//     by name: the arm PIVOTS travel 30 mm forward at F=1 and the chest draws
+//     in 3.5% across, so he narrows from the front as he folds. Two assignments
+//     a frame.
+//   - the heave is deeper front-to-back (0.075 -> 0.092) because the gut it is
+//     inflating is bigger now and the same fraction read as less.
+//   - both legs raked 2.6 degrees forward of the pelvis: weight on the heels,
+//     belly out over them. A constant on both legs, so the gait is untouched.
+// Ledger: still 13 meshes, 3 materials, one 512 px atlas. 7,032 -> 7,816 tris.
+// shots/agents_r7.png carries the portrait AND a true 214x120 render, because
+// round 1 proved both scales and so does this.
+//
+// ===========================================================================
 // ROUND 6 — ONE WAY OUT, AND A REASON NOT TO STAND ON IT
 // ===========================================================================
 // The client asked for one exit: "I think you should kind of have a clue where

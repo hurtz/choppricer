@@ -12,7 +12,7 @@
 // in as PANELS from layout.js — nothing here assumes a grid, a count, or that
 // two monitors are the same size.
 
-import { drawText, drawTextR, textW } from './font5x7.js';
+import { drawText, drawTextR, textW, CH_H } from './font5x7.js';
 
 const rr = (ctx, x, y, w, h, r) => {
   if (ctx.roundRect) { ctx.beginPath(); ctx.roundRect(x, y, w, h, r); return; }
@@ -790,6 +790,12 @@ export function paintFloorBurnIn(cv, W, H, now, blink, label) {
   ctx.beginPath(); ctx.arc(dotX, 26, 4.5, 0, 7); ctx.fill();
 
   drawText(ctx, label, 22, 20, 2, 'rgba(232,238,228,0.80)', SHA);
-  drawTextR(ctx, `${date} ${time}`, rx, H - 20 - LINE, 2, 'rgba(232,238,228,0.80)', SHA);
+  // `LINE` was never defined — this threw a ReferenceError out of renderFloor
+  // every time the stamp repainted (once a second, and again on every REC
+  // blink), which took main.js's step() down with it BEFORE game.render(),
+  // so the whole HUD dropped a frame each time. It survived because
+  // updateFloorBurnIn stores the cache key before painting, so the throw is
+  // once per key change rather than every frame. One line height at scale 2.
+  drawTextR(ctx, `${date} ${time}`, rx, H - 20 - CH_H * 2, 2, 'rgba(232,238,228,0.80)', SHA);
   return cv;
 }

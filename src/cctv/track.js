@@ -353,24 +353,18 @@ export function createTracker(THREE, scene, opts = {}) {
 //
 // The shader maps screen -> source. Placing an overlay needs the inverse, source
 // -> screen, and the forward map is a scalar function of radius along a fixed
-// ray, so four Newton steps invert it to well under a pixel.
-export function unbarrel(ux, uy, aspect, k) {
-  if (!(k > 1e-4)) return [ux, uy];
-  const lx = (ux - 0.5) * aspect, ly = uy - 0.5;
-  const L = Math.hypot(lx, ly);
-  if (L < 1e-6) return [ux, uy];
-  const rmax = 0.25 * aspect * aspect + 0.25;
-  const denom = 1 + k * rmax;
-  let s = L;
-  for (let i = 0; i < 4; i++) {
-    const f = s * (1 + k * s * s) / denom - L;
-    const df = (1 + 3 * k * s * s) / denom;
-    s -= f / df;
-    if (s < 0) s = L * 0.5;
-  }
-  const g = s / L;
-  return [(lx * g) / aspect + 0.5, ly * g + 0.5];
-}
+// ray.
+//
+// ROUND 5. That inverse used to be defined HERE, as four Newton steps, and it
+// was the only place in JS that knew the shape of the grade's geometry. It has
+// moved to cctv/warp.js, because src/game/hud.js now needs the same map for the
+// FLOOR view — its world markers were being drawn through a pinhole onto a
+// picture the grade had bent by up to 31 px — and a second hand-written copy of
+// a derivation is the exact failure CLAUDE.md is written about. warp.js solves
+// the cubic in closed form instead of iterating; the two agree to 2.5e-13 over
+// the whole frame, so nothing on the wall changed.
+export { unbarrel } from './warp.js';
+import { unbarrel } from './warp.js';
 
 /**
  * World point -> panel-local uv (origin top-left, y DOWN, 0..1 across the glass),

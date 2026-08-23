@@ -84,7 +84,7 @@
    "verdict": "Edge density mean 41.0 -> 44.2, spread 5.6 -> 7.0. Warm-band pixels 37.7-40.7% -> 7.7-11.3% (references 5.6-11.4%). Mean saturation 0.33-0.35 -> 0.23-0.25 (references 0.27-0.32)."
   },
   "cctv": {
-   "round": 4,
+   "round": 5,
    "state": "passed",
    "shots": [
     {
@@ -111,6 +111,11 @@
      "round": 4,
      "path": "../shots/cctv_r4_desk.png",
      "t": 1787499192.5492291
+    },
+    {
+     "round": 5,
+     "path": "../shots/cctv_r5.png",
+     "t": 1787523333.274982
     }
    ],
    "gaps": [
@@ -119,14 +124,14 @@
      "text": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
     }
    ],
-   "updated": 1787499446.944247,
-   "note": "The arithmetic WAS the problem: a subject 12m down an aisle through a 98-degree dome is 8.3 degrees tall = 14px on a 190px panel. No grade fixes 14px. New track.js NEVER sees agents.js - pure kinematics, so a concealment and a woman reading a jar of sauce emit the identical token; the wall says WHERE, only your eyes say WHAT. Key measurement that made the big monitor affordable: a scene render costs 2.0-2.7ms at EVERY resolution from 190x143 to 1664x936 - the store is draw-call bound, not fill bound, so a 4x bigger picture is free. Bug: Box3.setFromObject walks INVISIBLE children, and a hidden anger sprite at y=2.05 made every shopper measure 2.38m instead of 1.75 - which broke box heights, under-zoomed every PTZ, and drew green boxes over empty shelf tops because the occlusion test cleared a 2.05m gondola.",
+   "updated": 1787523434.891823,
+   "note": "It explained WHY the camera builder's measurement was misleading rather than just correcting it: the reported 'x~659 centre' is an artefact of fitting a 1-D affine model to a 2-D radial field, and it reproduced the artefact - fitting right-hand samples alone gives an apparent centre of 409, while a symmetric fit recovers 640.1 to a tenth of a pixel. Its own method defeats the contamination that spoiled two of the camera builder's three attempts: a white-marker-minus-black-marker difference, so background cancels exactly and neither an occluder nor magenta product can leak in. Kept the lens and PUBLISHED the mapping, on precedent - boxOf has warped the wall's analytics boxes into feed space since round 4, and removing the barrel would make the on-foot view the only picture in the game shot through a rectilinear lens. New warp.js is the single definition and track.js's duplicate unbarrel was DELETED and re-imported from it, so this removes a duplicated derivation rather than adding one. Also fixed a latent crash: paintFloorBurnIn referenced an undefined LINE, throwing out of renderFloor once a second plus every REC blink, which took step() down BEFORE game.render() and dropped the entire HUD for that frame.",
    "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself.",
-   "verdict": "PASS on the client's core complaint. A 766x431 spot monitor with PTZ push-in makes the subject ~138px instead of 14px; a five-frame capture shows a concealment legibly (item out, raised, at chest, gone, hands back on cart). Desk frame 2.76 -> 4.08ms, and scene renders per frame went DOWN (1.12 vs 1.65)."
+   "verdict": "PASS. The offset is real and it is ONE term: uBarrel in GradeShader. projectFromCop vs the GRADED frame was 24.5px mean / 31.6px worst; via warpFloor it is 0.19px / 1.15px. Set barrel:0 and graded returns to raw within 0.19px, so every other round-3 grade term is geometrically neutral - and no grade constant was touched (scan .078 / vignette .37 / bloom 1.00 / chroma .62 all intact)."
   },
   "agents": {
-   "round": 6,
-   "state": "passed",
+   "round": 7,
+   "state": "building",
    "shots": [
     {
      "round": 0,
@@ -177,6 +182,16 @@
      "round": 6,
      "path": "../shots/agents_r6.png",
      "t": 1787503339.293308
+    },
+    {
+     "round": 7,
+     "path": "../shots/agents_r7.png",
+     "t": 1787522906.528457
+    },
+    {
+     "round": 7,
+     "path": "../shots/agents_r7_announce.png",
+     "t": 1787522906.628931
     }
    ],
    "gaps": [
@@ -201,8 +216,8 @@
      "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
     }
    ],
-   "updated": 1787503587.4081259,
-   "note": "With round-5 rules and one door a camper scores 91% and the aisle number is worth EXACTLY ZERO (82.0 at off0, 82.0 at off1). Four mechanics pay for it, none geometry: he won't commit with a uniform on the door, he won't walk into one either (ditches after 11s - new 'ditched' outcome), he only bolts from a man coming AT him, and innocents leave by the same door so heading for the exit is no longer a confession. THE RAMP FINDING: 'make the thief slower early' makes the game HARDER by 27 points - rampRun 0.65 gives 70.0% vs 1.00 giving 86.3% - because a slower man is still walking out when the dispatch lands, so the cop arrives BEHIND him, and behind is a verdict not a position. Median chase collapsed 6.22 -> 1.98s. rampWalk 0.88 is the real lever. Bug found by looking at it big: round 5 authored the concealment item in absolute rig coordinates while the arm was driven separately - they disagreed by 0.50m, so the box hung beside his LEFT ear while his RIGHT arm reached. Invisible at 431px, obvious on the new spot monitor.",
+   "updated": 1787522906.628927,
+   "note": "announce evidence sheet",
    "gap": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it.",
    "verdict": "PASS. One exit shipped and the camper is dead by INCOME, not catch rate: 0 pts/shift in every shift sampled, 4.17 thefts started and 4.83 balked, 91% of his time on the door. The desk player earns 250. Rationing still beats always-sprint 77.0 vs 53.0. Median chase 6.22s, catchUnder1s 11.7%, lungCheck passes."
   },
@@ -332,6 +347,38 @@
   }
  },
  "log": [
+  {
+   "t": 1787523434.8918242,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 5,
+   "state": "passed",
+   "text": "It explained WHY the camera builder's measurement was misleading rather than just correcting it: the reported 'x~659 centre' is an artefact of fitting a 1-D affine model to a 2-D radial field, and it reproduced the artefact - fitting right-hand samples alone gives an apparent centre of 409, while a symmetric fit recovers 640.1 to a tenth of a pixel. Its own method defeats the contamination that spoiled two of the camera builder's three attempts: a white-marker-minus-black-marker difference, so background cancels exactly and neither an occluder nor magenta product can leak in. Kept the lens and PUBLISHED the mapping, on precedent - boxOf has warped the wall's analytics boxes into feed space since round 4, and removing the barrel would make the on-foot view the only picture in the game shot through a rectilinear lens. New warp.js is the single definition and track.js's duplicate unbarrel was DELETED and re-imported from it, so this removes a duplicated derivation rather than adding one. Also fixed a latent crash: paintFloorBurnIn referenced an undefined LINE, throwing out of renderFloor once a second plus every REC blink, which took step() down BEFORE game.render() and dropped the entire HUD for that frame."
+  },
+  {
+   "t": 1787523333.274982,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 5,
+   "state": "building",
+   "text": "Verified the camera builder's offset: it is real, it is the uBarrel term in GradeShader and nothing else. 45 known world points, shipped round-3 grade: pinhole matches the RAW render to 0.37px mean/1.95 max, but the GRADED frame is displaced 24.5px mean/31.6 max. Pure radial about the exact frame centre (640.1 fitted), 1.1248x at centre, 1.0 at corners - not an off-centre principal point, not an overscan; barrel=0 returns graded to raw within 0.19px. Kept the lens (the wall has warped its analytics boxes into feed space since r4 for the same reason) and PUBLISHED the forward map: new src/cctv/warp.js, exposed as cctv.warpFloor / unwarpFloor / floorMagAt / floorLens. track.js's duplicate unbarrel now imports it - one JS definition, not two. hud.js needs one call: warpFloor(projectFromCop(...)); that takes 24.5px mean error to 0.19. No round-3 grade constant touched. Also fixed a latent ReferenceError (undefined LINE) in paintFloorBurnIn that threw out of renderFloor once a second whenever floorBurnIn was on, taking game.render() down with it."
+  },
+  {
+   "t": 1787522906.628932,
+   "piece": "agents",
+   "role": "builder",
+   "round": 7,
+   "state": "building",
+   "text": "announce evidence sheet"
+  },
+  {
+   "t": 1787522906.5284579,
+   "piece": "agents",
+   "role": "builder",
+   "round": 7,
+   "state": "building",
+   "text": "announceAt(subject,'putback'|'hold') \u2014 deterrence at range on round-6's own machinery. Guilty 63.3% put it back, innocent 32.5% put it back (same clip), guilty-with-goods 35.0% vs innocent 32.5% = no information at all; LR 1.95, a 50/50 read goes to 66% or 35%. PA-spam bot earns 0 pts/shift and LOSES 1.67 items, zero complaints. Cop rebuilt fat+beaten-up: hanging gut, untucked tail, strained placket, bags/capillaries/hairline, worn belt and shoes; 13 meshes / 3 mats / 1 atlas unchanged, 7032->7816 tris. Round-6 distribution byte-identical (77.0 / 6.22s / 11.7% / camp 27.0 with 70 ditched / ration 77.0 vs 53.0 / lungCheck ok)."
+  },
   {
    "t": 1787522020.47925,
    "piece": "camera",
@@ -989,5 +1036,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787522020.4792519
+ "updated": 1787523434.891825
 }
