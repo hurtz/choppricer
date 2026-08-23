@@ -1,0 +1,80 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>CHOP PRICER — push-to-talk in an iframe</title>
+<!--
+  OWNER: builder-audio.
+
+  The game ships two ways: GitHub Pages at hurtz.github.io/choppricer/, which is
+  a TOP-LEVEL document, and a claude.ai Artifact, which is a document inside
+  somebody else's iframe. getUserMedia behaves differently in the second case,
+  and the difference is not the browser being awkward — it is Permissions Policy,
+  and it is decided by the PARENT page, not by us.
+
+  A CROSS-ORIGIN iframe gets the microphone only if the embedding page wrote
+  allow="microphone" on the <iframe> tag. If it did not, getUserMedia rejects
+  with NotAllowedError immediately and WITHOUT PROMPTING: the user is never
+  asked, because the page they are on already answered on their behalf. Note the
+  word cross-origin — the policy default for microphone is `self`, so a
+  same-origin frame is allowed with or without the attribute and proves nothing.
+
+  So this page has to be loaded from the OTHER hostname the dev server answers on:
+
+      http://localhost:8171/src/audio/iframe_test.html      <- load it here
+
+  and it embeds http://127.0.0.1:8171/src/audio/iframe_probe.html, which is a
+  different origin by the same-origin rule even though it is the same server.
+  Each frame runs the real createTalk() from talk.js and reports what happened.
+-->
+<style>
+  body { font: 13px ui-monospace, Menlo, monospace; background: #111; color: #ddd; margin: 0; padding: 14px; }
+  h1 { font-size: 14px; margin: 0 0 4px; color: #fff; }
+  p.n { color: #888; margin: 0 0 12px; }
+  .row { display: flex; gap: 14px; align-items: stretch; }
+  .cell { flex: 1; }
+  iframe { width: 100%; height: 80px; border: 1px solid #333; background: #000; }
+  pre { background: #191919; padding: 8px; white-space: pre-wrap; min-height: 60px; margin: 6px 0 0; }
+  b { color: #ffd479; } .bad { color: #ff8080; } .good { color: #9f9; }
+  button { font: inherit; margin: 10px 6px 0 0; padding: 4px 9px; }
+</style>
+
+<h1>push-to-talk: the same talk.js, two embeddings</h1>
+<p class="n" id="warn"></p>
+<div class="row">
+  <div class="cell">
+    <b>cross-origin &lt;iframe&gt;</b>, no allow attribute<br>
+    <span class="n">an artifact viewer that does not grant the microphone</span>
+    <iframe id="a" src="http://127.0.0.1:8171/src/audio/iframe_probe.html"></iframe>
+    <pre id="oa">—</pre>
+  </div>
+  <div class="cell">
+    <b>cross-origin &lt;iframe allow="microphone"&gt;</b><br>
+    <span class="n">an artifact viewer that does grant it</span>
+    <iframe id="b" src="http://127.0.0.1:8171/src/audio/iframe_probe.html" allow="microphone"></iframe>
+    <pre id="ob">—</pre>
+  </div>
+</div>
+<button onclick="go('a')">probe LEFT</button>
+<button onclick="go('b')">probe RIGHT</button>
+<button onclick="go('a');go('b')">probe both</button>
+
+<script>
+const W = document.getElementById('warn');
+if (location.hostname === '127.0.0.1') {
+  W.innerHTML = '<span class="bad">Loaded from 127.0.0.1, so the frames are SAME-ORIGIN and this test '
+    + 'proves nothing. Open it from <b>http://localhost:8171/src/audio/iframe_test.html</b> instead.</span>';
+} else {
+  W.textContent = 'frames are ' + location.origin + '  ->  http://127.0.0.1:8171 (cross-origin, as intended)';
+}
+const map = { a: 'oa', b: 'ob' };
+function go(id) { document.getElementById(id).contentWindow.postMessage({ go: true }, '*'); }
+addEventListener('message', (e) => {
+  if (!e.data || !e.data.probe) return;
+  for (const id of ['a', 'b']) {
+    if (document.getElementById(id).contentWindow === e.source) {
+      const el = document.getElementById(map[id]);
+      el.textContent = e.data.msg;
+      el.className = e.data.ok ? 'good' : (e.data.pending ? 'good' : (e.data.state === 'ready' ? '' : 'bad'));
+    }
+  }
+});
+</script>

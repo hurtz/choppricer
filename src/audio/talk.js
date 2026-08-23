@@ -62,9 +62,13 @@
 //     This is what an automatic feedback suppressor does, and it is the backstop
 //     for the case where the AEC loses lock because somebody moved the laptop.
 //
-// Gain staging is the fourth defence and the quiet one: TALK_LVL is set so the
-// voice sits with the announcer's, not over it. A PA the player can shout over
-// is a PA that howls.
+//  4. THE BED DUCKS TOO (audio.js). Seven decibels off the trolleys and the
+//     tills while the channel is open buys exactly as much audibility as seven
+//     decibels more microphone gain, and unlike microphone gain it SUBTRACTS
+//     from the loop instead of adding to it. Reach for this one first.
+//
+// TALK_LVL is the number to be careful with, and the one place where the
+// audible answer and the safe answer pull against each other. See its comment.
 
 import { gain, filt, mulberry, clamp } from './dsp.js';
 
@@ -73,7 +77,25 @@ import { gain, filt, mulberry, clamp } from './dsp.js';
 // enough that the tab's recording dot goes away when he stops using it.
 const HOLD_MS = 20000;
 
-const TALK_LVL = 0.62;      // mic into the can. Measured against voices.say's 0.46.
+// Mic into the can. NOT set by ear — measured. A laptop microphone with
+// autoGainControl on delivers speech at about -19 dBFS RMS (checked: the test
+// voice used for the evidence clips arrives at micIn at -19.1). At the first
+// value tried, 0.62, that landed the player's voice 10 dB UNDER the store bed —
+// which is roughly where the store's own once-a-minute announcer sits, and fine
+// for background, and useless for "I hear my own voice come out of the ceiling".
+// Which way it went, and why it stopped where it did:
+//
+//   0.62  the first guess. Voice 10 dB UNDER the bed. Inaudible; the joke dies.
+//   2.00  audible, and 25.7% THD on a 700 Hz tone (h3 at -11.8 dB). The store's
+//         own announcer measures 7.0% through the same cone. The paper is being
+//         driven past the knee and it stops sounding cheap and starts sounding
+//         broken, which is a different and much less funny thing.
+//   1.35  ~12% THD. Grittier than the automated announcer, which is right — a
+//         live handset is hotter than the recording — and still a speaker.
+//
+// The level that 2.00 bought is made back in audio.js's bed duck instead, which
+// costs distortion nothing and buys feedback margin rather than spending it.
+const TALK_LVL = 1.35;
 const HISS_LVL = 0.030;     // the amplifier's own noise floor, exposed by the key
 const HOWL_ON = 0.30;       // linear RMS at the mic that counts as "too loud"
 const HOWL_OFF = 0.12;
@@ -170,7 +192,7 @@ export function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
   let want = false;                   // is the key down RIGHT NOW
   let deniedAt = -1e9;
   let releaseTimer = 0;
-  let level = 0, hot = 0, guardG = 1, capMuted = false;
+  let level = 0, hot = 0, guardG = 1;
 
   function open(t) {
     click(t, false);
@@ -315,7 +337,8 @@ export function createTalk(ctx, speechDest, noiseBuf, opts = {}) {
     get holding() { return !!stream; },
     // audio.js's recorder calls this. The mic cannot reach master while a
     // capture is running, full stop.
-    muteCapture(on) { capMuted = !!on; micGate.gain.value = capMuted ? 0 : 1; },
+    muteCapture(on) { micGate.gain.value = on ? 0 : 1; },
+    get captureMuted() { return micGate.gain.value === 0; },
     // Hand the device back now, without waiting out HOLD_MS.
     release() { if (releaseTimer) { clearTimeout(releaseTimer); releaseTimer = 0; } dropStream(); },
 

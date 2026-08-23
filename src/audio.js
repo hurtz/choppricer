@@ -211,12 +211,23 @@ export function createAudio(THREE, camera) {
 
   const room = createRoom(ctx);
 
-  buses.ambience.connect(storeDry);
+  // THE BED DUCK. Everything in the building EXCEPT the ceiling passes through
+  // these two, so an announcement can push the trolleys and the tills back for a
+  // moment. That is a real effect — a store PA is loud enough that you stop
+  // hearing the room while it is talking — and it is also the cheap half of
+  // making the player's own voice audible: five decibels off everything else
+  // costs nothing in feedback margin, where five decibels more microphone gain
+  // costs exactly five decibels of it. `pa` is deliberately not in here.
+  const bedDry = gain(ctx, 1);
+  const bedWet = gain(ctx, 1);
+  buses.ambience.connect(bedDry);
+  buses.foley.connect(bedDry);
+  bedDry.connect(storeDry);
   buses.pa.connect(storeDry);
-  buses.foley.connect(storeDry);
-  wetB.ambience.connect(room.input);
+  wetB.ambience.connect(bedWet);
+  wetB.foley.connect(bedWet);
+  bedWet.connect(room.input);
   wetB.pa.connect(room.input);
-  wetB.foley.connect(room.input);
 
   storeDry.connect(room.storeIn);
   room.out.connect(room.storeIn);
@@ -283,6 +294,7 @@ export function createAudio(THREE, camera) {
   let zn = room.zone;
   let gassF = 0;
   let chaseF = 0;
+  let talkF = 0;
 
   function update(dt, state) {
     if (ctx.state !== 'running') return;
@@ -342,6 +354,23 @@ export function createAudio(THREE, camera) {
     chaseF += (hot - chaseF) * (1 - Math.exp(-(hot > chaseF ? 0.85 : 0.30) * dt));
     pa.setIntensity(chaseF);
     pa.update(dt, t, zn);
+
+    // ---- the bed duck, while somebody is on the handset. Down fast, back up
+    // slowly, and it only touches the AudioParams while it is moving — the
+    // whole block costs one comparison a frame in the 99.9% of the game where
+    // nobody is talking.
+    const tTarget = pa.talk.live ? 1 : 0;
+    if (talkF !== tTarget) {
+      talkF += (tTarget - talkF) * (1 - Math.exp(-(tTarget > talkF ? 6.0 : 1.6) * dt));
+      if (Math.abs(tTarget - talkF) < 0.004) talkF = tTarget;
+      // -6.9 dB. It went 5 -> 7 when talk.js's TALK_LVL came DOWN from 2.00 to
+      // 1.35 to keep the cone under 12% THD: the same audibility, bought here
+      // instead of at the microphone, where it would have cost distortion and
+      // feedback margin both.
+      const g = lerp(1, 0.45, talkF);
+      to(bedDry.gain, g, t, 0.10);
+      to(bedWet.gain, g, t, 0.10);
+    }
 
     // ---- the duck. Driven off FATIGUE, not off the tank: the bar bounces
     // every 2.2 s in a chase and the world receding has to move at the speed

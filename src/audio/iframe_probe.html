@@ -1,0 +1,44 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>talk.js permission probe</title>
+<!--
+  OWNER: builder-audio. Loaded by iframe_test.html, never by a player.
+
+  The real createTalk() from src/audio/talk.js, in a page small enough that the
+  only thing being measured is what the browser's Permissions Policy does to
+  getUserMedia. Reports the outcome to whoever embedded it.
+-->
+<style>
+  body { font: 12px ui-monospace, Menlo, monospace; background: #000; color: #9f9; margin: 0; padding: 10px; }
+  b { color: #ffd479; }
+</style>
+<div id="o">idle</div>
+<script type="module">
+import { createTalk } from './talk.js';
+import { whiteBuffer } from './dsp.js';
+
+const o = document.getElementById('o');
+const ctx = new (window.AudioContext || window.webkitAudioContext)();
+const sink = ctx.createGain(); sink.gain.value = 0; sink.connect(ctx.destination);
+const talk = createTalk(ctx, sink, whiteBuffer(ctx, 1.0, 5), { seed: 1 });
+window.__TALK = talk;
+
+function say(msg, data) {
+  o.innerHTML = '<b>' + location.origin + '</b><br>' + msg;
+  try { parent.postMessage({ probe: true, msg, ...data }, '*'); } catch (e) {}
+}
+say('ready');
+
+addEventListener('message', async (e) => {
+  if (!e.data || e.data.go !== true) return;
+  const t0 = performance.now();
+  say('requesting…', { state: talk.state });
+  let settled = false;
+  setTimeout(() => { if (!settled) say('STILL PENDING after 1500 ms — a permission PROMPT is up, so this embedding DOES permit the microphone', { state: talk.state, pending: true }); }, 1500);
+  const ok = await talk.start();
+  settled = true;
+  say(`talk.start() -> ${ok} · state ${talk.state} · ${(performance.now() - t0).toFixed(0)} ms`,
+      { ok, state: talk.state, ms: +(performance.now() - t0).toFixed(0) });
+  talk.stop(); talk.release();
+});
+</script>
