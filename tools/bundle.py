@@ -13,6 +13,15 @@ OUT = sys.argv[1] if len(sys.argv) > 1 else os.path.join(ROOT, "dist", "chop-pri
 VENDOR = {"three": "vendor/three.module.js",
           "three/addons/postprocessing/Pass.js": "vendor/Pass.js"}
 
+# `export { a, b as c } from './x.js'` — a re-export WITH a from-clause. This form
+# binds names AND re-exports them, and it is NOT matched by the plain-export strip
+# below (that one anchors at end-of-line). It survived into a shipped bundle as a
+# bare `export` keyword and broke the game. Handled first, as an import plus a
+# re-export of the same names.
+REEXPORT_RE = re.compile(
+    r"^[ \t]*export\s*\{(?P<names>[^}]*)\}\s*from\s*['\"](?P<spec>[^'\"]+)['\"]\s*;?[ \t]*$",
+    re.M)
+
 IMPORT_RE = re.compile(
     r"^[ \t]*import\s+(?:(?P<ns>\*\s*as\s+\w+)|(?P<named>\{[^}]*\})|(?P<def>\w+))?\s*"
     r"(?:from\s*)?['\"](?P<spec>[^'\"]+)['\"]\s*;?[ \t]*$",
@@ -52,23 +61,58 @@ def load(path):
     building.add(path)
     src = open(os.path.join(ROOT, path), encoding="utf-8").read()
     prelude = []
+    bound = set()
     def strip(m):
         spec = m.group("spec"); dep = resolve(spec, path)
         load(dep)
         if m.group("ns"):
-            prelude.append(f'const {m.group("ns").split("as")[-1].strip()} = {var(dep)};')
+            nm = m.group("ns").split("as")[-1].strip()
+            if nm not in bound:
+                bound.add(nm)
+                prelude.append(f'const {nm} = {var(dep)};')
         elif m.group("named"):
             inner = m.group("named")[1:-1]
             pieces = []
             for p in (x.strip() for x in inner.split(",")):
                 if not p: continue
-                pieces.append(f'{p.split(" as ")[0].strip()}: {p.split(" as ")[-1].strip()}' if " as " in p else p)
+                out = p.split(" as ")[-1].strip()
+                if out in bound: continue
+                bound.add(out)
+                pieces.append(f'{p.split(" as ")[0].strip()}: {out}' if " as " in p else p)
             if pieces: prelude.append(f'const {{ {", ".join(pieces)} }} = {var(dep)};')
         elif m.group("def"):
-            prelude.append(f'const {m.group("def")} = {var(dep)}.default;')
+            nm = m.group("def")
+            if nm not in bound:
+                bound.add(nm)
+                prelude.append(f'const {nm} = {var(dep)}.default;')
         return ""
+    reexported = []
+    def strip_reexport(m):
+        dep = resolve(m.group("spec"), path)
+        load(dep)
+        pieces = []
+        for part in (x.strip() for x in m.group("names").split(",")):
+            if not part:
+                continue
+            if " as " in part:
+                src_name, out_name = [q.strip() for q in part.split(" as ")]
+                pieces.append(f"{src_name}: {out_name}")
+                reexported.append(out_name)
+            else:
+                pieces.append(part)
+                reexported.append(part)
+        pieces = [q for q in pieces if q.split(":")[-1].strip() not in bound]
+        for q in pieces:
+            bound.add(q.split(":")[-1].strip())
+        if pieces:
+            prelude.append(f'const {{ {", ".join(pieces)} }} = {var(dep)};')
+        return ""
+    src = REEXPORT_RE.sub(strip_reexport, src)
     src = IMPORT_RE.sub(strip, src)
     src, names = exports_of(src)
+    for n in reexported:
+        if n not in names:
+            names.append(n)
     mods[path] = {"src": src, "names": names, "prelude": prelude}
     building.discard(path)
     order.append(path)
@@ -102,5 +146,26 @@ if "--artifact" in sys.argv:
 
 os.makedirs(os.path.dirname(OUT), exist_ok=True)
 open(OUT, "w", encoding="utf-8").write(html)
+
+# SYNTAX GATE. A bundle that does not parse is a black screen for the player, and
+# this shipped once already: `export {x} from './y.js'` survived the plain-export
+# strip and reached production as a bare `export` keyword. Never again silently.
+import subprocess, tempfile
+_body = re.search(r'<script type="module">([\s\S]*)</script>', html)
+if _body:
+    with tempfile.NamedTemporaryFile("w", suffix=".mjs", delete=False, encoding="utf-8") as _f:
+        _f.write(_body.group(1)); _tmp = _f.name
+    for _node in ("/usr/local/bin/node", "node"):
+        try:
+            _r = subprocess.run([_node, "--check", _tmp], capture_output=True, text=True, timeout=60)
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            continue
+        if _r.returncode != 0:
+            os.unlink(_tmp)
+            raise SystemExit("BUNDLE DOES NOT PARSE — refusing to write a broken build:\n"
+                             + (_r.stderr or "").strip()[:600])
+        break
+    os.unlink(_tmp)
+
 print(f"{len(order)} modules -> {OUT}  ({len(html)/1e6:.2f} MB)")
 for p in order: print(f"   {len(mods[p]['names']):3d} exports  {p}")
