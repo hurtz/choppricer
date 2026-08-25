@@ -66,3 +66,21 @@ python3 tools/report.py --piece store --role builder --round 2 \
   thousands of. No external network requests at runtime — everything procedural or local.
 - If the page throws an error from a file you don't own, another agent is mid-save.
   Wait and reload. Do not "fix" their file.
+
+
+## Reporting a measurement: profiles, not single points
+
+A blind critic reported render contact shadows bottoming at 31-58% of open floor.
+The builder re-measured the same fixtures at 2-7%, and then showed that a hand-placed
+contact line on the *real reference photo* swings between 2.2% and 37.4% depending
+on which of two runs you pick. The metric was almost entirely a function of where
+the measuring row was placed.
+
+So: **report the whole profile and its error against the reference, not a single
+extremum.** `min % of open floor` is not a number two people can compare. Mean
+absolute error across a stated pixel range, against a named reference file, is.
+
+The same builder listed three instruments it distrusted and why — peak lamp
+luminance (clips at 0.99 in both render and photograph, so it cannot separate them),
+that min% metric, and its own bake timing (varies 32-39 ms from JIT warm-up alone).
+**Naming the instruments you distrusted is as useful as naming the ones you trusted.**
