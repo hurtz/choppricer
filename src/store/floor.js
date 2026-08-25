@@ -39,6 +39,7 @@
 //     single gradient is most of the dynamic range the round-3 render lacked.
 
 import { makeRng, rr } from './kit.js';
+import { FIELD_GLSL } from './light.js';
 
 // ---------------------------------------------------------------------------
 // GONDOLA WALL LOOKUP. u = X across the store, v = height 0 -> WALL_TOP.
@@ -132,7 +133,26 @@ export function wallLUT(THREE, runs, minX, spanX) {
 }
 
 // ---------------------------------------------------------------------------
-// PROP LOOKUP. ROUND 7.
+// PROP LOOKUP. ROUND 7, COLLAPSED IN ROUND 8 — the argument below is why the
+// mirror needs a lookup at all, and it still holds. What changed is where the
+// lookup comes from. propLUT was filled from a hand-maintained PROPS[] list in
+// store.js: 256 px, colour+height, and it contained exactly the furniture
+// somebody remembered to call prop() for. Blind test 7 still read the floor as
+// a texture, and the reason is one line of the critique:
+//
+//   "no object occludes it."
+//
+// A list you have to remember to append to has the same failure mode as an
+// occlusion card you have to remember to place. Round 8 replaces it with
+// light.js's Field — 1024 px, filled by construction from Batch.push and
+// solid(), so it contains every gondola, every endcap, every barrel, every
+// pallet, every cart, every checkout AND the product on the shelves, without
+// anyone maintaining anything. The march below reads that instead, so the
+// occlusion, the colour and the AO are all the same measurement of the same
+// building.
+//
+// The original round-7 note, kept because it is the argument for the whole
+// approach:
 //
 // The blind test's floor verdict: "the ceiling strips reflect at full
 // brightness all the way to the horizon, while a brightly-lit endcap standing
@@ -152,31 +172,10 @@ export function wallLUT(THREE, runs, minX, spanX) {
 // footprint holding, per square 190 mm of floor, the colour of whatever stands
 // there and how tall it is. The march the mirror already runs then costs one
 // extra tap per step and reflects the whole store instead of a third of it.
-// Height in alpha, scaled by PROP_H so a 2.6 m stack saturates.
-export const PROP_H = 2.6;
-
-export function propLUT(THREE, props, minX, spanX, minZ, spanZ) {
-  const N = 256;
-  const c = document.createElement('canvas');
-  c.width = N; c.height = N;
-  const g = c.getContext('2d');
-  g.clearRect(0, 0, N, N);
-  const kx = N / spanX, kz = N / spanZ;
-  for (const p of props) {
-    const a = Math.max(0.05, Math.min(0.99, p.h / PROP_H));
-    const r = (p.c >> 16) & 255, gg = (p.c >> 8) & 255, b = p.c & 255;
-    g.fillStyle = `rgba(${r},${gg},${b},${a})`;
-    g.fillRect((p.x - p.w / 2 - minX) * kx, (p.z - p.l / 2 - minZ) * kz,
-      Math.max(1.4, p.w * kx), Math.max(1.4, p.l * kz));
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.generateMipmaps = false;
-  t.minFilter = THREE.LinearFilter;
-  t.magFilter = THREE.LinearFilter;
-  return t;
-}
+// Height in alpha, scaled by light.js's FIELD_H so a 3.4 m stack saturates.
+// The 256 px canvas rasteriser that used to live here is gone; Field does the
+// same job at four times the resolution, off a sink nobody has to remember to
+// call, and holds the product as well as the furniture.
 
 // ---------------------------------------------------------------------------
 // BURNISH. Low-frequency swirl left by the floor machine, plus the black arcs
@@ -499,23 +498,37 @@ export function reflectiveFloor(THREE, opts) {
     // crossing a floor is BROKEN AND DISPLACED at every seam. Round 5 ran the
     // streaks continuously over the grout, which is the second thing the critic
     // named. uTile is the real tile pitch the floor map lays down: 2.44 / 8.
+    // ROUND 8 — HOW HARD. The blind test's first proof that the highlight was
+    // a texture: "it is chopped into per-tile quads on the grout grid." That
+    // is this, at round 7's settings, doing its job too well. A grout seam is
+    // 3 mm of recessed matte in a 305 mm tile; it interrupts a reflection, it
+    // does not quantise one into squares. Cutting the per-tile gloss spread
+    // and the seam kill by roughly half leaves the break-up readable close up,
+    // where it belongs, and stops the mid-field mirror from reading as tiling.
     uTile: { value: 2.44 / 8 },
-    uTileVar: { value: 0.40 },      // how much the per-tile wax varies
-    uTileTilt: { value: 0.019 },    // how far a tile displaces the mirrored ray
-    uSeam: { value: 0.52 },         // how completely the grout kills the mirror
+    uTileVar: { value: 0.22 },      // how much the per-tile wax varies
+    uTileTilt: { value: 0.013 },    // how far a tile displaces the mirrored ray
+    uSeam: { value: 0.28 },         // how completely the grout kills the mirror
     // How hard the floor mirrors the SHELVING, as opposed to the lamps. Round 5
     // sampled the wall LUT raw, and the LUT is authored dim on purpose, so the
     // gondolas, the endcaps and the red promo caps were all present in the
     // reflection at a few percent — i.e. invisibly. Only the strip lights ever
     // made it out, which is the third thing the critic named.
     uWallGain: { value: 1.45 },
-    // the hand-placed furniture — see propLUT. store.js fills the texture in
-    // after the build, because half of what goes in it does not exist yet when
-    // the floor material is made.
-    uProp: { value: opts.prop || null },
-    uPropMap: { value: new THREE.Vector4(
-      1 / spanX, minX, 1 / (opts.spanZ || 1), opts.minZ || 0) },
+    // ROUND 8. The march against light.js's Field. uPropOn stays as the gate
+    // (store.js turns it on once the field is baked) but there is no longer a
+    // second texture or a second mapping: uFld/uFldMap arrive with FIELD_GLSL,
+    // which the AO and the glass read from as well.
+    //   x  how far up the march reaches, in metres
+    //   y  how wide the reflection lobe is vertically at the hit, i.e. how
+    //      soft the top edge of a reflected object is
     uPropOn: { value: 0.0 },
+    uFldRefl: { value: new THREE.Vector2(2.60, 0.30) },
+    // Illuminance on a vertical sales-floor surface, in the same linear units
+    // uLightCol is in. The lamp is 3.30; a matte facing under it returns a
+    // couple of tenths of that, and it is the difference between a reflected
+    // endcap you can see and one that measures 2% against the ceiling.
+    uFldGain: { value: 3.05 },
   };
   mat.userData.chop = U;
 
@@ -530,12 +543,10 @@ export function reflectiveFloor(THREE, opts) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vChopW;
-uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain, uPropOn;
-uniform vec2 uBlurA, uBlurB, uBlurMax, uFade;
-uniform vec4 uPropMap;
+uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain, uPropOn, uFldGain;
+uniform vec2 uBlurA, uBlurB, uBlurMax, uFade, uFldRefl;
 uniform sampler2D uBurn;
-uniform sampler2D uProp;
-` + CHOP_SCENE_GLSL + `
+` + FIELD_GLSL + CHOP_SCENE_GLSL + `
 `)
       .replace('#include <opaque_fragment>', `#include <opaque_fragment>
 {
@@ -645,9 +656,20 @@ uniform sampler2D uProp;
     // the edge of a reflected object is a gradient the width of the lobe. The
     // binary version is what put the hard straight terminations at the
     // cross-aisle that made the whole floor read as a decal.
+    // ROUND 8 — THE MARCH NOW WALKS THE WHOLE ROOM, NOT A REMEMBERED LIST.
+    // The old loop ran seven samples up to the top of a gondola and tested two
+    // things: the periodic run field, and a 256 px lookup of hand-placed
+    // furniture. Everything else on the sales floor — and ALL of the product,
+    // which is most of what a real floor reflects — was invisible to it. Now
+    // the same march reads light.js's Field, which is filled by construction
+    // from every Batch.push and every solid() in the build, and it reaches
+    // uFldRefl.x metres up instead of stopping at the shelf line. Twelve
+    // samples on a squared distribution: dense near the fragment, where the
+    // reflection of the thing you are standing next to lives.
     float tTop = ( uShelfH - Pw.y ) / R.y;
+    float tFld = ( uFldRefl.x - Pw.y ) / R.y;
     float occ = 0.0, hitT = tTop;
-    float pocc = 0.0;
+    float pocc = 0.0, hitY = 0.0;
     vec3 pcol = vec3( 0.0 );
     for ( int i = 0; i < 7; i ++ ) {
       float t = tTop * ( float( i ) + 0.5 ) / 7.0;
@@ -656,15 +678,18 @@ uniform sampler2D uProp;
       float ox = 1.0 - smoothstep( uRunHalf - 0.16, uRunHalf + 0.16, abs( rn.x ) );
       float o = ox * rn.y * max( rn.z, chopRunZ( Q.z ) );
       if ( o > occ ) { occ = o; hitT = t; }
-      // ...and the hand-placed furniture, which the periodic tests above
-      // cannot see. Same continuous-occupancy treatment: a reflection lobe has
-      // width, so the edge of a reflected endcap is a gradient, not a step.
-      if ( uPropOn > 0.5 ) {
-        vec4 pr = texture2D( uProp, vec2( ( Q.x - uPropMap.y ) * uPropMap.x,
-                                          ( Q.z - uPropMap.w ) * uPropMap.z ) );
-        float po = pr.a * step( 0.02, pr.a )
-          * ( 1.0 - smoothstep( pr.a * 2.6 - 0.22, pr.a * 2.6 + 0.14, Q.y ) );
-        if ( po > pocc ) { pocc = po; pcol = pr.rgb; }
+    }
+    if ( uPropOn > 0.5 ) {
+      for ( int i = 0; i < 12; i ++ ) {
+        float u = ( float( i ) + 0.5 ) / 12.0;
+        float t = tFld * u * u;
+        vec3 Q = Pw + R * t;
+        // the lobe widens along the ray, so the field is read at a coarser mip
+        // the further out the sample is — the same reason the ceiling tap has
+        // a growing footprint, applied to the geometry instead of the lamps
+        float lod = log2( max( 1.0, ( 0.06 + t * 0.16 ) * uFldCfg.y ) );
+        vec4 hit = chopFldHit( Q, lod, uFldRefl.y + t * 0.05 );
+        if ( hit.a > pocc ) { pocc = hit.a; pcol = hit.rgb; hitY = Q.y; }
       }
     }
     if ( occ > 0.004 ) {
@@ -690,8 +715,18 @@ uniform sampler2D uProp;
       // ragged red column two or three times its own width in Z — which is
       // exactly the "saturated red object produces no red smear" the blind
       // test could not find anywhere in four frames.
+      //
+      // ROUND 8 — WHY IT WAS INVISIBLE EVEN WITH THE LOOKUP LIVE. The field
+      // stores ALBEDO, and this was mixing albedo straight against a radiance
+      // that runs to 3.3 for a lamp. A 0.22-albedo endcap arriving unlit into
+      // a term whose other branch is over unity contributes a dark grey
+      // nothing. What a floor mirrors is the object's RADIANCE — albedo times
+      // the light falling on it — and in a supermarket that light is a
+      // continuous strip four metres straight up, so a facing's top is over a
+      // stop brighter than its kick. uFldGain is that illuminance.
       float pn = chopHash( vec2( floor( Pw.z * 2.2 ), floor( Pw.x * 1.5 ) ) );
-      refl = mix( refl, pcol * ( 0.70 + 0.62 * pn ), clamp( pocc * 1.25, 0.0, 1.0 ) );
+      vec3 lit = pcol * uFldGain * ( 0.74 + 0.62 * smoothstep( 0.0, 1.15, hitY ) );
+      refl = mix( refl, lit * ( 0.72 + 0.58 * pn ), clamp( pocc * 1.45, 0.0, 1.0 ) );
       gloss *= 1.0 - 0.12 * pocc;
     }
     gl_FragColor.rgb = mix( gl_FragColor.rgb, refl, clamp( fres * gloss, 0.0, 1.0 ) );
@@ -841,7 +876,8 @@ uniform vec3 uTint, uFloorCol, uHaze, uRoomCol, uWallCol;
 uniform float uTintA, uGap, uGhost, uGGloss, uPaneAsp, uGF0;
 uniform vec2 uGBlur, uGBlurMax;
 uniform vec4 uRoom;
-` + CHOP_SCENE_GLSL + `
+uniform float uPropOn;
+` + FIELD_GLSL + CHOP_SCENE_GLSL + `
 
 // The positive exit parameter of a slab. Guarded, because a ray that is
 // exactly parallel to a wall never leaves through it.
@@ -870,15 +906,46 @@ vec3 chopTrace( vec3 O, vec3 R, float haze ) {
   // pane, where a 1.34 m gondola crossed at a shallow angle would otherwise
   // fall clean between two samples of a uniform march.
   float hitT = 1.0e9;
+  // ROUND 8. The same march now also asks light.js's Field what is standing
+  // where the ray passes. Round 7's trace could only see the PERIODIC gondola
+  // runs, so a pane looking out across the cross-aisle at an endcap, a pallet
+  // drop, a barrel or a parked row of carts reflected none of them and
+  // returned the room average — "the glass mirrors no aisle", exactly. The
+  // field carries all of it, and the product on it, at 47 mm.
+  float fT = 1.0e9;
+  vec3 fC = vec3( 0.0 );
   for ( int i = 0; i < 14; i ++ ) {
     float u = ( float( i ) + 0.5 ) / 14.0;
     float t = tEnd * u * u;
     vec3 Q = O + R * t;
+    if ( uPropOn > 0.5 && fT > 1.0e8 && t > 0.35 ) {
+      vec4 fh = chopFldAt( Q.xz, log2( max( 1.0, ( 0.05 + t * 0.10 ) * uFldCfg.y ) ) );
+      // a pane cannot reflect the case it is set into: skip the field for as
+      // long as the ray is still inside this run's own footprint
+      float own = ( selfSide != 0.0 && sign( Q.x ) == selfSide
+        && abs( abs( Q.x ) - uEdgeX ) < uRunHalf + 0.35 ) ? 1.0 : 0.0;
+      if ( own < 0.5 && fh.a > 0.035 && Q.y < fh.a * uFldCfg.x ) {
+        fT = t; fC = fh.rgb;
+      }
+    }
     if ( Q.y > uShelfH + 0.34 ) continue;
     vec3 rr = chopRun( Q.x );
     if ( rr.z > 0.5 && selfSide != 0.0 && sign( Q.x ) == selfSide ) continue;
     float gate = max( rr.z, chopRunZ( Q.z ) );
     if ( abs( rr.x ) < uRunHalf && rr.y > 0.5 && gate > 0.5 ) { hitT = min( hitT, t ); }
+  }
+  if ( fT < hitT && fT < 1.0e8 ) {
+    // Whatever is actually standing there, mirrored. A door is a mirror, not a
+    // smear, so this keeps the field's colour nearly straight and only breaks
+    // it up on the facing rhythm of the shelf it came off.
+    vec3 Q = O + R * fT;
+    float n = chopHash( vec2( floor( Q.z * 3.4 ), floor( Q.y * 6.0 ) ) );
+    float n2 = chopHash( vec2( floor( Q.x * 3.4 ), floor( Q.y * 2.2 ) + 11.0 ) );
+    // vertical falloff: what a pane sees of a 1 m endcap standing 4 m away is
+    // its lit top, not its kickplate
+    float lift = 0.60 + 0.75 * smoothstep( 0.10, 1.30, Q.y );
+    return fC * lift * ( 0.74 + 0.40 * n + 0.16 * n2 )
+      * mix( 1.0, 0.72, smoothstep( 6.0, 24.0, fT ) );
   }
   if ( hitT < 1.0e8 ) {
     vec3 Q = O + R * hitT;

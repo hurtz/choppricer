@@ -9,6 +9,7 @@
 //     yields an unlimited variety of grocery packages.
 
 import { makeRng, rr, ri } from './kit.js';
+import { promoDeal } from './light.js';
 
 function cv(w, h) {
   const c = document.createElement('canvas');
@@ -247,40 +248,7 @@ export function ceilTex(THREE) {
 //   contactTex   1-D ramp: near-black at v = 0 (hard against the base) fading
 //                to white by v = 1, 100-300 mm out. Used as edge-hugging strips.
 //   groundAOTex  radial pool for the broad ambient darkening under a fixture.
-export function contactTex(THREE) {
-  const W = 8, H = 128;
-  const [c, g] = cv(W, H);
-  const grd = g.createLinearGradient(0, H, 0, 0);      // v = 0 is the BOTTOM row
-  grd.addColorStop(0.00, 'rgb(28,26,26)');
-  grd.addColorStop(0.10, 'rgb(58,55,54)');
-  grd.addColorStop(0.26, 'rgb(120,116,112)');
-  grd.addColorStop(0.52, 'rgb(196,192,186)');
-  grd.addColorStop(0.78, 'rgb(240,238,233)');
-  grd.addColorStop(1.00, 'rgb(255,255,255)');
-  g.fillStyle = grd; g.fillRect(0, 0, W, H);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = THREE.RepeatWrapping;
-  t.wrapT = THREE.ClampToEdgeWrapping;
-  t.anisotropy = 4;
-  return t;
-}
 
-export function groundAOTex(THREE) {
-  const N = 128;
-  const [c, g] = cv(N, N);
-  const grd = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
-  grd.addColorStop(0.00, 'rgb(96,92,88)');
-  grd.addColorStop(0.22, 'rgb(140,136,130)');
-  grd.addColorStop(0.52, 'rgb(212,209,203)');
-  grd.addColorStop(0.80, 'rgb(247,246,242)');
-  grd.addColorStop(1.00, 'rgb(255,255,255)');
-  g.fillStyle = grd; g.fillRect(0, 0, N, N);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  return t;
-}
 
 // ---------------------------------------------------------------------------
 // LIGHT STRIP ATLAS — 4 states of one 4ft 2-tube fluorescent troffer, in a
@@ -474,71 +442,17 @@ export function pegTex(THREE) {
 // product meets the deck. This is the round-3 headline change — without it
 // every facing is evenly lit and the whole gondola reads as a decal on a plane.
 // TWO gradients in one 2-column atlas so both AO passes share one material and
-// one draw call. store.js selects with AO_UV.mouth / AO_UV.deck.
-//   left  (u 0..0.5)  cavity mouth: v=1 hard under the deck above -> v=0 deck
-//   right (u 0.5..1)  deck surface: v=1 hard against the back panel -> v=0 lip
-// The DECK pass is the one round-3 nearly missed. A side-by-side crop against
-// the reference photography showed the single largest flat region in the frame
-// was not the product at all — it was the bare cream deck surface receding
-// behind the facings on every shelf below eye level.
-export const AO_UV = { mouth: [0.02, 0, 0.48, 1], deck: [0.52, 0, 0.98, 1] };
-export function shelfAOTex(THREE) {
-  // ROUND 4. The round-3 version was "omnidirectional and too weak — a uniform
-  // dark halo with no light direction in it". Light in a supermarket aisle
-  // comes from a strip four metres straight up, so a shelf cavity is not softly
-  // shaded: the deck above it is a hard horizontal occluder, and it throws a
-  // distinct shadow BAND across the top third of whatever is on the deck below.
-  // These stops are that band, and the deck gradient is the same argument seen
-  // from above: near black where the deck meets the back panel, blown out along
-  // the front two inches where the lip catches the light.
-  const [c, g] = cv(16, 256);
-  const mouth = g.createLinearGradient(0, 0, 0, 256);
-  // The band has to be HARD but not deep. Round-4a crushed the top fifth of
-  // every cavity under 40% brightness, which put the printed packaging in there
-  // below the threshold where any of it reads — a real cast shadow is a sharp
-  // edge with recoverable detail behind it, not a black hole.
-  // ROUND 5. Softened about 12% and the band narrowed. Measured mean VALUE of a
-  // shelf close-up was 0.37-0.40 against 0.52-0.56 for reference/store_01 and
-  // _02, and the cavity card was most of it: it was multiplying the top quarter
-  // of every cavity down toward black over the ENTIRE mouth. The band stays
-  // hard-edged — that was the round-4 win and it is real — but a shadow cast by
-  // a shelf lip in a room lit to 800 lux does not take a facing to 8% grey.
-  //
-  // ...and ROUND 5 made them NEUTRAL, which turned out to matter more than the
-  // softening. A hue mask over a shelf close-up put 22% of the frame in the
-  // saturated warm band, and it was not the packaging: it was the shadowed
-  // pegboard visible in every cavity. Multiply blending COMPOUNDS chroma — a
-  // 12%-saturated cream panel under a 26%-saturated brown shadow card lands at
-  // 35%, well past anything in the reference photography. An occlusion card is
-  // a light-LEVEL change, not a pigment; and what fills the deepest part of a
-  // shelf cavity is bounce off the cool fill, so if it leans anywhere it leans
-  // the other way. Every surface in here is still as warm as it was painted.
-  mouth.addColorStop(0.00, '#1c1d20');        // deepest, right under the deck
-  mouth.addColorStop(0.035, '#2b2c30');
-  mouth.addColorStop(0.085, '#535459');       // the lip's cast shadow band
-  mouth.addColorStop(0.160, '#8d8e91');
-  mouth.addColorStop(0.260, '#c0c1c1');
-  mouth.addColorStop(0.400, '#e0e0de');
-  mouth.addColorStop(0.600, '#f7f6f2');
-  mouth.addColorStop(0.780, '#fefdfa');
-  mouth.addColorStop(0.880, '#d2d2cf');       // deck contact seam
-  mouth.addColorStop(0.945, '#87888b');
-  mouth.addColorStop(1.00, '#4f5054');
-  g.fillStyle = mouth; g.fillRect(0, 0, 8, 256);
-  const deck = g.createLinearGradient(0, 0, 0, 256);
-  deck.addColorStop(0.00, '#1e1f23');         // hard against the back panel
-  deck.addColorStop(0.10, '#3e3f44');
-  deck.addColorStop(0.26, '#7c7d80');
-  deck.addColorStop(0.48, '#a5a6a6');
-  deck.addColorStop(0.74, '#d8d8d5');
-  deck.addColorStop(0.90, '#f6f5f1');
-  deck.addColorStop(1.00, '#fffefc');         // the lit strip at the lip
-  g.fillStyle = deck; g.fillRect(8, 0, 8, 256);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
+// one draw call. store.js used to select with AO_UV.mouth / AO_UV.deck.
+//
+// DELETED IN ROUND 8 with contactTex and groundAOTex. All three were authored
+// occlusion — a cavity-mouth gradient, a deck ramp, a floor contact ramp and a
+// broad ground pool — and all four are now computed per fragment from the
+// world occupancy field. The measurement that produced them is worth keeping:
+// a supermarket cavity mouth runs about a stop and a half from the deck lip to
+// the back panel, the deck itself about two thirds of a stop over 550 mm, and
+// the floor contact ramp is 100-340 mm wide depending on how much of the base
+// is a recessed toe kick. light.js reproduces all three from geometry; if it
+// ever measures wider or narrower than those numbers, it is wrong.
 
 export function smearTex(THREE) {
   const [c, g] = cv(8, 128);
@@ -615,48 +529,18 @@ export function floorWearTex(THREE) {
 // CEILING DANGLERS — die-cut cardboard promo cards on strings. Cheap, and they
 // put real detail into the top third of the frame, which was the single
 // lowest-detail band in every round-2 render.
+export const DANGLE_COLS = 4, DANGLE_ROWS = 4;
 export function danglerAtlas(THREE) {
-  const COLS = 4, ROWS = 2, CW = 192, CH = 144;
-  const [c, g] = cv(CW * COLS, CH * ROWS);
-  const rng = makeRng(0xDA9);
-  const SETS = [
-    ['SAVE', '$1.00', '#d8341f', '#fff8e6'],
-    ['2 FOR', '$5', '#1d5f97', '#fffdf0'],
-    ['NEW!', 'TRY IT', '#e0a416', '#2b2519'],
-    ['BUY 1', 'GET 1', '#2f7a35', '#fffbe9'],
-    ['LOW', 'PRICE', '#c8551b', '#fff6e2'],
-    ['SALE', '99¢', '#b3161d', '#fffae8'],
-    ['CLUB', 'DEAL', '#5a3d8c', '#fff6ec'],
-    ['FRESH', 'DAILY', '#3f7f4f', '#fdf8e8'],
-  ];
-  for (let i = 0; i < COLS * ROWS; i++) {
-    const s = SETS[i % SETS.length];
+  // Same grammar as the endcap boards. Round 7 had eight hand-written sets
+  // here and four in promoAtlas, which is where "SAVE $1.50 twice in one
+  // frame" came from — two short lists sampled independently still collide.
+  const CW = 192, CH = 144;
+  const [c, g] = cv(CW * DANGLE_COLS, CH * DANGLE_ROWS);
+  for (let i = 0; i < DANGLE_COLS * DANGLE_ROWS; i++) {
     g.save();
-    g.translate((i % COLS) * CW, Math.floor(i / COLS) * CH);
+    g.translate((i % DANGLE_COLS) * CW, Math.floor(i / DANGLE_COLS) * CH);
     g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
-    g.fillStyle = s[3]; g.fillRect(0, 0, CW, CH);
-    g.fillStyle = s[2]; g.fillRect(0, 0, CW, CH * 0.30);
-    g.fillStyle = s[2]; g.fillRect(0, CH * 0.90, CW, CH * 0.10);
-    g.strokeStyle = 'rgba(60,52,40,0.45)'; g.lineWidth = 3;
-    g.strokeRect(1.5, 1.5, CW - 3, CH - 3);
-    g.textBaseline = 'alphabetic';
-    g.textAlign = 'center';
-    g.fillStyle = s[3];
-    fitText(g, s[0], CW / 2, CH * 0.235, CW * 0.84, CH * 0.20, '900');
-    g.fillStyle = s[2];
-    fitText(g, s[1], CW / 2, CH * 0.68, CW * 0.86, CH * 0.36, '900');
-    g.fillStyle = 'rgba(40,34,26,0.75)';
-    g.font = `700 ${CH * 0.075}px ${'Helvetica Neue, Arial'}`;
-    g.textAlign = 'center';
-    g.fillText('WITH CARD  ·  LIMIT 4', CW / 2, CH * 0.855);
-    // punched hang hole
-    g.fillStyle = 'rgba(30,26,20,0.8)';
-    g.beginPath(); g.arc(CW / 2, CH * 0.075, CH * 0.032, 0, 6.29); g.fill();
-    // a little print noise so it is not a flat vector plate
-    for (let k = 0; k < 160; k++) {
-      g.fillStyle = `rgba(${ri(rng, 0, 255)},${ri(rng, 0, 255)},${ri(rng, 0, 255)},0.05)`;
-      g.fillRect(rng() * CW, rng() * CH, rr(rng, 1, 3), rr(rng, 1, 3));
-    }
+    promoCard(g, CW, CH, 90210 + i * 53, { hole: true });
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
@@ -1123,22 +1007,136 @@ export function laneAtlas(THREE) {
 }
 
 // ENDCAP PROMO SIGNS — 4 cells of 512x256, loud red discount boards.
+// PROMO SIGNAGE. ROUND 8 — SIX ASSETS IS AN ARITHMETIC PROBLEM.
+//
+// Blind test 7: "promo signage is about six unique assets — SAVE $1.50 appears
+// in three of four frames, twice in one." Both halves of that are true and
+// neither is fixable by drawing more carefully, because the cause is that the
+// copy lived in a four-entry array. Four strings over roughly forty sign sites
+// repeats by pigeonhole; so does eight, so does twenty. What does not repeat
+// is a GRAMMAR — see promoDeal() in light.js — crossed with a layout family
+// and a colour scheme, because the number of distinct outcomes is the product
+// of three independent draws rather than the length of a list.
+//
+// Sixteen cells, no two alike, and the seeds are per-cell so adding a
+// seventeenth costs one number.
+//
+// It is also where a measurable amount of the frame's chroma comes from. Our
+// renders span 64-71 mean saturation against 59-134 for the twelve reference
+// photographs, and the 90th percentile — the saturated blocks, not the
+// average — sat at 106-139 against their 137-222. Retail promo print is not
+// tasteful: it is process red on process yellow at full ink. These schemes are
+// what a real shelf-talker measures, and the fixtures around them stay exactly
+// as cream as they were.
+const PROMO_SCHEME = [
+  { bg: '#e01818', fg: '#fff6d8', plate: '#ffd400', ink: '#1a1408' },
+  { bg: '#ffd400', fg: '#12100a', plate: '#e01818', ink: '#fffaea' },
+  { bg: '#fffbee', fg: '#c8121a', plate: '#c8121a', ink: '#fffaea' },
+  { bg: '#0a6b2e', fg: '#fdfbe8', plate: '#ffd400', ink: '#12240f' },
+  { bg: '#f26a10', fg: '#fffaea', plate: '#1b2a55', ink: '#fff6d8' },
+  { bg: '#1b3f8f', fg: '#fffaea', plate: '#ffd400', ink: '#101a34' },
+  { bg: '#7b1470', fg: '#fff2f8', plate: '#ffe14a', ink: '#2a0a26' },
+  { bg: '#fffbee', fg: '#12100a', plate: '#0a6b2e', ink: '#fdfbe8' },
+];
+
+// One promo card, drawn into the current transform at W x H. Shared by the
+// endcap boards, the coupon flags and the ceiling danglers, so a flag and a
+// board never carry the same artwork by accident and never disagree about
+// what a deal looks like in this store.
+function promoCard(g, W, H, seed, opts = {}) {
+  const rng = makeRng(seed * 22695477 + 7);
+  const d = promoDeal(seed);
+  const S = PROMO_SCHEME[Math.floor(rng() * PROMO_SCHEME.length) % PROMO_SCHEME.length];
+  const lay = Math.floor(rng() * 4);
+  const pad = H * 0.055;
+  g.fillStyle = S.bg; g.fillRect(0, 0, W, H);
+  g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+
+  // header band — a real shelf-talker carries the retailer's device across the
+  // top, and which edge it sits on is a per-design decision
+  const hb = H * (0.24 + rng() * 0.10);
+  const bodyY = lay === 3 ? 0 : hb;
+  const bodyH = H - bodyY - H * 0.12;
+  // The header is painted LAST, over whatever the body drew. A starburst is
+  // wider than its own bounding box by definition and was eating the retailer
+  // device off the top of every card that used one.
+  const header = () => {
+    if (lay === 3) return;
+    g.fillStyle = S.plate; g.fillRect(0, 0, W, hb);
+    g.fillStyle = S.ink;
+    fitText(g, d.head, W / 2, hb * 0.76, W - pad * 3, hb * 0.66, '900');
+  };
+
+  if (lay === 2) {
+    // burst: the value sits on a starburst, which is the one promo shape that
+    // still reads as a promo shape when it is nine pixels across
+    g.save();
+    g.translate(W / 2, bodyY + bodyH * 0.52);
+    g.fillStyle = S.plate;
+    g.beginPath();
+    const pts = 14, R = Math.min(W, bodyH) * 0.55;
+    for (let i = 0; i < pts * 2; i++) {
+      const a = (i / (pts * 2)) * Math.PI * 2 - Math.PI / 2;
+      const r = (i % 2 ? R * 0.74 : R) * (W / Math.min(W, bodyH) * 0.72);
+      g.lineTo(Math.cos(a) * r, Math.sin(a) * r * (bodyH / Math.min(W, bodyH) * 0.80));
+    }
+    g.closePath(); g.fill();
+    g.restore();
+    g.fillStyle = S.ink;
+    fitText(g, d.big, W / 2, bodyY + bodyH * 0.52, W * 0.62, bodyH * 0.44, '900');
+    g.fillStyle = S.ink;
+    fitText(g, d.sub, W / 2, bodyY + bodyH * 0.84, W * 0.44, bodyH * 0.22, '800');
+  } else if (lay === 1) {
+    // value reversed out of a plate, qualifier under it
+    g.fillStyle = S.plate;
+    g.fillRect(pad, bodyY + pad * 0.6, W - pad * 2, bodyH * 0.70);
+    g.fillStyle = S.ink;
+    fitText(g, d.big, W / 2, bodyY + bodyH * 0.60, W - pad * 4, bodyH * 0.56, '900');
+    g.fillStyle = S.fg;
+    fitText(g, d.sub, W / 2, bodyY + bodyH * 0.96, W * 0.55, bodyH * 0.24, '800');
+  } else {
+    // value straight on the field, sub on a rule beside it
+    g.fillStyle = S.fg;
+    fitText(g, d.big, W / 2, bodyY + bodyH * 0.66, W - pad * 3, bodyH * 0.62, '900');
+    g.fillStyle = S.plate;
+    const sw = W * 0.44, sh = bodyH * 0.24;
+    g.fillRect((W - sw) / 2, bodyY + bodyH * 0.74, sw, sh);
+    g.fillStyle = S.ink;
+    fitText(g, d.sub, W / 2, bodyY + bodyH * 0.74 + sh * 0.78, sw * 0.88, sh * 0.78, '800');
+  }
+
+  header();
+  // the legal line. Nobody reads it and every card has one; at range it is the
+  // grey smudge along the bottom edge that says "printed sign".
+  g.fillStyle = lay === 3 ? S.fg : S.fg;
+  g.globalAlpha = 0.82;
+  g.font = `700 ${H * 0.062}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  g.fillText(d.qual, W / 2, H - H * 0.035);
+  g.globalAlpha = 1;
+
+  if (opts.hole) {                       // punched hang hole, danglers only
+    g.fillStyle = 'rgba(30,26,20,0.8)';
+    g.beginPath(); g.arc(W / 2, H * 0.075, H * 0.032, 0, 6.29); g.fill();
+  }
+  g.strokeStyle = 'rgba(60,52,40,0.40)';
+  g.lineWidth = Math.max(2, H * 0.014);
+  g.strokeRect(1.5, 1.5, W - 3, H - 3);
+  // print noise, so it is a printed card and not a vector plate
+  for (let k = 0; k < 260; k++) {
+    g.fillStyle = `rgba(${ri(rng, 0, 255)},${ri(rng, 0, 255)},${ri(rng, 0, 255)},0.045)`;
+    g.fillRect(rng() * W, rng() * H, rr(rng, 1, 3), rr(rng, 1, 3));
+  }
+}
+
+export const PROMO_COLS = 4, PROMO_ROWS = 4;
 export function promoAtlas(THREE) {
-  const W = 512, H = 256, n = 4;
-  const [c, g] = cv(W, H * n);
-  const rng = makeRng(2468);
-  const copy = [['SALE', '2 FOR $5'], ['LOW', 'PRICE'], ['SAVE', '$1.50'], ['BOGO', 'FREE']];
-  for (let i = 0; i < n; i++) {
-    g.save(); g.translate(0, i * H);
-    g.fillStyle = i % 2 ? '#c8281c' : '#ffd21e'; g.fillRect(0, 0, W, H);
-    g.fillStyle = i % 2 ? '#ffd21e' : '#c8281c'; g.fillRect(0, 0, W, 20); g.fillRect(0, H - 20, W, 20);
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillStyle = i % 2 ? '#fffaf0' : '#20242c';
-    fitText(g, copy[i][0], W / 2, 82, W - 60, 92, '800');
-    g.fillStyle = i % 2 ? '#ffd21e' : '#c8281c';
-    g.fillRect(30, 130, W - 60, 92);
-    g.fillStyle = i % 2 ? '#20242c' : '#fffaf0';
-    fitText(g, copy[i][1], W / 2, 176, W - 90, 78, '800');
+  const W = 320, H = 176;
+  const [c, g] = cv(W * PROMO_COLS, H * PROMO_ROWS);
+  for (let i = 0; i < PROMO_COLS * PROMO_ROWS; i++) {
+    g.save();
+    g.translate((i % PROMO_COLS) * W, Math.floor(i / PROMO_COLS) * H);
+    g.beginPath(); g.rect(0, 0, W, H); g.clip();
+    promoCard(g, W, H, 1301 + i * 37);
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });

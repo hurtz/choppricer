@@ -916,22 +916,11 @@ export function tagAtlas(THREE) {
 // SHELF-CAVITY GRADIENT — a vertical ramp, near-opaque at the top where the
 // shelf above casts, clearing toward the deck. Sold-out voids read as dark
 // holes with this behind them instead of beige gaps.
-export function cavityTex(THREE) {
-  const [c, g] = cv(4, 64);
-  // CanvasTexture flips Y, so canvas row 0 becomes v=1 — the top of the
-  // cavity, hard up under the next shelf, which is the dark end.
-  const grd = g.createLinearGradient(0, 0, 0, 64);
-  // ROUND 5: neutral, not brown. See shelfAOTex — multiply layers compound
-  // chroma, and this one sits on top of the pegboard in every single cavity.
-  grd.addColorStop(0, 'rgba(15,15,17,0.82)');    // v=1: under the next shelf
-  grd.addColorStop(0.22, 'rgba(18,18,21,0.60)');
-  grd.addColorStop(0.60, 'rgba(21,21,24,0.24)');
-  grd.addColorStop(1, 'rgba(21,21,24,0.00)');    // v=0: the deck
-  g.fillStyle = grd; g.fillRect(0, 0, 4, 64);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  return t;
-}
+// cavityTex — DELETED IN ROUND 8. It painted the back of every shelf cavity
+// with a multiply gradient, neutral rather than brown because (round 5) stacked
+// multiply layers compound chroma as well as value. light.js darkens the same
+// cavity from the height field instead, per fragment, with each facing's actual
+// depth in the hole accounted for, which the card never could.
 
 // ---------------------------------------------------------------------------
 // PACKAGE MATERIAL — one mask atlas + a per-instance brand colour + a

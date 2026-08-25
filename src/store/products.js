@@ -303,6 +303,54 @@ export function fillShelf(B, rng, dept, opts) {
   // reads far more than any single item does.
   const deckSetback = (1 - pull) * 0.024;
 
+  // ---- ROUND-8: THE VARIANCE IS THE THING THAT VARIES ---------------------
+  //
+  // Blind test 7: "every facing is face-forward, evenly pitched, flush to the
+  // shelf front, and full." Read next to the code that produced those frames
+  // that is a strange verdict, because round 3 already gave every unit its own
+  // yaw, its own depth, a 1-in-20 chance of being shelved backwards and six
+  // separate ways of being WRONG. All of it was firing. The critic is still
+  // right, and the reason is the one thing none of that touched:
+  //
+  //   every shelf in the building drew from the SAME distribution.
+  //
+  // Yaw was +-4 degrees everywhere. Depth wander was 0-28 mm everywhere. The
+  // wrong-state probability was 2.6/n everywhere. Sample a fixed distribution
+  // four thousand times and you do not get variety, you get its mean, plus
+  // noise too small to read at the scale a photograph is judged at. What a
+  // real store has is high variance IN THE VARIANCE: the bay a clerk fronted
+  // an hour ago is a planogram photograph, the bay beside it has been through
+  // a Saturday and is 40 mm deep in gaps and cocked boxes, and the two are
+  // 1.2 m apart on the same run.
+  //
+  // So each 4 ft bay draws a STATE, and the state sets the parameters every
+  // draw below is made from. Nothing new is randomised; what changed is that
+  // the ranges are themselves a random variable. The same idea, one level up.
+  const BAY_W = 1.22;
+  const BAY_STATE = [
+    // p     skew  depth wrong hole  gap    stack chroma
+    [0.30, 0.32, 0.30, 0.30, 0.35, 0.30, 1.05, 1.00],   // just fronted
+    [0.36, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.02],   // ordinary
+    [0.21, 1.85, 1.90, 1.70, 2.10, 2.30, 0.80, 0.98],   // shopped through
+    [0.13, 3.10, 2.90, 2.45, 3.30, 4.20, 0.55, 0.96],   // been a Saturday
+  ];
+  const bayCache = new Map();
+  const bayOf = (p) => {
+    const k = Math.floor((p - a0) / BAY_W);
+    let st = bayCache.get(k);
+    if (st) return st;
+    // seeded off the deck's own rng so a run is deterministic, but drawn per
+    // bay so two bays of one deck disagree
+    let r = rng(), acc = 0, pick = BAY_STATE[1];
+    for (const row of BAY_STATE) { acc += row[0]; if (r < acc) { pick = row; break; } }
+    st = {
+      skew: pick[1], depth: pick[2], wrong: pick[3], hole: pick[4],
+      gap: pick[5], stack: pick[6], chroma: pick[7],
+    };
+    bayCache.set(k, st);
+    return st;
+  };
+
   // ---- ROUND-3 VACANCY PLAN ----------------------------------------------
   // Round-2 shelves were 100% full and perfectly faced, which no store on
   // earth is. Before anything is stocked, this deck reserves 0-2 BARE BAYS it
@@ -433,8 +481,11 @@ export function fillShelf(B, rng, dept, opts) {
     // a shopped shelf actually looks like.
     const pd = Math.min(depth * 0.94, 0.21, w * 1.7, Math.max(0.07, kind.d * depth));
 
-    // sold-out void — deeper shelves and lower decks get shopped harder
-    if (rng() < 0.060 + (1 - pull) * 0.050) {
+    // sold-out void — deeper shelves and lower decks get shopped harder, and
+    // a bay that has been through a Saturday gets shopped three times harder
+    // again than the one next to it that was fronted this morning
+    const BS = bayOf(a);
+    if (rng() < (0.060 + (1 - pull) * 0.050) * BS.hole) {
       if (tag && rng() < 0.5) tag(a + 0.01, rr(rng, 0.055, 0.095), 'orphan');
       a += rr(rng, 0.06, 0.34);
       continue;
@@ -447,11 +498,11 @@ export function fillShelf(B, rng, dept, opts) {
     // been pulled 100-220 mm back off the lip and sits in the dark. That
     // silhouette — a facing at the rail beside a facing sunk in shadow — is
     // most of what makes a real shelf read as trafficked.
-    const shopped = rng() < 0.115;
+    const shopped = rng() < 0.115 * BS.hole;
     const maxSet = Math.max(0, depth - Math.min(depth * 0.94, 0.21) - 0.02);
     const skuSetback = shopped
-      ? Math.min(maxSet, deckSetback + rr(rng, 0.10, 0.22))
-      : deckSetback + rr(rng, 0.0, 0.016);
+      ? Math.min(maxSet, deckSetback + rr(rng, 0.10, 0.22) * BS.depth)
+      : deckSetback + rr(rng, 0.0, 0.016) * BS.depth;
 
     // Cap the whole brand block. Four varieties x six facings of one design is
     // 24 identical faces in a row, which is the exact repetition round 2 was
@@ -475,7 +526,7 @@ export function fillShelf(B, rng, dept, opts) {
       // lamp actually returns, and the print does not sink because the mask's
       // brightness channel still carries the ink.
       const shade = lit * (litAt ? litAt(a) : 1) * 0.82 * rr(rng, 0.90, 1.10);
-      const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.42, 1.75));
+      const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.42, 1.75) * BS.chroma);
       const vLit = Math.min(0.97, baseHsl[2] / 100 * rr(rng, 0.86, 1.38));
       // Set per INSTANCE below, not once per variety: eight identical facings
       // in a row at one exact colour is a flat field with no internal edges,
@@ -514,7 +565,7 @@ export function fillShelf(B, rng, dept, opts) {
       if (stackable) {
         const nFit = Math.floor((headroom - 0.015) / h);
         // a stock clerk stacks two, sometimes three. Never six.
-      if (nFit >= 2 && rng() < 0.90) stack = Math.min(nFit, rng() < 0.30 ? 3 : 2);
+      if (nFit >= 2 && rng() < 0.90 * BS.stack) stack = Math.min(nFit, rng() < 0.30 ? 3 : 2);
       }
 
       // ---- ROUND-3 PER-INSTANCE VARIATION ---------------------------------
@@ -525,7 +576,7 @@ export function fillShelf(B, rng, dept, opts) {
       // and 2-3 units per block are deliberately WRONG — face-turned, crushed,
       // leaning, shoved deep, or simply missing.
       const soft = kind.t === 'bag';
-      const pWrong = Math.min(0.34, 2.6 / Math.max(2, n));
+      const pWrong = Math.min(0.62, (2.6 / Math.max(2, n)) * BS.wrong);
       // The "lying flat on top of the row" leftover has to sit on a unit that
       // actually EXISTS. Round 3 added missing facings and shoved-back facings,
       // and without this the leftover ended up hovering in mid-air over the
@@ -534,14 +585,14 @@ export function fillShelf(B, rng, dept, opts) {
       for (let k = 0; k < n && a < a1 - w * 0.55 && a - brandA0 < brandMax; k++) {
         const jitter = rr(rng, -0.006, 0.006);
         // per-item depth wander: 0-40 mm off the SKU's own setback
-        let itemSet = Math.max(0, skuSetback + rr(rng, -0.006, 0.028));
+        let itemSet = Math.max(0, skuSetback + rr(rng, -0.006, 0.028) * BS.depth);
         // BASELINE yaw is now +-4 degrees on every single unit, not on one in
         // five. Nothing on a real shelf is square to the rail.
-        let skew = rr(rng, -0.070, 0.070);
-        if (rng() < 0.22) skew += rr(rng, 0.06, 0.24) * (rng() < 0.5 ? -1 : 1);
+        let skew = rr(rng, -0.070, 0.070) * BS.skew;
+        if (rng() < 0.22 * BS.wrong) skew += rr(rng, 0.06, 0.24) * BS.skew * (rng() < 0.5 ? -1 : 1);
         // one in twenty is shelved backwards — 180 degrees shows the plain
         // wrap column, which is exactly what a reversed package looks like
-        let extraYaw = rng() < 0.045 ? Math.PI : 0;
+        let extraYaw = rng() < 0.045 * BS.wrong ? Math.PI : 0;
         // per-instance scale: 3-5% either way, and bags get more
         let sx = w * rr(rng, soft ? 0.93 : 0.955, soft ? 1.035 : 1.005);
         let sy = h * rr(rng, 0.965, 1.035);
@@ -609,7 +660,11 @@ export function fillShelf(B, rng, dept, opts) {
         }
         // real facings do not butt flush: film goods leave air, board goods
         // leave a saw-tooth of one or two millimetres
-        a += w + (soft ? rr(rng, 0.002, 0.018) : rr(rng, -0.001, 0.006));
+        // A faced bay butts flush; a shopped one leaves ragged air between
+        // facings, and that irregular pitch is most of what "evenly pitched"
+        // was naming. Same line, times the bay's own number.
+        a += w + (soft ? rr(rng, 0.002, 0.018) : rr(rng, -0.001, 0.006)) * BS.gap
+          + (BS.gap > 1.5 ? rr(rng, 0.0, 0.022) * (BS.gap - 1.0) : 0);
       }
 
       // one item lying flat on top of the row — the classic restock leftover

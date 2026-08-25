@@ -17,6 +17,18 @@ export const rr = (rng, a, b) => a + (b - a) * rng();
 export const ri = (rng, a, b) => Math.floor(a + (b - a + 1) * rng());
 export const pick = (rng, arr) => arr[Math.floor(rng() * arr.length) % arr.length];
 
+// --- the occupancy sink ----------------------------------------------------
+// ROUND 8. Every solid in this building — every product, every deck, every
+// kick plate, every bollard, every cart — reaches the GPU through Batch.push.
+// That makes push the one place a world occupancy field can be filled without
+// anybody having to remember to fill it. See ../store/light.js for what reads
+// it and why authoring occlusion at remembered junctions could never work.
+//
+// The sink is a plain function so kit.js keeps no dependency on light.js:
+//   sink(x, z, w, l, y0, y1, r, g, b)   footprint + vertical span + LINEAR rgb
+let FIELD_SINK = null;
+export function setFieldSink(fn) { FIELD_SINK = fn; }
+
 // --- instanced batch -------------------------------------------------------
 // Collect transforms first, allocate the InstancedMesh once at build().
 export class Batch {
@@ -34,6 +46,18 @@ export class Batch {
     this.c.push(col.r, col.g, col.b);
     if (this.grid) this.cells.push(cell);
     this.n++;
+    if (FIELD_SINK && !this.noField) {
+      // Conservative world AABB of a yaw+roll'd box. Yaw spreads sx/sz into
+      // each other; roll about Z tips sy into x and sx into y. Anything the
+      // approximation over-covers is inside the softness of the term that
+      // reads it — a 47 mm field texel under a 2.6 m occlusion cone.
+      const cy = Math.abs(Math.cos(ey)), sy2 = Math.abs(Math.sin(ey));
+      const cr = Math.abs(Math.cos(ez)), sr = Math.abs(Math.sin(ez));
+      const hy = cr * sy + sr * sx;                 // effective vertical extent
+      const wx = cr * sx + sr * sy;                 // roll widens the footprint
+      FIELD_SINK(px, pz, cy * wx + sy2 * sz, sy2 * wx + cy * sz,
+        py - hy / 2, py + hy / 2, col.r, col.g, col.b);
+    }
   }
   box(px, py, pz, sx, sy, sz, col) { this.push(px, py, pz, 0, 0, 0, sx, sy, sz, col); }
   build(name) {
