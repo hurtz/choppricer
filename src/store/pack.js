@@ -975,14 +975,51 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
     })
     : new THREE.MeshLambertMaterial({ map: mask, color: 0xffffff, ...rest });
   const cell = new THREE.Vector2(1 / grid.cols, 1 / grid.rows);
+  const px = new THREE.Vector2(grid.cw * grid.cols, grid.ch * grid.rows);
   m.onBeforeCompile = (sh) => {
     sh.uniforms.uCell = { value: cell };
+    sh.uniforms.uAtlasPx = { value: px };
     sh.vertexShader = 'attribute vec2 aCell;\nvarying vec2 vCell;\n' + sh.vertexShader
       .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvCell = aCell;');
-    sh.fragmentShader = 'uniform vec2 uCell;\nvarying vec2 vCell;\nfloat chopGloss;\n'
+    sh.fragmentShader = 'uniform vec2 uCell;\nuniform vec2 uAtlasPx;\nvarying vec2 vCell;\nfloat chopGloss;\n'
       + sh.fragmentShader
         .replace('#include <map_fragment>', `
-        vec4 chopM = texture2D( map, vCell + clamp( vMapUv, 0.0015, 0.9985 ) * uCell, -0.85 );
+        vec2 chopUv = vCell + clamp( vMapUv, 0.0015, 0.9985 ) * uCell;
+        vec4 chopM = texture2D( map, chopUv, -0.85 );
+        // ---- ROUND 7: MAGNIFICATION ------------------------------------
+        // "Product blur is depth-independent: a pack half a metre away is as
+        // unreadable as one six metres away. That is a magnified low-res atlas
+        // behaving as the inverse of a lens."
+        //
+        // Exactly right, and the number is easy to check. A carton cell is 340
+        // px wide and the printed front face gets 85% of it, so a 200 mm facing
+        // carries 289 texels. At 600 mm from a 40-degree lens that facing
+        // covers 586 pixels. Two screen pixels per texel — the bilinear filter
+        // is interpolating, so the near shelf is soft for the same reason a
+        // scaled-up JPEG is, and no amount of LOD bias touches it because we are
+        // MAGNIFYING, not minifying. Bias only ever selects a mip.
+        //
+        // Quadrupling every atlas is 55 MB of texture for one shelf's worth of
+        // near field. An unsharp mask is the honest alternative: it restores the
+        // acutance the sampler threw away, it costs four taps, and it is gated
+        // on the actual magnification ratio so it does nothing at all past about
+        // a metre and a half — which is where the atlas genuinely does have more
+        // texels than the screen has pixels. Only the ink channels are
+        // sharpened; chopM.b packs the food-palette band and an over/undershoot
+        // there would flip a swatch to a different colour entirely.
+        {
+          vec2 dpx = fwidth( vMapUv ) * uCell * uAtlasPx;
+          float mag = clamp( 1.0 - max( dpx.x, dpx.y ), 0.0, 1.0 );
+          if ( mag > 0.04 ) {
+            vec2 o = 1.0 / uAtlasPx;
+            vec4 lo = texture2D( map, chopUv + vec2( o.x, 0.0 ), -0.85 )
+                    + texture2D( map, chopUv - vec2( o.x, 0.0 ), -0.85 )
+                    + texture2D( map, chopUv + vec2( 0.0, o.y ), -0.85 )
+                    + texture2D( map, chopUv - vec2( 0.0, o.y ), -0.85 );
+            chopM.rg = clamp( chopM.rg + ( chopM.rg - lo.rg * 0.25 ) * ( 1.45 * mag ),
+                              0.0, 1.0 );
+          }
+        }
         float scaled = chopM.b * 4.0;
         float band = min( 3.0, floor( scaled ) );
         float amt = clamp( scaled - band, 0.0, 1.0 );
@@ -1005,7 +1042,7 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
         .replace('#include <color_fragment>', '')
         .replace('#include <specularmap_fragment>', 'float specularStrength = chopGloss;');
   };
-  m.customProgramCacheKey = () => 'chopPkg' + grid.cols + 'x' + grid.rows
+  m.customProgramCacheKey = () => 'chopPkgR7' + grid.cols + 'x' + grid.rows
     + (spec ? 'P' + (gloss ? gloss.length : 0) : 'L');
   return m;
 }

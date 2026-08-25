@@ -132,6 +132,53 @@ export function wallLUT(THREE, runs, minX, spanX) {
 }
 
 // ---------------------------------------------------------------------------
+// PROP LOOKUP. ROUND 7.
+//
+// The blind test's floor verdict: "the ceiling strips reflect at full
+// brightness all the way to the horizon, while a brightly-lit endcap standing
+// directly on the floor casts no reflection whatsoever, and a saturated red
+// object produces no red smear at all. Real floors reflect everything or
+// nothing."
+//
+// It is right and the reason is structural. The round-4 mirror can only test a
+// reflected ray against things it can describe in closed form: the periodic
+// gondola runs and the periodic light rows. Everything ELSE that stands on the
+// sales floor — the endcaps with their red promo headers, the produce tables,
+// the pallet drops, the donut tables and barrels, the checkout run, the parked
+// carts, the service desk — is placed by hand and has no closed form at all,
+// so none of it existed as far as the reflection was concerned.
+//
+// A top-down lookup is the cheap general answer: one 256 px map over the store
+// footprint holding, per square 190 mm of floor, the colour of whatever stands
+// there and how tall it is. The march the mirror already runs then costs one
+// extra tap per step and reflects the whole store instead of a third of it.
+// Height in alpha, scaled by PROP_H so a 2.6 m stack saturates.
+export const PROP_H = 2.6;
+
+export function propLUT(THREE, props, minX, spanX, minZ, spanZ) {
+  const N = 256;
+  const c = document.createElement('canvas');
+  c.width = N; c.height = N;
+  const g = c.getContext('2d');
+  g.clearRect(0, 0, N, N);
+  const kx = N / spanX, kz = N / spanZ;
+  for (const p of props) {
+    const a = Math.max(0.05, Math.min(0.99, p.h / PROP_H));
+    const r = (p.c >> 16) & 255, gg = (p.c >> 8) & 255, b = p.c & 255;
+    g.fillStyle = `rgba(${r},${gg},${b},${a})`;
+    g.fillRect((p.x - p.w / 2 - minX) * kx, (p.z - p.l / 2 - minZ) * kz,
+      Math.max(1.4, p.w * kx), Math.max(1.4, p.l * kz));
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.generateMipmaps = false;
+  t.minFilter = THREE.LinearFilter;
+  t.magFilter = THREE.LinearFilter;
+  return t;
+}
+
+// ---------------------------------------------------------------------------
 // BURNISH. Low-frequency swirl left by the floor machine, plus the black arcs
 // a pallet-jack wheel scrubs into the wax. Used for two things: it modulates
 // how glossy each patch of floor is, and it perturbs the mirrored ray, which
@@ -462,6 +509,13 @@ export function reflectiveFloor(THREE, opts) {
     // reflection at a few percent — i.e. invisibly. Only the strip lights ever
     // made it out, which is the third thing the critic named.
     uWallGain: { value: 1.45 },
+    // the hand-placed furniture — see propLUT. store.js fills the texture in
+    // after the build, because half of what goes in it does not exist yet when
+    // the floor material is made.
+    uProp: { value: opts.prop || null },
+    uPropMap: { value: new THREE.Vector4(
+      1 / spanX, minX, 1 / (opts.spanZ || 1), opts.minZ || 0) },
+    uPropOn: { value: 0.0 },
   };
   mat.userData.chop = U;
 
@@ -476,9 +530,11 @@ export function reflectiveFloor(THREE, opts) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vChopW;
-uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain;
+uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain, uPropOn;
 uniform vec2 uBlurA, uBlurB, uBlurMax, uFade;
+uniform vec4 uPropMap;
 uniform sampler2D uBurn;
+uniform sampler2D uProp;
 ` + CHOP_SCENE_GLSL + `
 `)
       .replace('#include <opaque_fragment>', `#include <opaque_fragment>
@@ -502,7 +558,20 @@ uniform sampler2D uBurn;
     vec3( dot( gl_FragColor.rgb, vec3( 0.36, 0.48, 0.16 ) ) ) * vec3( 1.03, 1.0, 0.94 ),
     far * 0.55 );
   gl_FragColor.rgb *= 0.90 + 0.20 * burn2;
-  gl_FragColor.rgb *= 0.74 + 0.26 * smoothstep( 0.10, 0.55, burn );   // scuff arcs
+  // SCUFF ARCS. ROUND 7 — "dirt ignores physics: scuff arcs run smoothly
+  // across grout instead of stopping at tile faces, and do not reduce gloss."
+  // Both halves of that are right and both have the same cause: the burnish
+  // lookup was a continuous field sampled per fragment, so it knew nothing
+  // about the tile grid and it only touched albedo. A pallet-jack wheel scrubs
+  // the WAX off a tile FACE — the tile is the unit of wear, the grout is
+  // recessed and never gets touched, and what is removed is the polish, not
+  // the pigment. So the arc is quantised to the tile it is on (a little
+  // continuous variation left in, because a tile can be half scrubbed) and it
+  // is fed to the gloss term below as well as to the albedo.
+  float tileScuff = mix( smoothstep( 0.10, 0.55, burn ),
+    smoothstep( 0.10, 0.55, texture2D( uBurn, ( floor( Pw.xz / uTile ) + 0.5 ) * uTile * 0.052 ).r ),
+    0.72 );
+  gl_FragColor.rgb *= 0.74 + 0.26 * tileScuff;
 
   if ( ny > 0.0025 ) {
     // ---- PER TILE ---------------------------------------------------------
@@ -519,13 +588,23 @@ uniform sampler2D uBurn;
     float tj = chopHash( tid );
     float tj2 = chopHash( tid + 19.0 );
     vec2 tf = abs( fract( tg ) - 0.5 );
-    float near = 1.0 - smoothstep( 5.0, 21.0, camD );
+    float near = 1.0 - smoothstep( 3.0, 13.0, camD );
     float seam = max( smoothstep( 0.435, 0.497, tf.x ), smoothstep( 0.442, 0.497, tf.y ) );
 
+    // ROUND 7 — WHY THE GROUT BREAKS READ AS A ZIG-ZAG. Round 6 displaced the
+    // mirrored ray by ( tj - 0.5 ) in x and ( tj2 - 0.5 ) in z, i.e. the SAME
+    // two hashes at the same magnitude on every tile, which is a fixed
+    // rectangular lattice of offsets. Reflections stepped left, right, left,
+    // right in a regular saw. A laid tile is not offset, it is CUPPED: it dips
+    // by a fraction of a degree in one arbitrary direction, and both the
+    // direction and the depth are independent per tile. Polar, not cartesian,
+    // and the depth carries its own hash.
+    float ta = tj * 6.28318;
+    vec2 cup = vec2( cos( ta ), sin( ta ) ) * ( ( 0.25 + 1.45 * tj2 * tj2 ) * uTileTilt * near );
     vec3 R = normalize( vec3(
-      Vd.x + ( burn - 0.5 ) * 0.055 + ( tj - 0.5 ) * uTileTilt * near,
+      Vd.x + ( burn - 0.5 ) * 0.055 + cup.x,
       ny,
-      Vd.z + ( tj2 - 0.5 ) * uTileTilt * near ) );
+      Vd.z + cup.y ) );
     // Sealed VCT: F0 about 0.04, and grazing incidence takes it toward a
     // mirror — but only toward one. Wax has micro-texture, so the specular
     // never quite reaches unity and the tile pattern stays faintly readable
@@ -536,12 +615,29 @@ uniform sampler2D uBurn;
     // wax is not uniform; a burnished floor is glossier where the machine ran
     float gloss = uGloss * ( 0.62 + 0.66 * burn );
     gloss *= 1.0 - near * ( uTileVar * ( 0.5 - tj ) * 0.5 + seam * uSeam );
+    // ...and a scuffed tile is a MATTE tile. This is the half of the dirt
+    // fault that mattered: an arc that only darkened albedo left the mirror
+    // running at full strength straight through it, so the scuff read as paint
+    // on top of a reflection rather than as an absence of one.
+    gloss *= 0.42 + 0.58 * tileScuff;
 
     // --- the ceiling, which is what the ray sees when nothing blocks it ----
     float tC = ( uCeilH - Pw.y ) / R.y;
     vec2 QC = ( Pw + R * tC ).xz;
     float bx = min( uBlurA.x + uBlurB.x * tC, uBlurMax.x );
     float bz = min( uBlurA.y + uBlurB.y * tC, uBlurMax.y );
+    // SCREEN FOOTPRINT. An analytic per-fragment mirror has no idea how big a
+    // pixel is. A floor fragment sixteen metres down the aisle is seen at four
+    // degrees, so one pixel covers the better part of half a metre of floor
+    // along the line of sight, and everything the mirror does inside that
+    // half metre is averaged by the sensor before it is ever a pixel. Round 6
+    // had no term for this at all, which is why the reflected fixtures stayed
+    // individually resolvable to the vanishing point — the third floor fault
+    // the blind test named. camD is the honest driver: it is the only thing
+    // that knows about the projection.
+    float foot = camD * 0.0018 / max( ny, 0.02 );
+    bz = max( bz, foot * 1.8 );
+    bx = max( bx, foot * 0.30 );
     vec3 refl = uCeilCol * chopCeilTile( QC, bz ) + uLightCol * chopLight( QC, bx, bz );
 
     // --- is a gondola in the way before the ray clears the shelf tops? -----
@@ -551,13 +647,25 @@ uniform sampler2D uBurn;
     // cross-aisle that made the whole floor read as a decal.
     float tTop = ( uShelfH - Pw.y ) / R.y;
     float occ = 0.0, hitT = tTop;
-    for ( int i = 0; i < 6; i ++ ) {
-      float t = tTop * ( float( i ) + 0.5 ) / 6.0;
+    float pocc = 0.0;
+    vec3 pcol = vec3( 0.0 );
+    for ( int i = 0; i < 7; i ++ ) {
+      float t = tTop * ( float( i ) + 0.5 ) / 7.0;
       vec3 Q = Pw + R * t;
       vec3 rn = chopRun( Q.x );
       float ox = 1.0 - smoothstep( uRunHalf - 0.16, uRunHalf + 0.16, abs( rn.x ) );
       float o = ox * rn.y * max( rn.z, chopRunZ( Q.z ) );
       if ( o > occ ) { occ = o; hitT = t; }
+      // ...and the hand-placed furniture, which the periodic tests above
+      // cannot see. Same continuous-occupancy treatment: a reflection lobe has
+      // width, so the edge of a reflected endcap is a gradient, not a step.
+      if ( uPropOn > 0.5 ) {
+        vec4 pr = texture2D( uProp, vec2( ( Q.x - uPropMap.y ) * uPropMap.x,
+                                          ( Q.z - uPropMap.w ) * uPropMap.z ) );
+        float po = pr.a * step( 0.02, pr.a )
+          * ( 1.0 - smoothstep( pr.a * 2.6 - 0.22, pr.a * 2.6 + 0.14, Q.y ) );
+        if ( po > pocc ) { pocc = po; pcol = pr.rgb; }
+      }
     }
     if ( occ > 0.004 ) {
       vec3 Q = Pw + R * hitT;
@@ -576,12 +684,22 @@ uniform sampler2D uBurn;
       // and the run's own occlusion darkens the wax right at its foot
       gloss *= 1.0 - 0.15 * occ;
     }
+    if ( pocc > 0.004 ) {
+      // The same vertical smear the gondolas get. A red promo cap standing on
+      // a burnished floor does not produce a picture of itself, it produces a
+      // ragged red column two or three times its own width in Z — which is
+      // exactly the "saturated red object produces no red smear" the blind
+      // test could not find anywhere in four frames.
+      float pn = chopHash( vec2( floor( Pw.z * 2.2 ), floor( Pw.x * 1.5 ) ) );
+      refl = mix( refl, pcol * ( 0.70 + 0.62 * pn ), clamp( pocc * 1.25, 0.0, 1.0 ) );
+      gloss *= 1.0 - 0.12 * pocc;
+    }
     gl_FragColor.rgb = mix( gl_FragColor.rgb, refl, clamp( fres * gloss, 0.0, 1.0 ) );
   }
 }
 `);
   };
-  mat.customProgramCacheKey = () => 'chopFloorR6';
+  mat.customProgramCacheKey = () => 'chopFloorR7';
   return mat;
 }
 
@@ -603,35 +721,100 @@ uniform sampler2D uBurn;
 // is deliberate — the two mirrors physically cannot disagree about where the
 // lamps are or where the cross-aisle cut the runs.
 //
-// Three things on top of the fresnel, all of which a real reach-in door does:
-//   * the DOUBLE-GLAZING GHOST. Two panes with a 12 mm argon gap give two
-//     reflections; the second is displaced by 2*gap*tan(theta) in the plane, so
-//     the ghost sits on top of the primary head-on and walks visibly away from
-//     it toward grazing. That drift is a strong "this is a sealed unit" cue.
-//   * THERMAL HAZE at the frame. The mullion is the cold bridge, so the film of
-//     condensation on the warm side is thickest within ~100 mm of it. It lifts
-//     the black point, milks the colour and blurs what is reflected.
-//   * the reflection blurs with reflected path length, same as the floor: near
-//     fixtures stay discrete, far ones merge into a line.
+// ROUND 7 — WHY IT STILL READ AS FLAT WHITE HAZE WITH THE SHADER LIVE.
+//
+// The lead confirmed the material was present, visible, transparent, at
+// renderOrder 4, with uGGloss 0.94. It was. The reflection it computed was a
+// CONSTANT, and there are three separate reasons, in descending order of size.
+//
+// 1. THE TRACE WAS STARTING INSIDE ITS OWN CASE. chopRun() reports a perimeter
+//    WALL run wherever |x| is within uRunHalf of uEdgeX. The aisle-1 cold wall
+//    IS that perimeter run — and its glass plane stands at x = minX + 1.16,
+//    which is 0.47 m inside the band. So every ray leaving every pane on that
+//    run was declared blocked by a gondola at the first march sample, 1.7 m
+//    out, and returned the wall LUT: a texture authored deliberately blurred,
+//    sampled at essentially one point, i.e. one flat colour with no ceiling in
+//    it, no aisle in it and no structure of any kind. Reflection and
+//    transmission cannot fight when one of them is a constant.
+//    A ray leaving the glass of a case cannot hit that case. selfSide below.
+//
+// 2. THE TRACE WAS UNBOUNDED IN X AND Z. Reflect a view ray about a VERTICAL
+//    pane and R.y is small — a metre of pane height at four metres of viewing
+//    distance spans about +-0.25 — so the ceiling intersection sits twenty to
+//    a hundred metres away. Both blur terms then slam into uGBlurMax and the
+//    light field is asked for a fully merged average of a periodic ceiling
+//    extrapolated well outside the building. Every grazing fragment got the
+//    same large number. The room is 47.7 x 38 m; a reflected ray leaves it
+//    long before that, and what it hits when it does is a WALL.
+//
+// 3. F0 = 0.04 IS SINGLE-SURFACE UNCOATED GLASS. A reach-in door is a sealed
+//    double-glazed unit: four air/glass interfaces, and the inner surface
+//    carries a low-e metal-oxide coat because the whole point is to keep the
+//    cold in. Normal-incidence reflectance of that assembly is 10-16%, not 4%.
+//    At 0.04 the mirror was worth less than half the flat 0.085 blue tint over
+//    it — i.e. head-on the round-6 pane was still the round-4 veil, in a more
+//    expensive shader. And the double-glazing ghost was ADDED at 0.52 on top
+//    of the primary rather than folded into it, which pushed total reflectance
+//    to 1.52x fresnel and helped saturate whatever survived.
+//
+// What a real reach-in door shows, and what this now computes, from bottom to
+// top of one pane, at a normal standing eye height:
+//   * the bottom third reflects the FLOOR a few hundred millimetres out, which
+//     on a burnished sales floor is itself carrying the ceiling strips;
+//   * the middle reflects the room horizontally — the opposite gondola if one
+//     is close enough, otherwise the far wall, compressed into a thin band;
+//   * the top reflects the CEILING, and because the pane top is only three
+//     metres under it the strips arrive steeply and read as discrete bars.
+// Plus the physical films that make a cold door a cold door: a condensation
+// band low on the warm face, frost creeping out of the bottom corners, wipe
+// arcs where somebody cleared it with a cloth, and a narrow thermal-haze bead
+// at the mullions — 57 mm, not the 202 mm of round 6, which was milking half
+// the width of every door toward white all on its own.
 export function reflectiveGlass(THREE, U, opts = {}) {
   const G = Object.assign({}, U, {
     uTint: { value: new THREE.Color(0.62, 0.76, 0.83) },
-    uTintA: { value: opts.tintA ?? 0.085 },
+    uTintA: { value: opts.tintA ?? 0.042 },
     uGap: { value: opts.gap ?? 0.016 },
-    uGhost: { value: opts.ghost ?? 0.52 },
-    uGGloss: { value: opts.gloss ?? 0.94 },
+    // The second surface of a sealed unit is a real reflection but it is
+    // BEHIND the first: it shares the energy, it is not extra energy. Mixed,
+    // not added.
+    uGhost: { value: opts.ghost ?? 0.34 },
+    uGGloss: { value: opts.gloss ?? 0.92 },
+    // ROUND 7. Normal-incidence reflectance of the door assembly, and the
+    // single number that decides whether this run reads as glass or as open
+    // racking. A merchandiser door is not one uncoated pane: it is a sealed
+    // double or triple unit — four to six air/glass interfaces — with a
+    // pyrolytic low-e coat on at least one of them, because the entire point
+    // of the door is to keep long-wave heat out of the case. Uncoated single
+    // glass is 0.04; this assembly measures 0.12-0.20 in the visible before
+    // the coating's own specular is counted.
+    //
+    // Swept it against reference/store_04 at 0.115 / 0.20 / 0.30 with the case
+    // interior at its new exposure. 0.115 is invisible at every angle a shopper
+    // stands at, because a vertical pane at eye height is seen near normal for
+    // most of a run. 0.30 genuinely fights the transmission the way the
+    // reference floral cooler does, and 0.26 is where the product near the
+    // mullions stops being readable while the middle of each pane stays
+    // shoppable — which is the behaviour, not the number, that was asked for.
+    uGF0: { value: opts.f0 ?? 0.26 },
     // near-mirror, so the lobe barely opens with distance — but it DOES open,
     // and that is what merges the far end of a run of fixtures.
-    uGBlur: { value: new THREE.Vector2(0.055, 0.030) },
-    uGBlurMax: { value: new THREE.Vector2(0.60, 1.60) },
+    uGBlur: { value: new THREE.Vector2(0.045, 0.026) },
+    uGBlurMax: { value: new THREE.Vector2(0.42, 1.05) },
     uFloorCol: { value: new THREE.Color(0.115, 0.101, 0.082) },
     // A ray leaving the pane a hair below horizontal spends thirty metres
     // crossing a LIT sales floor before it lands on anything. What comes back
     // is the room average, not the tile it eventually hits — and that is most
     // of why the grazing end of a real freezer run goes bright rather than dark.
     uRoomCol: { value: new THREE.Color(0.36, 0.335, 0.285) },
+    uWallCol: { value: new THREE.Color(0.50, 0.455, 0.375) },
     uHaze: { value: new THREE.Color(0.84, 0.90, 0.92) },
     uPaneAsp: { value: opts.aspect ?? 2.4 },
+    // the room, so a reflected ray stops at a wall instead of running out to a
+    // periodic ceiling a hundred metres outside the building
+    uRoom: { value: new THREE.Vector4(
+      opts.room ? opts.room[0] : -24, opts.room ? opts.room[1] : -20,
+      opts.room ? opts.room[2] : 24, opts.room ? opts.room[3] : 18) },
   });
 
   const mat = new THREE.ShaderMaterial({
@@ -654,25 +837,46 @@ precision highp float;
 varying vec3 vChopW;
 varying vec3 vChopN;
 varying vec2 vChopUv;
-uniform vec3 uTint, uFloorCol, uHaze, uRoomCol;
-uniform float uTintA, uGap, uGhost, uGGloss, uPaneAsp;
+uniform vec3 uTint, uFloorCol, uHaze, uRoomCol, uWallCol;
+uniform float uTintA, uGap, uGhost, uGGloss, uPaneAsp, uGF0;
 uniform vec2 uGBlur, uGBlurMax;
+uniform vec4 uRoom;
 ` + CHOP_SCENE_GLSL + `
+
+// The positive exit parameter of a slab. Guarded, because a ray that is
+// exactly parallel to a wall never leaves through it.
+float chopSlab( float o, float d, float lo, float hi ) {
+  if ( abs( d ) < 2.0e-4 ) return 1.0e9;
+  float t0 = ( lo - o ) / d, t1 = ( hi - o ) / d;
+  return max( t0, t1 );
+}
 
 // One mirrored ray, from an origin ON the pane, out into the sales floor.
 vec3 chopTrace( vec3 O, vec3 R, float haze ) {
-  // where the ray would leave the room
-  float tCeil = R.y > 0.001 ? ( uCeilH - O.y ) / R.y : 1.0e9;
-  float tFloor = R.y < -0.001 ? ( 0.02 - O.y ) / R.y : 1.0e9;
-  float tEnd = min( min( tCeil, tFloor ), 34.0 );
-  // ...and whether a gondola stops it first. Marched, not solved: the runs are
-  // periodic in X but broken in Z, so there is no closed form.
+  // Where the ray leaves the ROOM. Not the ceiling plane extended forever.
+  float tCeil  = R.y >  0.001 ? ( uCeilH - O.y ) / R.y : 1.0e9;
+  float tFloor = R.y < -0.001 ? ( 0.02 - O.y ) / R.y   : 1.0e9;
+  float tWall = min( chopSlab( O.x, R.x, uRoom.x, uRoom.z ),
+                     chopSlab( O.z, R.z, uRoom.y, uRoom.w ) );
+  float tEnd = min( min( tCeil, tFloor ), tWall );
+
+  // Is this pane part of a perimeter case? Then its own run is not something
+  // its own reflection can ever hit. Without this the aisle-1 cold wall
+  // occluded itself at the first sample and the whole run returned one colour.
+  float selfSide = abs( O.x ) > uEdgeX - uRunHalf - 0.03 ? sign( O.x ) : 0.0;
+
+  // Marched, not solved: the runs are periodic in X but broken in Z, so there
+  // is no closed form. 14 samples on a squared distribution — dense near the
+  // pane, where a 1.34 m gondola crossed at a shallow angle would otherwise
+  // fall clean between two samples of a uniform march.
   float hitT = 1.0e9;
-  for ( int i = 0; i < 10; i ++ ) {
-    float t = tEnd * ( float( i ) + 0.5 ) / 10.0;
+  for ( int i = 0; i < 14; i ++ ) {
+    float u = ( float( i ) + 0.5 ) / 14.0;
+    float t = tEnd * u * u;
     vec3 Q = O + R * t;
     if ( Q.y > uShelfH + 0.34 ) continue;
     vec3 rr = chopRun( Q.x );
+    if ( rr.z > 0.5 && selfSide != 0.0 && sign( Q.x ) == selfSide ) continue;
     float gate = max( rr.z, chopRunZ( Q.z ) );
     if ( abs( rr.x ) < uRunHalf && rr.y > 0.5 && gate > 0.5 ) { hitT = min( hitT, t ); }
   }
@@ -682,7 +886,29 @@ vec3 chopTrace( vec3 O, vec3 R, float haze ) {
     vec3 c = texture2D( uWall, wuv ).rgb * 1.55;
     // a gondola END seen across the back cross-aisle, not a gondola SIDE: the
     // wood end panel is a shade the LUT does not carry, so warm it toward one.
-    return mix( c, c * vec3( 1.18, 1.02, 0.82 ), 0.5 );
+    c = mix( c, c * vec3( 1.18, 1.02, 0.82 ), 0.5 );
+    // and the vertical break-up a real reflection off a shelf full of product
+    // has. The LUT is authored smooth on purpose for the FLOOR, where the
+    // reflection is genuinely smeared; on glass it is a mirror and a mirror
+    // shows the facings.
+    float n = chopHash( vec2( floor( Q.z * 3.1 ), floor( Q.y * 5.5 ) ) );
+    return c * ( 0.80 + 0.42 * n );
+  }
+  if ( tWall <= min( tCeil, tFloor ) ) {
+    // the far wall, or the front glass. Either way a big pale vertical plane,
+    // and by the time a reflected ray reaches one it is thirty metres of lit
+    // room away, so it arrives as the room average with a little of the wall
+    // in it. This is the branch that used to be a hundred metres of
+    // extrapolated ceiling.
+    vec2 Qw = ( O + R * tWall ).xz;
+    vec3 c = mix( uWallCol, uRoomCol, smoothstep( 10.0, 34.0, tWall ) );
+    // What that wall is LIT BY is the same strip field everything else is lit
+    // by, so the reflected room is not a constant: it carries the fixture
+    // rhythm, and because the reflected ray sweeps along the run as you move
+    // up and across a pane, that rhythm lands on the glass as the soft diagonal
+    // bands every real reach-in door has running across it.
+    float lw = chopLight( Qw, 0.55, 1.25 );
+    return c * ( 0.70 + 0.44 * lw + 0.22 * chopCeilTile( Qw, 0.9 ) );
   }
   if ( tFloor < tCeil ) {
     // the floor, which on a burnished sales floor is itself carrying the
@@ -695,41 +921,65 @@ vec3 chopTrace( vec3 O, vec3 R, float haze ) {
   vec2 Q = ( O + R * tCeil ).xz;
   float bx = min( uGBlur.x + uGBlur.x * tCeil * 0.30 + haze * 0.9, uGBlurMax.x );
   float bz = min( uGBlur.y + uGBlur.y * tCeil * 0.55 + haze * 1.8, uGBlurMax.y );
-  return uCeilCol + uLightCol * chopLight( Q, bx, bz );
+  return uCeilCol * chopCeilTile( Q, bz ) + uLightCol * chopLight( Q, bx, bz );
 }
 
 void main() {
   vec3 Pw = vChopW;
   vec3 V = normalize( Pw - cameraPosition );
-  // General in the pane normal, because round 5 also stood a bank of these
-  // doors down the aisle-1 wall — where the whole point is that you see them at
-  // every angle from head-on to eighty degrees as you walk past.
   vec3 N = normalize( vChopN );
   float ct = clamp( - dot( V, N ), 0.0, 1.0 );
   vec3 R = reflect( V, N );
 
-  // THERMAL HAZE. Distance to the nearest edge of THIS pane, in pane widths,
-  // corrected for the door's aspect so the haze band is the same physical
-  // width top and side.
+  // one id per door leaf, whichever axis the run happens to lie along, so the
+  // films below are different on the door next to this one
+  float did = floor( ( Pw.x + Pw.z ) / 0.86 );
+  float dh = chopHash( vec2( did, 7.0 ) );
+
+  // ---- THE FILMS ---------------------------------------------------------
+  // THERMAL HAZE at the frame. The mullion is the cold bridge, so the film on
+  // the warm side is thickest within a few centimetres of it. Round 6 ran this
+  // ramp out to 0.10 of the pane HEIGHT, which on a 0.81 x 2.02 door is 202 mm
+  // — a quarter of the width from each side, i.e. half of every door, milked
+  // toward near-white. That white bead, and not the mirror, is what the blind
+  // test was looking at.
   vec2 e = min( vChopUv, 1.0 - vChopUv );
   float edge = min( e.x * uPaneAsp, e.y );
-  float haze = smoothstep( 0.10, 0.008, edge );
+  float haze = smoothstep( 0.028, 0.004, edge );
+  // CONDENSATION. Cold air pools at the bottom of a reach-in, so the warm-side
+  // film is a band across the lower third with a soft, wavering top edge.
+  float wob = sin( vChopUv.x * 11.0 + dh * 6.28 ) * 0.035
+            + sin( vChopUv.x * 26.0 + dh * 3.1 ) * 0.014;
+  float cond = smoothstep( 0.34 + wob, 0.05 + wob, vChopUv.y ) * ( 0.35 + 0.5 * dh );
+  // FROST creeping out of the bottom corners, where the evaporator draws.
+  float cx = min( vChopUv.x, 1.0 - vChopUv.x ) * uPaneAsp;
+  float frost = smoothstep( 0.16, 0.0, cx + vChopUv.y * 0.55 );
+  frost *= 0.55 + 0.75 * chopHash( floor( vChopUv * vec2( 34.0, 12.0 ) ) + did );
+  // WIPE SMEARS. Somebody cleared this door with a cloth at chest height and
+  // left arcs of half-dissolved film behind. They ADD haze where the film is
+  // smeared and REMOVE it where the cloth actually took it off.
+  float arc = sin( vChopUv.x * 7.0 + dh * 20.0 ) * 0.10 + 0.52 + dh * 0.16;
+  float wipe = smoothstep( 0.085, 0.0, abs( vChopUv.y - arc ) );
+  float film = clamp( haze + cond + frost * 0.85, 0.0, 1.0 );
+  film = mix( film, film * 0.35 + 0.10, wipe * 0.75 );
 
-  // fresnel on a 1.52 dielectric. This IS the change.
-  float fres = 0.040 + 0.960 * pow( 1.0 - ct, 5.0 );
-  float gloss = uGGloss * ( 1.0 - 0.42 * haze );
+  // fresnel on the sealed low-e unit
+  float fres = uGF0 + ( 1.0 - uGF0 ) * pow( 1.0 - ct, 5.0 );
+  float gloss = uGGloss * ( 1.0 - 0.50 * film );
 
-  vec3 refl = chopTrace( Pw, R, haze );
-  // the inner pane, 2 * gap * tan(theta) away in the plane of the glass
+  vec3 refl = chopTrace( Pw, R, film );
+  // the inner pane, 2 * gap * tan(theta) away in the plane of the glass. It
+  // SHARES the reflected energy with the outer surface rather than doubling
+  // it, so this is a mix, not a sum.
   vec3 Rp = R - N * dot( R, N );
   float tanT = length( Rp ) / max( abs( dot( R, N ) ), 0.14 );
   vec3 off = normalize( Rp + vec3( 0.0, 1e-5, 0.0 ) ) * ( 2.0 * uGap * tanT );
-  vec3 ghost = chopTrace( Pw + off, R, haze );
-  refl = refl + ghost * uGhost;
-  refl = mix( refl, uHaze * ( 0.55 + 0.85 * dot( refl, vec3( 0.33 ) ) ), haze * 0.55 );
+  vec3 ghost = chopTrace( Pw + off, R, film );
+  refl = mix( refl, ghost, uGhost );
+  refl = mix( refl, uHaze * ( 0.55 + 0.85 * dot( refl, vec3( 0.33 ) ) ), film * 0.55 );
 
-  float A = clamp( fres * gloss + uTintA + haze * 0.30, 0.0, 0.985 );
-  vec3 C = ( refl * ( fres * gloss ) + uTint * uTintA + uHaze * ( haze * 0.30 ) ) / max( A, 1e-3 );
+  float A = clamp( fres * gloss + uTintA + film * 0.34, 0.0, 0.985 );
+  vec3 C = ( refl * ( fres * gloss ) + uTint * uTintA + uHaze * ( film * 0.34 ) ) / max( A, 1e-3 );
   gl_FragColor = vec4( C, A );
   #include <colorspace_fragment>
 }`,

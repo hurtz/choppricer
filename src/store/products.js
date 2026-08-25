@@ -57,10 +57,19 @@ const K = {
   wideBox:   { t: 'box', w: [0.24, 0.34], h: [0.14, 0.20], d: 0.80, run: [1, 3] },
   tallBox:   { t: 'box', w: [0.09, 0.13], h: [0.26, 0.33], d: 0.82, run: [2, 5] },
   tinyBox:   { t: 'box', w: [0.045, 0.075], h: [0.075, 0.12], d: 0.9, run: [4, 8] },
-  can:       { t: 'can', w: [0.068, 0.086], h: [0.10, 0.13], d: 1.0, run: [3, 7] },
-  bigCan:    { t: 'can', w: [0.098, 0.115], h: [0.15, 0.19], d: 1.0, run: [2, 5] },
-  jar:       { t: 'can', w: [0.075, 0.098], h: [0.14, 0.19], d: 1.0, run: [2, 5] },
-  tallJar:   { t: 'can', w: [0.082, 0.105], h: [0.20, 0.27], d: 1.0, run: [2, 4] },
+  // ROUND 7 — SILHOUETTE. `shape` selects one of the outlines store.js builds
+  // (see CAN_PROFILES / gussetGeo / wrapGeo). Every kind below that used to be
+  // a bare nine-sided cylinder now carries the rolled rim, the proud lug lid or
+  // the overhanging snap lid that identifies it from across an aisle. The
+  // blind test's words: "your per-instance variation is currently colour only
+  // — real variation is silhouette."
+  can:       { t: 'can', shape: 'rim',  w: [0.068, 0.086], h: [0.10, 0.13], d: 1.0, run: [3, 7] },
+  bigCan:    { t: 'can', shape: 'rim',  w: [0.098, 0.115], h: [0.15, 0.19], d: 1.0, run: [2, 5] },
+  jar:       { t: 'can', shape: 'jarL', w: [0.075, 0.098], h: [0.14, 0.19], d: 1.0, run: [2, 5] },
+  tallJar:   { t: 'can', shape: 'jarL', w: [0.082, 0.105], h: [0.20, 0.27], d: 1.0, run: [2, 4] },
+  tub:       { t: 'can', shape: 'tub',  w: [0.090, 0.130], h: [0.075, 0.115], d: 1.0, run: [2, 5] },
+  bigTub:    { t: 'can', shape: 'tub',  w: [0.125, 0.165], h: [0.13, 0.19], d: 1.0, run: [1, 3] },
+  drum:      { t: 'can', shape: 'plain', w: [0.088, 0.108], h: [0.16, 0.22], d: 1.0, run: [2, 4] },
   bottle:    { t: 'bottle', shape: 'spray', w: [0.070, 0.090], h: [0.24, 0.32], d: 1.0, run: [3, 6] },
   jug:       { t: 'bottle', shape: 'jug',   w: [0.115, 0.150], h: [0.26, 0.34], d: 1.0, run: [2, 4] },
   sodaBtl:   { t: 'bottle', shape: 'soda',  w: [0.078, 0.095], h: [0.28, 0.34], d: 1.0, run: [3, 7] },
@@ -68,7 +77,19 @@ const K = {
   bag:       { t: 'bag', w: [0.19, 0.30], h: [0.24, 0.33], d: 0.55, run: [1, 3] },
   smallBag:  { t: 'bag', w: [0.11, 0.18], h: [0.15, 0.23], d: 0.60, run: [2, 4] },
   pouch:     { t: 'bag', w: [0.085, 0.130], h: [0.13, 0.19], d: 0.45, run: [3, 6] },
-  case12:    { t: 'box', w: [0.30, 0.42], h: [0.13, 0.17], d: 0.85, run: [1, 3] },
+  // stand-up pouch: gusseted foot, tapered body, flat top crimp. The fastest
+  // growing format in a real store and the one most obviously missing here.
+  standUp:   { t: 'bag', shape: 'gusset', w: [0.095, 0.145], h: [0.17, 0.26], d: 0.55, run: [2, 5] },
+  bigPouch:  { t: 'bag', shape: 'gusset', w: [0.145, 0.210], h: [0.24, 0.34], d: 0.62, run: [1, 3] },
+  case12:    { t: 'box', shape: 'wrap', w: [0.30, 0.42], h: [0.13, 0.17], d: 0.85, run: [1, 3] },
+  // shrink-wrapped multipack: film pulled tight over the corners, slumping
+  // between them. Rounded silhouette, and the specular finally has a shape.
+  multi:     { t: 'box', shape: 'wrap', w: [0.20, 0.30], h: [0.12, 0.19], d: 0.80, run: [1, 3] },
+  sixPack:   { t: 'box', shape: 'wrap', w: [0.14, 0.20], h: [0.20, 0.27], d: 0.72, run: [2, 4] },
+  // flat sleeve: a boxed frozen meal, a bar carton, a foil-wrapped block. Two
+  // to three centimetres deep, so it reads as a slab of print on edge.
+  sleeve:    { t: 'box', w: [0.14, 0.22], h: [0.19, 0.27], d: 0.16, run: [3, 7] },
+  thinBox:   { t: 'box', w: [0.075, 0.115], h: [0.16, 0.23], d: 0.20, run: [4, 8] },
 };
 
 // Every department gets at least one non-box kind in `mustSoft` so no deck is
@@ -77,65 +98,65 @@ export const DEPTS = [
   {
     name: 'bakery', key: 'bakery', blade: 'BREAD / BAKING',
     sign: ['BREAD', 'BAKING NEEDS', 'FLOUR / SUGAR', 'COOKIES'],
-    kinds: [K.bag, K.midBox, K.smallBox, K.wideBox, K.tallBox, K.pouch, K.tallJar, K.smallBag],
-    soft: [K.bag, K.pouch, K.tallJar, K.smallBag],
+    kinds: [K.bag, K.midBox, K.sleeve, K.wideBox, K.tallBox, K.standUp, K.tallJar, K.bigPouch],
+    soft: [K.bag, K.standUp, K.tallJar, K.bigPouch, K.tub],
     colors: mix('cream', 'cream', 'red', 'yellow', 'brown', 'white'),
   },
   {
     name: 'canned', key: 'canned', blade: 'CANNED GOODS',
     sign: ['CANNED VEGETABLES', 'SOUPS / BROTH', 'CANNED FRUITS', 'PORK & BEANS'],
-    kinds: [K.can, K.can, K.bigCan, K.jar, K.tallJar, K.midBox, K.pouch, K.smallBox],
-    soft: [K.jar, K.tallJar, K.pouch],
+    kinds: [K.can, K.can, K.bigCan, K.jar, K.tallJar, K.multi, K.standUp, K.smallBox],
+    soft: [K.jar, K.tallJar, K.standUp, K.tub],
     colors: mix('red', 'red', 'red', 'green', 'green', 'silver', 'yellow'),
   },
   {
     name: 'pasta', key: 'pasta', blade: 'PASTA / SAUCE',
     sign: ['SPAGHETTI / SAUCES', 'RICE & DRY BEANS', 'MEXICAN', 'ASIAN'],
-    kinds: [K.jar, K.midBox, K.smallBox, K.tallBox, K.tallJar, K.bigCan, K.pouch, K.squat],
-    soft: [K.jar, K.tallJar, K.pouch, K.squat],
+    kinds: [K.jar, K.thinBox, K.smallBox, K.tallBox, K.tallJar, K.bigCan, K.standUp, K.squat],
+    soft: [K.jar, K.tallJar, K.standUp, K.squat, K.tub],
     colors: mix('red', 'red', 'green', 'cream', 'yellow'),
   },
   {
     name: 'snacks', key: 'snacks', blade: 'SNACKS / CHIPS',
     sign: ['CHIPS & SNACKS', 'CANDIES', 'CRACKERS', 'NUTS'],
-    kinds: [K.bag, K.bag, K.smallBag, K.wideBox, K.midBox, K.pouch, K.tinyBox, K.tallJar],
-    soft: [K.bag, K.smallBag, K.pouch, K.tallJar],
+    kinds: [K.bag, K.bag, K.smallBag, K.wideBox, K.multi, K.standUp, K.tinyBox, K.tallJar],
+    soft: [K.bag, K.smallBag, K.standUp, K.tallJar, K.bigPouch],
     colors: mix('orange', 'orange', 'red', 'red', 'yellow', 'yellow', 'blue', 'green', 'purple'),
   },
   {
     name: 'soda', key: 'soda', blade: 'SODA / JUICE',
     sign: ['SOFT DRINKS', 'JUICES', 'BOTTLED WATER', 'SPORTS DRINKS'],
-    kinds: [K.sodaBtl, K.case12, K.sodaBtl, K.bottle, K.jug, K.case12, K.squat, K.can],
-    soft: [K.sodaBtl, K.bottle, K.jug, K.squat],
+    kinds: [K.sodaBtl, K.case12, K.sodaBtl, K.sixPack, K.jug, K.case12, K.squat, K.can],
+    soft: [K.sodaBtl, K.bottle, K.jug, K.squat, K.drum],
     colors: mix('red', 'red', 'blue', 'blue', 'green', 'orange', 'purple', 'silver', 'white'),
   },
   {
     name: 'breakfast', key: 'breakfast', blade: 'CEREAL / COFFEE',
     sign: ['CEREAL', 'COFFEE / TEA', 'BREAKFAST FOODS', 'SYRUP / JAM'],
-    kinds: [K.cerealBox, K.cerealBox, K.midBox, K.jar, K.tallBox, K.smallBox, K.tallJar, K.pouch],
-    soft: [K.jar, K.tallJar, K.pouch],
+    kinds: [K.cerealBox, K.cerealBox, K.midBox, K.jar, K.tallBox, K.drum, K.tallJar, K.standUp],
+    soft: [K.jar, K.tallJar, K.standUp, K.tub],
     colors: mix('yellow', 'yellow', 'red', 'red', 'blue', 'brown', 'orange'),
   },
   {
     name: 'paper', key: 'paper', blade: 'PAPER / CLEANING',
     sign: ['PAPER GOODS', 'LAUNDRY', 'CLEANING SUPPLIES', 'TRASH BAGS'],
-    kinds: [K.jug, K.wideBox, K.bag, K.jug, K.midBox, K.cerealBox, K.squat, K.bottle],
-    soft: [K.jug, K.bag, K.squat, K.bottle],
+    kinds: [K.jug, K.wideBox, K.bigPouch, K.jug, K.multi, K.cerealBox, K.squat, K.bottle],
+    soft: [K.jug, K.bigPouch, K.squat, K.bottle, K.bigTub],
     colors: mix('blue', 'blue', 'blue', 'blue', 'white', 'white', 'teal', 'yellow', 'green'),
   },
   {
     name: 'health', key: 'health', blade: 'HEALTH / BEAUTY',
     sign: ['HEALTH & BEAUTY', 'BABY CARE', 'VITAMINS', 'PET SUPPLIES'],
-    kinds: [K.smallBox, K.bottle, K.tinyBox, K.midBox, K.smallBag, K.jar, K.squat, K.pouch],
-    soft: [K.bottle, K.jar, K.squat, K.pouch, K.smallBag],
+    kinds: [K.thinBox, K.bottle, K.tinyBox, K.sleeve, K.standUp, K.jar, K.squat, K.tub],
+    soft: [K.bottle, K.jar, K.squat, K.standUp, K.tub],
     colors: mix('white', 'white', 'white', 'silver', 'purple', 'pink', 'teal', 'blue'),
   },
 ];
 
 export const FROZEN = {
   name: 'frozen', key: 'frozen', blade: 'FROZEN', sign: ['FROZEN'],
-  kinds: [K.wideBox, K.midBox, K.smallBag, K.bag, K.tallBox, K.pouch],
-  soft: [K.smallBag, K.bag, K.pouch],
+  kinds: [K.sleeve, K.sleeve, K.smallBag, K.bag, K.thinBox, K.standUp, K.bigTub, K.multi],
+  soft: [K.smallBag, K.bag, K.standUp, K.bigTub],
   colors: mix('white', 'blue', 'blue', 'blue', 'teal', 'silver', 'red', 'green'),
 };
 
@@ -185,7 +206,8 @@ function poolFor(idx, total, strays) {
 // Kinds whose natural height suits this deck's clear height. Falls back to the
 // shortest available rather than returning nothing.
 const STACKABLE = new Set([K.can, K.bigCan, K.jar, K.tallJar, K.tinyBox,
-  K.smallBox, K.wideBox, K.case12, K.pouch]);
+  K.smallBox, K.wideBox, K.case12, K.pouch, K.tub, K.bigTub, K.multi,
+  K.drum, K.standUp, K.thinBox]);
 
 function fits(kinds, headroom) {
   let ok = kinds.filter((k) => k.h[0] <= headroom - 0.02 && k.h[1] <= headroom + 0.06);
@@ -236,6 +258,10 @@ function fits(kinds, headroom) {
 export function fillBackRow(B, rng, dept, opts) {
   const { axis, a0, a1, lip, face, deckY, headroom, depth, lit, col } = opts;
   const litAt = opts.litAt || null;
+  // ROUND 7: the deck under this row is no longer one flat line — see `notch`
+  // in store.js. Product has to ride the step or it sinks into one bay's board
+  // and floats over the next one's.
+  const stepAt = opts.stepAt || null;
   const isZ = axis === 'z';
   const baseRy = isZ ? (face > 0 ? Math.PI / 2 : -Math.PI / 2) : (face > 0 ? 0 : Math.PI);
   let a = a0;
@@ -255,8 +281,8 @@ export function fillBackRow(B, rng, dept, opts) {
       const back = pd / 2 + 0.008;
       const cx = isZ ? lip - face * back : a + w / 2;
       const cz = isZ ? a + w / 2 : lip - face * back;
-      B.box.push(cx, deckY + h / 2, cz, 0, baseRy + rr(rng, -0.10, 0.10), 0,
-        w * 0.98, h, pd, col, cell);
+      B.box.push(cx, deckY + (stepAt ? stepAt(a + w / 2) : 0) + h / 2, cz,
+        0, baseRy + rr(rng, -0.10, 0.10), 0, w * 0.98, h, pd, col, cell);
       a += w + rr(rng, 0, 0.007);
     }
     a += rr(rng, 0.002, 0.022);
@@ -266,8 +292,9 @@ export function fillBackRow(B, rng, dept, opts) {
 export function fillShelf(B, rng, dept, opts) {
   const {
     axis, a0, a1, lip, face, deckY, headroom, depth, lit, col,
-    pull = 0.5, tag = null, vacancy = 1, litAt = null,
+    pull = 0.5, tag = null, vacancy = 1, litAt = null, stepAt = null,
   } = opts;
+  const dy = (p) => deckY + (stepAt ? stepAt(p) : 0);
   const isZ = axis === 'z';
   const baseRy = isZ ? (face > 0 ? Math.PI / 2 : -Math.PI / 2) : (face > 0 ? 0 : Math.PI);
 
@@ -327,9 +354,10 @@ export function fillShelf(B, rng, dept, opts) {
     const cx = isZ ? lip - face * back : a;
     const cz = isZ ? a : lip - face * back;
     if (kind.t === 'box' || kind.t === 'bag') {
-      B[kind.t === 'bag' ? 'bag' : 'box'].push(cx, cy, cz, roll, yaw, 0, sx, sy, sz, col, cell);
+      B[kind.t === 'bag' ? 'bag' : 'box']
+        .push(cx, cy, cz, roll, yaw, 0, sx, sy, sz, col, cell, kind.shape);
     } else if (kind.t === 'can') {
-      B.can.push(cx, cy, cz, roll, yaw, 0, sx, sy, sz, col, cell);
+      B.can.push(cx, cy, cz, roll, yaw, 0, sx, sy, sz, col, cell, kind.shape);
     } else {
       B.bottle.push(cx, cy, cz, roll, yaw, 0, sx, sy, sz, col, cell, kind.shape);
     }
@@ -349,6 +377,39 @@ export function fillShelf(B, rng, dept, opts) {
         for (let t = bay[0] + 0.02; t < bay[1] - 0.05; t += rr(rng, 0.11, 0.30)) {
           tag(t, rr(rng, 0.055, 0.10), 'orphan');
         }
+      }
+      // ---- ROUND 7: RAGGED, NOT RECTANGULAR -------------------------------
+      // "The emptiness is too tidy: clean rectangular voids on a spotless
+      // deck, where real shopped-through shelves are ragged."
+      // Right, and the reason is that round 3's bare bay was a plan-level
+      // SKIP — the fill loop jumped the whole span, so the void was exactly
+      // as wide as the plan said and its two edges were the flush faces of
+      // the blocks either side. A bay that has been shopped out is never
+      // that: there is always one unit left at the back that nobody could
+      // reach, one lying on its side, and a survivor or two clinging to each
+      // edge of the hole. Those stragglers are what make the void read as
+      // something that HAPPENED rather than as something that was drawn.
+      const bw = bay[1] - bay[0];
+      const strag = ri(rng, 1, 3);
+      for (let q = 0; q < strag && bw > 0.22; q++) {
+        const sk = pick(rng, fits(dept.kinds, headroom));
+        const sw = rr(rng, sk.w[0], sk.w[1]);
+        const sh = Math.min(headroom - 0.03, rr(rng, sk.h[0], sk.h[1]));
+        const sd = Math.min(depth * 0.9, 0.20, Math.max(0.07, sk.d * depth));
+        const hs = pick(rng, dept.colors);
+        col.setHSL(hs[0] / 360, Math.min(1, hs[1] / 100 * 1.4),
+          Math.min(0.95, hs[2] / 100 * rr(rng, 0.80, 1.15)));
+        // stragglers sit in the DARK: they are 100-200 mm back off the lip,
+        // in the part of the cavity the AO card is blackest over
+        col.multiplyScalar(lit * 0.58 * rr(rng, 0.82, 1.02));
+        const sp = q === 0 ? bay[0] + rr(rng, 0.01, 0.06)
+          : (q === 1 ? bay[1] - rr(rng, 0.03, 0.10) : bay[0] + rng() * bw);
+        const tipped = rng() < 0.38;
+        place(sk, pick(rng, dept.cells[sk.t] || dept.cells.box), sw, sd, sp,
+          deckY + (stepAt ? stepAt(sp) : 0) + (tipped ? sw * 0.5 : sh / 2),
+          Math.min(Math.max(0, depth - sd - 0.02), rr(rng, 0.06, 0.19)),
+          baseRy + rr(rng, -0.5, 0.5), tipped ? Math.PI / 2 : rr(rng, -0.12, 0.12),
+          sw, sh);
       }
       a = bay[1] + rr(rng, 0.004, 0.02);
       continue;
@@ -421,10 +482,21 @@ export function fillShelf(B, rng, dept, opts) {
       // and a photographed shelf has none of those. Cartons that came off the
       // same press still catch the light differently once a customer has
       // handled them.
+      // ROUND 7 — CAVITY DEPTH. "No ambient occlusion in the shelf cavities:
+      // the deck is lit uniformly to the back panel." The AO cards in store.js
+      // are a vertical gradient across the cavity MOUTH and a horizontal one on
+      // the deck SURFACE; neither knows how far into the hole a given facing is
+      // standing. So a unit shoved 200 mm back — and about one facing in nine
+      // is, deliberately — came out exactly as bright as the one faced to the
+      // lip beside it, throwing away the strongest depth cue a shelf has.
+      // A cavity is lit through its own mouth and the illumination falls off
+      // with the solid angle of that opening, so 200 mm back is most of a stop.
+      let toneDepth = 0;
       const tone = () => {
         col.setHSL(hh / 360, vSat * rr(rng, 0.90, 1.08),
           Math.min(0.96, vLit * rr(rng, 0.82, 1.22)));
-        col.multiplyScalar(shade * rr(rng, 0.88, 1.10));
+        col.multiplyScalar(shade * rr(rng, 0.88, 1.10)
+          * (1.0 - 1.55 * Math.min(0.34, Math.max(0, toneDepth))));
       };
       tone();
 
@@ -514,12 +586,22 @@ export function fillShelf(B, rng, dept, opts) {
         // even castellation, and an even one is instantly readable as a grid
         const colH = stack > 1 && rng() < 0.30 ? Math.max(1, stack - 1) : stack;
 
+        // ROUND 7 — THE TAG RIBBON. "Shelf-edge rails are sparse and blank: real
+        // gondolas carry an unbroken edge-to-edge ribbon of tags, one under
+        // every facing." Round 3-6 emitted ONE tag per brand block, so a metre
+        // of shelf carrying eight facings got two tags and 800 mm of empty
+        // channel. The tag now goes under the facing it belongs to, including
+        // under the ones that are missing — a hole in a row still has its tag
+        // sitting there, which is precisely how you can tell it is a hole.
+        if (tag) tag(a + 0.003, Math.max(0.045, w * 0.94), draw ? 'sku' : 'orphan');
         if (draw) {
+          toneDepth = itemSet - deckSetback;
           tone();
-          lastA = a + w / 2 + jitter; lastTop = deckY + sy * colH; lastSet = itemSet;
+          const dyHere = dy(a + w / 2);
+          lastA = a + w / 2 + jitter; lastTop = dyHere + sy * colH; lastSet = itemSet;
           for (let s = 0; s < colH; s++) {
             place(kind, cell, w, pd,
-              a + w / 2 + jitter, deckY + sy / 2 + lift + s * sy * 1.005,
+              a + w / 2 + jitter, dyHere + sy / 2 + lift + s * sy * 1.005,
               itemSet + (s ? rr(rng, 0, 0.014) : 0),
               yaw + (s ? rr(rng, -0.06, 0.06) : 0), roll,
               sx, sy);
@@ -531,8 +613,9 @@ export function fillShelf(B, rng, dept, opts) {
       }
 
       // one item lying flat on top of the row — the classic restock leftover
+      toneDepth = 0;
       if (lastA !== null && a - blockStart > w * 1.6
-          && lastTop - deckY + w * 0.6 < headroom
+          && lastTop - dy(lastA) + w * 0.6 < headroom
           && blockStart - lastFlat > 1.6 && rng() < 0.13) {
         col.multiplyScalar(0.97);
         place(kind, cell, w, pd, lastA, lastTop + w * 0.50,
@@ -542,11 +625,6 @@ export function fillShelf(B, rng, dept, opts) {
         lastFlat = blockStart;
       }
 
-      // ONE shelf tag per variety, sized to this SKU's facing — irregular
-      // rhythm keyed to the product above it, not a tiling ribbon
-      if (tag && a > blockStart) {
-        tag(blockStart + 0.004, Math.min(0.115, Math.max(0.052, w * 0.92)), 'sku');
-      }
       a += rr(rng, 0.0, 0.012);
     }
     // gap between brand blocks
