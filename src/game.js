@@ -345,7 +345,11 @@ export function createGame(hudEl, deps = {}) {
   // erode is anything that reports STATE: the PA button's four words, the
   // WIND panel's KEY HELD — NO RECOVERY, the stand-down prompt's [Q]. Those
   // are not teaching a key, they are answering "what is happening".
-  const taught = { dispatch: 0, roster: 0, pa: 0, track: 0, sprint: 0, post: 0 };
+  // ROUND 10 adds `cost`, which is the same idea one step further out: not a
+  // key the player has not pressed but a SENTENCE he has not read. See
+  // tickCost() — the price of announcing at a flagged row is said in words
+  // once and carried by the PA button's colour from then on.
+  const taught = { dispatch: 0, roster: 0, pa: 0, track: 0, sprint: 0, post: 0, cost: 0 };
 
   const recs = new Map();     // shopper.id -> the DVR's opinion of that shopper
   let caseSeq = 112;
@@ -359,6 +363,17 @@ export function createGame(hudEl, deps = {}) {
   // onBolt to tell "he ran" from "he ran because of you" without depending on
   // the order agents delivers its two callbacks in.
   let lastAnn = null;         // { id, t }
+  // ---- ROUND 10: THE ANNOUNCEMENT RECORD LEFT G.floor ----------------------
+  // This was `G.floor.annAt` for two rounds, which was fine while the only
+  // place you could make an announcement was the floor. It is the bug in one
+  // field now: the desk is where the client asked for the button, `G.floor` is
+  // null at the desk, and every line of presentation in onAnnounce hangs off
+  // that object — so a desk announcement would have gone out silently, with
+  // three outcomes and no readout for any of them.
+  //
+  // One record, owned by the file rather than by a mode. The floor chip and
+  // the desk's roster rows both read it; whichever screen is up renders it.
+  let ann = null;   // { code, id, t, heard, out, label, line, sub, boltT, from }
   // THE OPEN CHANNEL. Everything the microphone touches lives in this object and
   // nowhere else, so what this file does and does not do with a live mic is one
   // paragraph rather than a hunt.
@@ -522,14 +537,22 @@ export function createGame(hudEl, deps = {}) {
         // the seconds until one would. Two clocks, both published, neither
         // inferred from the other.
         mic: micReady(), mode: st.mode,
-        // The desk half: an announcement needs the recharge AND a row.
-        ann: annReady() && G.desk.subjects.some((s) => s.id === G.desk.sel),
+        // ROUND 10: `ann` used to publish "the price check is armed" here, and
+        // the button drew its whole armed state off it. There are two verbs
+        // now and the field could only ever describe one of them; the button
+        // asks deskReadout() below which verb is up and reports that verb's
+        // clock, so this one has nothing left to say.
         // The floor half answers to agents' cooldown, not mine, so the readout
         // and the behaviour cannot drift apart. If they ever disagree the
         // button is lying again and that is the bug this round is about.
         pbReady: !a || a.announceReady !== false,
         pbIn: (a && a.announceIn) || 0,
-        pbAt: G.floor && G.floor.annAt,
+        pbMax: (a && a.K && a.K.annCool) || 6,
+        pbAt: ann,
+        // ROUND 10 — THE DESK BUTTON SAYS WHICH OF THE TWO LINES IT WOULD
+        // SPEAK, AT WHOM, AND WHAT THAT COSTS. Same rule as round 8's: the HUD
+        // never guesses what [F] would do, it is told. See deskAim/deskVerb.
+        ...deskReadout(),
       };
     },
     // ROUND 8 — WHERE THE PLAYER IS LOOKING, which is now a thing that can be
@@ -614,6 +637,10 @@ export function createGame(hudEl, deps = {}) {
         dwell: (Math.random() * 300) | 0, aisle: null, lastA: -1,
         item: L.ITEMS[(s.id * 5) % L.ITEMS.length], announced: false,
         complained: false,          // he has already filed one. See onHarass.
+        // ROUND 10. What he did about the last announcement, and when. Lives on
+        // the record rather than on the row because the row is rebuilt every
+        // frame from scratch. See stampPA().
+        paLine: null, paT: -99,
         // channel state — see camForZone()'s note. cam is null until a monitor
         // has actually seen him; lost is seconds since the last one did.
         cam: null, lost: 0, pend: -1, pendT: 0, lostSaid: false,
@@ -801,9 +828,18 @@ export function createGame(hudEl, deps = {}) {
       // middle of the picture.
       const running = s.state === 'bolt' || s.state === 'react';
       const toDoor = running && a2 && a2.exitDistOf ? a2.exitDistOf(s) : null;
+      // ROUND 10 — WHAT HE DID ABOUT THE PA, on his own row, for a few seconds.
+      // Expires here rather than in the drawing code so the census and the
+      // screen cannot disagree, and it is dropped the moment the wall loses
+      // him: everything in that column is something a motion detector
+      // reported, and a detector that cannot see him is not reporting a
+      // reaction. The same three lines go on the man who was aimed at and on
+      // everybody who merely heard it — see L.PA_ROW_WAIT.
+      if (r.paLine && (blind || G.now - r.paT > PA_ROW_HOLD)) r.paLine = null;
       const row = {
         id: s.id, cam: r.cam, aisle: r.aisle, code: r.code,
-        line: r.line, dwell: r.dwell | 0, flagged: r.flagged, lost: r.lost,
+        line: r.line, pa: r.paLine || null,
+        dwell: r.dwell | 0, flagged: r.flagged, lost: r.lost,
         running, toDoor: isFinite(toDoor) ? toDoor : null,
         fresh: r.flagged && G.now - r.flagAt < FLAG_BLINK,
         post, where: postLabel(post), held: held != null && held.id === s.id,
@@ -993,16 +1029,201 @@ export function createGame(hudEl, deps = {}) {
       // so out loud is what stops "somebody looked around" being worth anything.
       // Copy is composed here, not in hud.js — that file owns pixels and this
       // one owns words, same as f.backLine and f.clearLine.
-      const heard = res.heard | 0;
-      f.annAt = {
-        code: r.code, id: s.id, t: G.now, heard, out: null,
-        label: L.fillS(L.PA_CHIP_AIM, r.code),
-        line: L.PA_CHIP_WAIT,
-        sub: heard ? L.fillN(L.PA_CHIP_HEARD, heard) : L.PA_CHIP_ALONE,
-      };
+      openAnn(s, r, res, 'floor');
     }
+    // ...and his roster row says so too, so `r.paLine` means the same thing
+    // wherever the key was pressed. Nothing renders it from out here; it is
+    // there for the player who shouts and then hits [Q].
+    stampPA(r, L.PA_ROW_WAIT);
     return true;
   }
+
+  // =========================================================================
+  // ROUND 10 — "IF HE'S VIEWING A CAMERA AND HE SAYS 'HEY, EXCUSE ME'"
+  // =========================================================================
+  // Round 8 read the second half of the client's sentence and put the
+  // deterrence line on the FLOOR, at the reticle. The first half of the same
+  // sentence says where he is standing when he says it, and it is the desk.
+  //
+  // That is not a preference, it is the only screen the mechanic is alive on.
+  // The chase builder gated the bolt on geometry rather than on a mode — it
+  // returns zero unless the subject beats the cop to a door — so:
+  //
+  //     cop at the service desk, 40 m            29.2% bolt
+  //     cop 8 m behind him                       22.5%
+  //     cop at the mouth of his aisle             0.0%   <- where dispatch puts you
+  //     cop standing on the door                  0.0%
+  //
+  // The floor button lives at the two zeroes. "The thief is like 'oh shit', and
+  // gets scared and starts running" could not happen at all on the screen the
+  // key was on. The floor version stays — shouting at a man you are walking up
+  // to is a legitimate thing to do and it is where the whole put-it-back half
+  // of the mechanic pays — but the desk is where it was asked for and where the
+  // third outcome exists.
+  //
+  // WHO IT GOES TO. The highlighted roster row — which IS the spot monitor's
+  // PTZ lock in normal play, and that is the point rather than a coincidence:
+  // round 6 spent a round making the two halves of this desk name the same man
+  // (selectTracked drags the highlight onto the dome's pick, selectCam prefers
+  // it, [C] and a click on the glass both step it, and setSubjects hands cctv
+  // the same subject codes the roster prints, so the box in the big picture
+  // says SUBJ-19 and so does the row). The man is boxed on 676x380 of glass
+  // with his code beside him, which is what makes "he's viewing a camera and he
+  // says hey, excuse me" a thing the player can actually aim.
+  //
+  // AIMING AT THE LOCK DIRECTLY WAS THE FIRST CUT AND IT WAS WRONG. In the one
+  // case where the two disagree — the player has arrowed off the dome's pick
+  // onto another row — it put DISPATCH on one man and the PA on a different
+  // one, side by side, two buttons pointing at two people. That is the round-6
+  // bug rebuilt in a new place. The lock is the fallback for the case where
+  // nothing is highlighted at all, which is also what keeps this path
+  // reachable from ./game/eval.js: that bench never renders a wall, so it never
+  // has a lock, and every announcement it makes goes to the row it selected.
+  function deskAim() {
+    if (st.mode !== 'desk') return null;
+    const rows = G.desk.subjects;
+    const code = trackedCode();
+    const row = rows.find((s) => s.id === G.desk.sel)
+      || (code && rows.find((s) => s.code === code));
+    if (!row) return null;
+    const s = shopperById(row.id);
+    if (!s || s.caught || s.escaped || !s.mesh.visible) return null;
+    if (s.bolted || s.state === 'react' || s.state === 'shove') return null;
+    return { s, row };
+  }
+  // ...AND WHICH OF THE TWO LINES HE GETS. Round 8 wrote the rule and got the
+  // premise wrong, not the rule:
+  //
+  //   at the desk   you have a roster row and a channel and NO EYES ON HIM, so
+  //                 the thing you can honestly say is a price check.
+  //
+  // The eyes arrived. cctv rebuilt this desk around a spot monitor you can
+  // watch a man's hands on, so the premise held for exactly as long as the
+  // desk was a wall of thumbnails. What survives is the sentence under it —
+  // what you say is decided by what you can see — and the terminal already
+  // publishes that per row, in words, on 13.2% of subject-seconds:
+  // SIGNAL LOST. A man no camera has is a man you can only page an aisle
+  // about. A man in a picture is a man you can tell to put it back.
+  //
+  // So the price check is not retired and not weakened; it has stopped being
+  // the only thing the desk could say and become the thing you say when the
+  // wall has lost him. bot.callHold() is still the price check verb directly,
+  // so every round-9 bench number that went through it still measures what it
+  // measured.
+  function deskVerb() {
+    const aim = deskAim();
+    if (!aim) return null;
+    return (aim.row.lost > 0) ? 'hold' : 'putback';
+  }
+  // What [F] would do if you pressed it right now, in words, for the button.
+  // Round 8's rule and it still stands: the HUD is TOLD what the key would do,
+  // it never re-derives it, and the copy is composed here because this file
+  // owns words and hud.js owns pixels.
+  const PA_OFF = { annAim: null, annVerb: null, annLabel: null, annCost: null, annArmed: false };
+  function deskReadout() {
+    if (st.mode !== 'desk') return PA_OFF;
+    const aim = deskAim();
+    if (!aim) return PA_OFF;
+    const verb = aim.row.lost > 0 ? 'hold' : 'putback';
+    const a = agentsOf();
+    return {
+      annAim: aim.row.code, annVerb: verb,
+      // TWO VERBS, TWO CLOCKS, AND EACH ONE REPORTS ITS OWN. The deterrence
+      // line answers to agents' annCool, same as the floor's does, so the
+      // readout and the behaviour cannot drift apart. The price check answers
+      // to mine. Round 8's whole bug was one predicate serving both.
+      annArmed: verb === 'putback' ? (!a || a.announceReady !== false) : annReady(),
+      annLabel: verb === 'putback' ? L.fillS(L.PA_BTN_WARN, aim.row.code) : L.PA_BTN_HOLD,
+      // The STATE half of the price: the man this key is pointed at is a man
+      // DISPATCH is armed on. Carried by the button's own weight rather than by
+      // a sentence — it is true 59% of a competent player's desk time, and a
+      // sentence that is true 59% of the time is furniture. See tickCost().
+      annHot: verb === 'putback' && !!aim.row.flagged,
+      // ...and the TEACHING half, which is said once and then never again.
+      annCost: G.now - costAt < COST_SHOW ? L.PA_COST : null,
+    };
+  }
+  // ---- THE PRICE IS A LESSON, NOT A LABEL ---------------------------------
+  // First cut of this printed the cost line on every frame the handset was
+  // pointed at a flagged row. That predicate is honest and it was the wrong
+  // element: censused at 63.1% OF DESK FRAMES on the observer bench, 8 shifts
+  // x 240 s — more than the key legend it draws over, and comfortably the
+  // loudest permanent thing left on this desk. Round 9's whole result was
+  // deleting things that were on 97.5% of idle frames. Adding one back at 63%
+  // because the sentence happens to be true would be the alarm bar again in a
+  // smaller font, and I would have spent the round undoing the last one.
+  //
+  // Second cut said it once per LANDING — stamp it when the aim arrives on a
+  // flagged row, hold 2.6 s, drop it. Measured 59-62%, i.e. no change at all,
+  // and the reason is worth writing down because it is not obvious: the aim
+  // does not sit still. updateSubjects clears G.desk.sel on any frame the
+  // selected man is not on the channel that is up, the auto-pick puts it back
+  // the next frame, and a bot working the wall re-lands on a flagged row
+  // several times a second. "Landing" was not the event I thought it was.
+  //
+  // So the line is split from the state, which is what round 9 says to do with
+  // anything that is true most of the time:
+  //
+  //   THE STATE   the man you are pointed at is a man DISPATCH is armed on.
+  //               Carried by the BUTTON'S OWN WEIGHT — `annHot` above paints
+  //               the armed word in the recharge's warm grey-amber instead of
+  //               full amber, so the loud control next to it is the one worth
+  //               pressing. No new ink at any duty cycle.
+  //   THE LESSON  what that weight MEANS, in words, exactly once — the first
+  //               time the handset is ever pointed at a flagged row. Same
+  //               reasoning as `taught`: a legend is for the first thirty
+  //               seconds, and a player who has read this sentence once does
+  //               not need it again, because from then on the colour says it.
+  const COST_SHOW = 2.6;
+  let costAt = -99;
+  function tickCost() {
+    if (st.mode !== 'desk' || taught.cost) return;
+    const aim = deskAim();
+    if (!aim || !aim.row.flagged || aim.row.lost > 0) return;
+    if (costAt < 0) costAt = G.now;
+    if (G.now - costAt >= COST_SHOW) taught.cost = 1;
+  }
+  // ONE HANDSET, ONE BUTTON, and the mouse and the key must not be able to
+  // disagree about what it does. Both go through here.
+  function deskPA() {
+    return deskVerb() === 'putback' ? announceDesk() : callHold();
+  }
+  function announceDesk() {
+    const a = agentsOf();
+    if (!a || typeof a.announceAt !== 'function') return false;   // pre-round-8 agents
+    const aim = deskAim();
+    if (!aim) return false;
+    const res = a.announceAt(aim.s, 'putback');
+    if (!res || !res.ok) return false;
+    lastAnn = { id: aim.s.id, t: G.now };
+    const r = recOf(aim.s);
+    logLine(L.fillS(L.pick(L.PA_PUTBACK), r.code));
+    openAnn(aim.s, r, res, 'desk');
+    // His row says so on the next frame — see stampPA. The wait state is not a
+    // gap to be filled: agents rolls the reaction 0.35-0.95 s later precisely
+    // so nothing in this file can get ahead of the picture.
+    stampPA(r, L.PA_ROW_WAIT);
+    return true;
+  }
+  // The one announcement record, and it is not owned by a mode. Was
+  // G.floor.annAt; see the note on `ann`.
+  function openAnn(s, r, res, from) {
+    const heard = res.heard | 0;
+    ann = {
+      code: r.code, id: s.id, t: G.now, heard, out: null, from,
+      label: L.fillS(L.PA_CHIP_AIM, r.code),
+      line: L.PA_CHIP_WAIT,
+      sub: heard ? L.fillN(L.PA_CHIP_HEARD, heard) : L.PA_CHIP_ALONE,
+    };
+  }
+  // THE DESK'S READOUT IS THE ROSTER ROW, and it costs no pixels: an
+  // announcement REPLACES the behaviour line on the row of everybody it
+  // reached, for PA_ROW_HOLD seconds, and then the row is a row again. The
+  // floor needed a chip because the floor has no list; the desk has a list of
+  // sentences about what bodies are doing, and "he just put something back" is
+  // one of those sentences.
+  const PA_ROW_HOLD = 3.2;
+  function stampPA(r, line) { r.paLine = line; r.paT = G.now; }
   // ---- hold to talk --------------------------------------------------------
   // Fire and forget: talkStart() is a Promise and a keydown handler is not the
   // place to wait on a permission prompt. If the player is still deciding when
@@ -1404,11 +1625,6 @@ export function createGame(hudEl, deps = {}) {
       } else if (d.t >= d.hold) f.dialogue = null;
     }
     if (f.stampT > 0) f.stampT -= dt;
-    // The announcement chip. It holds the aim from the moment you key the
-    // handset, through agents' 0.35-0.95 s reaction latency, to a beat after he
-    // has visibly done whatever he is going to do — then it goes, because a
-    // panel that stays up is a panel the player starts reading as state.
-    if (f.annAt && G.now - f.annAt.t > (f.annAt.boltT ? 1.4 : f.annAt.out ? 2.8 : 4.5)) f.annAt = null;
 
     // prompt
     // ---- ROUND 7: BEING PUNISHED BY AN ABSENCE --------------------------
@@ -1480,7 +1696,7 @@ export function createGame(hudEl, deps = {}) {
     f.door = null; f.exitDist = 0; f.exitDist0 = 0; f.eta = 0;
     f.viaBack = false; f.backT = 0; f.dEma = null; f.doorI = null;
     f.dialogue = null; f.dialogueId = null;
-    f.annAt = null;               // the man you shouted at is not your business now
+    ann = null;                   // the man you shouted at is not your business now
     f.prompt = L.STAND_DOWN;
   }
 
@@ -1578,7 +1794,7 @@ export function createGame(hudEl, deps = {}) {
       // two doors: which one he is running at, and how sure the box is
       door: null, doorI: null, dEma: null, eta: 0,
       viaBack: false, backT: 0, backSaid: false, closed: null,
-      postedFor: 0, quietLine: null, annAt: null,
+      postedFor: 0, quietLine: null,
       standDown: L.STAND_DOWN_DEST, backLine: L.VIA_BACK, backSub: L.VIA_BACK_SUB,
     };
     st.mode = 'floor';
@@ -1757,10 +1973,29 @@ export function createGame(hudEl, deps = {}) {
     // exists to hide, on top of flooding an eight-line log. The bystanders are
     // in the picture, where they belong.
     onAnnounce(s, kind, outcome) {
-      const f = G.floor;
-      if (!f || !f.annAt || f.annAt.id !== s.id) return;
-      f.annAt.out = outcome;
-      f.annAt.t = G.now;
+      const r = recOf(s);
+      // ---- ROUND 10: THE ROW FIRST, AND FOR EVERYBODY IT REACHED ----------
+      // This callback fires for the man you aimed at AND for every body inside
+      // agents' annSpill, which is the property the whole feature rests on: a
+      // PA is a loudspeaker and not a laser, so four people look up and
+      // "somebody looked around" is worth nothing. Round 8 answered that with
+      // a footnote counting them. The desk can do better for free — put the
+      // reaction on each of their rows and the player watches four rows change
+      // at once. Shown, not told, and the bystanders end up exactly where
+      // round 8 said they belonged: in the picture.
+      //
+      // ONE POOL FOR ALL OF THEM. No branch on s.guilty, and no branch on
+      // whether this was the aimed man — the box cannot tell those apart from
+      // a body either. 'bolt' deliberately writes nothing: he is sprinting
+      // through the middle of the picture and updateSubjects gives his row
+      // RUNNING — n M FROM THE DOOR, which is the number that matters now.
+      if (outcome === 'heed') stampPA(r, L.PA_ROW_HEED);
+      else if (outcome === 'shrug') stampPA(r, L.PA_ROW_SHRUG);
+      else r.paLine = null;
+
+      if (!ann || ann.id !== s.id) return;
+      ann.out = outcome;
+      ann.t = G.now;
       // ---- ROUND 9: THE THIRD OUTCOME, AND IT IS NOT A PRIZE --------------
       // agents.js added 'bolt' — you shouted and he panicked. It is the one
       // outcome of the three that IS a confession, and the temptation is to
@@ -1779,14 +2014,21 @@ export function createGame(hudEl, deps = {}) {
       // NO TICKER LINE HERE. onBolt() writes that, and it writes the causal
       // version — see the lastAnn check there.
       if (outcome === 'bolt') {
-        f.annAt.line = L.PA_CHIP_BOLT;
-        f.annAt.boltT = G.now;
+        ann.line = L.PA_CHIP_BOLT;
+        ann.boltT = G.now;
         const gap = d2(s.position.x, s.position.z, G.cop.x, G.cop.z);
-        f.annAt.sub = L.fillN(L.PA_CHIP_GAP, Math.round(gap));
+        ann.sub = L.fillN(L.PA_CHIP_GAP, Math.round(gap));
         return;
       }
-      f.annAt.line = outcome === 'heed' ? L.PA_CHIP_HEED : L.PA_CHIP_SHRUG;
-      const r = recOf(s);
+      // ---- ROUND 10: THE THIRD ARM, AND IT IS A THIRD ARM NOW -------------
+      // This line used to be reached by 'bolt' as well, because the ternary
+      // below has two arms and agents has four outcomes. It printed HE LOOKED
+      // AROUND over a man sprinting for the doors. The `if` above is the fix
+      // and 'hold' — the price check's own outcome, which rolls nothing — is
+      // the fourth: it gets no chip line at all, because nothing happened that
+      // the player did not already watch happen.
+      if (outcome !== 'heed' && outcome !== 'shrug') return;
+      ann.line = outcome === 'heed' ? L.PA_CHIP_HEED : L.PA_CHIP_SHRUG;
       const pool = outcome === 'heed' ? L.PA_HEED : L.PA_SHRUG;
       logLine(L.fillS(L.pick(pool), r.code));
       // No stamp and no stand-down, either way. A stamp is for a resolution,
@@ -1968,7 +2210,7 @@ export function createGame(hudEl, deps = {}) {
     else if (r.id === 'subj') { taught.roster = 1; G.desk.sel = r.data; showSel(); }
     else if (r.id === 'track') cycleTrack();
     else if (r.id === 'dispatch') dispatch();
-    else if (r.id === 'hold') callHold();
+    else if (r.id === 'hold') { taught.pa = 1; deskPA(); }
     else if (r.id === 'scroll') { taught.roster = 1; G.desk.scroll = clamp(G.desk.scroll + r.data, 0, Math.max(0, G.desk.rows - ROWS)); }
   });
 
@@ -1990,11 +2232,18 @@ export function createGame(hudEl, deps = {}) {
       else if (c === 'ArrowUp') { cycleSel(-1); ev.preventDefault(); }
       else if (c === 'KeyC') { cycleTrack(); ev.preventDefault(); }
       else if (c === 'KeyF') {
-        // Tap fires the announcement exactly as it always has — that path is
-        // measured and neutral and must not move. The microphone rides on top:
-        // if it opens, the same announcement goes out in the player's voice; if
-        // it never opens, this key is the key that shipped.
-        if (!ev.repeat) { taught.pa = 1; talk.down = true; callHold(); talkOpen(); }
+        // ROUND 10 — AND THIS IS THE LINE THE WHOLE ROUND IS ABOUT. It used to
+        // be `callHold()`, unconditionally: the neutral price check, on the one
+        // screen where the client's third outcome is live and the only screen
+        // he ever described. Now the key speaks to the man in the big picture
+        // and says what you can honestly say about him — see deskVerb(). The
+        // microphone rides on top of whichever line goes out, exactly as
+        // before; if it never opens, this key is the key that shipped.
+        if (!ev.repeat) {
+          taught.pa = 1; talk.down = true;
+          deskPA();
+          talkOpen();
+        }
         ev.preventDefault();
       }
       else if (c === 'Space' || c === 'Enter') { dispatch(); ev.preventDefault(); }
@@ -2052,6 +2301,13 @@ export function createGame(hudEl, deps = {}) {
 
     updateSubjects(dt);
     updateHold(dt);
+    // The announcement record. It holds the aim from the moment you key the
+    // handset, through agents' 0.35-0.95 s reaction latency, to a beat after he
+    // has visibly done whatever he is going to do — then it goes, because a
+    // readout that stays up is a readout the player starts reading as state.
+    // ROUND 10: aged here rather than in updateFloor, because there is an
+    // announcement at the desk now and updateFloor does not run there.
+    if (ann && G.now - ann.t > (ann.boltT ? 1.4 : ann.out ? 2.8 : 4.5)) ann = null;
     updateAlarm();
     stallWatch(dt);
     repopulate();
@@ -2074,6 +2330,7 @@ export function createGame(hudEl, deps = {}) {
         const hot = on.find((s) => s.flagged);
         if (hot) { G.desk.sel = hot.id; showSel(); }
       }
+      tickCost();               // after the selection settles: it reads the aim
     } else if (st.mode === 'floor') { updateFloor(dt); settleHarass(); }
     else if (st.mode === 'writeup') updateWriteup(dt);
   }
@@ -2102,6 +2359,13 @@ export function createGame(hudEl, deps = {}) {
     // WOULD go to without firing, so the bench can measure the aim separately
     // from the roll.
     announce, announceSubject,
+    // ROUND 10. `deskPA` is the desk's [F] exactly as the key and the mouse
+    // fire it, verb routing and all. deskAim/deskVerb report who it would go to
+    // and what it would say without firing, and callHold above is still the
+    // price check verb on its own, so a bench that measured a price check in
+    // round 9 measures the same thing in round 10.
+    deskPA, announceDesk, deskAim, deskVerb,
+    get deskReadout() { return deskReadout(); },
     get taught() { return taught; },
     get annReady() { return annReady(); },
     get micReady() { return micReady(); },

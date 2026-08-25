@@ -232,7 +232,7 @@
    "verdict": "PASS. Third outcome 'bolt' gated on GEOMETRY not a mode check - beatsCopToDoor(). 29.2% from the desk, 22.5% from 8m behind, 0.0% from the aisle mouth, 0.0% from the door, 0.0% for innocents anywhere. Likelihood ratio 1.98 against round 7's 1.95, and a live ablation proves it: set annBolt to 0 and the build IS round 7, every row to the decimal."
   },
   "game": {
-   "round": 9,
+   "round": 10,
    "state": "passed",
    "shots": [
     {
@@ -284,6 +284,11 @@
      "round": 9,
      "path": "../shots/game_r9_desk.png",
      "t": 1787617253.45062
+    },
+    {
+     "round": 10,
+     "path": "../shots/game_r10_desk.png",
+     "t": 1787620544.485091
     }
    ],
    "gaps": [
@@ -300,10 +305,10 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787617434.159918,
-   "note": "Built a permanent instrument to answer it - hud.sample() marks at each element's real draw site and eval.js renders one frame every 6 steps across a whole shift, so every number is a measured duty cycle rather than a judgement. Deleted outright: the OFFICER/BADGE panel, per-tile subject counts, the 16-CH DVR line, a second clock, POST UNMANNED, the floor RECORD panel, PULSE (the cop's body already carries fatigue), the PAN box. The key legend now ERODES per key and is at 0% after four presses. Notably it did not just subtract: the roster grew 558 -> 896px, spending the reclaimed space on 300px more behaviour text, which is the one thing the player is actually reading.",
+   "updated": 1787620741.6724842,
+   "note": "THE ANTI-ORACLE, SHOWN NOT FOOTNOTED: the reaction replaces the behaviour line for 3.2s on EVERY body the PA reached, so the man you aimed at and the three who merely heard it print the IDENTICAL row. Costs zero pixels. It also caught itself rebuilding the alarm bar - its first cut printed the PA cost whenever the aim was a flagged row, censused at 63.1% of desk frames, so it split the STATE (no new ink at any duty cycle) from the SENTENCE (said once per session, 0.2%). Rejected aiming at cctv.spot.track directly: where the lock and the highlight disagree it put DISPATCH on one man and the PA on another, side by side. TWO INSTRUMENT FINDINGS: agents.js seeds once at module init and agents.reset() does NOT reseed, so a stray agents.update() moves the whole stream and every bench number with it; and eval.js was never forwarding onAnnounce at all, so rounds 8 and 9 could not have caught a mislabelled outcome on the bench if they had tried.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
-   "verdict": "PASS on the clutter note. Something BLINKING on the wall during an idle shift: 97.5% -> 13.7%. Alarm bar lit 41.0% -> 14.5%, and the soft tier is gone entirely (27.6% -> 0). Under a live policy it drops 40.1% -> 7.2%. The bar is no longer a bar: a compact non-flashing chip in the status band that brightens under 3s and never strobes."
+   "verdict": "PASS. Announce moved to the desk on the highlighted roster row (spot lock as fallback), line chosen by what the wall can SEE - 88% deterrence / 12% price check, matching the 13.2% blind-spot rate. Reproduces the round-9 build BYTE-FOR-BYTE under round-9 bench conditions: 12 fields per policy, all identical, because the change is inert unless [F] is pressed at the desk."
   },
   "cop": {
    "round": 2,
@@ -375,6 +380,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787620741.672485,
+   "piece": "game",
+   "role": "builder",
+   "round": 10,
+   "state": "passed",
+   "text": "THE ANTI-ORACLE, SHOWN NOT FOOTNOTED: the reaction replaces the behaviour line for 3.2s on EVERY body the PA reached, so the man you aimed at and the three who merely heard it print the IDENTICAL row. Costs zero pixels. It also caught itself rebuilding the alarm bar - its first cut printed the PA cost whenever the aim was a flagged row, censused at 63.1% of desk frames, so it split the STATE (no new ink at any duty cycle) from the SENTENCE (said once per session, 0.2%). Rejected aiming at cctv.spot.track directly: where the lock and the highlight disagree it put DISPATCH on one man and the PA on another, side by side. TWO INSTRUMENT FINDINGS: agents.js seeds once at module init and agents.reset() does NOT reseed, so a stray agents.update() moves the whole stream and every bench number with it; and eval.js was never forwarding onAnnounce at all, so rounds 8 and 9 could not have caught a mislabelled outcome on the bench if they had tried."
+  },
+  {
+   "t": 1787620544.485093,
+   "piece": "game",
+   "role": "builder",
+   "round": 10,
+   "state": "building",
+   "text": "Desk announce. [F] at the desk was callHold() (neutral price check); it now speaks the deterrence line at the highlighted roster row \u2014 which IS the spot-monitor lock (selectTracked/selectCam/setSubjects already keep them the same man; measured 77.1% agreement, and aiming at the lock directly was wrong because it split DISPATCH and PA onto two different men). Verb picked by what the wall can see: row visible -> 'return the item' (88% of desk frames), SIGNAL LOST -> the round-7 price check (12%), so callHold survives as the line for a man no camera has. onAnnounce left G.floor: one mode-neutral `ann` record, and the readout is the ROSTER ROW, not a panel \u2014 the reaction replaces the behaviour line for 3.2s on every body in earshot, so the aimed man and the bystanders print the identical line (anti-oracle shown, not footnoted). Three outcomes captured and labelled: HEED 'PUT SOMETHING BACK AFTER THE PA', SHRUG 'LOOKED AROUND FOR WHOEVER SAID THAT', BOLT -> the row's RUNNING - n M FROM THE DOOR, never 'HE LOOKED AROUND'. No double ticker line (onBolt's lastAnn stamp covers the desk path). Cost priced: bench policy 'tattle' (observer that announces at tells it has read instead of walking) 307 pts/shift vs observer 373 (8x240s; 251 vs 397 at 5x240s). Door tile: deleted the t.w<200 'small' branch \u2014 the amber DOOR 1 footer sat across the mat of the 320x180 door panel under a chin already reading CH09. WHERE column MEASURED not cut: 54.3% of drawn rows -> 6.7%, >1 aisle out 16.6% -> 0.0% (4019 rows, 300 shift-s) now that the domes are at 2.62m; 66% of what is left is FRONT END, the case it was kept for. eval: dropped the ctx.step(0) prime (a cold createCCTV instance returns byte-identical channelsFor lists) but kept it as opts.prime, because agents.reset() does not reseed and it is the only way to line a round-10 bench up with a round-9 one. Regression: with prime:true the final build reproduces the round-9 build byte-for-byte on observer/reader/random, 12 fields each. Idle census unchanged (blink 16.6%, alarm 14.1%, all hard); new elements read 0% on a shift where nobody keys the handset, cost line 0.2%. Fixed a round-8 overlap: the PA recharge count and the word RECHARGING were 3px apart on a 40px button."
+  },
   {
    "t": 1787617914.346349,
    "piece": "agents",
@@ -1152,5 +1173,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787617914.3463502
+ "updated": 1787620741.6724858
 }

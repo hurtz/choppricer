@@ -298,15 +298,29 @@ export function createHUD(hudEl) {
     // one silkscreened on the chin below.
     //
     // The bank's job is now "something moved over there". Everything that is not
-    // that comes off the small tiles. What survives, and why:
+    // that comes off. What survives, and why:
     //   ACTIVE FRAME  which monitor the spot is showing. Non-negotiable.
-    //   FLAG PIP      a 7px blinking square, top-right, where cctv.js leaves a
-    //                 gap between its channel number and its REC dot. It replaces
-    //                 a 44px word. It is still guilt-blind: traps flag too.
-    //   COUNT         on the ACTIVE tile only, because that is the one whose
-    //                 roster is open underneath. On the other eight, the count
-    //                 was answering a question the pictures now answer better.
+    //   FLAG PIP      a blinking square in the top-right corner, where cctv.js
+    //                 used to burn a REC dot and no longer does. It replaces a
+    //                 44px word. It is still guilt-blind: traps flag too.
     // Sizes are derived from the rect, so a wall that changes again scales.
+    //
+    // ---- ROUND 10: `small` IS GONE, AND THE DOOR TILE IS WHY ----------------
+    // Round 9 kept a second, heavier overlay behind `t.w < 200` — a full-width
+    // amber footer naming the channel, and the word FLAG in a 44px plate — on
+    // the reasoning that a large panel has room for a label. cctv.js then
+    // rebuilt the wall as a map: eight 142x80 aisle tiles in world-X order, and
+    // the DOOR on its own 320x180 panel. 320 is not "small", so the heavy
+    // branch landed on the second most important picture in the room. See
+    // shots/game_r10_before_door.png: select channel 9 and a solid amber bar
+    // sits across the bottom of the doorway, over the mat, which is the exact
+    // strip of pixels where you find out whether he is through it. Under a chin
+    // that already reads CH09, beside a spot monitor whose own OSD already
+    // reads CAM 09 DOOR 1.
+    //
+    // So there is one overlay now and every tile gets it. The premise of the
+    // branch was never true anyway: a bigger picture is a better picture to
+    // leave alone, not a bigger canvas to write on.
     tiles.forEach((t, i) => {
       if (!t) return;
       reg('cam', t.x, t.y, t.w, t.h, i);
@@ -324,40 +338,24 @@ export function createHUD(hudEl) {
       // is reporting a change rather than restating a state.
       const fresh = subs.some((s) => s.fresh && s.primary !== false);
       const act = i === G.desk.cam;
-      const small = t.w < 200;
       box(t.x, t.y, t.w, t.h, act ? AMB : 'rgba(120,170,130,0.16)', act ? 2 : 1);
       if (act) {
         const k = Math.max(7, Math.min(16, t.w * 0.085));
-        ctx.strokeStyle = AMB; ctx.lineWidth = small ? 2 : 3;
+        ctx.strokeStyle = AMB; ctx.lineWidth = 2;
         [[0, 0, 1, 1], [1, 0, -1, 1], [0, 1, 1, -1], [1, 1, -1, -1]].forEach(([cx, cy, sx, sy]) => {
           const px = t.x + cx * t.w, py = t.y + cy * t.h;
           ctx.beginPath(); ctx.moveTo(px + sx * k, py); ctx.lineTo(px, py);
           ctx.lineTo(px, py + sy * k); ctx.stroke();
         });
-        // ROUND 9 — THE COUNT BADGE IS GONE FROM EVERY TILE.
-        // On the active tile it was a number telling you how many rows are in
-        // the roster panel directly underneath it, which is a list you can see.
-        // On the others it answered a question the pictures answer better, and
-        // it was doing it on 100% of frames. What a tile has to say is "the
-        // spot monitor is on me" and "something in here is flagged"; a large
-        // wall still gets its channel name burnt on the chin, because at that
-        // size the name is the picture's own label rather than furniture.
-        if (!small) {
-          ctx.fillStyle = AMB; ctx.fillRect(t.x, t.y + t.h - 15, t.w, 15);
-          tx(`▶ ${G.cams[i]?.label || G.cams[i]?.id || 'CAM'}`,
-            t.x + 6, t.y + t.h - 4, { s: 10, w: 'bold', c: '#07100a', ls: 1.1, max: t.w - 12 });
-        }
       }
       if (flagged) mark('pipTiles');
       if (fresh) mark('pipFresh');
       if (flagged && (!fresh || (G.now % 0.8) < 0.5)) {
-        if (small) {
-          ctx.fillStyle = fresh ? RED : '#c3382c';
-          ctx.fillRect(t.x + t.w - 11, t.y + 4, 7, 7);
-        } else {
-          ctx.fillStyle = fresh ? RED : '#c3382c'; ctx.fillRect(t.x + 4, t.y + 4, 44, 15);
-          tx('FLAG', t.x + 8, t.y + 15, { s: 10, w: 'bold', c: '#1a0402' });
-        }
+        // Scaled off the rect for the same reason the brackets are: a 7px
+        // square is a pip on 142px of glass and a speck on 320.
+        const p = Math.max(7, Math.round(t.w * 0.045));
+        ctx.fillStyle = fresh ? RED : '#c3382c';
+        ctx.fillRect(t.x + t.w - p - 4, t.y + 4, p, p);
       }
     });
     // The spot monitor is cctv.js's panel and its chrome, but it is the thing the
@@ -425,7 +423,8 @@ export function createHUD(hudEl) {
       // camera but he is NOT in the aisle it is named after — which is also
       // the case where dispatch is about to send you somewhere else.
       const where = shortWhere(s, G.cams[s.cam]);
-      if (where) tx(where, ax + 100, ry + 15, { s: 12, w: 'bold', c: AMB });
+      if (where) { mark('rowWhere'); tx(where, ax + 100, ry + 15, { s: 12, w: 'bold', c: AMB }); }
+      mark('rosterRow');
       // A row for a man no camera can currently see. He is in one of this
       // store's blind spots — 13% of subject-seconds are — and the last channel
       // that had him is the last channel that had him, which is a different
@@ -454,6 +453,19 @@ export function createHUD(hudEl) {
         mark('rowRunning');
         tx(s.toDoor != null ? `RUNNING — ${Math.round(s.toDoor)} M FROM THE DOOR` : 'RUNNING',
           lx, ry + 15, { s: 12, w: 'bold', c: RED, max: lw });
+      } else if (s.pa) {
+        // ROUND 10 — THE ANNOUNCEMENT'S WHOLE READOUT, and it is not a panel.
+        // The floor gets a chip because the floor has no list. This is a list
+        // of sentences about what bodies are doing, and what this body just
+        // did is answer a PA — so the line is replaced for three seconds and
+        // then the row goes back to being a row. Every man in earshot gets one,
+        // which is the bystander footnote shown instead of counted.
+        //
+        // Amber rather than red on a flagged row, deliberately: a reaction is
+        // not a flag. It is the one thing on this desk the player asked for by
+        // pressing a key, and it reads as an answer to that key.
+        mark('rowPA');
+        tx(s.pa, lx, ry + 15, { s: 12, w: 'bold', c: AMB, max: lw });
       } else if (s.lost > 0) {
         ctx.globalAlpha = s.flagged ? 0.8 : 0.55;
         tx(`SIGNAL LOST — LAST SEEN ${s.lost.toFixed(1)}s`, lx, ry + 15,
@@ -493,7 +505,7 @@ export function createHUD(hudEl) {
       const dest = sel.where || `AISLE ${sel.aisle + 1}`;
       tx('▶ DISPATCH', dx + 8 + bw / 2, by + 41, { s: 15, w: 'bold', c: '#07100a', a: 'center', ls: 1.4 });
       tx(dest, dx + 8 + bw / 2, by + 57, { s: 13, w: 'bold', c: '#07100a', a: 'center', ls: 1.2, max: bw - 12 });
-      keyRow(G, dx + 12, by + 78, dw - 24, ['dispatch', 'roster', 'pa', 'track']);
+      paCost(G, dx + 12, by + 78, dw - 24, ['dispatch', 'roster', 'pa', 'track']);
     } else {
       tx('SELECT A SUBJECT ROW', dx + 12, by + 42, { s: 14, w: 'bold', c: '#6f8a77', max: 212 });
       // ONE CHANNEL PER AISLE, said in the only place it needs saying: the key
@@ -502,7 +514,7 @@ export function createHUD(hudEl) {
       const nA = G.cams.filter((c) => /AISLE/.test(c.label || '')).length || G.cams.length;
       tx(nA < G.cams.length ? `[1]-[${nA}] AISLE  ·  [${nA + 1}] DOOR` : `[1]-[${nA}] CHANNEL`,
         dx + 12, by + 62, { s: 11, c: '#5d7364', max: 212 });
-      keyRow(G, dx + 12, by + 78, dw - 24, ['roster', 'pa', 'track']);
+      paCost(G, dx + 12, by + 78, dw - 24, ['roster', 'pa', 'track']);
     }
     // ---- ROUND 8: THE PA BUTTON LIVES OUTSIDE THE `if (can)` -----------------
     // It used to be drawn inside the branch above, i.e. ONLY WHEN A SUBJECT ROW
@@ -569,20 +581,63 @@ export function createHUD(hudEl) {
     return true;
   }
 
+  // ---- ROUND 10: WHAT THE PA WOULD COST, ON THE ROW THE LEGEND VACATES ----
+  // The only line of new ink this round, and it is drawn on the row above:
+  // round 9's legend deletes each clause the first time its key is pressed, so
+  // within about thirty seconds this strip of the dispatch panel is empty on
+  // every frame forever. That makes it the right home for something the player
+  // is told once — it competes with nothing, because there is nothing there.
+  //
+  // WHAT IT IS ABOUT. The handset is pointed at a FLAGGED row, which is the one
+  // configuration where pressing it costs something: the box has already
+  // flagged this man, DISPATCH is armed on him, and this file's own bench
+  // measured a bot that announces at the tells it has read instead of walking
+  // at them at 307 points a shift against 373 for the identical reads
+  // (./game/eval.js, `tattle` vs `observer`, 8x240s; 251 vs 397 at 5x240s).
+  // The line does not say any of that — the DVR does not know about points and
+  // would not editorialise if it did. It says the fact the terminal knows.
+  //
+  // AND IT IS SAID ONCE PER SESSION. Drawn on every frame the predicate held it
+  // censused at 63.1% of desk frames, and stamping it per aim-landing measured
+  // the same 59% because the aim does not sit still. game.js's tickCost() puts
+  // it on the same footing as the key legend — teaching, spent once, 0.2% —
+  // and hands the permanent half to the button's colour. See the note there.
+  //
+  // The legend gets the row on every other frame, so nothing round 9 measured
+  // is undone: this can only draw over an empty strip, or over a hint the
+  // player has not needed since his first dispatch.
+  function paCost(G, x, y, w, want, opt) {
+    const cost = (G.hold || {}).annCost;
+    if (!cost) return keyRow(G, x, y, w, want, opt);
+    mark('paCost');
+    tx(cost, x, y, { s: 11, w: 'bold', c: '#c08a3e', max: w });
+    return true;
+  }
+
   // The one power this job actually confers. Ready / counting down / live.
   function holdBtn(G, x, y, w, h) {
     const H2 = G.hold || {};
     if (!H2.on) return;
     mark('paBtn');
-    const live = H2.live, cool = H2.cool || 0;
+    const live = H2.live;
     // ROUND 8 — TWO CLOCKS, AND THE BUTTON HAS TO STOP CONFLATING THEM.
     // `charged` is the handset's recharge; `armed` additionally means there is a
     // roster row for an announcement to go to. Round 7 drew one `ready` off the
     // recharge alone, and because the whole button was hidden without a
     // selection the difference never showed. It shows now: the button is always
     // up, so it has to be honest about which of the two is missing.
-    const charged = !live && cool <= 0;
-    const armed = charged && H2.ann !== false;
+    //
+    // ROUND 10 — AND THERE ARE TWO VERBS NOW, WITH A CLOCK EACH. [F] at the
+    // desk speaks to the man on the spot monitor: the deterrence line if the
+    // wall can see him, the round-7 price check if it has lost him. Those
+    // answer to agents' recharge and to mine respectively, so the button asks
+    // game.js which verb is up and then reports THAT verb's clock. Deriving one
+    // from the other is exactly the round-8 bug and it is not repeated here.
+    const warn = H2.annVerb === 'putback';
+    const cool = (warn ? H2.pbIn : H2.cool) || 0;
+    const coolMax = (warn ? H2.pbMax : H2.max) || 0;
+    const charged = warn ? !!H2.pbReady : (!live && cool <= 0);
+    const armed = charged && !!H2.annVerb;
     const ready = armed;
     // ROUND 7 — THE CHANNEL IS OPEN AND THAT HAS TO BE UNMISTAKABLE.
     // An open microphone is the one piece of state in this game that exists
@@ -639,27 +694,78 @@ export function createHUD(hudEl) {
     // should look it — but the number itself is warmed off that grey, or the
     // state reads as DISABLED rather than as COMING BACK. Those are different
     // sentences and only one of them is true.
-    const cc = (!charged && !live) ? '#c08a3e' : c;
-    tx(live ? 'HOLDING' : armed ? 'PRICE CHK' : charged ? 'MIC ONLY' : `${Math.ceil(cool)}s`,
-      x + w / 2, y + 32, { s: 11, w: 'bold', c: cc, a: 'center', max: w - 6 });
-    if (!charged && !live && H2.max) {                   // cooldown drains left to right
-      tx('RECHARGING', x + w / 2, y + h - 5, { s: 8, c: '#6b7d70', a: 'center', ls: 0.8 });
-      ctx.fillStyle = 'rgba(255,180,58,0.35)';
-      ctx.fillRect(x, y + h - 3, w * (1 - cool / H2.max), 3);
+    // ---- ROUND 10: THE COUNT AND THE WORD WERE ON TOP OF EACH OTHER --------
+    // Round 8 printed the count on the baseline at y+32 and RECHARGING at
+    // y+h-5 — three pixels apart on a 40 px button, overlapping, on the one
+    // number this file's own comment calls "the thing a player has to be able
+    // to read, because it is the answer to why did nothing happen". It hardly
+    // ever showed: the only way to spend the handset at the desk was a price
+    // check, and neither bench bot made many. The desk announcement spends it
+    // every single time, so the state is on screen constantly now and the
+    // overlap had to go. One line, number then word, measured rather than
+    // centred twice.
+    if (!charged && !live) {
+      const num = `${Math.ceil(cool)}s`;
+      const wN = advance(num, 11, 'bold'), wW = advance('RECHARGING', 9);
+      const x0 = x + Math.max(3, (w - (wN + 6 + wW)) / 2);
+      tx(num, x0, y + 32, { s: 11, w: 'bold', c: '#c08a3e' });
+      tx('RECHARGING', x0 + wN + 6, y + 32, { s: 9, c: '#6b7d70', max: w - (x0 - x) - wN - 9 });
+      if (coolMax) {                                     // cooldown drains left to right
+        ctx.fillStyle = 'rgba(255,180,58,0.35)';
+        ctx.fillRect(x, y + h - 3, w * (1 - cool / coolMax), 3);
+      }
+      return;
     }
+    // ROUND 10: `PRICE CHK` was hardcoded here, which was fine while it was the
+    // only thing the desk could say. The armed word is now WARN SUBJ-07 or
+    // PRICE CHK depending on whether the wall can see the man it is pointed
+    // at, and it is composed in game.js — see deskReadout(). HOLDING sits
+    // behind it rather than in front: a pinned man already carries a HOLD chip
+    // on his own roster row, and what the button is for is what it would DO.
+    //
+    // AND THE PRICE IS IN THE WEIGHT. `annHot` means the man this key is
+    // pointed at is a man DISPATCH is armed on, which is the one configuration
+    // where pressing it costs something — 397 points a shift down to 251 on
+    // this file's own bench. It is true on most of a competent player's desk
+    // frames, so it cannot be a sentence; it is the difference between the
+    // armed word being full amber and being the recharge's warm grey-amber,
+    // next to a DISPATCH button that is pulsing. The loud control is the one
+    // worth pressing. game.js says the sentence out loud once, the first time
+    // it is ever true — see tickCost().
+    tx(armed ? (H2.annLabel || 'PRICE CHK') : live ? 'HOLDING' : 'MIC ONLY',
+      x + w / 2, y + 32,
+      { s: 11, w: 'bold', c: (armed && H2.annHot) ? '#c08a3e' : c, a: 'center', max: w - 6 });
   }
   const clampN = (v, a, b) => (v < a ? a : v > b ? b : v);
   // "A4" / "FRONT" / "BACK" — where the terminal will send you, not where he is.
   // ROUND 9: silent when it agrees with the channel header. The rule is "a
   // column that prints A3 on every row of a panel titled AISLE 3 is a margin,
   // not a column" — and I expected that to delete most of it. Measured over 160
-  // shift-seconds, 4210 rows, it deletes 45.7%: the OTHER 54.3% of rows are a
-  // subject the channel can see who is not in the aisle the channel is named
-  // after, and 16.6% are more than one aisle away. That is not a HUD problem
-  // and this column is not the fix for it — see the note to cctv in the round-9
-  // report: the domes sit at 4.35 m over 2.05 m gondolas, so every one of them
-  // sees across the tops of the shelving into its neighbours. Until the sight
-  // lines are cut, this column is the only thing on the desk that says so.
+  // shift-seconds, 4210 rows, it deleted 45.7%: the other 54.3% were a subject
+  // the channel could see who was not in the aisle the channel is named after,
+  // and 16.6% were more than one aisle away. I said then that this was not a
+  // HUD problem and that this column was the only thing on the desk admitting
+  // it — the domes sat at 4.35 m over 2.05 m gondolas and saw across the tops
+  // of the shelving into their neighbours.
+  //
+  // ---- ROUND 10: THE SIGHT LINES GOT CUT, AND I RE-MEASURED BEFORE CUTTING
+  // cctv dropped the aisle domes to 2.62 m so the gondolas mask across-aisle
+  // views. Same instrument, 300 shift-seconds, cycling channels every 3 s,
+  // 4019 drawn rows:
+  //
+  //                        speaks   >1 aisle out
+  //     round 9            54.3%       16.6%
+  //     round 10            6.7%        0.0%
+  //
+  // So the column stopped being a margin without being touched, and the honest
+  // move is to leave it exactly where it is. 65.7% of the 6.7% is FRONT END —
+  // a man out on the cross-aisle, seen by his own aisle's dome, whom DISPATCH
+  // is about to send you to the front of the store for rather than into an
+  // aisle. That is the one case round 9 kept it for, and it is now the only
+  // case it fires in. The rest are ±1 aisle, i.e. a man standing in a mouth,
+  // which is also a different destination. Cutting a 6.7% column that only
+  // speaks when the destination is not the header would save nothing and would
+  // cost the player the one warning that dispatch is not going where he thinks.
   function shortWhere(s, cam) {
     if (!s.where) return '';
     if (cam && s.where === cam.label) return '';
@@ -1130,7 +1236,7 @@ export function createHUD(hudEl) {
     const H2 = G.hold || {};
     const air = !!H2.talk;
     const RED_AIR = '#ff4a3a';
-    const a = f.annAt;
+    const a = H2.pbAt;                        // ROUND 10: was f.annAt; see game.js `ann`
     const held = a && !a.out;                 // keyed, and he has not reacted yet
     // ---- ROUND 9: THE IDLE PANEL COLLAPSES TO ONE LINE --------------------
     // Round 8 put this panel up on every floor frame and the reasoning was

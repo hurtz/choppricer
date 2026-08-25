@@ -333,6 +333,11 @@ function observer(ctx, opts) {
           const other = game.bot.visibleRows()
             .find((s) => s.id !== row.id && GUILTY.has(s.line));
           if (other) { game.bot.select(other.id); game.bot.callHold(); game.bot.select(row.id); }
+          // ROUND 10. The hook where a policy does something OTHER than walk at
+          // a subject it has read correctly. Undefined for every round-9 bot,
+          // costs no draw, and the whole bench reproduces to the decimal with
+          // it in place — see tattle().
+          if (opts.onTell && opts.onTell(row, game)) { phase = 'scan'; return; }
           game.bot.dispatch();
         }
         phase = 'scan'; return;
@@ -409,6 +414,60 @@ function idle() { return { name: 'idle', desk() {} }; }
 // a human walks into. Every one of those is a confrontation with an innocent
 // and therefore a complaint. This is the bot the demotion economy has to be
 // survivable for.
+// ---------------------------------------------------------------- ROUND 10
+// THE SAME MAN, WITH THE ROUND-10 BUTTON. `reader` walks at a flag it cannot
+// explain, which is the mistake that produces every complaint in this game.
+// `announcer` is the identical bot with the identical `slip` on the identical
+// draw, except that what it does about the unexplained flag is KEY THE HANDSET
+// at it from the desk rather than get up. That is precisely the play the desk
+// button exists for — the client's "if he's viewing a camera and he says hey,
+// excuse me, return that item" — so the pair prices it: same read, same
+// impatience, two different things to do about it.
+//
+// It needs a bench that RENDERS to have a spot-monitor lock, and this one
+// deliberately does not (see the prime note in run()). deskAim() therefore
+// falls back to the highlighted row here, which is the man this bot has just
+// selected — the same man the lock would be on in the real game, since
+// selectTracked() drags one onto the other.
+function announcer(ctx, opts) {
+  const slip = opts.slip ?? 0.35;
+  const rnd = opts.rnd;
+  const tally = opts.tally;
+  const base = observer(ctx, {
+    ...opts,
+    onPark(rows, game) {
+      if (rnd() > slip) return false;
+      const lit = rows.find((r) => r.flagged);
+      if (!lit) return false;
+      game.bot.select(lit.id);
+      if (!game.bot.deskPA()) return false;
+      if (tally) tally.keyed++;
+      return true;
+    },
+  });
+  return { name: 'announcer', desk: base.desk };
+}
+
+// THE OTHER HALF OF THE PRICE, AND IT IS THE HALF THE HUD HAS TO WARN ABOUT.
+// `announcer` shouts at flags it CANNOT explain, which is the play the button
+// is for. `tattle` shouts at the ones it CAN — a man whose row is already
+// reading ITEM LEFT FRAME / NOT IN CART, i.e. a man DISPATCH is armed on. Same
+// observer, same reads, same seed; the only difference is what it does at the
+// moment it has been proved right. That is the exact configuration L.PA_COST
+// prints on, so this is the measurement behind that line.
+function tattle(ctx, opts) {
+  const tally = opts.tally;
+  const base = observer(ctx, {
+    ...opts,
+    onTell(row, game) {
+      if (!game.bot.deskPA()) return false;
+      if (tally) tally.keyed++;
+      return true;
+    },
+  });
+  return { name: 'tattle', desk: base.desk };
+}
+
 function reader(ctx, opts) {
   const slip = opts.slip ?? 0.35;
   const rnd = opts.rnd;
@@ -492,7 +551,7 @@ function camper(ctx, opts) {
   };
 }
 
-const POLICIES = { observer, reader, random, camper, idle };
+const POLICIES = { observer, reader, announcer, tattle, random, camper, idle };
 
 // ------------------------------------------------------------------- the shift
 export async function run(ctx, opts = {}) {
@@ -501,19 +560,43 @@ export async function run(ctx, opts = {}) {
   const seconds = opts.seconds ?? 240;
   const dt = 1 / 60;
   const names = opts.policies || ['observer', 'random'];
-  // ---- PRIME THE WALL, AND THIS COST A WHOLE MEASUREMENT ------------------
-  // cctv.channelsFor() projects through the channel cameras, and a three.js
-  // camera only gets its world matrix when something RENDERS through it. This
-  // bench never renders the wall — and in a backgrounded tab, which is where
-  // every agent runs, rAF never renders it either. So the first census of this
-  // round reported every subject on zero channels, an empty roster, and an
-  // observer that dispatched 0 times in 10 shift-minutes. Nothing was wrong
-  // with the game; the wall had simply never been asked to look.
+  // ---- THE WALL PRIME, DELETED IN ROUND 10 --------------------------------
+  // This used to be `if (ctx.step) ctx.step(0);` — one real frame through
+  // main.js's test surface before the first shift. cctv.channelsFor() projects
+  // through the channel cameras, a three.js camera only gets its world matrix
+  // when something RENDERS through it, and this bench never renders the wall.
+  // In a backgrounded tab, which is where every agent runs, rAF never renders
+  // it either. So the round-6 census reported every subject on zero channels,
+  // an empty roster, and an observer that dispatched 0 times in 10 shift-
+  // minutes. Nothing was wrong with the game; the wall had never been asked to
+  // look.
   //
-  // One real step through main.js's own test surface fixes it. The cameras are
-  // static, so once per bench is enough. Reported to cctv as well — it should
-  // not need a render to answer a question about its own frustums.
-  if (ctx.step) { try { ctx.step(0); } catch { /* no bootstrap: fall through */ } }
+  // It was reported to cctv at the time as something that should not need a
+  // render, and cctv fixed it at the root: the cameras get
+  // updateMatrixWorld(true) at construction and channelsFor() refreshes them
+  // unconditionally on every call.
+  //
+  // MEASURED BEFORE DELETING, because "they say it is fixed" is not a
+  // measurement and a prime that is quietly load-bearing would take the roster
+  // down with it. A SECOND cctv was built with createCCTV() against the same
+  // scene and never rendered through — genuinely cold cameras, not merely a
+  // paused page — and asked for the channels of eight live subjects:
+  //
+  //     live wall   [] [4] [1] [4] [4] [1] [2] [3]
+  //     cold wall   [] [4] [1] [4] [4] [1] [2] [3]
+  //
+  // Identical, line-of-sight tests and all, 7 of 8 subjects on a channel. It
+  // bought the wall nothing, so it is gone.
+  //
+  // IT DID BUY ONE THING AND IT IS NOT A FEATURE: agents.js seeds its RNG once
+  // at module init and agents.reset() does NOT reseed, so that one extra
+  // agents.update() moved the agents stream by however many draws it took, and
+  // every bench number after it moved with it. That is why `prime` survives as
+  // an option rather than as code — it is the only way to line a round-10 bench
+  // up against a round-9 one draw for draw. It is off by default because a
+  // bench that has to render a frame to be correct is a bench that is lying
+  // about what it measures.
+  if (opts.prime && ctx.step) { try { ctx.step(0); } catch { /* no bootstrap */ } }
   const fixWas = { ...game.bot.FIX };
   if (opts.fix) Object.assign(game.bot.FIX, opts.fix);
 
@@ -531,6 +614,10 @@ export async function run(ctx, opts = {}) {
       liveT: [0, 0, 0, 0, 0, 0],
       hChase: 0, hDialogue: 0, hSubj: 0, hZone: 0, hBlocked: 0, hRepeat: 0, hPeople: 0,
       leaves: 0, aborts: 0, balks: 0, dumps: 0,
+      // ROUND 10. `annKeyed` is announcements the player made; the other four
+      // are BODIES that reacted, which is a bigger number on purpose — a PA is
+      // a loudspeaker and everybody in earshot answers it.
+      annKeyed: 0, anns: 0, annHeed: 0, annShrug: 0, annBolt: 0,
     };
     let windows = [], cases = [];
     const census = { _frames: 0, _desk: 0, _floor: 0 };
@@ -560,7 +647,12 @@ export async function run(ctx, opts = {}) {
       const c = { _frames: census._frames, _deskPct: pct(census._desk, census._frames),
         _floorPct: pct(census._floor, census._frames) };
       const DESK = new Set(['officer', 'roster', 'rosterEmpty', 'dispatch', 'dispatchArmed',
-        'dispatchIdle', 'deskKeyHint', 'paBtn', 'tileCount', 'pipTiles', 'pipFresh', 'bandRow2', 'rowRunning',
+        'dispatchIdle', 'deskKeyHint', 'paBtn', 'pipTiles', 'pipFresh', 'bandRow2', 'rowRunning',
+        // ROUND 10: `rowPA` is an announcement's reaction on a roster row and
+        // `paCost` is the flagged-row price on the line the legend vacated.
+        // Both are desk-only and both are supposed to read near zero on a bot
+        // that never keys the handset — see the announcer policy.
+        'rowPA', 'paCost', 'rowWhere',
         'alarm', 'alarmHard', 'alarmSoft']);
       const FLOOR = new Set(['dispatched', 'pursuit', 'backBanner', 'wind', 'pulse', 'gassedFrame',
         'record', 'prompt', 'backOff', 'dialogue', 'stamp', 'paPanel', 'paIdle', 'pan', 'floorKeyHint',
@@ -632,7 +724,8 @@ async function shift(ctx, policyName, opts) {
   // A policy may declare that it does not have a floor skill; see random().
   const skills = { random: { backOff: false } }[policyName] || {};
   const drive = makeDriver(ctx, { ...opts, ...skills });
-  const bot = POLICIES[policyName](ctx, { ...opts, rnd });
+  const tally = { keyed: 0 };
+  const bot = POLICIES[policyName](ctx, { ...opts, rnd, tally });
 
   agents.reset();
   game._restart();
@@ -645,6 +738,7 @@ async function shift(ctx, policyName, opts) {
     dispatches: 0, deadZone: 0, holds: 0, floorTime: 0, deskTime: 0, wuTime: 0,
     hChase: 0, hDialogue: 0, hSubj: 0, hZone: 0, hBlocked: 0, hRepeat: 0, hPeople: 0,
     leaves: 0, aborts: 0, balks: 0, dumps: 0,
+    annKeyed: 0, anns: 0, annHeed: 0, annShrug: 0, annBolt: 0,
     windows: [],            // seconds from the concealment tell to the door
     cases: [],              // ...to the door OR the cuffs. How long one takes.
     liveT: [0, 0, 0, 0, 0, 0],
@@ -696,6 +790,19 @@ async function shift(ctx, policyName, opts) {
       r.aborts++;
       if (why === 'dump') r.dumps++; else r.balks++;
       gapi.onAbort && gapi.onAbort(s, why);
+    },
+    // ---- ROUND 10: THIS CALLBACK WAS NOT FORWARDED AT ALL -----------------
+    // agents has fired onAnnounce since round 7 and this api never had it, so
+    // every announcement made on this bench went out with its entire
+    // presentation dead — no chip, no roster line, no ticker — and the round-8
+    // and round-9 benches could not have caught a mislabelled outcome if they
+    // had tried. Same species as the wall that had never been asked to look.
+    onAnnounce(s, kind, outcome) {
+      r.anns++;
+      if (outcome === 'heed') r.annHeed++;
+      else if (outcome === 'shrug') r.annShrug++;
+      else if (outcome === 'bolt') r.annBolt++;
+      gapi.onAnnounce && gapi.onAnnounce(s, kind, outcome);
     },
   };
   // On an escape the elapsed time IS the window: tell on the wall to body
@@ -792,6 +899,7 @@ async function shift(ctx, policyName, opts) {
     if ((i & 2047) === 2047) await yieldNow();
   }
   r.points = game.st.points;
+  r.annKeyed = tally.keyed;
   r.stallEscape = game._g.dbg.stallEscape;
   r.stallPutBack = game._g.dbg.stallPutBack;
   // ROUND 7: a complaint is the fail state, so where they come from is worth

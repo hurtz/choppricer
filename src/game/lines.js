@@ -406,6 +406,74 @@ export const PA_CHIP_ALONE = 'NOBODY ELSE IN EARSHOT';
 // nothing to announce is still a PA, and this is the funnier half of the key.
 export const PA_IDLE = 'PA — OPEN CHANNEL';
 export const PA_AT = 'PA — SAY SOMETHING TO %S';
+
+// ============== ROUND 10: THE BUTTON WAS ON THE WRONG SCREEN ==============
+// The client's sentence, in full, because round 8 acted on the second half of
+// it and dropped the first:
+//
+//   "IF HE'S VIEWING A CAMERA and he says 'hey, excuse me, return that item',
+//    there's some interaction. They look around, they're not sure where the
+//    sound is coming from... unless they're a real thief, and then the thief
+//    is like 'oh shit', and gets scared and starts running."
+//
+// He is at the desk, watching a monitor. Round 8 put the line on the floor at
+// the reticle instead, and the chase builder's bolt gate is geometric — it
+// returns zero unless the subject beats the cop to a door — so at the mouth of
+// the aisle dispatch drops you in, the third outcome measures 0.0%. The man
+// who "gets scared and starts running" could not run. From the service desk,
+// forty metres back, he runs 29.2% of the time.
+//
+// ---- THE ROSTER ROW IS THE READOUT, AND IT COST NOTHING -------------------
+// The floor has a chip because the floor has no list. The desk has a list, and
+// every row on it is already a sentence about what one body is doing. So an
+// announcement does not get a panel here; it REPLACES the behaviour line on
+// the row of everybody it reached, for a few seconds, and then the row goes
+// back to being a row. Nothing new is drawn at all.
+//
+// And it reaches more than one. Every body inside agents' annSpill hears it
+// and reacts, which is the property that stops "somebody looked around" being
+// worth anything — so the same three lines are used for the man you aimed at
+// and for the three people who happened to be in his aisle, because the box
+// cannot tell those apart either. Round 8 paid for that guarantee with a
+// footnote counting the bystanders. It is cheaper and better to just show them.
+//
+// Machine voice, no pronoun — these sit in the same column as
+// 'STANDING VERY STILL' and 'SMELLED A MELON' and have to read as the same
+// instrument. Same anti-oracle test as PA_HEED: would this line be strange
+// printed under the other kind of person? None of the three would.
+export const PA_ROW_WAIT = 'HEARD THE PA — NO REACTION YET';
+export const PA_ROW_HEED = 'PUT SOMETHING BACK AFTER THE PA';
+export const PA_ROW_SHRUG = 'LOOKED AROUND FOR WHOEVER SAID THAT';
+
+// ---- WHAT IT COSTS, SAID BEFORE IT IS SPENT -------------------------------
+// The chase builder priced it: announcing at a subject you have already made
+// is worth 8.4 expected points against a dispatch's 77.0, and it turns a
+// 6.22 s median chase into a 10.6 s one. That is not a line the DVR can say —
+// it does not know about points — but the FACT under it is one the terminal
+// knows exactly: this row is flagged, and the PA is about to tell the man on
+// it that somebody is watching this row.
+//
+// Guilt-blind by construction: `flagged` is the analytics box's opinion and
+// 30% of the rows carrying it are traps. It is a statement about the terminal,
+// not about him. And it is not advice — it does not say don't, it says what
+// the key does.
+//
+// Printed ONCE, when the aim lands on a flagged row, and then it goes: see the
+// duty-cycle note at tickCost() in game.js. As a permanent state it censused
+// at 63.1% of desk frames, which is the thing round 9 spent a whole round
+// deleting.
+//
+// LENGTH: the strip it goes on is 332 px at 11 px bold mono, which is 44
+// characters. The first cut ran to 49 and printed
+// "...HE IS BEING W…" on the capture — the same mistake round 8 made with
+// PA_BOLT and round 7 made with ABORT_DUMP. Measured at 40.
+export const PA_COST = 'FLAGGED ROW — DISPATCH DOES NOT WARN HIM';
+// The desk handset's two verbs, on the button, so [F] says what it would do.
+// `WARN` is the deterrence line at the man in the big picture. `PRICE CHK` is
+// the round-7 line, unchanged, and it is what is left to say about a man no
+// camera can currently see — see game.js deskVerb().
+export const PA_BTN_WARN = 'WARN %S';
+export const PA_BTN_HOLD = 'PRICE CHK';
 // REJECTED, and each of these is the same mistake:
 //   '%S PUT IT BACK AND THOUGHT BETTER OF IT'   — 'thought better of it' is only
 //     sayable about somebody who was doing something wrong. Guilt, in a verb.
