@@ -11,6 +11,9 @@ import { DEPTS, FROZEN, fillShelf, fillBackRow } from './store/products.js';
 import * as TX from './store/tex.js';
 import * as PK from './store/pack.js';
 import * as FL from './store/floor.js';
+// cctv.js owns where the cameras hang; config's CAMERAS[].pos is only a fallback.
+// cctv.js does not import store.js, so this is not a cycle.
+import { cameraRig } from './cctv.js';
 
 // ---------------------------------------------------------------------------
 // PALETTE — warm cream / sage / terracotta, wood-tone uprights. Never grey.
@@ -934,9 +937,11 @@ export function buildStore(THREE, scene) {
     if (frontGroup.visible !== f) frontGroup.visible = f;
   };
 
-  // dome cameras (below the ceiling — visible from every view)
+  // Dome cameras. These must sit where the cameras ACTUALLY are, which is cctv.js's
+  // decision now — CAMERAS[].pos in config is only a fallback. Reading the fallback
+  // left the plastic hanging in a row the lenses had moved out of.
   const domeMat = new THREE.MeshLambertMaterial({ color: 0x2c2f33 });
-  for (const c of CAMERAS) {
+  for (const c of cameraRig(CAMERAS)) {
     const d = new THREE.Mesh(G.dome, domeMat);
     d.scale.set(0.34, 0.24, 0.34);
     d.rotation.x = Math.PI;
