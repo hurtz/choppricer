@@ -2,7 +2,7 @@
  "pieces": {
   "store": {
    "round": 9,
-   "state": "critiquing",
+   "state": "gap",
    "shots": [
     {
      "round": 0,
@@ -105,12 +105,16 @@
     {
      "round": 7,
      "text": "THE DIAGNOSIS IS OF THE LOOP, NOT THE STORE: 'You fixed the three tells the last critic named. You did not fix the CLASS of problem those tells belonged to. This is the sixth round of that pattern - a critic names a symptom, the symptom gets repaired precisely, and the next critic picks a different symptom from the identical underlying class and calls it just as fast.' The class is LIGHT TRANSPORT and CONTENT ENTROPY. On the glass: 'You added the OPACITY of a reflection without adding the IMAGE. That is the same mistake as the r4 painted-decal floor, one surface over.' #1 fix, and it says if you do exactly one thing do this: contact shadows and AO at every junction - 'nothing in these frames is in contact with anything.'"
+    },
+    {
+     "round": 9,
+     "text": "THE CEILING gave up all four frames in two seconds, before a floor, a shelf base or a pane of glass was looked at: troffers show ZERO falloff with distance (the far one is as bright as the near one), they are single flat white rectangles where real ones show 2-4 discrete tubes with dark gaps and neighbouring fixtures at different colour temperatures, and the sprinkler main has no heads, no couplings and casts no shadow on the deck 150mm below it. Second: occlusion COVERAGE, not calibration - the refrigerated case run, the largest single occluder in the set, measures 31-58.5%, at or worse than last round's baseline, and several plain gondola bases have no measurable skirt at all. Third: the kick plate is an 18-19px band of near-constant black with a hard step, where real is a LIT kick darkening over 6px - occlusion is mutual and continuous across a junction, a smooth V, not a black slab followed by a ramp."
     }
    ],
-   "updated": 1787672843.444594,
+   "updated": 1787673664.255667,
    "note": "FIVE placed shadows, not the two the critic named - all the same recipe, a 660mm near-black SQUARE under a 600mm ROUND tub, written as a 'plinth'. Then it closed the CLASS rather than the instances: cylinders were stamping their AABB into the occupancy field, so the new computed AO was about to draw a square shadow under the barrel by arithmetic. Batch now carries a 'round' flag and rasterises an antialiased ellipse - 'a property of the primitive, not the call site'. THE TRANSFERABLE MECHANISM: 'the smallest skirt radius is the entire falloff width', because horizon is a max() over the ray so far taps see the same wall from 0.1m as from 1m and only the nearest radius varies with distance. And the core's radius weights are the DERIVATIVE of the target profile - d/dx of a smoothstep is a parabola peaking at 300mm - 'which is why every monotone-decreasing weighting I tried first died inside 120mm: they put their mass where the profile is flat.' GLASS BUG: chopTrace's self-hit guard only covered runs lying along X, so the back-wall dairy run's march sample zero landed inside the pane's own case, latched, and skipped every remaining sample - all twelve doors returned their own case's column average, which is a low-alpha wash by construction.",
-   "gap": "THE DIAGNOSIS IS OF THE LOOP, NOT THE STORE: 'You fixed the three tells the last critic named. You did not fix the CLASS of problem those tells belonged to. This is the sixth round of that pattern - a critic names a symptom, the symptom gets repaired precisely, and the next critic picks a different symptom from the identical underlying class and calls it just as fast.' The class is LIGHT TRANSPORT and CONTENT ENTROPY. On the glass: 'You added the OPACITY of a reflection without adding the IMAGE. That is the same mistake as the r4 painted-decal floor, one surface over.' #1 fix, and it says if you do exactly one thing do this: contact shadows and AO at every junction - 'nothing in these frames is in contact with anything.'",
-   "verdict": "Luminance profiles now track the reference IN THE REFERENCE'S OWN UNITS. Endcap bottomed at 93 and never left mid-grey; now bottoms at 43 (33% of asymptote) and reaches 90% at ~60px. Dairy reached full brightness in 8px then went dead flat; now bottoms at 19-30 (8-13% luminance, inside the 2-19% band asked for) and reaches 90% at ~50px. 130 draw calls, 4.19ms GPU."
+   "gap": "THE CEILING gave up all four frames in two seconds, before a floor, a shelf base or a pane of glass was looked at: troffers show ZERO falloff with distance (the far one is as bright as the near one), they are single flat white rectangles where real ones show 2-4 discrete tubes with dark gaps and neighbouring fixtures at different colour temperatures, and the sprinkler main has no heads, no couplings and casts no shadow on the deck 150mm below it. Second: occlusion COVERAGE, not calibration - the refrigerated case run, the largest single occluder in the set, measures 31-58.5%, at or worse than last round's baseline, and several plain gondola bases have no measurable skirt at all. Third: the kick plate is an 18-19px band of near-constant black with a hard step, where real is a LIT kick darkening over 6px - occlusion is mutual and continuous across a junction, a smooth V, not a black slab followed by a ramp.",
+   "verdict": "10/10 again BUT THE BOTTLENECK MOVED \u2014 first time in nine rounds. 'Your occlusion work succeeded well enough that the floor is no longer the loudest tell, it's now roughly fourth. The bottleneck is now the ceiling.' Contact depth 36% -> 18.6% best case against a real reference of 22.1%: a 48% reduction in residual light at contact, about 0.95 stops, and that fixture class is now AT OR PAST PARITY with the real photo. Skirt length constant within 10% of real. Round primitives confirmed a true ellipse. Glass constant genuinely fixed, 0 -> 9.78 bay-to-bay spread."
   },
   "cctv": {
    "round": 7,
@@ -434,6 +438,14 @@
   }
  },
  "log": [
+  {
+   "t": 1787673664.2556689,
+   "piece": "store",
+   "role": "critic",
+   "round": 9,
+   "state": "gap",
+   "text": "THE CEILING gave up all four frames in two seconds, before a floor, a shelf base or a pane of glass was looked at: troffers show ZERO falloff with distance (the far one is as bright as the near one), they are single flat white rectangles where real ones show 2-4 discrete tubes with dark gaps and neighbouring fixtures at different colour temperatures, and the sprinkler main has no heads, no couplings and casts no shadow on the deck 150mm below it. Second: occlusion COVERAGE, not calibration - the refrigerated case run, the largest single occluder in the set, measures 31-58.5%, at or worse than last round's baseline, and several plain gondola bases have no measurable skirt at all. Third: the kick plate is an 18-19px band of near-constant black with a hard step, where real is a LIT kick darkening over 6px - occlusion is mutual and continuous across a junction, a smooth V, not a black slab followed by a ramp."
+  },
   {
    "t": 1787672843.4445992,
    "piece": "store",
@@ -1347,5 +1359,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787672843.444601
+ "updated": 1787673664.255671
 }

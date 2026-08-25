@@ -54467,6 +54467,27 @@ const rr = (rng, a, b) => a + (b - a) * rng();
 const ri = (rng, a, b) => Math.floor(a + (b - a + 1) * rng());
 const pick = (rng, arr) => arr[Math.floor(rng() * arr.length) % arr.length];
 
+// --- the occupancy sink ----------------------------------------------------
+// ROUND 8. Every solid in this building — every product, every deck, every
+// kick plate, every bollard, every cart — reaches the GPU through Batch.push.
+// That makes push the one place a world occupancy field can be filled without
+// anybody having to remember to fill it. See ../store/light.js for what reads
+// it and why authoring occlusion at remembered junctions could never work.
+//
+// The sink is a plain function so kit.js keeps no dependency on light.js:
+//   sink(x, z, w, l, y0, y1, r, g, b, round)
+//     footprint + vertical span + LINEAR rgb + "this footprint is an ellipse"
+//
+// ROUND 9 — `round`. Blind test 8's first call was a hard-edged black
+// rectangle under a cylindrical barrel. The authored quad that caused it is
+// gone, but a cylinder stamped into the occupancy field as its BOUNDING SQUARE
+// casts a square computed shadow, which is the same tell arrived at by
+// arithmetic instead of by hand. It is a property of the PRIMITIVE — a batch
+// built on a CylinderGeometry or a SphereGeometry is round, always, whoever
+// pushes into it — so it is set once on the batch and never at a call site.
+let FIELD_SINK = null;
+function setFieldSink(fn) { FIELD_SINK = fn; }
+
 // --- instanced batch -------------------------------------------------------
 // Collect transforms first, allocate the InstancedMesh once at build().
 class Batch {
@@ -54474,8 +54495,11 @@ class Batch {
   // batch also carries a per-instance `aCell` attribute holding that instance's
   // atlas-cell UV origin, so one geometry + one draw call serves every design
   // in the atlas instead of one geometry clone per design.
-  constructor(THREE, geo, mat, grid = null) {
+  // `round` = this batch's primitive has a circular cross-section, so its
+  // footprint in the occupancy field is an ellipse rather than its AABB.
+  constructor(THREE, geo, mat, grid = null, round = false) {
     this.THREE = THREE; this.geo = geo; this.mat = mat; this.grid = grid;
+    this.round = round;
     this.t = []; this.c = []; this.cells = []; this.n = 0;
   }
   // p / e(uler) / s(cale) are 3-arrays; col is a THREE.Color (working space).
@@ -54484,6 +54508,21 @@ class Batch {
     this.c.push(col.r, col.g, col.b);
     if (this.grid) this.cells.push(cell);
     this.n++;
+    if (FIELD_SINK && !this.noField) {
+      // Conservative world AABB of a yaw+roll'd box. Yaw spreads sx/sz into
+      // each other; roll about Z tips sy into x and sx into y. Anything the
+      // approximation over-covers is inside the softness of the term that
+      // reads it — a 47 mm field texel under a 2.6 m occlusion cone.
+      const cy = Math.abs(Math.cos(ey)), sy2 = Math.abs(Math.sin(ey));
+      const cr = Math.abs(Math.cos(ez)), sr = Math.abs(Math.sin(ez));
+      const hy = cr * sy + sr * sx;                 // effective vertical extent
+      const wx = cr * sx + sr * sy;                 // roll widens the footprint
+      // A rolled cylinder is no longer round in plan, so the ellipse only
+      // holds while it is standing up.
+      FIELD_SINK(px, pz, cy * wx + sy2 * sz, sy2 * wx + cy * sz,
+        py - hy / 2, py + hy / 2, col.r, col.g, col.b,
+        this.round && cr > 0.985);
+    }
   }
   box(px, py, pz, sx, sy, sz, col) { this.push(px, py, pz, 0, 0, 0, sx, sy, sz, col); }
   build(name) {
@@ -54574,7 +54613,858 @@ class Quads {
   }
 }
 
-return { makeRng, rr, ri, pick, Batch, Quads };
+return { makeRng, rr, ri, pick, setFieldSink, Batch, Quads };
+})();
+
+/* ==== src/store/light.js ==== */
+const M_src_store_light_js = (() => {
+const { makeRng } = M_src_store_kit_js;
+// OWNER: builder-store. THE WORLD LIGHT FIELD. ROUND 8.
+//
+// WHY THIS FILE EXISTS — and it is the only thing in this round that matters.
+//
+// Rounds 3-7 fixed light transport by AUTHORING it. Round 3 drew a multiply
+// card across the mouth of every shelf cavity. Round 6 drew a contact ramp at
+// every base I could think of and a radial pool under every fixture I could
+// think of. Round 7 gave the freezer pane a fresnel curve and a white veil.
+// Every one of those was correct where it was placed, and blind test 7 still
+// called all four frames in one to two seconds on "nothing in this store
+// touches the ground", because:
+//
+//   an authored occlusion card exists only at the junctions its author
+//   remembered. The junction nobody thought of stays at full brightness on
+//   BOTH sides, and a frame contains hundreds of junctions.
+//
+// So the round-8 change is not another card. It is a data structure that every
+// junction is in whether or not anyone thought about it:
+//
+//   ONE top-down field over the whole store footprint, 1024x1024, holding per
+//   47 mm column (a) how tall the tallest thing standing there is and (b) what
+//   colour it is in the band a floor reflection would see.
+//
+// It is populated BY CONSTRUCTION: kit.js's Batch.push and store.js's solid()
+// are the two funnels every solid in the building already goes through, and
+// both now stamp. Nothing has to be remembered. A prop added in round 9 with no
+// knowledge of this file is in the field the moment it is pushed.
+//
+// Two consumers read it and they cannot disagree, because it is one texture:
+//
+//   AO   — chopAO() walks a golden-angle spiral of 8 taps around the shading
+//          point, reads the horizon height in each direction, and converts it
+//          to sky occlusion as sin^2(theta) — the analytic cosine-weighted
+//          visibility of a hemisphere cut by a horizon at elevation theta. It
+//          is injected into EVERY opaque material in the store by walking the
+//          tree, so a material nobody thought about gets it too. That single
+//          function is barrel-to-pad, pad-to-floor, kick-to-floor,
+//          bollard-to-floor and product-to-deck simultaneously, because all
+//          five are the same query.
+//
+//   MIRROR — the floor's and the glass's reflected ray march the same field
+//          instead of the round-7 256 px hand-placed prop list, so what a
+//          floor reflects is what is standing on it.
+//
+// The same taps also return a BOUNCE term: the fraction of the LOWER
+// hemisphere that is open floor, distance-weighted. That is what lifts the
+// bottom shelf out of the pure-black void the blind test measured — a shelf
+// 250 mm off a lit floor is not unlit, it is lit from below, and "no light was
+// sampled here" is exactly the bug an occlusion-only model has.
+//
+// CONTRACT
+//   makeField(THREE, minX, minZ, spanX, spanZ, N) -> Field
+//   field.box(x,z,w,l,y0,y1,r,g,b,round) -> stamp one solid; `round` means the
+//                                   footprint is an ELLIPSE, not the AABB
+//   field.boxHex(x,z,w,l,y0,y1,hex,round) -> the same, in sRGB swatches
+//   field.finish(THREE)          -> the height/low-colour texture; also fills
+//                                   field.hiTex, the high colour band
+//   fieldUniforms(THREE, field, opts) -> the uniform bag both mirrors and the
+//                                   AO patch share
+//   applyAO(THREE, root, U)      -> patch every opaque material under root
+//   FIELD_GLSL                   -> the shared sampler, chopFldCol(), chopAO()
+//   promoDeal(seed)              -> one deal drawn from the promo grammar
+
+
+
+// Heights above this saturate. A gondola is 2.05 m, a pallet stack 2.4, a
+// promo header 2.6; nothing that matters for ground occlusion is taller, and
+// capping keeps the whole range in one byte at 13 mm resolution.
+const FIELD_H = 3.40;
+// TWO COLOUR BANDS, ROUND 9. Round 8 stored ONE averaged colour per column,
+// over 0.04-1.45 m, and that single decision is most of why blind test 8 said
+// "twelve reach-in dairy doors in a row, and not one carries a mirrored image
+// of the aisle". A mirror is an image and an image needs vertical structure: a
+// pane at chest height looking across an aisle sees a gondola's dark kick, its
+// bright mid decks and its promo header as three different things. Averaged
+// into one number they are one flat vertical stripe of mud, which is exactly
+// what the glass was painting — and it is why "objects contribute nothing"
+// while the ceiling strips, which are computed analytically and NOT from this
+// field, kept their contrast.
+//
+// So the column now carries a LOW band and a HIGH band, and the two mirrors
+// blend between them at the height their ray actually passes through.
+const REFL_LO = 0.04, REFL_MID = 1.30, REFL_HI = 2.70;
+
+class Field {
+  // N is the HEIGHT resolution. Round 9 doubles it to 2048 over a 47.7 m room
+  // = 23 mm/texel, and the reason is the contact core below: a two-to-five
+  // pixel dark line at the distance a kickplate is photographed from is 25-60
+  // mm of floor, so a 47 mm texel could not resolve one however the shader
+  // asked. Colour rides at N/2 — a reflection is blurred by its own lobe long
+  // before it is texel-limited, and two full-resolution colour bands is 45 MB.
+  constructor(minX, minZ, spanX, spanZ, N = 2048) {
+    this.N = N;
+    this.minX = minX; this.minZ = minZ; this.spanX = spanX; this.spanZ = spanZ;
+    this.kx = N / spanX; this.kz = N / spanZ;
+    this.top = new Float32Array(N * N);
+    const M = N >> 1;
+    this.M = M; this.mx = M / spanX; this.mz = M / spanZ;
+    this.cr = new Float32Array(M * M);
+    this.cg = new Float32Array(M * M);
+    this.cb = new Float32Array(M * M);
+    this.cw = new Float32Array(M * M);
+    this.hr = new Float32Array(M * M);
+    this.hg = new Float32Array(M * M);
+    this.hb = new Float32Array(M * M);
+    this.hw = new Float32Array(M * M);
+    this.n = 0;
+  }
+
+  // One axis-aligned solid. w/l are FULL extents about (x,z); y0..y1 vertical.
+  // r/g/b are LINEAR (three's working space) — everything upstream of here is
+  // a THREE.Color, and averaging colour in linear and encoding once at the end
+  // is the only order that does not lighten every blend. Pass r < 0 for
+  // something that occludes but has no useful colour, e.g. a bare wall volume.
+  // `round` marks a solid whose footprint is an ELLIPSE, not a rectangle. It is
+  // the structural half of the round-9 shadow deletion. The red barrel's placed
+  // black slab is gone, but deleting it only helps if what replaces it is the
+  // right shape: this field is what the AO reads, and a cylinder stamped as its
+  // bounding square casts a SQUARE computed shadow — i.e. it re-creates by
+  // arithmetic exactly the hard-edged rectangle under a cylindrical silhouette
+  // that the blind test called out. Every cylinder, tube and sphere batch in
+  // kit.js now sets it, so this is a property of the primitive rather than of
+  // the call site, and a barrel added in round 12 gets it without being told.
+  //
+  // Edge texels take PARTIAL height by analytic coverage, so the ellipse is
+  // antialiased into the field rather than staircased: a boundary texel reports
+  // a fraction of the solid's height and the shader's own softness does the
+  // rest. That is also what stops a 60 mm can from vanishing between texels.
+  box(x, z, w, l, y0, y1, r, g, b, round) {
+    if (y1 <= 0.012) return;                  // a floor decal is not an occluder
+    // Anything whose UNDERSIDE is already near the ceiling hangs from it: a
+    // troffer, a sprinkler main, a dome camera, an aisle sign on two cables.
+    // A height field is a model of what STANDS on the floor, so a hanging sign
+    // stamped into it would black out the aisle underneath as if it were a
+    // pillar. One rule, applied at the sink, covers every ceiling prop anyone
+    // ever adds — which is the whole point of doing this at the funnel.
+    if (y0 > 2.90) return;
+    const N = this.N;
+    let i0 = Math.floor((x - w / 2 - this.minX) * this.kx);
+    let i1 = Math.ceil((x + w / 2 - this.minX) * this.kx);
+    let j0 = Math.floor((z - l / 2 - this.minZ) * this.kz);
+    let j1 = Math.ceil((z + l / 2 - this.minZ) * this.kz);
+    if (i1 <= 0 || j1 <= 0 || i0 >= N || j0 >= N) return;
+    if (i0 < 0) i0 = 0; if (j0 < 0) j0 = 0;
+    if (i1 > N) i1 = N; if (j1 > N) j1 = N;
+    if (i1 === i0) i1 = i0 + 1;
+    if (j1 === j0) j1 = j0 + 1;
+    const h = Math.min(y1, FIELD_H);
+    // colour weight = how much of each reflected band this solid occupies
+    let cwL = Math.max(0, Math.min(y1, REFL_MID) - Math.max(y0, REFL_LO));
+    let cwH = Math.max(0, Math.min(y1, REFL_HI) - Math.max(y0, REFL_MID));
+    if (!(r >= 0)) { cwL = 0; cwH = 0; }
+    const top = this.top;
+    // ellipse setup: centre and inverse radii in texel space, plus how many
+    // texels one unit of the normalised radius spans (for the coverage ramp)
+    const ci = (x - this.minX) * this.kx, cj = (z - this.minZ) * this.kz;
+    const ri = Math.max(1e-4, w / 2 * this.kx), rj = Math.max(1e-4, l / 2 * this.kz);
+    const featherK = Math.min(ri, rj);
+    for (let j = j0; j < j1; j++) {
+      const row = j * N;
+      const dj = round ? (j + 0.5 - cj) / rj : 0;
+      for (let i = i0; i < i1; i++) {
+        let cov = 1;
+        if (round) {
+          const di = (i + 0.5 - ci) / ri;
+          const t = Math.sqrt(di * di + dj * dj);
+          cov = (1 - t) * featherK + 0.5;
+          if (cov <= 0) continue;
+          if (cov > 1) cov = 1;
+        }
+        const k = row + i;
+        const hc = h * cov;
+        if (hc > top[k]) top[k] = hc;
+      }
+    }
+    if (cwL > 0 || cwH > 0) this.colour(x, z, w, l, cwL, cwH, r, g, b, round);
+    this.n++;
+  }
+
+  // The colour half, at N/2. Split out because it runs on a different grid and
+  // because a solid with no useful colour (a bare wall volume, r < 0) skips it
+  // entirely — which is most of the perimeter.
+  colour(x, z, w, l, cwL, cwH, r, g, b, round) {
+    const M = this.M;
+    let i0 = Math.floor((x - w / 2 - this.minX) * this.mx);
+    let i1 = Math.ceil((x + w / 2 - this.minX) * this.mx);
+    let j0 = Math.floor((z - l / 2 - this.minZ) * this.mz);
+    let j1 = Math.ceil((z + l / 2 - this.minZ) * this.mz);
+    if (i1 <= 0 || j1 <= 0 || i0 >= M || j0 >= M) return;
+    if (i0 < 0) i0 = 0; if (j0 < 0) j0 = 0;
+    if (i1 > M) i1 = M; if (j1 > M) j1 = M;
+    if (i1 === i0) i1 = i0 + 1;
+    if (j1 === j0) j1 = j0 + 1;
+    const CR = this.cr, CG = this.cg, CB = this.cb, CW = this.cw;
+    const HR = this.hr, HG = this.hg, HB = this.hb, HW = this.hw;
+    const ci = (x - this.minX) * this.mx, cj = (z - this.minZ) * this.mz;
+    const ri = Math.max(1e-4, w / 2 * this.mx), rj = Math.max(1e-4, l / 2 * this.mz);
+    const featherK = Math.min(ri, rj);
+    for (let j = j0; j < j1; j++) {
+      const row = j * M;
+      const dj = round ? (j + 0.5 - cj) / rj : 0;
+      for (let i = i0; i < i1; i++) {
+        let cov = 1;
+        if (round) {
+          const di = (i + 0.5 - ci) / ri;
+          const t = Math.sqrt(di * di + dj * dj);
+          cov = (1 - t) * featherK + 0.5;
+          if (cov <= 0) continue;
+          if (cov > 1) cov = 1;
+        }
+        const k = row + i;
+        if (cwL > 0) {
+          const q = cwL * cov;
+          CR[k] += r * q; CG[k] += g * q; CB[k] += b * q; CW[k] += q;
+        }
+        if (cwH > 0) {
+          const q = cwH * cov;
+          HR[k] += r * q; HG[k] += g * q; HB[k] += b * q; HW[k] += q;
+        }
+      }
+    }
+  }
+
+  // sRGB hex convenience for the call sites that still think in swatches.
+  boxHex(x, z, w, l, y0, y1, hex, round) {
+    if (hex == null) return this.box(x, z, w, l, y0, y1, -1, 0, 0, round);
+    const d = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+    return this.box(x, z, w, l, y0, y1,
+      d(((hex >> 16) & 255) / 255), d(((hex >> 8) & 255) / 255), d((hex & 255) / 255),
+      round);
+  }
+
+  finish(THREE, emptyHex = 0xbdb3a0) {
+    const N = this.N, M = this.M;
+    const px = new Uint8Array(N * N * 4);
+    const hx = new Uint8Array(M * M * 4);
+    const er = (emptyHex >> 16) & 255, eg = (emptyHex >> 8) & 255, eb = emptyHex & 255;
+    const top = this.top;
+    const CR = this.cr, CG = this.cg, CB = this.cb, CW = this.cw;
+    const HR = this.hr, HG = this.hg, HB = this.hb, HW = this.hw;
+    const inv = 255 / FIELD_H;
+    // linear -> sRGB, 1024 entries, so the encode is a lookup not 12M pows
+    const LUT = new Uint8Array(1025);
+    for (let i = 0; i <= 1024; i++) {
+      const v = i / 1024;
+      LUT[i] = Math.round(255 * (v <= 0.0031308 ? v * 12.92
+        : 1.055 * Math.pow(v, 1 / 2.4) - 0.055));
+    }
+    const enc = (v) => LUT[v <= 0 ? 0 : (v >= 1 ? 1024 : (v * 1024) | 0)];
+    // HEIGHT + LOW BAND. The height is what the contact core resolves, so it
+    // rides at full N; the low colour band is upsampled from the M grid when
+    // the mirror reads it, which costs nothing because both live in the same
+    // sampler call.
+    const SH = Math.round(Math.log2(N));
+    for (let k = 0; k < N * N; k++) {
+      const o = k * 4;
+      const i = k & (N - 1), j = k >> SH;
+      const km = (j >> 1) * M + (i >> 1);
+      const w = CW[km];
+      if (w > 0) {
+        px[o] = enc(CR[km] / w); px[o + 1] = enc(CG[km] / w); px[o + 2] = enc(CB[km] / w);
+      } else { px[o] = er; px[o + 1] = eg; px[o + 2] = eb; }
+      px[o + 3] = Math.min(255, top[k] * inv);
+    }
+    // HIGH BAND, 1.30 - 2.70 m. Alpha carries how much of that band is actually
+    // filled, so a mirror can tell "a gondola header stands here" from "nothing
+    // stands here above waist height" instead of blending toward an empty
+    // column's fallback colour and washing every reflected object pale.
+    for (let k = 0; k < M * M; k++) {
+      const o = k * 4, w = HW[k];
+      if (w > 0) {
+        hx[o] = enc(HR[k] / w); hx[o + 1] = enc(HG[k] / w); hx[o + 2] = enc(HB[k] / w);
+        hx[o + 3] = Math.min(255, Math.round(w / (REFL_HI - REFL_MID) * 255));
+      } else { hx[o] = er; hx[o + 1] = eg; hx[o + 2] = eb; hx[o + 3] = 0; }
+    }
+    const mk = (data, n) => {
+      const t = new THREE.DataTexture(data, n, n, THREE.RGBAFormat);
+      // The colour channels are authored sRGB swatches; the height in alpha is
+      // linear and three does not touch alpha, so one colourSpace flag is right
+      // for both.
+      t.colorSpace = THREE.SRGBColorSpace;
+      t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+      t.minFilter = THREE.LinearMipmapLinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      t.generateMipmaps = true;      // the far AO taps read coarse mips
+      t.needsUpdate = true;
+      return t;
+    };
+    this.tex = mk(px, N);
+    this.hiTex = mk(hx, M);
+    return this.tex;
+  }
+
+  // Texels per metre, averaged. Drives the LOD the spiral asks for.
+  get density() { return (this.kx + this.kz) * 0.5; }
+
+  // Debug: the field as a data URL, height in luminance. Not shipped; called
+  // from the console when a stamp looks like it is missing.
+  debugURL(mode = 'h') {
+    const hi = mode === 'hi';
+    const N = mode === 'h' ? this.N : this.M, c = document.createElement('canvas');
+    c.width = c.height = N;
+    const g = c.getContext('2d'), im = g.createImageData(N, N);
+    const R = hi ? this.hr : this.cr, G = hi ? this.hg : this.cg;
+    const B = hi ? this.hb : this.cb, W = hi ? this.hw : this.cw;
+    for (let j = 0; j < N; j++) {
+      for (let i = 0; i < N; i++) {
+        const k = j * N + i, o = ((N - 1 - j) * N + i) * 4, w = W[k];
+        if (mode === 'h') {
+          const v = Math.min(255, this.top[k] / FIELD_H * 255);
+          im.data[o] = im.data[o + 1] = im.data[o + 2] = v;
+        } else {
+          im.data[o] = w > 0 ? R[k] / w * 255 : 0;
+          im.data[o + 1] = w > 0 ? G[k] / w * 255 : 0;
+          im.data[o + 2] = w > 0 ? B[k] / w * 255 : 0;
+        }
+        im.data[o + 3] = 255;
+      }
+    }
+    g.putImageData(im, 0, 0);
+    return c.toDataURL('image/png');
+  }
+}
+
+function makeField(THREE, minX, minZ, spanX, spanZ, N) {
+  return new Field(minX, minZ, spanX, spanZ, N);
+}
+
+// ---------------------------------------------------------------------------
+// THE SHARED GLSL.
+//
+// Names are prefixed `chopF`/`vAo` on purpose: this chunk is concatenated into
+// shaders that ALREADY carry floor.js's CHOP_SCENE_GLSL and signs.js's varying
+// block, and a duplicate declaration is a silent all-black material.
+//
+// The whole chunk is #ifndef-guarded so it can be included by the floor, by
+// the glass and by the generic AO patch in any order and any number of times.
+// Three consumers each needing to know whether one of the others already
+// declared the sampler is exactly the kind of coupling that turns into a
+// shadow block two rounds later.
+const FIELD_GLSL = `
+#ifndef CHOP_FIELD
+#define CHOP_FIELD
+uniform sampler2D uFld;
+uniform sampler2D uFldHi;  // the 1.30-2.70 m colour band; a = how filled it is
+uniform vec4 uFldMap;      // 1/spanX, minX, 1/spanZ, minZ
+uniform vec4 uFldCfg;      // FIELD_H, texels/m, aoStrength, bounceStrength
+uniform vec4 uFldCore;     // coreStrength, coreBias, coreGain, coreReach
+uniform vec4 uFldSk;       // skirt near radius, radius ratio, -, -
+uniform vec3 uFldBounce;   // colour of the light coming back off the floor
+uniform float uFldDbg;     // 0 off, 1 visibility, 2 bounce, 3 height, 4 core
+
+vec2 chopFldUV( vec2 p ) {
+  return vec2( ( p.x - uFldMap.y ) * uFldMap.x, ( p.y - uFldMap.w ) * uFldMap.z );
+}
+vec4 chopFldAt( vec2 p, float lod ) {
+  return textureLod( uFld, chopFldUV( p ), lod );
+}
+float chopFldTop( vec2 p, float lod ) {
+  return chopFldAt( p, lod ).a * uFldCfg.x;
+}
+// What stands at p, AS SEEN AT HEIGHT y. Two bands, blended across the split,
+// with the high band's fill fraction deciding how much of it there is to see —
+// so a mirror looking at head height across an aisle gets the promo header
+// where there is one and the low band where there is not, instead of one
+// column-averaged mud colour for every object in the building.
+vec3 chopFldCol( vec2 p, float y, float lod ) {
+  vec2 uv = chopFldUV( p );
+  vec3 lo = textureLod( uFld, uv, lod ).rgb;
+  vec4 hi = textureLod( uFldHi, uv, max( 0.0, lod - 1.0 ) );
+  float k = smoothstep( 1.00, 1.70, y ) * hi.a;
+  return mix( lo, hi.rgb, k );
+}
+
+// Sky visibility and floor bounce in one walk.
+//   .x  visibility  1 = open sky, 0 = sealed
+//   .y  bounce      how much of the lower hemisphere is open lit floor
+//
+// Eight taps on a golden-angle spiral, radius 0.09 m to 2.6 m, each reading a
+// mip whose footprint matches its own radius — so the near taps resolve a
+// 47 mm contact and the far taps read a smoothed horizon instead of aliasing
+// off individual cans. The occlusion a horizon at elevation theta casts on a
+// cosine-weighted hemisphere is exactly sin^2(theta), which is why a barrel
+// 90 mm away goes almost black at its foot and the same barrel 2 m away
+// barely registers, with no falloff constant anywhere.
+// SIX AZIMUTHS, FOUR RADII EACH, MAX PER AZIMUTH. The first version of this
+// walked one golden-angle spiral — one sample per direction, radius growing
+// with the index — and it measured almost nothing: a 2.05 m gondola standing
+// 2.0 m from the middle of an aisle was only ever seen by whichever single tap
+// happened to be BOTH pointed at it AND far enough out, so the aisle floor
+// came back at 0.94 visibility instead of 0.86 and the whole term was a
+// rounding error. That is not a tuning miss, it is the wrong estimator: theta
+// has to be the HORIZON in a direction, i.e. the max elevation over the whole
+// ray, and one sample cannot be a max. Four radii per azimuth, geometric from
+// 80 mm to 2.4 m, each read at the mip that matches its own footprint.
+// ---------------------------------------------------------------------------
+// TWO TERMS, ROUND 9. THE ONE THING BLIND TEST 8 MEASURED FOR US.
+//
+// The critic ran luminance profiles perpendicular to fixture bases in the
+// reference photographs and in our renders, and the finding was a SHAPE, not a
+// level:
+//
+//   REAL, gondola kickplate   floor bottoms at  49   ramps over ~35 px
+//   REAL, shelf base          floor bottoms at 3-7   ramps over ~40 px
+//   RENDER, endcap            floor bottoms at  93   ramps over  60 px, never
+//                                                    leaving mid-grey
+//   RENDER, dairy             floor bottoms at  18   full brightness in 8 px,
+//                                                    then dead flat
+//
+// "A skirt with no core, and a core with no skirt. Real contact is both."
+//
+// One horizon walk cannot be both, and the reason is structural rather than a
+// tuning miss. Round 8's estimator is cosine-weighted SKY VISIBILITY. For a
+// floor point standing against a wall the honest answer is 0.5 — half the
+// hemisphere is wall — and it stays near 0.5 for metres, because what changes
+// as you walk away is not the horizon ELEVATION (still ~90 degrees, so still
+// sin^2 ~ 1) but the AZIMUTHAL COVERAGE, which is a half-plane either way. So
+// the term saturates within about a hundred millimetres, then decays over
+// metres. Measured on the round-8 build at the dairy base: 0.37 at the line,
+// 0.65 six pixels out, 0.80 at 45 px, 0.87 at 93. That is a room-scale ambient
+// term. It is a good one. It is not contact, and no gain applied to it can be,
+// because gain cannot move a knee.
+//
+// Contact is a different physical quantity. The last few millimetres of the
+// crevice where two surfaces meet lose light to repeated bounces between two
+// absorbers, and single-bounce visibility does not model that at all. It is
+// short-range, it is far deeper than any visibility number, and it is what
+// makes the line where an object meets the floor read as a LINE. So it gets
+// its own walk, at its own scale, at lod 0 on a 23 mm field, and the two
+// multiply:
+//
+//     vis = ( 1 - aoSkirt * skirt ) * ( 1 - aoCore * core )
+//
+// which is the only combination that produces both numbers at once.
+//
+// SELF-EXCLUSION IS THE WHOLE DIFFICULTY. A height field holds the tallest
+// thing in a column, so a shelf deck 900 mm up inside a 2.05 m gondola reads
+// "1.15 m of occluder directly overhead" in every direction and a naive core
+// paints the entire product wall black. The skirt dodges this by pushing its
+// sample origin 145 mm out along the normal — but a core that resolves
+// millimetres cannot be pushed 145 mm anywhere. So instead the core measures
+// height relative to the column the shading point is ALREADY PART OF:
+//
+//     rise = tapHeight - max( P.y, heightOfMyOwnColumn )
+//
+// A deck inside a gondola sees rise = 0 in every direction and takes no core.
+// A floor point beside a barrel has its own column at zero, sees 0.9 m of
+// barrel 40 mm away, and goes black. One line, and it is the difference
+// between a contact term and a bug.
+const int CHOP_AZ = 8;
+
+// One contact tap: how much of the sky in direction d is cut off by whatever
+// stands at radius r, as sin^2 of its elevation. The mip is matched at 0.55 of
+// the radius rather than 0.50 on purpose — the sampled footprint has to be
+// WIDER than the gap between consecutive radii or the sum of five discrete
+// taps reads as five discrete steps walking away from a base, which is what
+// the first build of this measured as a staircase in the profile.
+float chopTap( vec2 p, vec2 d, float r, float base ) {
+  float h = chopFldTop( p + d * r, log2( max( 1.0, r * uFldCfg.y * 0.55 ) ) );
+  float e = max( 0.0, h - base ) / r;
+  return e * e / ( 1.0 + e * e );
+}
+
+// Coverage of the immediate neighbourhood, in the hemisphere this surface
+// faces. Returns 0..~0.5 raw — 0.5 being a flat wall standing beside a floor
+// point, which is the geometric maximum a half-plane can ever produce.
+float chopCore( vec3 Pin, vec3 N, float rot ) {
+  // The core origin is pushed out along the normal only as far as the surface
+  // is VERTICAL. A floor or a deck top gets 6 mm and can resolve its own
+  // contact line; a product facing gets 160 mm, which clears both the 90 mm it
+  // stands inside its gondola's stamp and the 100 mm of collider padding on
+  // the perimeter cases, so a facing is never occluded by the fixture it is
+  // sitting in. Vertical surfaces therefore take their darkening from the
+  // skirt, which is correct: a shelf cavity is a cavity, not a contact.
+  vec3 P = Pin + N * ( 0.006 + 0.155 * ( 1.0 - abs( N.y ) ) );
+  float hSelf = chopFldTop( P.xz, 0.0 );
+  // ...and the self-clamp only applies to surfaces that are actually up INSIDE
+  // something. Measured, because it showed up as an inversion: the first six
+  // pixels of floor at the dairy base came back BRIGHTER than the six after
+  // them — 83, 56, 44, 56, 65, then 27 — which is a shadow with a hole punched
+  // through its own contact line. Cause: colliders are padded outward (the
+  // cooler's by 100 mm) and the field takes the collider, so the floor for the
+  // first four texels outside a fixture is still inside that fixture's STAMP.
+  // hSelf reads 2.3 m there, the clamp says "you are part of this column, take
+  // no contact", and the darkest part of the shadow is deleted.
+  //
+  // The clamp exists for a shelf deck 900 mm up inside a 2.05 m gondola. A
+  // floor fragment is at y = 0 and is never part of the column of whatever is
+  // standing on it, however far that thing's stamp is padded — so height is
+  // the discriminator, and it is a good one because the two cases are 900 mm
+  // apart. Below 50 mm the clamp is off entirely.
+  float selfW = smoothstep( 0.05, 0.19, P.y );
+  float base = max( P.y, ( hSelf - 0.02 ) * selfW );
+  float acc = 0.0, wsum = 0.0;
+  for ( int a = 0; a < CHOP_AZ; a ++ ) {
+    float ang = rot + float( a ) * ( 6.28318 / float( CHOP_AZ ) );
+    vec2 d = vec2( cos( ang ), sin( ang ) );
+    // A crevice occludes from the SIDE at least as much as from above, so this
+    // lobe is much flatter than the skirt's 35-degree cone — 17 degrees up.
+    float wc = max( 0.0, dot( vec3( d.x, 0.30, d.y ) * 0.95783, N ) );
+    // THE RADIUS WEIGHTS ARE THE DERIVATIVE OF THE PROFILE WE ARE AIMING AT.
+    //
+    // This went through three wrong estimators before it went through the
+    // right one, and all three failures are the same failure: they answer a
+    // question about REACH when the profile is a question about SHAPE.
+    //   * max() over radii -> full strength everywhere inside the outermost
+    //     radius and nothing outside it. Measured 36 at 8 px, 95 at 16 px: a
+    //     cliff, i.e. the round-8 fault at a smaller scale.
+    //   * 1/(1+(r/r0)^2) weights -> monotone decreasing, so the near radii
+    //     dominate and the term dies inside 120 mm however far the taps reach.
+    //
+    // What a term built as "sum over the radii that reach past x" actually is,
+    // is the survival function of a distribution over radii. So its derivative
+    // x is the weight at radius x, and if the target profile is known the
+    // weights are not free parameters at all — they are read off it.
+    //
+    // The target is measured, off reference/store_05's gondola end panel, and
+    // corrected into linear light because a 35-pixel ramp in an 8-bit sRGB
+    // image is a much longer ramp in radiance than it looks:
+    //
+    //     V(x) = 0.08 + 0.92 * smoothstep( 0.02, 0.58, x )
+    //
+    // d/dx of a smoothstep is 6t(1-t), a parabola peaking at the MIDDLE of its
+    // span — so the weights peak at 300 mm and fall away on both sides, and
+    // the 26 mm tap, the one that feels like it should matter most, carries
+    // 1.5% of the term. That is the whole reason every monotone-decreasing
+    // weighting failed: it puts its mass where the profile is flat.
+    //
+    // Radii hand-placed on that parabola rather than geometric, because a
+    // geometric ladder bunches its samples exactly where the weight is
+    // smallest. Unrolled: five different constants, no array indexing.
+    float o = chopTap( P.xz, d, 0.026 * uFldCore.w, base ) * 0.0147
+            + chopTap( P.xz, d, 0.085 * uFldCore.w, base ) * 0.1422
+            + chopTap( P.xz, d, 0.175 * uFldCore.w, base ) * 0.2778
+            + chopTap( P.xz, d, 0.300 * uFldCore.w, base ) * 0.3467
+            + chopTap( P.xz, d, 0.470 * uFldCore.w, base ) * 0.2186;
+    acc += o * wc; wsum += wc;
+  }
+  return acc / max( wsum, 0.05 );
+}
+
+vec2 chopAO( vec3 Pin, vec3 N ) {
+  // SELF-OCCLUSION BIAS. The field is a height field of SOLID volumes and a
+  // gondola is stamped as one: 1.34 m deep, 2.05 m tall, opaque all the way
+  // through. A facing faced to the lip stands about 90 mm INSIDE that volume,
+  // so a tap taken from its own surface lands in its own fixture and reports
+  // a sealed horizon in every direction — which is exactly what happened: the
+  // whole product wall came back at the cavity's darkness with no front-to-
+  // back gradient at all. Pushing the sample origin out along the normal is
+  // the standard fix and it is the honest one, because the hemisphere a
+  // vertical facing can see is the hemisphere in FRONT of the facing. Scaled
+  // by (1 - |N.y|) so an up-facing deck or the floor itself barely moves and
+  // keeps its tight contact line.
+  vec3 P = Pin + N * ( 0.145 * ( 1.0 - abs( N.y ) * 0.78 ) );
+  float occ = 0.0, wsum = 0.0, bnc = 0.0, bsum = 0.0;
+  // World-space rotation of the fan. It is a function of POSITION, not of
+  // screen space, so it is rock steady under camera motion.
+  //
+  // ROUND 9 — CONTINUOUS, NOT A QUANTISED HASH. Round 8 hashed floor(P.xz*2.9),
+  // i.e. one random angle per 345 mm cell, and with the contact core added on
+  // top the seams between those cells showed up in the measured profile as
+  // genuine non-monotonicity: 30, 18, 18, 26, 32, 54, 33, 37 reading OUTWARD
+  // from a base, which is a floor that gets brighter and darker and brighter
+  // again as you walk away from a wall. A hash is discontinuous by
+  // construction, so the cell boundary is a step in the estimator however
+  // coarsely it is quantised. A plain linear ramp is continuous everywhere,
+  // the estimator has period 2*pi/8 in it so the ramp never needs to wrap, and
+  // it turns the eight-fold aliasing into a slow smooth wobble with a 190 mm
+  // period instead of a lattice of steps.
+  float rot = ( P.x * 1.7 + P.z * 2.3 ) * 2.4;
+  for ( int a = 0; a < CHOP_AZ; a ++ ) {
+    float ang = rot + float( a ) * ( 6.28318 / float( CHOP_AZ ) );
+    vec2 d = vec2( cos( ang ), sin( ang ) );
+    float horizon = 0.0;                    // max sin^2(theta) along this ray
+    float open = 0.0;                       // mean "lit floor visible" along it
+    float ow = 0.0;
+    for ( int s = 0; s < 4; s ++ ) {
+      // ROUND 9 — 0.080 -> 0.30 for the first radius, and five radii instead of
+      // four. THE SMALLEST SKIRT RADIUS IS THE ENTIRE FALLOFF WIDTH, which is
+      // not obvious and is why the round-8 skirt was 10 px wide when the
+      // reference is 35. horizon is a max() over the ray, so the far radii see
+      // the same 2.3 m wall from 0.1 m out as from 1 m out and contribute a
+      // nearly constant term; the only thing that CHANGES as you walk away
+      // from a base is which azimuths the NEAREST radius still reaches. Move
+      // that radius and the whole skirt moves with it.
+      //
+      // Measured, not guessed. reference/store_05 at the black gondola end
+      // panel, floor luminance as a fraction of the open-aisle asymptote:
+      //   0.07 at the line, 0.16 at 6 px, 0.26 at 12, 0.37 at 18, 0.51 at 20,
+      //   0.79 at 24, 0.90 at 34, 0.98 at 60.
+      // Round 8 hit 0.50 at 7 px and 0.90 at 12 — the right shape at a third
+      // of the right SIZE. The core covers 0 to 280 mm and the skirt now
+      // starts at 300, so between them they tile 0 to 2.7 m continuously
+      // instead of both crowding into the first 120.
+      float rad = uFldSk.x * pow( uFldSk.y, float( s ) );   // 0.34 .. 2.52 m
+      float lod = log2( max( 1.0, rad * uFldCfg.y * 0.50 ) );
+      float h = chopFldTop( P.xz + d * rad, lod );
+      float e = max( 0.0, h - P.y - 0.015 ) / rad;      // tan(theta)
+      horizon = max( horizon, e * e / ( 1.0 + e * e ) ); // sin^2(theta)
+      // ...and the same tap read downward: is there open floor out there for
+      // light to come back off? Near samples count for more, because bounce
+      // falls off with distance twice — once going down, once coming back.
+      float seen = 1.0 - clamp( ( h - 0.05 ) / max( 0.22, rad * 0.55 ), 0.0, 1.0 );
+      float sw = 1.0 / ( 1.0 + rad * 1.6 );
+      open += seen * sw; ow += sw;
+    }
+    // cosine weight of a cone about 35 degrees up in this azimuth, against the
+    // shading normal — so a vertical facing is occluded by what is in FRONT of
+    // it and not by the shelf behind its own back panel
+    float wu = max( 0.0, dot( vec3( d.x, 0.70, d.y ) * 0.81922, N ) );
+    occ += horizon * wu; wsum += wu;
+    float wd = max( 0.0, dot( vec3( d.x, -0.55, d.y ) * 0.87619, N ) );
+    bnc += ( open / ow ) * wd; bsum += wd;
+  }
+  // uFldCfg.z is BOTH the strength and the ceiling on how dark occlusion can
+  // get. A sealed point returns 1 - strength rather than 0, which is the
+  // difference between a shadow and "no light was sampled here" — the flat
+  // black the blind test measured on every bottom deck.
+  float skirt = 1.0 - uFldCfg.z * ( occ / max( wsum, 0.05 ) );
+  // ...and the core, remapped. A half-plane occluder saturates the raw
+  // coverage at 0.5 — that is what a half-plane IS — so uFldCore.y is the
+  // noise floor and uFldCore.z the gain that puts a wall standing beside a
+  // floor point at full strength. The bias matters as much as the gain: below
+  // it, nothing happens, which is what keeps the open aisle clean and stops
+  // the term from reading as a general dirtiness.
+  float core = clamp( ( chopCore( Pin, N, rot ) - uFldCore.y ) * uFldCore.z, 0.0, 1.0 );
+  float vis = skirt * ( 1.0 - uFldCore.x * core );
+  float b = bnc / max( bsum, 0.30 );
+  // floor bounce falls off hard with height: it is light that has already lost
+  // most of its energy to one diffuse reflection.
+  b *= 1.0 / ( 1.0 + P.y * P.y * 0.80 );
+  return vec2( clamp( vis, 0.0, 1.0 ), clamp( b, 0.0, 1.0 ) );
+}
+
+// The mirror's view of the same field. Returns rgb = what stands at p in the
+// band a reflection sees, a = how much of the ray's lobe that column fills at
+// height y. One function so the floor and the glass cannot disagree about what
+// is standing in the room, the way the analytic gondola test and the
+// hand-placed prop list used to.
+vec4 chopFldHit( vec3 Q, float lod, float soft ) {
+  vec4 s = chopFldAt( Q.xz, lod );
+  float h = s.a * uFldCfg.x;
+  float o = 1.0 - smoothstep( h - soft, h + soft * 0.55, Q.y );
+  return vec4( s.rgb, o * step( 0.012, s.a ) );
+}
+#endif
+`;
+
+// The fragment code that consumes it. Applied AFTER <opaque_fragment>, so it
+// scales everything the material returned — including any reflection the floor
+// or the glass already put there, which is what a shadow physically does.
+const AO_FRAG = `
+{
+  vec2 chopA = chopAO( vAoW, normalize( vAoN ) );
+  gl_FragColor.rgb *= chopA.x;
+  gl_FragColor.rgb += diffuseColor.rgb * uFldBounce * ( chopA.y * uFldCfg.w );
+  // 1 = visibility, 2 = bounce, 3 = field height under the fragment, 4 = the
+  // contact core on its own, which is the term round 9 added and the one worth
+  // being able to look at in isolation. Driven from the console:
+  //   __CHOP.scene.userData.chopField.uniforms.uFldDbg.value = 1
+  if ( uFldDbg > 0.5 ) {
+    vec3 nn = normalize( vAoN );
+    gl_FragColor.rgb = uFldDbg < 1.5 ? vec3( chopA.x )
+      : ( uFldDbg < 2.5 ? vec3( chopA.y )
+      : ( uFldDbg < 3.5 ? vec3( chopFldTop( vAoW.xz, 0.0 ) / uFldCfg.x )
+      : vec3( 1.0 - clamp( ( chopCore( vAoW, nn, 0.7 ) - uFldCore.y )
+          * uFldCore.z, 0.0, 1.0 ) ) ) );
+  }
+}
+`;
+
+const AO_VERT_HEAD = `
+varying vec3 vAoW;
+varying vec3 vAoN;`;
+
+// instanceMatrix is declared by three's prefix whenever USE_INSTANCING is set,
+// and modelMatrix alone does NOT carry it — three applies it in
+// <project_vertex>, after <begin_vertex>. Every product in this store is an
+// InstancedMesh, so getting this wrong puts the entire product wall's AO at
+// the origin.
+const AO_VERT_BODY = `
+#ifdef USE_INSTANCING
+  vAoW = ( modelMatrix * instanceMatrix * vec4( transformed, 1.0 ) ).xyz;
+  vAoN = normalize( mat3( modelMatrix ) * mat3( instanceMatrix ) * normal );
+#else
+  vAoW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;
+  vAoN = normalize( mat3( modelMatrix ) * normal );
+#endif`;
+
+let AO_SERIAL = 0;
+
+// Patch one material. Chains whatever onBeforeCompile it already had — pack.js,
+// signs.js and floor.js all use theirs — and appends to its cache key so three
+// does not hand back the unpatched program.
+function patchAO(THREE, m, U) {
+  if (!m || m.userData.chopAOd) return false;
+  m.userData.chopAOd = true;
+  const prev = m.onBeforeCompile;
+  const prevKey = m.customProgramCacheKey;
+  m.onBeforeCompile = (sh, renderer) => {
+    if (prev) prev.call(m, sh, renderer);
+    Object.assign(sh.uniforms, U);
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>' + AO_VERT_HEAD)
+      .replace('#include <begin_vertex>', '#include <begin_vertex>' + AO_VERT_BODY);
+    // ANCHORED AT TONEMAPPING, NOT AT opaque_fragment. Three of the materials
+    // this patches — the floor, the freezer glass, every signMat — already
+    // append their own code to <opaque_fragment>, and because patchAO chains
+    // the previous hook FIRST, a second replace of that same token inserts
+    // BEFORE their code, not after it. That put the occlusion underneath the
+    // floor's reflection mix, so the mirror was unshadowed: a barrel got a
+    // dark ring on the matte tile and none at all on the reflective part of
+    // the same tile. <tonemapping_fragment> is the next include after
+    // <opaque_fragment> in every one of three's lit and unlit shaders, so it
+    // is after everything anybody appended, and still before fog — which is
+    // correct, because fog is in front of the surface, not on it.
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>' + AO_VERT_HEAD + FIELD_GLSL)
+      .replace('#include <tonemapping_fragment>', AO_FRAG + '#include <tonemapping_fragment>');
+  };
+  m.customProgramCacheKey = () => (prevKey ? prevKey.call(m) : (m.type + AO_SERIAL)) + '|chopAO8';
+  m.needsUpdate = true;
+  return true;
+}
+
+// Walk everything under `root` and patch every material that should take
+// occlusion. The skip rules are properties of the MATERIAL, not a name list:
+//   * anything not normal-blended is already a multiply or additive card, and
+//     occluding an occlusion card double-counts
+//   * anything flagged userData.chopNoAO — emitters (lamp lenses, EXIT boxes,
+//     the daylight plate outside the doors) and the glass, which does its own
+//   Returns a census so the round report can state coverage rather than hope.
+function applyAO(THREE, root, U) {
+  const seen = new Set();
+  let patched = 0, skipped = 0;
+  root.traverse((o) => {
+    if (!o.isMesh && !o.isInstancedMesh && !o.isPoints) return;
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (!m || seen.has(m.uuid)) continue;
+      seen.add(m.uuid);
+      if (m.userData.chopNoAO) { skipped++; continue; }
+      if (m.blending !== THREE.NormalBlending) { skipped++; continue; }
+      if (patchAO(THREE, m, U)) patched++;
+    }
+  });
+  return { patched, skipped, materials: seen.size };
+}
+
+function fieldUniforms(THREE, field, opts = {}) {
+  // finish() is idempotent-by-caller but the tex must exist NOW: a uniform
+  // holding `undefined` binds no texture at all, every tap returns black, the
+  // height field reads as zero everywhere and the AO comes out as a perfectly
+  // uniform 1.0 — which looks exactly like "the shader is not running".
+  if (!field.tex) field.finish(THREE);
+  return {
+    uFld: { value: field.tex },
+    uFldHi: { value: field.hiTex },
+    uFldMap: {
+      value: new THREE.Vector4(1 / field.spanX, field.minX, 1 / field.spanZ, field.minZ),
+    },
+    uFldCfg: {
+      value: new THREE.Vector4(FIELD_H, field.density,
+        opts.ao ?? 0.90, opts.bounce ?? 0.34),
+    },
+    // strength, bias, gain, reach. Swept live against the dairy-base profile
+    // with the console loop open; see the note above chopCore for what each
+    // one is doing and why the bias is not optional.
+    uFldCore: {
+      // 0.84 was swept against the dairy-base profile at 0.78 / 0.85 / 0.92.
+      // 0.92 sits eight to fifteen counts UNDER the reference all the way out
+      // to 40 px; 0.78 is over it by about the same; 0.84 tracks it to within
+      // the width of a grout line. See the round-9 report for the numbers.
+      value: new THREE.Vector4(opts.core ?? 0.84, opts.coreBias ?? 0.020,
+        opts.coreGain ?? 2.20, opts.coreReach ?? 1.0),
+    },
+    uFldSk: {
+      value: new THREE.Vector4(opts.skirtR ?? 0.34, opts.skirtRatio ?? 1.95, 0, 0),
+    },
+    uFldBounce: { value: new THREE.Color(opts.bounceCol ?? 0xb9a887) },
+    uFldDbg: { value: 0 },
+  };
+}
+
+// ---------------------------------------------------------------------------
+// PROMO COPY. ROUND 8 — the other half of the entropy fault.
+//
+// "Promo signage is about six unique assets — SAVE $1.50 appears in three of
+// four frames, twice in one."  True, and the cause is that the promo atlas is
+// a hand-written list of six strings. Six strings tiled over forty sign sites
+// repeats by arithmetic; no amount of care in the artwork changes that.
+//
+// A supermarket's promo copy is not a list, it is a GRAMMAR: a deal shape
+// (BOGO / multibuy / price point / percent / member), a price drawn from a
+// psychological ladder that never lands on a round number, and a qualifier
+// line. Generating from the grammar means the fortieth sign is as unlikely to
+// repeat as the second, which is a property of the production rather than of
+// the asset count.
+const CENTS = [9, 19, 25, 29, 33, 39, 44, 49, 50, 59, 66, 69, 77, 79, 88, 89, 97, 99];
+const DOLLARS = [1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 5, 6, 7, 8, 9, 10, 12, 15];
+const QUAL = [
+  'WITH CARD', 'LIMIT 4', 'LIMIT 2', 'MIX OR MATCH', 'SELECT VARIETIES',
+  'WHILE SUPPLIES LAST', 'MEMBER PRICE', 'EVERY DAY', 'SAVE MORE',
+  'LIMIT 6 PER VISIT', 'ASSORTED SIZES', 'THIS WEEK ONLY', 'NO CARD NEEDED',
+  'SELECT SIZES', 'IN STORE ONLY', 'FROZEN ONLY', 'PLUS DEPOSIT',
+];
+const HEADS = [
+  'LOW PRICE', 'HOT BUY', 'SAVE', 'DEAL', 'PRICE DROP', 'MANAGER SPECIAL',
+  'ROLLBACK', 'CLUB DEAL', 'FRESH DEAL', 'MARKDOWN', 'VALUE PICK', 'BIG SAVE',
+  'WEEKLY WIN', 'STOCK UP', 'BUY MORE SAVE', 'CLEARANCE', 'NEW LOW', 'BONUS BUY',
+];
+
+// A deal, drawn from the grammar. `seed` makes it deterministic per site.
+function promoDeal(seed) {
+  const rng = makeRng(seed * 2654435761 + 0x9e37);
+  const P = (a) => a[Math.floor(rng() * a.length) % a.length];
+  const money = (d, c) => '$' + d + '.' + String(c).padStart(2, '0');
+  const roll = rng();
+  const head = P(HEADS);
+  const qual = P(QUAL);
+  if (roll < 0.16) {
+    const n = rng() < 0.7 ? 2 : 3;
+    return { head: 'BUY ' + n, big: 'GET 1', sub: 'FREE', qual, kind: 'bogo' };
+  }
+  if (roll < 0.36) {
+    const n = 2 + Math.floor(rng() * 4);
+    const d = P(DOLLARS);
+    return { head, big: n + ' FOR', sub: '$' + d, qual, kind: 'multi' };
+  }
+  if (roll < 0.50) {
+    const p = [10, 15, 20, 25, 30, 33, 40, 50][Math.floor(rng() * 8)];
+    return { head, big: p + '%', sub: 'OFF', qual, kind: 'pct' };
+  }
+  if (roll < 0.70) {
+    const c = P(CENTS);
+    return { head, big: c + '¢', sub: 'EACH', qual, kind: 'cents' };
+  }
+  if (roll < 0.86) {
+    const d = P(DOLLARS), c = P(CENTS);
+    return { head: 'SAVE', big: money(d, c), sub: 'PER LB', qual, kind: 'save' };
+  }
+  const d = P(DOLLARS), c = P(CENTS);
+  return { head, big: money(d, c), sub: rng() < 0.5 ? 'EACH' : 'EA', qual, kind: 'price' };
+}
+
+return { FIELD_H, Field, makeField, FIELD_GLSL, patchAO, applyAO, fieldUniforms, promoDeal };
 })();
 
 /* ==== src/store/products.js ==== */
@@ -54885,6 +55775,54 @@ function fillShelf(B, rng, dept, opts) {
   // reads far more than any single item does.
   const deckSetback = (1 - pull) * 0.024;
 
+  // ---- ROUND-8: THE VARIANCE IS THE THING THAT VARIES ---------------------
+  //
+  // Blind test 7: "every facing is face-forward, evenly pitched, flush to the
+  // shelf front, and full." Read next to the code that produced those frames
+  // that is a strange verdict, because round 3 already gave every unit its own
+  // yaw, its own depth, a 1-in-20 chance of being shelved backwards and six
+  // separate ways of being WRONG. All of it was firing. The critic is still
+  // right, and the reason is the one thing none of that touched:
+  //
+  //   every shelf in the building drew from the SAME distribution.
+  //
+  // Yaw was +-4 degrees everywhere. Depth wander was 0-28 mm everywhere. The
+  // wrong-state probability was 2.6/n everywhere. Sample a fixed distribution
+  // four thousand times and you do not get variety, you get its mean, plus
+  // noise too small to read at the scale a photograph is judged at. What a
+  // real store has is high variance IN THE VARIANCE: the bay a clerk fronted
+  // an hour ago is a planogram photograph, the bay beside it has been through
+  // a Saturday and is 40 mm deep in gaps and cocked boxes, and the two are
+  // 1.2 m apart on the same run.
+  //
+  // So each 4 ft bay draws a STATE, and the state sets the parameters every
+  // draw below is made from. Nothing new is randomised; what changed is that
+  // the ranges are themselves a random variable. The same idea, one level up.
+  const BAY_W = 1.22;
+  const BAY_STATE = [
+    // p     skew  depth wrong hole  gap    stack chroma
+    [0.30, 0.32, 0.30, 0.30, 0.35, 0.30, 1.05, 1.00],   // just fronted
+    [0.36, 1.00, 1.00, 1.00, 1.00, 1.00, 1.00, 1.02],   // ordinary
+    [0.21, 1.85, 1.90, 1.70, 2.10, 2.30, 0.80, 0.98],   // shopped through
+    [0.13, 3.10, 2.90, 2.45, 3.30, 4.20, 0.55, 0.96],   // been a Saturday
+  ];
+  const bayCache = new Map();
+  const bayOf = (p) => {
+    const k = Math.floor((p - a0) / BAY_W);
+    let st = bayCache.get(k);
+    if (st) return st;
+    // seeded off the deck's own rng so a run is deterministic, but drawn per
+    // bay so two bays of one deck disagree
+    let r = rng(), acc = 0, pick = BAY_STATE[1];
+    for (const row of BAY_STATE) { acc += row[0]; if (r < acc) { pick = row; break; } }
+    st = {
+      skew: pick[1], depth: pick[2], wrong: pick[3], hole: pick[4],
+      gap: pick[5], stack: pick[6], chroma: pick[7],
+    };
+    bayCache.set(k, st);
+    return st;
+  };
+
   // ---- ROUND-3 VACANCY PLAN ----------------------------------------------
   // Round-2 shelves were 100% full and perfectly faced, which no store on
   // earth is. Before anything is stocked, this deck reserves 0-2 BARE BAYS it
@@ -55015,8 +55953,11 @@ function fillShelf(B, rng, dept, opts) {
     // a shopped shelf actually looks like.
     const pd = Math.min(depth * 0.94, 0.21, w * 1.7, Math.max(0.07, kind.d * depth));
 
-    // sold-out void — deeper shelves and lower decks get shopped harder
-    if (rng() < 0.060 + (1 - pull) * 0.050) {
+    // sold-out void — deeper shelves and lower decks get shopped harder, and
+    // a bay that has been through a Saturday gets shopped three times harder
+    // again than the one next to it that was fronted this morning
+    const BS = bayOf(a);
+    if (rng() < (0.060 + (1 - pull) * 0.050) * BS.hole) {
       if (tag && rng() < 0.5) tag(a + 0.01, rr(rng, 0.055, 0.095), 'orphan');
       a += rr(rng, 0.06, 0.34);
       continue;
@@ -55029,11 +55970,27 @@ function fillShelf(B, rng, dept, opts) {
     // been pulled 100-220 mm back off the lip and sits in the dark. That
     // silhouette — a facing at the rail beside a facing sunk in shadow — is
     // most of what makes a real shelf read as trafficked.
-    const shopped = rng() < 0.115;
+    const shopped = rng() < 0.115 * BS.hole;
     const maxSet = Math.max(0, depth - Math.min(depth * 0.94, 0.21) - 0.02);
-    const skuSetback = shopped
-      ? Math.min(maxSet, deckSetback + rr(rng, 0.10, 0.22))
-      : deckSetback + rr(rng, 0.0, 0.016);
+    // ROUND 9 — DEPTH IS A CONTINUUM, NOT A COIN FLIP. Blind test 8:
+    // "vary product depth, not just count. Everything still sits flush at the
+    // lip." Both halves were true and the cause was this line: setback was
+    // binary. One SKU in nine was declared "shopped" and pulled 100-220 mm
+    // back, and the other eight in nine got 0-16 mm, i.e. flush. So the wall
+    // read as a plane with occasional holes punched in it rather than as a
+    // surface with relief.
+    //
+    // Nobody fronts a shelf to the millimetre. A facing is where the last
+    // shopper left it, and over a day that produces a heavy-tailed
+    // distribution: most SKUs a few centimetres back, a long tail out to a
+    // hand's depth, and separately the ones that have genuinely been shopped
+    // through. u^2.1 * 115 mm is that: median 27 mm, upper decile 90 mm,
+    // maximum 115 — over a 100 mm carton, enough that the lip line reads as
+    // ragged from down the aisle instead of as an edge.
+    const sd = rng();
+    const skuSetback = Math.min(maxSet, deckSetback + (shopped
+      ? rr(rng, 0.10, 0.24) * BS.depth
+      : Math.pow(sd, 2.1) * 0.115 * BS.depth));
 
     // Cap the whole brand block. Four varieties x six facings of one design is
     // 24 identical faces in a row, which is the exact repetition round 2 was
@@ -55057,7 +56014,7 @@ function fillShelf(B, rng, dept, opts) {
       // lamp actually returns, and the print does not sink because the mask's
       // brightness channel still carries the ink.
       const shade = lit * (litAt ? litAt(a) : 1) * 0.82 * rr(rng, 0.90, 1.10);
-      const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.42, 1.75));
+      const vSat = Math.min(1, baseHsl[1] / 100 * rr(rng, 1.42, 1.75) * BS.chroma);
       const vLit = Math.min(0.97, baseHsl[2] / 100 * rr(rng, 0.86, 1.38));
       // Set per INSTANCE below, not once per variety: eight identical facings
       // in a row at one exact colour is a flat field with no internal edges,
@@ -55096,7 +56053,7 @@ function fillShelf(B, rng, dept, opts) {
       if (stackable) {
         const nFit = Math.floor((headroom - 0.015) / h);
         // a stock clerk stacks two, sometimes three. Never six.
-      if (nFit >= 2 && rng() < 0.90) stack = Math.min(nFit, rng() < 0.30 ? 3 : 2);
+      if (nFit >= 2 && rng() < 0.90 * BS.stack) stack = Math.min(nFit, rng() < 0.30 ? 3 : 2);
       }
 
       // ---- ROUND-3 PER-INSTANCE VARIATION ---------------------------------
@@ -55107,7 +56064,7 @@ function fillShelf(B, rng, dept, opts) {
       // and 2-3 units per block are deliberately WRONG — face-turned, crushed,
       // leaning, shoved deep, or simply missing.
       const soft = kind.t === 'bag';
-      const pWrong = Math.min(0.34, 2.6 / Math.max(2, n));
+      const pWrong = Math.min(0.62, (2.6 / Math.max(2, n)) * BS.wrong);
       // The "lying flat on top of the row" leftover has to sit on a unit that
       // actually EXISTS. Round 3 added missing facings and shoved-back facings,
       // and without this the leftover ended up hovering in mid-air over the
@@ -55115,15 +56072,20 @@ function fillShelf(B, rng, dept, opts) {
       let lastA = null, lastTop = 0, lastSet = 0;
       for (let k = 0; k < n && a < a1 - w * 0.55 && a - brandA0 < brandMax; k++) {
         const jitter = rr(rng, -0.006, 0.006);
-        // per-item depth wander: 0-40 mm off the SKU's own setback
-        let itemSet = Math.max(0, skuSetback + rr(rng, -0.006, 0.028));
+        // per-item depth wander off the SKU's own setback. ROUND 9 — widened
+        // from -6/+28 mm to -8/+52, and one facing in eleven gets shoved a
+        // further 40-90 back on its own. Two facings of the same SKU are never
+        // at the same depth; a shopper takes the front one and the row behind
+        // it stays where it is.
+        let itemSet = Math.max(0, skuSetback + rr(rng, -0.008, 0.052) * BS.depth
+          + (rng() < 0.09 ? rr(rng, 0.040, 0.090) * BS.depth : 0));
         // BASELINE yaw is now +-4 degrees on every single unit, not on one in
         // five. Nothing on a real shelf is square to the rail.
-        let skew = rr(rng, -0.070, 0.070);
-        if (rng() < 0.22) skew += rr(rng, 0.06, 0.24) * (rng() < 0.5 ? -1 : 1);
+        let skew = rr(rng, -0.070, 0.070) * BS.skew;
+        if (rng() < 0.22 * BS.wrong) skew += rr(rng, 0.06, 0.24) * BS.skew * (rng() < 0.5 ? -1 : 1);
         // one in twenty is shelved backwards — 180 degrees shows the plain
         // wrap column, which is exactly what a reversed package looks like
-        let extraYaw = rng() < 0.045 ? Math.PI : 0;
+        let extraYaw = rng() < 0.045 * BS.wrong ? Math.PI : 0;
         // per-instance scale: 3-5% either way, and bags get more
         let sx = w * rr(rng, soft ? 0.93 : 0.955, soft ? 1.035 : 1.005);
         let sy = h * rr(rng, 0.965, 1.035);
@@ -55191,7 +56153,11 @@ function fillShelf(B, rng, dept, opts) {
         }
         // real facings do not butt flush: film goods leave air, board goods
         // leave a saw-tooth of one or two millimetres
-        a += w + (soft ? rr(rng, 0.002, 0.018) : rr(rng, -0.001, 0.006));
+        // A faced bay butts flush; a shopped one leaves ragged air between
+        // facings, and that irregular pitch is most of what "evenly pitched"
+        // was naming. Same line, times the bay's own number.
+        a += w + (soft ? rr(rng, 0.002, 0.018) : rr(rng, -0.001, 0.006)) * BS.gap
+          + (BS.gap > 1.5 ? rr(rng, 0.0, 0.022) * (BS.gap - 1.0) : 0);
       }
 
       // one item lying flat on top of the row — the classic restock leftover
@@ -55220,6 +56186,7 @@ return { DEPTS, FROZEN, fillBackRow, fillShelf };
 /* ==== src/store/tex.js ==== */
 const M_src_store_tex_js = (() => {
 const { makeRng, rr, ri } = M_src_store_kit_js;
+const { promoDeal } = M_src_store_light_js;
 // OWNER: builder-store. Every texture in the store is generated here on a
 // 2D canvas at load time. No network, no image files.
 //
@@ -55229,6 +56196,7 @@ const { makeRng, rr, ri } = M_src_store_kit_js;
 //     green channel = "print brightness". ../store.js patches the standard
 //     shader so a single greyscale package mask + a per-instance brand colour
 //     yields an unlimited variety of grocery packages.
+
 
 
 
@@ -55469,40 +56437,7 @@ function ceilTex(THREE) {
 //   contactTex   1-D ramp: near-black at v = 0 (hard against the base) fading
 //                to white by v = 1, 100-300 mm out. Used as edge-hugging strips.
 //   groundAOTex  radial pool for the broad ambient darkening under a fixture.
-function contactTex(THREE) {
-  const W = 8, H = 128;
-  const [c, g] = cv(W, H);
-  const grd = g.createLinearGradient(0, H, 0, 0);      // v = 0 is the BOTTOM row
-  grd.addColorStop(0.00, 'rgb(28,26,26)');
-  grd.addColorStop(0.10, 'rgb(58,55,54)');
-  grd.addColorStop(0.26, 'rgb(120,116,112)');
-  grd.addColorStop(0.52, 'rgb(196,192,186)');
-  grd.addColorStop(0.78, 'rgb(240,238,233)');
-  grd.addColorStop(1.00, 'rgb(255,255,255)');
-  g.fillStyle = grd; g.fillRect(0, 0, W, H);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = THREE.RepeatWrapping;
-  t.wrapT = THREE.ClampToEdgeWrapping;
-  t.anisotropy = 4;
-  return t;
-}
 
-function groundAOTex(THREE) {
-  const N = 128;
-  const [c, g] = cv(N, N);
-  const grd = g.createRadialGradient(N / 2, N / 2, 0, N / 2, N / 2, N / 2);
-  grd.addColorStop(0.00, 'rgb(96,92,88)');
-  grd.addColorStop(0.22, 'rgb(140,136,130)');
-  grd.addColorStop(0.52, 'rgb(212,209,203)');
-  grd.addColorStop(0.80, 'rgb(247,246,242)');
-  grd.addColorStop(1.00, 'rgb(255,255,255)');
-  g.fillStyle = grd; g.fillRect(0, 0, N, N);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  return t;
-}
 
 // ---------------------------------------------------------------------------
 // LIGHT STRIP ATLAS — 4 states of one 4ft 2-tube fluorescent troffer, in a
@@ -55696,71 +56631,17 @@ function pegTex(THREE) {
 // product meets the deck. This is the round-3 headline change — without it
 // every facing is evenly lit and the whole gondola reads as a decal on a plane.
 // TWO gradients in one 2-column atlas so both AO passes share one material and
-// one draw call. store.js selects with AO_UV.mouth / AO_UV.deck.
-//   left  (u 0..0.5)  cavity mouth: v=1 hard under the deck above -> v=0 deck
-//   right (u 0.5..1)  deck surface: v=1 hard against the back panel -> v=0 lip
-// The DECK pass is the one round-3 nearly missed. A side-by-side crop against
-// the reference photography showed the single largest flat region in the frame
-// was not the product at all — it was the bare cream deck surface receding
-// behind the facings on every shelf below eye level.
-const AO_UV = { mouth: [0.02, 0, 0.48, 1], deck: [0.52, 0, 0.98, 1] };
-function shelfAOTex(THREE) {
-  // ROUND 4. The round-3 version was "omnidirectional and too weak — a uniform
-  // dark halo with no light direction in it". Light in a supermarket aisle
-  // comes from a strip four metres straight up, so a shelf cavity is not softly
-  // shaded: the deck above it is a hard horizontal occluder, and it throws a
-  // distinct shadow BAND across the top third of whatever is on the deck below.
-  // These stops are that band, and the deck gradient is the same argument seen
-  // from above: near black where the deck meets the back panel, blown out along
-  // the front two inches where the lip catches the light.
-  const [c, g] = cv(16, 256);
-  const mouth = g.createLinearGradient(0, 0, 0, 256);
-  // The band has to be HARD but not deep. Round-4a crushed the top fifth of
-  // every cavity under 40% brightness, which put the printed packaging in there
-  // below the threshold where any of it reads — a real cast shadow is a sharp
-  // edge with recoverable detail behind it, not a black hole.
-  // ROUND 5. Softened about 12% and the band narrowed. Measured mean VALUE of a
-  // shelf close-up was 0.37-0.40 against 0.52-0.56 for reference/store_01 and
-  // _02, and the cavity card was most of it: it was multiplying the top quarter
-  // of every cavity down toward black over the ENTIRE mouth. The band stays
-  // hard-edged — that was the round-4 win and it is real — but a shadow cast by
-  // a shelf lip in a room lit to 800 lux does not take a facing to 8% grey.
-  //
-  // ...and ROUND 5 made them NEUTRAL, which turned out to matter more than the
-  // softening. A hue mask over a shelf close-up put 22% of the frame in the
-  // saturated warm band, and it was not the packaging: it was the shadowed
-  // pegboard visible in every cavity. Multiply blending COMPOUNDS chroma — a
-  // 12%-saturated cream panel under a 26%-saturated brown shadow card lands at
-  // 35%, well past anything in the reference photography. An occlusion card is
-  // a light-LEVEL change, not a pigment; and what fills the deepest part of a
-  // shelf cavity is bounce off the cool fill, so if it leans anywhere it leans
-  // the other way. Every surface in here is still as warm as it was painted.
-  mouth.addColorStop(0.00, '#1c1d20');        // deepest, right under the deck
-  mouth.addColorStop(0.035, '#2b2c30');
-  mouth.addColorStop(0.085, '#535459');       // the lip's cast shadow band
-  mouth.addColorStop(0.160, '#8d8e91');
-  mouth.addColorStop(0.260, '#c0c1c1');
-  mouth.addColorStop(0.400, '#e0e0de');
-  mouth.addColorStop(0.600, '#f7f6f2');
-  mouth.addColorStop(0.780, '#fefdfa');
-  mouth.addColorStop(0.880, '#d2d2cf');       // deck contact seam
-  mouth.addColorStop(0.945, '#87888b');
-  mouth.addColorStop(1.00, '#4f5054');
-  g.fillStyle = mouth; g.fillRect(0, 0, 8, 256);
-  const deck = g.createLinearGradient(0, 0, 0, 256);
-  deck.addColorStop(0.00, '#1e1f23');         // hard against the back panel
-  deck.addColorStop(0.10, '#3e3f44');
-  deck.addColorStop(0.26, '#7c7d80');
-  deck.addColorStop(0.48, '#a5a6a6');
-  deck.addColorStop(0.74, '#d8d8d5');
-  deck.addColorStop(0.90, '#f6f5f1');
-  deck.addColorStop(1.00, '#fffefc');         // the lit strip at the lip
-  g.fillStyle = deck; g.fillRect(8, 0, 8, 256);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
-}
+// one draw call. store.js used to select with AO_UV.mouth / AO_UV.deck.
+//
+// DELETED IN ROUND 8 with contactTex and groundAOTex. All three were authored
+// occlusion — a cavity-mouth gradient, a deck ramp, a floor contact ramp and a
+// broad ground pool — and all four are now computed per fragment from the
+// world occupancy field. The measurement that produced them is worth keeping:
+// a supermarket cavity mouth runs about a stop and a half from the deck lip to
+// the back panel, the deck itself about two thirds of a stop over 550 mm, and
+// the floor contact ramp is 100-340 mm wide depending on how much of the base
+// is a recessed toe kick. light.js reproduces all three from geometry; if it
+// ever measures wider or narrower than those numbers, it is wrong.
 
 function smearTex(THREE) {
   const [c, g] = cv(8, 128);
@@ -55781,42 +56662,160 @@ function smearTex(THREE) {
 // FLOOR WEAR — one non-repeating multiply layer stretched over the whole sales
 // floor: black scuffing concentrated in the traffic lanes, cart-wheel arcs,
 // heel marks, patched tiles and the dull halo where the buffer never reaches.
-function floorWearTex(THREE) {
+function floorWearTex(THREE, plan) {
+  // TRAFFIC WEAR IS A PROCESS. ROUND 9.
+  //
+  // Blind test 8: "wear must correlate with traffic. Real stores are scraped
+  // at cart-bumper height: dented kickplates, paint worn off uprights, black
+  // rubber skid arcs in the turning lanes at aisle ends. Your floor grime is
+  // low-frequency noise UNCORRELATED with where a cart could physically go."
+  //
+  // Dead right, and the tell was structural. Round 8 drew nine evenly spaced
+  // vertical bands and two horizontal ones into a 1024 canvas, because that is
+  // roughly what a supermarket floor plan looks like. It is not what THIS
+  // store's plan looks like: there are eight aisles at aisleX(i) plus two much
+  // wider perimeter runs, THREE cross-aisles including the mid-store walkway
+  // cut in round 5, and two entrance doors that funnel every cart in the
+  // building through two specific points. None of that was in the texture, so
+  // the grime sat a metre off every lane it was meant to be in, ran straight
+  // under gondolas where no wheel has ever been, and missed the mid-store
+  // walkway entirely.
+  //
+  // So the store hands its own plan in and the wear is DERIVED from it:
+  //
+  //   1. a traffic field, built from the lane centrelines, the cross-aisles
+  //      and a funnel at each door;
+  //   2. masked to zero inside every fixture footprint, because a cart cannot
+  //      go there and therefore nothing wears there;
+  //   3. read as TWO opposite effects, which is the part that makes it look
+  //      like a floor rather than like dirt: the middle of a lane is walked so
+  //      hard it is BURNISHED — lighter and cleaner than the open floor — and
+  //      the grime collects at the lane MARGINS, where the traffic thins out
+  //      and the scrubber's brush does not reach. Peak dirt at half traffic,
+  //      not at full;
+  //   4. skid arcs placed at the lane-by-cross-aisle intersections at a real
+  //      cart turning radius, because that is the only place a wheel is ever
+  //      dragged sideways.
   const N = 1024;
   const [c, g] = cv(N, N);
   const rng = makeRng(0x5CFF);
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, N, N);
-  // broad dull traffic bands — the store's aisles run vertically in this map
-  for (let k = 0; k < 9; k++) {
-    const x = (k + 0.5) * N / 9;
-    const grd = g.createLinearGradient(x - N * 0.052, 0, x + N * 0.052, 0);
-    grd.addColorStop(0, 'rgba(255,255,255,0)');
-    grd.addColorStop(0.5, 'rgba(118,117,114,0.30)');
-    grd.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grd; g.fillRect(x - N * 0.052, 0, N * 0.104, N);
+  const { minX, minZ, spanX, spanZ, lanes, cross, blocks, doors } = plan;
+  // world -> canvas. The wear plane is a PlaneGeometry rotated -90 about X, so
+  // its v runs from the front of the store to the back, and CanvasTexture's
+  // flipY cancels that: canvas row 0 is z = minZ.
+  const px = (x) => (x - minX) / spanX * N;
+  const py = (z) => (z - minZ) / spanZ * N;
+
+  // --- 1. the traffic field ------------------------------------------------
+  // Separable: lanes depend only on x, cross-aisles only on z, so each is a
+  // 1-D profile and the field is their max. Doors are the only 2-D term.
+  const LSIG = 1.55, CSIG = 1.30;        // metres, lane and cross-aisle spread
+  const laneT = new Float32Array(N), crossT = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const wx = minX + (i + 0.5) / N * spanX;
+    let t = 0;
+    for (const L of lanes) {
+      const d = (wx - L.x) / (L.w || LSIG);
+      t = Math.max(t, (L.a || 1) * Math.exp(-d * d * 0.5));
+    }
+    laneT[i] = t;
   }
-  for (const y of [N * 0.14, N * 0.86]) {         // front + back cross-aisles
-    const grd = g.createLinearGradient(0, y - N * 0.06, 0, y + N * 0.06);
-    grd.addColorStop(0, 'rgba(255,255,255,0)');
-    grd.addColorStop(0.5, 'rgba(113,112,109,0.30)');
-    grd.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grd; g.fillRect(0, y - N * 0.06, N, N * 0.12);
+  for (let j = 0; j < N; j++) {
+    const wz = minZ + (j + 0.5) / N * spanZ;
+    let t = 0;
+    for (const C of cross) {
+      const d = (wz - C.z) / (C.w || CSIG);
+      t = Math.max(t, (C.a || 1) * Math.exp(-d * d * 0.5));
+    }
+    crossT[j] = t;
   }
-  // black scuff arcs — cart wheels and shoe heels, biased into the lanes
-  for (let i = 0; i < 1500; i++) {
-    const lane = Math.floor(rng() * 9);
-    const x = (lane + 0.5) * N / 9 + rr(rng, -N * 0.055, N * 0.055);
-    const y = rng() * N;
-    g.strokeStyle = `rgba(${ri(rng, 30, 78)},${ri(rng, 28, 70)},${ri(rng, 24, 60)},${rr(rng, 0.05, 0.30)})`;
-    g.lineWidth = rr(rng, 0.7, 3.2);
+  // --- 2. the mask: nothing wears under a fixture --------------------------
+  const open = new Uint8Array(N * N).fill(1);
+  for (const b of blocks) {
+    let i0 = Math.max(0, Math.floor(px(b[0]))), i1 = Math.min(N, Math.ceil(px(b[2])));
+    let j0 = Math.max(0, Math.floor(py(b[1]))), j1 = Math.min(N, Math.ceil(py(b[3])));
+    for (let j = j0; j < j1; j++) open.fill(0, j * N + i0, j * N + i1);
+  }
+  const T = new Float32Array(N * N);
+  for (let j = 0; j < N; j++) {
+    const wz = minZ + (j + 0.5) / N * spanZ;
+    for (let i = 0; i < N; i++) {
+      if (!open[j * N + i]) continue;
+      const wx = minX + (i + 0.5) / N * spanX;
+      let t = Math.max(laneT[i], crossT[j]);
+      for (const D of doors) {
+        const dx = (wx - D.x) / 3.4, dz = (wz - D.z) / 4.2;
+        t = Math.max(t, 1.25 * Math.exp(-(dx * dx + dz * dz) * 0.5));
+      }
+      T[j * N + i] = t > 1 ? 1 : t;
+    }
+  }
+
+  // --- 3. burnish in the middle, grime at the margins ----------------------
+  const im = g.createImageData(N, N), D = im.data;
+  for (let k = 0; k < N * N; k++) {
+    const t = T[k];
+    // a cheap value hash so the two effects are not perfectly smooth fields
+    const i = k & (N - 1), j = k >> 10;
+    const n = (Math.sin(i * 0.271 + j * 0.113) * 0.5 + Math.sin(i * 0.041 - j * 0.087) * 0.5);
+    const burnish = Math.max(0, (t - 0.52) / 0.48);          // 0 .. 1
+    const margin = Math.max(0, 1 - Math.abs(t - 0.42) / 0.42); // peaks at t=0.42
+    const dead = Math.max(0, 0.18 - t) / 0.18;               // never-walked corners
+    let v = 1
+      + burnish * burnish * 0.085 * (0.7 + 0.3 * n)          // polished lighter
+      - margin * 0.185 * (0.72 + 0.28 * n)                   // rubber and grit
+      - dead * 0.055;                                        // dust film
+    // a warm bias on the grime: it is shoe rubber and cardboard dust, not soot
+    const r = Math.max(0, Math.min(1, v + margin * 0.020));
+    const gg = Math.max(0, Math.min(1, v));
+    const b = Math.max(0, Math.min(1, v - margin * 0.028 - dead * 0.012));
+    const o = k * 4;
+    D[o] = r * 255; D[o + 1] = gg * 255; D[o + 2] = b * 255; D[o + 3] = 255;
+  }
+  g.putImageData(im, 0, 0);
+
+  // --- 4. skid arcs, only where a cart actually turns ----------------------
+  // A shopping cart turns on about a 900 mm radius and its rear wheels do not
+  // steer, so the mark it leaves coming out of an aisle is an ARC struck from
+  // the inside corner of the turn — not a random scribble somewhere in the
+  // lane, which is what round 8 drew 1500 of.
+  for (const L of lanes) {
+    for (const C of cross) {
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const cx = L.x + sx * (L.w || LSIG) * 0.95;
+        const cz = C.z + sz * (C.w || CSIG) * 0.95;
+        const n = 5 + ((rng() * 7) | 0);
+        for (let k = 0; k < n; k++) {
+          const rw = rr(rng, 0.62, 1.55);                 // metres
+          const a0 = Math.atan2(-sz, -sx) - rr(rng, 0.15, 0.55);
+          g.strokeStyle = `rgba(${ri(rng, 26, 62)},${ri(rng, 24, 56)},${ri(rng, 22, 50)},${rr(rng, 0.06, 0.30)})`;
+          g.lineWidth = rr(rng, 0.9, 3.4);
+          g.beginPath();
+          g.arc(px(cx + rr(rng, -0.22, 0.22)), py(cz + rr(rng, -0.22, 0.22)),
+            rw / spanX * N, a0, a0 + rr(rng, 0.5, 1.5));
+          g.stroke();
+        }
+      }
+    }
+  }
+  // heel marks and dropped-pallet gouges scattered ALONG the lanes, sampled
+  // from the traffic field by rejection so none of them land under a shelf
+  for (let i = 0, tries = 0; i < 900 && tries < 12000; tries++) {
+    const cx = (rng() * N) | 0, cy = (rng() * N) | 0;
+    if (T[cy * N + cx] < rng() * 0.9 + 0.1) continue;
+    i++;
+    g.strokeStyle = `rgba(${ri(rng, 30, 74)},${ri(rng, 28, 66)},${ri(rng, 24, 58)},${rr(rng, 0.05, 0.26)})`;
+    g.lineWidth = rr(rng, 0.7, 2.8);
     g.beginPath();
-    const r = rr(rng, 4, 46), a = rng() * 6.28;
-    g.arc(x, y, r, a, a + rr(rng, 0.25, 1.5));
+    const r = rr(rng, 3, 30), a = rng() * 6.28;
+    g.arc(cx, cy, r, a, a + rr(rng, 0.2, 1.1));
     g.stroke();
   }
-  // buffer swirls over the whole floor, much fainter
+  // buffer swirls over the whole floor — the scrubber does not follow lanes,
+  // it drives in overlapping passes, so this one term is deliberately NOT
+  // correlated with traffic.
   for (let i = 0; i < 420; i++) {
-    g.strokeStyle = rng() < 0.5 ? 'rgba(255,255,255,0.30)' : 'rgba(120,112,98,0.10)';
+    g.strokeStyle = rng() < 0.5 ? 'rgba(255,255,255,0.26)' : 'rgba(120,112,98,0.09)';
     g.lineWidth = rr(rng, 0.8, 2.6);
     g.beginPath();
     const x = rng() * N, y = rng() * N, r = rr(rng, 40, 260), a = rng() * 6.28;
@@ -55837,48 +56836,18 @@ function floorWearTex(THREE) {
 // CEILING DANGLERS — die-cut cardboard promo cards on strings. Cheap, and they
 // put real detail into the top third of the frame, which was the single
 // lowest-detail band in every round-2 render.
+const DANGLE_COLS = 4, DANGLE_ROWS = 4;
 function danglerAtlas(THREE) {
-  const COLS = 4, ROWS = 2, CW = 192, CH = 144;
-  const [c, g] = cv(CW * COLS, CH * ROWS);
-  const rng = makeRng(0xDA9);
-  const SETS = [
-    ['SAVE', '$1.00', '#d8341f', '#fff8e6'],
-    ['2 FOR', '$5', '#1d5f97', '#fffdf0'],
-    ['NEW!', 'TRY IT', '#e0a416', '#2b2519'],
-    ['BUY 1', 'GET 1', '#2f7a35', '#fffbe9'],
-    ['LOW', 'PRICE', '#c8551b', '#fff6e2'],
-    ['SALE', '99¢', '#b3161d', '#fffae8'],
-    ['CLUB', 'DEAL', '#5a3d8c', '#fff6ec'],
-    ['FRESH', 'DAILY', '#3f7f4f', '#fdf8e8'],
-  ];
-  for (let i = 0; i < COLS * ROWS; i++) {
-    const s = SETS[i % SETS.length];
+  // Same grammar as the endcap boards. Round 7 had eight hand-written sets
+  // here and four in promoAtlas, which is where "SAVE $1.50 twice in one
+  // frame" came from — two short lists sampled independently still collide.
+  const CW = 192, CH = 144;
+  const [c, g] = cv(CW * DANGLE_COLS, CH * DANGLE_ROWS);
+  for (let i = 0; i < DANGLE_COLS * DANGLE_ROWS; i++) {
     g.save();
-    g.translate((i % COLS) * CW, Math.floor(i / COLS) * CH);
+    g.translate((i % DANGLE_COLS) * CW, Math.floor(i / DANGLE_COLS) * CH);
     g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
-    g.fillStyle = s[3]; g.fillRect(0, 0, CW, CH);
-    g.fillStyle = s[2]; g.fillRect(0, 0, CW, CH * 0.30);
-    g.fillStyle = s[2]; g.fillRect(0, CH * 0.90, CW, CH * 0.10);
-    g.strokeStyle = 'rgba(60,52,40,0.45)'; g.lineWidth = 3;
-    g.strokeRect(1.5, 1.5, CW - 3, CH - 3);
-    g.textBaseline = 'alphabetic';
-    g.textAlign = 'center';
-    g.fillStyle = s[3];
-    fitText(g, s[0], CW / 2, CH * 0.235, CW * 0.84, CH * 0.20, '900');
-    g.fillStyle = s[2];
-    fitText(g, s[1], CW / 2, CH * 0.68, CW * 0.86, CH * 0.36, '900');
-    g.fillStyle = 'rgba(40,34,26,0.75)';
-    g.font = `700 ${CH * 0.075}px ${'Helvetica Neue, Arial'}`;
-    g.textAlign = 'center';
-    g.fillText('WITH CARD  ·  LIMIT 4', CW / 2, CH * 0.855);
-    // punched hang hole
-    g.fillStyle = 'rgba(30,26,20,0.8)';
-    g.beginPath(); g.arc(CW / 2, CH * 0.075, CH * 0.032, 0, 6.29); g.fill();
-    // a little print noise so it is not a flat vector plate
-    for (let k = 0; k < 160; k++) {
-      g.fillStyle = `rgba(${ri(rng, 0, 255)},${ri(rng, 0, 255)},${ri(rng, 0, 255)},0.05)`;
-      g.fillRect(rng() * CW, rng() * CH, rr(rng, 1, 3), rr(rng, 1, 3));
-    }
+    promoCard(g, CW, CH, 90210 + i * 53, { hole: true });
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
@@ -56345,22 +57314,136 @@ function laneAtlas(THREE) {
 }
 
 // ENDCAP PROMO SIGNS — 4 cells of 512x256, loud red discount boards.
+// PROMO SIGNAGE. ROUND 8 — SIX ASSETS IS AN ARITHMETIC PROBLEM.
+//
+// Blind test 7: "promo signage is about six unique assets — SAVE $1.50 appears
+// in three of four frames, twice in one." Both halves of that are true and
+// neither is fixable by drawing more carefully, because the cause is that the
+// copy lived in a four-entry array. Four strings over roughly forty sign sites
+// repeats by pigeonhole; so does eight, so does twenty. What does not repeat
+// is a GRAMMAR — see promoDeal() in light.js — crossed with a layout family
+// and a colour scheme, because the number of distinct outcomes is the product
+// of three independent draws rather than the length of a list.
+//
+// Sixteen cells, no two alike, and the seeds are per-cell so adding a
+// seventeenth costs one number.
+//
+// It is also where a measurable amount of the frame's chroma comes from. Our
+// renders span 64-71 mean saturation against 59-134 for the twelve reference
+// photographs, and the 90th percentile — the saturated blocks, not the
+// average — sat at 106-139 against their 137-222. Retail promo print is not
+// tasteful: it is process red on process yellow at full ink. These schemes are
+// what a real shelf-talker measures, and the fixtures around them stay exactly
+// as cream as they were.
+const PROMO_SCHEME = [
+  { bg: '#e01818', fg: '#fff6d8', plate: '#ffd400', ink: '#1a1408' },
+  { bg: '#ffd400', fg: '#12100a', plate: '#e01818', ink: '#fffaea' },
+  { bg: '#fffbee', fg: '#c8121a', plate: '#c8121a', ink: '#fffaea' },
+  { bg: '#0a6b2e', fg: '#fdfbe8', plate: '#ffd400', ink: '#12240f' },
+  { bg: '#f26a10', fg: '#fffaea', plate: '#1b2a55', ink: '#fff6d8' },
+  { bg: '#1b3f8f', fg: '#fffaea', plate: '#ffd400', ink: '#101a34' },
+  { bg: '#7b1470', fg: '#fff2f8', plate: '#ffe14a', ink: '#2a0a26' },
+  { bg: '#fffbee', fg: '#12100a', plate: '#0a6b2e', ink: '#fdfbe8' },
+];
+
+// One promo card, drawn into the current transform at W x H. Shared by the
+// endcap boards, the coupon flags and the ceiling danglers, so a flag and a
+// board never carry the same artwork by accident and never disagree about
+// what a deal looks like in this store.
+function promoCard(g, W, H, seed, opts = {}) {
+  const rng = makeRng(seed * 22695477 + 7);
+  const d = promoDeal(seed);
+  const S = PROMO_SCHEME[Math.floor(rng() * PROMO_SCHEME.length) % PROMO_SCHEME.length];
+  const lay = Math.floor(rng() * 4);
+  const pad = H * 0.055;
+  g.fillStyle = S.bg; g.fillRect(0, 0, W, H);
+  g.textAlign = 'center'; g.textBaseline = 'alphabetic';
+
+  // header band — a real shelf-talker carries the retailer's device across the
+  // top, and which edge it sits on is a per-design decision
+  const hb = H * (0.24 + rng() * 0.10);
+  const bodyY = lay === 3 ? 0 : hb;
+  const bodyH = H - bodyY - H * 0.12;
+  // The header is painted LAST, over whatever the body drew. A starburst is
+  // wider than its own bounding box by definition and was eating the retailer
+  // device off the top of every card that used one.
+  const header = () => {
+    if (lay === 3) return;
+    g.fillStyle = S.plate; g.fillRect(0, 0, W, hb);
+    g.fillStyle = S.ink;
+    fitText(g, d.head, W / 2, hb * 0.76, W - pad * 3, hb * 0.66, '900');
+  };
+
+  if (lay === 2) {
+    // burst: the value sits on a starburst, which is the one promo shape that
+    // still reads as a promo shape when it is nine pixels across
+    g.save();
+    g.translate(W / 2, bodyY + bodyH * 0.52);
+    g.fillStyle = S.plate;
+    g.beginPath();
+    const pts = 14, R = Math.min(W, bodyH) * 0.55;
+    for (let i = 0; i < pts * 2; i++) {
+      const a = (i / (pts * 2)) * Math.PI * 2 - Math.PI / 2;
+      const r = (i % 2 ? R * 0.74 : R) * (W / Math.min(W, bodyH) * 0.72);
+      g.lineTo(Math.cos(a) * r, Math.sin(a) * r * (bodyH / Math.min(W, bodyH) * 0.80));
+    }
+    g.closePath(); g.fill();
+    g.restore();
+    g.fillStyle = S.ink;
+    fitText(g, d.big, W / 2, bodyY + bodyH * 0.52, W * 0.62, bodyH * 0.44, '900');
+    g.fillStyle = S.ink;
+    fitText(g, d.sub, W / 2, bodyY + bodyH * 0.84, W * 0.44, bodyH * 0.22, '800');
+  } else if (lay === 1) {
+    // value reversed out of a plate, qualifier under it
+    g.fillStyle = S.plate;
+    g.fillRect(pad, bodyY + pad * 0.6, W - pad * 2, bodyH * 0.70);
+    g.fillStyle = S.ink;
+    fitText(g, d.big, W / 2, bodyY + bodyH * 0.60, W - pad * 4, bodyH * 0.56, '900');
+    g.fillStyle = S.fg;
+    fitText(g, d.sub, W / 2, bodyY + bodyH * 0.96, W * 0.55, bodyH * 0.24, '800');
+  } else {
+    // value straight on the field, sub on a rule beside it
+    g.fillStyle = S.fg;
+    fitText(g, d.big, W / 2, bodyY + bodyH * 0.66, W - pad * 3, bodyH * 0.62, '900');
+    g.fillStyle = S.plate;
+    const sw = W * 0.44, sh = bodyH * 0.24;
+    g.fillRect((W - sw) / 2, bodyY + bodyH * 0.74, sw, sh);
+    g.fillStyle = S.ink;
+    fitText(g, d.sub, W / 2, bodyY + bodyH * 0.74 + sh * 0.78, sw * 0.88, sh * 0.78, '800');
+  }
+
+  header();
+  // the legal line. Nobody reads it and every card has one; at range it is the
+  // grey smudge along the bottom edge that says "printed sign".
+  g.fillStyle = lay === 3 ? S.fg : S.fg;
+  g.globalAlpha = 0.82;
+  g.font = `700 ${H * 0.062}px "Helvetica Neue", Helvetica, Arial, sans-serif`;
+  g.fillText(d.qual, W / 2, H - H * 0.035);
+  g.globalAlpha = 1;
+
+  if (opts.hole) {                       // punched hang hole, danglers only
+    g.fillStyle = 'rgba(30,26,20,0.8)';
+    g.beginPath(); g.arc(W / 2, H * 0.075, H * 0.032, 0, 6.29); g.fill();
+  }
+  g.strokeStyle = 'rgba(60,52,40,0.40)';
+  g.lineWidth = Math.max(2, H * 0.014);
+  g.strokeRect(1.5, 1.5, W - 3, H - 3);
+  // print noise, so it is a printed card and not a vector plate
+  for (let k = 0; k < 260; k++) {
+    g.fillStyle = `rgba(${ri(rng, 0, 255)},${ri(rng, 0, 255)},${ri(rng, 0, 255)},0.045)`;
+    g.fillRect(rng() * W, rng() * H, rr(rng, 1, 3), rr(rng, 1, 3));
+  }
+}
+
+const PROMO_COLS = 4, PROMO_ROWS = 4;
 function promoAtlas(THREE) {
-  const W = 512, H = 256, n = 4;
-  const [c, g] = cv(W, H * n);
-  const rng = makeRng(2468);
-  const copy = [['SALE', '2 FOR $5'], ['LOW', 'PRICE'], ['SAVE', '$1.50'], ['BOGO', 'FREE']];
-  for (let i = 0; i < n; i++) {
-    g.save(); g.translate(0, i * H);
-    g.fillStyle = i % 2 ? '#c8281c' : '#ffd21e'; g.fillRect(0, 0, W, H);
-    g.fillStyle = i % 2 ? '#ffd21e' : '#c8281c'; g.fillRect(0, 0, W, 20); g.fillRect(0, H - 20, W, 20);
-    g.textAlign = 'center'; g.textBaseline = 'middle';
-    g.fillStyle = i % 2 ? '#fffaf0' : '#20242c';
-    fitText(g, copy[i][0], W / 2, 82, W - 60, 92, '800');
-    g.fillStyle = i % 2 ? '#ffd21e' : '#c8281c';
-    g.fillRect(30, 130, W - 60, 92);
-    g.fillStyle = i % 2 ? '#20242c' : '#fffaf0';
-    fitText(g, copy[i][1], W / 2, 176, W - 90, 78, '800');
+  const W = 320, H = 176;
+  const [c, g] = cv(W * PROMO_COLS, H * PROMO_ROWS);
+  for (let i = 0; i < PROMO_COLS * PROMO_ROWS; i++) {
+    g.save();
+    g.translate((i % PROMO_COLS) * W, Math.floor(i / PROMO_COLS) * H);
+    g.beginPath(); g.rect(0, 0, W, H); g.clip();
+    promoCard(g, W, H, 1301 + i * 37);
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
@@ -56556,7 +57639,7 @@ function exitSignAtlas(THREE) {
   return t;
 }
 
-return { floorTex, ceilTex, contactTex, groundAOTex, stripTex, WELL_UV, wellTex, trofferShadowTex, slotTex, pegTex, AO_UV, shelfAOTex, smearTex, floorWearTex, danglerAtlas, cartMeshTex, railTex, woodTex, boxMask, boxAtlas, bagAtlas, canMask, bottleMask, bagMask, cartonMask, signAtlas, bladeAtlas, wallSignAtlas, laneAtlas, promoAtlas, glowTex, wallTex, coolerBackTex, outsideTex, doorDecalAtlas, exitSignAtlas };
+return { floorTex, ceilTex, stripTex, WELL_UV, wellTex, trofferShadowTex, slotTex, pegTex, smearTex, floorWearTex, DANGLE_COLS, danglerAtlas, cartMeshTex, railTex, woodTex, boxMask, boxAtlas, bagAtlas, canMask, bottleMask, bagMask, cartonMask, signAtlas, bladeAtlas, wallSignAtlas, laneAtlas, PROMO_COLS, promoAtlas, glowTex, wallTex, coolerBackTex, outsideTex, doorDecalAtlas, exitSignAtlas };
 })();
 
 /* ==== src/store/brands.js ==== */
@@ -57593,8 +58676,15 @@ function tagAtlas(THREE) {
     g.textBaseline = 'alphabetic';
 
     if (i >= TAG_SKU) { orphanTag(g, i - TAG_SKU, CW, CH, rng); g.restore(); continue; }
-    const sale = i % 5 === 4, yellow = i % 7 === 3;
-    g.fillStyle = sale ? '#ffe418' : (yellow ? '#fff6b0' : '#ffffff');
+    // ROUND 9 — CLEARANCE. Blind test 8 named the missing third state by
+    // name: "white, yellow sale, orange clearance". A clearance card is not a
+    // recolour of a sale card — it is a different DOCUMENT: full-bleed orange,
+    // no unit price (the item is going away), the old price struck through,
+    // and a hand-written reduction date because a department manager wrote it
+    // on with a marker at 6 a.m.
+    const clear = i === 2 || i === 9;
+    const sale = !clear && i % 5 === 4, yellow = !clear && i % 7 === 3;
+    g.fillStyle = clear ? '#f07018' : (sale ? '#ffe418' : (yellow ? '#fff6b0' : '#ffffff'));
     g.fillRect(0, 0, CW, CH);
     g.strokeStyle = 'rgba(70,64,54,0.55)'; g.lineWidth = 2;
     g.strokeRect(1, 1, CW - 2, CH - 2);
@@ -57603,15 +58693,34 @@ function tagAtlas(THREE) {
       g.fillStyle = '#fffdf2'; g.textAlign = 'left';
       fitText(g, 'SALE PRICE', 5, CH * 0.16, CW * 0.5, CH * 0.15, FACE.fat, '900', 'left');
     }
+    if (clear) {
+      g.fillStyle = '#1d1a16'; g.fillRect(0, 0, CW, CH * 0.24);
+      g.fillStyle = '#ffd9a8'; g.textAlign = 'left';
+      fitText(g, 'CLEARANCE', 5, CH * 0.19, CW * 0.62, CH * 0.18, FACE.fat, '900', 'left');
+      // struck-through was-price, top right
+      g.fillStyle = '#7a3a12';
+      g.font = `800 ${CH * 0.15}px ${FACE.grot}`;
+      const was = `$${ri(rng, 2, 9)}.${String(ri(rng, 10, 99))}`;
+      g.fillText(was, CW * 0.70, CH * 0.41);
+      const ww = g.measureText(was).width;
+      g.fillRect(CW * 0.70 - 2, CH * 0.36, ww + 4, 2.4);
+      // the marker date somebody wrote on it
+      g.fillStyle = 'rgba(28,24,20,0.72)';
+      g.font = `700 ${CH * 0.12}px ${FACE.mono}`;
+      g.save();
+      g.translate(CW * 0.71, CH * 0.92); g.rotate(rr(rng, -0.10, 0.05));
+      g.fillText(`${ri(rng, 1, 12)}/${ri(rng, 10, 28)}`, 0, 0);
+      g.restore();
+    }
 
     // the big numeral — this is what a shopper's eye locks onto and it is
     // the dominant mark on every tag in every reference photo
     // grocery prices cluster at 99/49/29 cents and rarely start at zero
     const dollars = rng() < 0.16 ? 0 : ri(rng, 1, 9);
     const cents = rng() < 0.55 ? pk(rng, [99, 49, 29, 79, 19, 89, 59, 39]) : ri(rng, 0, 99);
-    g.fillStyle = sale ? '#1b1a17' : '#141312';
+    g.fillStyle = (sale || clear) ? '#1b1a17' : '#141312';
     g.textAlign = 'left';
-    const py = sale ? CH * 0.66 : CH * 0.58;
+    const py = (sale || clear) ? CH * 0.70 : CH * 0.58;
     g.font = `900 ${CH * 0.46}px ${FACE.fat}`;
     const big = `${dollars}`;
     g.fillText(big, 6, py);
@@ -57621,20 +58730,24 @@ function tagAtlas(THREE) {
     g.font = `900 ${CH * 0.13}px ${FACE.grot}`;
     g.fillText('$', 6 + bw + 3, py);
 
-    // caps description + unit price
-    g.fillStyle = '#26241f';
-    fitText(g, pk(rng, BRANDS), CW * 0.45, CH * 0.26, CW * 0.52, CH * 0.16,
-      FACE.grot, '800', 'left');
-    g.fillStyle = '#3b382f';
-    fitText(g, pk(rng, TAG_DESC), CW * 0.45, CH * 0.42, CW * 0.50, CH * 0.125,
-      FACE.grot, '600', 'left');
-    g.fillStyle = '#55503f';
-    fitText(g, `UNIT ${ri(rng, 1, 9)}.${ri(rng, 10, 99)} PER LB`, CW * 0.45, CH * 0.56,
-      CW * 0.48, CH * 0.10, FACE.grot, '400', 'left');
+    // caps description + unit price. A clearance card carries neither: the
+    // item is being run out, so the only things on it are the reduction and
+    // what it used to cost.
+    if (!clear) {
+      g.fillStyle = '#26241f';
+      fitText(g, pk(rng, BRANDS), CW * 0.45, CH * 0.26, CW * 0.52, CH * 0.16,
+        FACE.grot, '800', 'left');
+      g.fillStyle = '#3b382f';
+      fitText(g, pk(rng, TAG_DESC), CW * 0.45, CH * 0.42, CW * 0.50, CH * 0.125,
+        FACE.grot, '600', 'left');
+      g.fillStyle = '#55503f';
+      fitText(g, `UNIT ${ri(rng, 1, 9)}.${ri(rng, 10, 99)} PER LB`, CW * 0.45, CH * 0.56,
+        CW * 0.48, CH * 0.10, FACE.grot, '400', 'left');
+    }
 
     // UPC block bottom-right
     g.fillStyle = '#1a1917';
-    let bx = CW * 0.50;
+    let bx = clear ? CW * 1.5 : CW * 0.50;
     while (bx < CW - 8) {
       const w = rr(rng, 0.8, 2.2);
       if (rng() < 0.7) g.fillRect(bx, CH * 0.66, w, CH * 0.20);
@@ -57644,7 +58757,7 @@ function tagAtlas(THREE) {
     g.fillStyle = '#2a2824';
     g.fillText(`${ri(rng, 10000, 99999)} ${ri(rng, 10000, 99999)}`, CW * 0.50, CH * 0.955);
     // coloured spine down the left edge, the way ESL-style tags print
-    g.fillStyle = sale ? '#b8190f' : (yellow ? '#c8a41c' : '#8d8676');
+    g.fillStyle = clear ? '#8c3a08' : (sale ? '#b8190f' : (yellow ? '#c8a41c' : '#8d8676'));
     g.fillRect(0, 0, CW * 0.022, CH);
     g.restore();
   }
@@ -57659,22 +58772,11 @@ function tagAtlas(THREE) {
 // SHELF-CAVITY GRADIENT — a vertical ramp, near-opaque at the top where the
 // shelf above casts, clearing toward the deck. Sold-out voids read as dark
 // holes with this behind them instead of beige gaps.
-function cavityTex(THREE) {
-  const [c, g] = cv(4, 64);
-  // CanvasTexture flips Y, so canvas row 0 becomes v=1 — the top of the
-  // cavity, hard up under the next shelf, which is the dark end.
-  const grd = g.createLinearGradient(0, 0, 0, 64);
-  // ROUND 5: neutral, not brown. See shelfAOTex — multiply layers compound
-  // chroma, and this one sits on top of the pegboard in every single cavity.
-  grd.addColorStop(0, 'rgba(15,15,17,0.82)');    // v=1: under the next shelf
-  grd.addColorStop(0.22, 'rgba(18,18,21,0.60)');
-  grd.addColorStop(0.60, 'rgba(21,21,24,0.24)');
-  grd.addColorStop(1, 'rgba(21,21,24,0.00)');    // v=0: the deck
-  g.fillStyle = grd; g.fillRect(0, 0, 4, 64);
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  return t;
-}
+// cavityTex — DELETED IN ROUND 8. It painted the back of every shelf cavity
+// with a multiply gradient, neutral rather than brown because (round 5) stacked
+// multiply layers compound chroma as well as value. light.js darkens the same
+// cavity from the height field instead, per fragment, with each facing's actual
+// depth in the hole accounted for, which the card never could.
 
 // ---------------------------------------------------------------------------
 // PACKAGE MATERIAL — one mask atlas + a per-instance brand colour + a
@@ -57859,12 +58961,13 @@ function cellOrigin(i, cols, rows) {
   return [cx / cols, 1 - (cy + 1) / rows];
 }
 
-return { ATLAS, TAG_SKU, cartonAtlas, pouchAtlas, canAtlas, bottleAtlas, tagAtlas, cavityTex, sharpen, chopPackageMat, unitCellUV, cellOrigin };
+return { ATLAS, TAG_SKU, cartonAtlas, pouchAtlas, canAtlas, bottleAtlas, tagAtlas, sharpen, chopPackageMat, unitCellUV, cellOrigin };
 })();
 
 /* ==== src/store/floor.js ==== */
 const M_src_store_floor_js = (() => {
 const { makeRng, rr } = M_src_store_kit_js;
+const { FIELD_GLSL } = M_src_store_light_js;
 // OWNER: builder-store. The sales floor, and the only surface in the store that
 // mirrors anything.
 //
@@ -57904,6 +59007,7 @@ const { makeRng, rr } = M_src_store_kit_js;
 //   - the fresnel term is ~0.04 underfoot and ~1.0 at the vanishing point, so
 //     the near floor stays matte VCT and the far floor goes to mirror. That
 //     single gradient is most of the dynamic range the round-3 render lacked.
+
 
 
 
@@ -57999,7 +59103,26 @@ function wallLUT(THREE, runs, minX, spanX) {
 }
 
 // ---------------------------------------------------------------------------
-// PROP LOOKUP. ROUND 7.
+// PROP LOOKUP. ROUND 7, COLLAPSED IN ROUND 8 — the argument below is why the
+// mirror needs a lookup at all, and it still holds. What changed is where the
+// lookup comes from. propLUT was filled from a hand-maintained PROPS[] list in
+// store.js: 256 px, colour+height, and it contained exactly the furniture
+// somebody remembered to call prop() for. Blind test 7 still read the floor as
+// a texture, and the reason is one line of the critique:
+//
+//   "no object occludes it."
+//
+// A list you have to remember to append to has the same failure mode as an
+// occlusion card you have to remember to place. Round 8 replaces it with
+// light.js's Field — 1024 px, filled by construction from Batch.push and
+// solid(), so it contains every gondola, every endcap, every barrel, every
+// pallet, every cart, every checkout AND the product on the shelves, without
+// anyone maintaining anything. The march below reads that instead, so the
+// occlusion, the colour and the AO are all the same measurement of the same
+// building.
+//
+// The original round-7 note, kept because it is the argument for the whole
+// approach:
 //
 // The blind test's floor verdict: "the ceiling strips reflect at full
 // brightness all the way to the horizon, while a brightly-lit endcap standing
@@ -58019,31 +59142,10 @@ function wallLUT(THREE, runs, minX, spanX) {
 // footprint holding, per square 190 mm of floor, the colour of whatever stands
 // there and how tall it is. The march the mirror already runs then costs one
 // extra tap per step and reflects the whole store instead of a third of it.
-// Height in alpha, scaled by PROP_H so a 2.6 m stack saturates.
-const PROP_H = 2.6;
-
-function propLUT(THREE, props, minX, spanX, minZ, spanZ) {
-  const N = 256;
-  const c = document.createElement('canvas');
-  c.width = N; c.height = N;
-  const g = c.getContext('2d');
-  g.clearRect(0, 0, N, N);
-  const kx = N / spanX, kz = N / spanZ;
-  for (const p of props) {
-    const a = Math.max(0.05, Math.min(0.99, p.h / PROP_H));
-    const r = (p.c >> 16) & 255, gg = (p.c >> 8) & 255, b = p.c & 255;
-    g.fillStyle = `rgba(${r},${gg},${b},${a})`;
-    g.fillRect((p.x - p.w / 2 - minX) * kx, (p.z - p.l / 2 - minZ) * kz,
-      Math.max(1.4, p.w * kx), Math.max(1.4, p.l * kz));
-  }
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.generateMipmaps = false;
-  t.minFilter = THREE.LinearFilter;
-  t.magFilter = THREE.LinearFilter;
-  return t;
-}
+// Height in alpha, scaled by light.js's FIELD_H so a 3.4 m stack saturates.
+// The 256 px canvas rasteriser that used to live here is gone; Field does the
+// same job at four times the resolution, off a sink nobody has to remember to
+// call, and holds the product as well as the furniture.
 
 // ---------------------------------------------------------------------------
 // BURNISH. Low-frequency swirl left by the floor machine, plus the black arcs
@@ -58366,23 +59468,37 @@ function reflectiveFloor(THREE, opts) {
     // crossing a floor is BROKEN AND DISPLACED at every seam. Round 5 ran the
     // streaks continuously over the grout, which is the second thing the critic
     // named. uTile is the real tile pitch the floor map lays down: 2.44 / 8.
+    // ROUND 8 — HOW HARD. The blind test's first proof that the highlight was
+    // a texture: "it is chopped into per-tile quads on the grout grid." That
+    // is this, at round 7's settings, doing its job too well. A grout seam is
+    // 3 mm of recessed matte in a 305 mm tile; it interrupts a reflection, it
+    // does not quantise one into squares. Cutting the per-tile gloss spread
+    // and the seam kill by roughly half leaves the break-up readable close up,
+    // where it belongs, and stops the mid-field mirror from reading as tiling.
     uTile: { value: 2.44 / 8 },
-    uTileVar: { value: 0.40 },      // how much the per-tile wax varies
-    uTileTilt: { value: 0.019 },    // how far a tile displaces the mirrored ray
-    uSeam: { value: 0.52 },         // how completely the grout kills the mirror
+    uTileVar: { value: 0.22 },      // how much the per-tile wax varies
+    uTileTilt: { value: 0.013 },    // how far a tile displaces the mirrored ray
+    uSeam: { value: 0.28 },         // how completely the grout kills the mirror
     // How hard the floor mirrors the SHELVING, as opposed to the lamps. Round 5
     // sampled the wall LUT raw, and the LUT is authored dim on purpose, so the
     // gondolas, the endcaps and the red promo caps were all present in the
     // reflection at a few percent — i.e. invisibly. Only the strip lights ever
     // made it out, which is the third thing the critic named.
     uWallGain: { value: 1.45 },
-    // the hand-placed furniture — see propLUT. store.js fills the texture in
-    // after the build, because half of what goes in it does not exist yet when
-    // the floor material is made.
-    uProp: { value: opts.prop || null },
-    uPropMap: { value: new THREE.Vector4(
-      1 / spanX, minX, 1 / (opts.spanZ || 1), opts.minZ || 0) },
+    // ROUND 8. The march against light.js's Field. uPropOn stays as the gate
+    // (store.js turns it on once the field is baked) but there is no longer a
+    // second texture or a second mapping: uFld/uFldMap arrive with FIELD_GLSL,
+    // which the AO and the glass read from as well.
+    //   x  how far up the march reaches, in metres
+    //   y  how wide the reflection lobe is vertically at the hit, i.e. how
+    //      soft the top edge of a reflected object is
     uPropOn: { value: 0.0 },
+    uFldRefl: { value: new THREE.Vector2(2.60, 0.30) },
+    // Illuminance on a vertical sales-floor surface, in the same linear units
+    // uLightCol is in. The lamp is 3.30; a matte facing under it returns a
+    // couple of tenths of that, and it is the difference between a reflected
+    // endcap you can see and one that measures 2% against the ceiling.
+    uFldGain: { value: 3.05 },
   };
   mat.userData.chop = U;
 
@@ -58397,12 +59513,10 @@ function reflectiveFloor(THREE, opts) {
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', `#include <common>
 varying vec3 vChopW;
-uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain, uPropOn;
-uniform vec2 uBlurA, uBlurB, uBlurMax, uFade;
-uniform vec4 uPropMap;
+uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain, uPropOn, uFldGain;
+uniform vec2 uBlurA, uBlurB, uBlurMax, uFade, uFldRefl;
 uniform sampler2D uBurn;
-uniform sampler2D uProp;
-` + CHOP_SCENE_GLSL + `
+` + FIELD_GLSL + CHOP_SCENE_GLSL + `
 `)
       .replace('#include <opaque_fragment>', `#include <opaque_fragment>
 {
@@ -58512,9 +59626,20 @@ uniform sampler2D uProp;
     // the edge of a reflected object is a gradient the width of the lobe. The
     // binary version is what put the hard straight terminations at the
     // cross-aisle that made the whole floor read as a decal.
+    // ROUND 8 — THE MARCH NOW WALKS THE WHOLE ROOM, NOT A REMEMBERED LIST.
+    // The old loop ran seven samples up to the top of a gondola and tested two
+    // things: the periodic run field, and a 256 px lookup of hand-placed
+    // furniture. Everything else on the sales floor — and ALL of the product,
+    // which is most of what a real floor reflects — was invisible to it. Now
+    // the same march reads light.js's Field, which is filled by construction
+    // from every Batch.push and every solid() in the build, and it reaches
+    // uFldRefl.x metres up instead of stopping at the shelf line. Twelve
+    // samples on a squared distribution: dense near the fragment, where the
+    // reflection of the thing you are standing next to lives.
     float tTop = ( uShelfH - Pw.y ) / R.y;
+    float tFld = ( uFldRefl.x - Pw.y ) / R.y;
     float occ = 0.0, hitT = tTop;
-    float pocc = 0.0;
+    float pocc = 0.0, hitY = 0.0;
     vec3 pcol = vec3( 0.0 );
     for ( int i = 0; i < 7; i ++ ) {
       float t = tTop * ( float( i ) + 0.5 ) / 7.0;
@@ -58523,15 +59648,22 @@ uniform sampler2D uProp;
       float ox = 1.0 - smoothstep( uRunHalf - 0.16, uRunHalf + 0.16, abs( rn.x ) );
       float o = ox * rn.y * max( rn.z, chopRunZ( Q.z ) );
       if ( o > occ ) { occ = o; hitT = t; }
-      // ...and the hand-placed furniture, which the periodic tests above
-      // cannot see. Same continuous-occupancy treatment: a reflection lobe has
-      // width, so the edge of a reflected endcap is a gradient, not a step.
-      if ( uPropOn > 0.5 ) {
-        vec4 pr = texture2D( uProp, vec2( ( Q.x - uPropMap.y ) * uPropMap.x,
-                                          ( Q.z - uPropMap.w ) * uPropMap.z ) );
-        float po = pr.a * step( 0.02, pr.a )
-          * ( 1.0 - smoothstep( pr.a * 2.6 - 0.22, pr.a * 2.6 + 0.14, Q.y ) );
-        if ( po > pocc ) { pocc = po; pcol = pr.rgb; }
+    }
+    if ( uPropOn > 0.5 ) {
+      for ( int i = 0; i < 12; i ++ ) {
+        float u = ( float( i ) + 0.5 ) / 12.0;
+        float t = tFld * u * u;
+        vec3 Q = Pw + R * t;
+        // the lobe widens along the ray, so the field is read at a coarser mip
+        // the further out the sample is — the same reason the ceiling tap has
+        // a growing footprint, applied to the geometry instead of the lamps
+        float lod = log2( max( 1.0, ( 0.06 + t * 0.16 ) * uFldCfg.y ) );
+        vec4 hit = chopFldHit( Q, lod, uFldRefl.y + t * 0.05 );
+        // ROUND 9 — the colour at the ray's OWN HEIGHT, not the column
+        // average. Same fix as the glass and the same reason: a floor mirroring
+        // an endcap should show its dark kick low and its promo header high,
+        // and one averaged colour per column cannot.
+        if ( hit.a > pocc ) { pocc = hit.a; pcol = chopFldCol( Q.xz, Q.y, lod ); hitY = Q.y; }
       }
     }
     if ( occ > 0.004 ) {
@@ -58557,8 +59689,18 @@ uniform sampler2D uProp;
       // ragged red column two or three times its own width in Z — which is
       // exactly the "saturated red object produces no red smear" the blind
       // test could not find anywhere in four frames.
+      //
+      // ROUND 8 — WHY IT WAS INVISIBLE EVEN WITH THE LOOKUP LIVE. The field
+      // stores ALBEDO, and this was mixing albedo straight against a radiance
+      // that runs to 3.3 for a lamp. A 0.22-albedo endcap arriving unlit into
+      // a term whose other branch is over unity contributes a dark grey
+      // nothing. What a floor mirrors is the object's RADIANCE — albedo times
+      // the light falling on it — and in a supermarket that light is a
+      // continuous strip four metres straight up, so a facing's top is over a
+      // stop brighter than its kick. uFldGain is that illuminance.
       float pn = chopHash( vec2( floor( Pw.z * 2.2 ), floor( Pw.x * 1.5 ) ) );
-      refl = mix( refl, pcol * ( 0.70 + 0.62 * pn ), clamp( pocc * 1.25, 0.0, 1.0 ) );
+      vec3 lit = pcol * uFldGain * ( 0.74 + 0.62 * smoothstep( 0.0, 1.15, hitY ) );
+      refl = mix( refl, lit * ( 0.72 + 0.58 * pn ), clamp( pocc * 1.45, 0.0, 1.0 ) );
       gloss *= 1.0 - 0.12 * pocc;
     }
     gl_FragColor.rgb = mix( gl_FragColor.rgb, refl, clamp( fres * gloss, 0.0, 1.0 ) );
@@ -58663,7 +59805,17 @@ function reflectiveGlass(THREE, U, opts = {}) {
     // reference floral cooler does, and 0.26 is where the product near the
     // mullions stops being readable while the middle of each pane stays
     // shoppable — which is the behaviour, not the number, that was asked for.
-    uGF0: { value: opts.f0 ?? 0.26 },
+    //
+    // ROUND 9 — 0.26 to 0.34, and the reason is not that 0.26 was unphysical.
+    // It is that until this round the reflection was a CONSTANT, so every count
+    // of reflectance spent on it bought a flat veil and nothing else, and the
+    // number was correctly tuned down to keep the veil out of the way. Now that
+    // the trace returns an image with the ceiling rows in the top of the pane
+    // and the mirrored aisle across the middle, the same reflectance buys
+    // structure instead of haze, and 0.34 is inside the 0.10-0.20 single-
+    // interface figure once the four interfaces and the low-e coat of a sealed
+    // merchandiser door are counted.
+    uGF0: { value: opts.f0 ?? 0.34 },
     // near-mirror, so the lobe barely opens with distance — but it DOES open,
     // and that is what merges the far end of a run of fixtures.
     uGBlur: { value: new THREE.Vector2(0.045, 0.026) },
@@ -58708,7 +59860,8 @@ uniform vec3 uTint, uFloorCol, uHaze, uRoomCol, uWallCol;
 uniform float uTintA, uGap, uGhost, uGGloss, uPaneAsp, uGF0;
 uniform vec2 uGBlur, uGBlurMax;
 uniform vec4 uRoom;
-` + CHOP_SCENE_GLSL + `
+uniform float uPropOn, uFldGain;
+` + FIELD_GLSL + CHOP_SCENE_GLSL + `
 
 // The positive exit parameter of a slab. Guarded, because a ray that is
 // exactly parallel to a wall never leaves through it.
@@ -58719,7 +59872,9 @@ float chopSlab( float o, float d, float lo, float hi ) {
 }
 
 // One mirrored ray, from an origin ON the pane, out into the sales floor.
-vec3 chopTrace( vec3 O, vec3 R, float haze ) {
+// PN is the pane's own outward normal — round 9 needs it; see the self-hit
+// note inside the march.
+vec3 chopTrace( vec3 O, vec3 R, vec3 PN, float haze ) {
   // Where the ray leaves the ROOM. Not the ceiling plane extended forever.
   float tCeil  = R.y >  0.001 ? ( uCeilH - O.y ) / R.y : 1.0e9;
   float tFloor = R.y < -0.001 ? ( 0.02 - O.y ) / R.y   : 1.0e9;
@@ -58737,15 +59892,111 @@ vec3 chopTrace( vec3 O, vec3 R, float haze ) {
   // pane, where a 1.34 m gondola crossed at a shallow angle would otherwise
   // fall clean between two samples of a uniform march.
   float hitT = 1.0e9;
-  for ( int i = 0; i < 14; i ++ ) {
-    float u = ( float( i ) + 0.5 ) / 14.0;
+  // ROUND 8. The same march now also asks light.js's Field what is standing
+  // where the ray passes. Round 7's trace could only see the PERIODIC gondola
+  // runs, so a pane looking out across the cross-aisle at an endcap, a pallet
+  // drop, a barrel or a parked row of carts reflected none of them and
+  // returned the room average — "the glass mirrors no aisle", exactly. The
+  // field carries all of it, and the product on it, at 47 mm.
+  float fT = 1.0e9;
+  vec3 fC = vec3( 0.0 );
+  // THE FIELD MARCH GETS ITS OWN RANGE. tEnd is where the ray leaves the ROOM,
+  // and for a pane seen at a shallow angle that is thirty metres away — so a
+  // squared distribution over it steps nearly two metres per sample at the far
+  // end, and a 1.3 m gondola crossed at that spacing is a coin flip. Measured:
+  // turning the field march off changed the pane by 2.1 counts out of 94, i.e.
+  // it was contributing essentially nothing. Past about fifteen metres the
+  // reflection lobe is wide enough that the answer IS the room average, which
+  // the wall branch already returns, so the field only has to be dense where
+  // its answer differs from that.
+  float tF = min( tEnd, 15.0 );
+  for ( int i = 0; i < 20; i ++ ) {
+    float u = ( float( i ) + 0.5 ) / 20.0;
     float t = tEnd * u * u;
-    vec3 Q = O + R * t;
-    if ( Q.y > uShelfH + 0.34 ) continue;
-    vec3 rr = chopRun( Q.x );
-    if ( rr.z > 0.5 && selfSide != 0.0 && sign( Q.x ) == selfSide ) continue;
-    float gate = max( rr.z, chopRunZ( Q.z ) );
+    vec3 Q = O + R * ( tF * u * u );
+    // ROUND 9. Three changes, and together they are the difference between a
+    // pane that mirrors the aisle and the "low-alpha white wash" blind test 8
+    // measured across twelve doors in a row.
+    //
+    //  * 20 samples, not 14. On a squared distribution over a 30 m ray the
+    //    round-8 march stepped 1.5 m at a time past three metres out, and a
+    //    gondola is 1.34 m deep — so the nearest thing a door looks at across
+    //    a cross-aisle could fall clean between two samples and the pane
+    //    returned the room average for it.
+    //  * the t > 0.35 gate is gone. It existed to stop a pane sampling its own
+    //    case, but selfSide already does that properly, and what the gate
+    //    actually excluded was everything within 350 mm of the glass — which
+    //    on a reach-in run is the door frame, the mullion and the case next
+    //    door, i.e. the things a real door most obviously reflects.
+    //  * the colour comes from chopFldCol at the ray's own HEIGHT rather than
+    //    from one column average. That is the whole reason objects contributed
+    //    nothing: a column averaged over 0.04-1.45 m is one flat number, so
+    //    every reflected fixture was a vertical stripe of mud whatever else
+    //    the trace did right.
+    // A PANE CANNOT REFLECT THE CASE IT IS SET INTO, and round 8's guard
+    // against that only covered the two runs that lie along X. This is the
+    // single largest reason the glass had no image in it.
+    //
+    // The back-wall dairy run faces -Z, its collider is stamped from 100 mm in
+    // FRONT of the glass plane (colliders are padded; the field takes the
+    // collider), and the march's first sample sits a few millimetres off the
+    // pane. So sample zero landed inside the case's own stamp, reported a hit,
+    // latched fT, and the loop's own "stop at the first hit" then skipped every
+    // remaining sample. Every pane in the run returned one colour: its own
+    // case's column average. That is a low-alpha wash by construction, and no
+    // amount of work further down the shader could recover from it.
+    //
+    // The fix is geometric rather than per-run: a reflected ray has to clear
+    // its own pane's plane by 300 mm before the field is allowed to answer. It
+    // is correct for the back wall, for both perimeter runs, and for any pane
+    // anyone adds later — and it is also physically right, because a planar
+    // run of doors genuinely cannot see itself.
+    float tf = tF * u * u;
+    float ahead = dot( Q - O, PN );
+    if ( uPropOn > 0.5 && fT > 1.0e8 && ahead > 0.30 ) {
+      float lod = log2( max( 1.0, ( 0.05 + tf * 0.10 ) * uFldCfg.y ) );
+      vec4 fh = chopFldAt( Q.xz, lod );
+      if ( fh.a > 0.035 && Q.y < fh.a * uFldCfg.x ) {
+        fT = tf; fC = chopFldCol( Q.xz, Q.y, lod );
+      }
+    }
+    // The analytic gondola-run test keeps the FULL range: it is closed form,
+    // it costs no texture tap, and a run of shelving 25 m down the store is
+    // still a run of shelving.
+    vec3 Qr = O + R * t;
+    if ( Qr.y > uShelfH + 0.34 ) continue;
+    vec3 rr = chopRun( Qr.x );
+    if ( rr.z > 0.5 && selfSide != 0.0 && sign( Qr.x ) == selfSide ) continue;
+    float gate = max( rr.z, chopRunZ( Qr.z ) );
     if ( abs( rr.x ) < uRunHalf && rr.y > 0.5 && gate > 0.5 ) { hitT = min( hitT, t ); }
+  }
+  if ( fT < hitT && fT < 1.0e8 ) {
+    // Whatever is actually standing there, mirrored.
+    //
+    // ROUND 9 — THE BREAK-UP WAS EATING THE IMAGE. This used to multiply the
+    // reflected colour by ( 0.74 + 0.40 * n + 0.16 * n2 ) on a 290 mm x 170 mm
+    // hash lattice: a 0.74-to-1.30 random gain, i.e. plus or minus a quarter
+    // stop of pure noise laid over every reflected object. That is the right
+    // instinct for the FLOOR, where a burnished surface genuinely smears what
+    // it reflects into ragged bands, and it is exactly wrong for glass. A
+    // sealed pane is a mirror. Blind test 8: "not one carries a mirrored image
+    // of the aisle" — and one of the reasons is that the trace was computing an
+    // image and then multiplying a different random number into every 290 mm
+    // of it. What survives noise like that is the mean, which is a wash.
+    //
+    // What a real door does put over the image is the CASE'S OWN CONTENTS
+    // showing through from behind, and that is not noise, it is the shelf
+    // rhythm: horizontal bands at the deck pitch. So the break-up is now one
+    // gentle horizontal band at 380 mm — a shelf pitch — at a fifth of the
+    // old amplitude, and the image reads through it.
+    vec3 Q = O + R * fT;
+    float band = 0.93 + 0.13 * chopHash( vec2( 3.0, floor( Q.y * 2.63 ) ) );
+    // vertical falloff: what a pane sees of a 1 m endcap standing 4 m away is
+    // its lit top, not its kickplate. Gentler than round 8's 0.60-1.35, which
+    // was doing half the wash on its own at door-bottom height.
+    float lift = 0.74 + 0.46 * smoothstep( 0.10, 1.30, Q.y );
+    return fC * uFldGain * 0.40 * lift * band
+      * mix( 1.0, 0.78, smoothstep( 6.0, 24.0, fT ) );
   }
   if ( hitT < 1.0e8 ) {
     vec3 Q = O + R * hitT;
@@ -58817,7 +60068,17 @@ void main() {
   // film is a band across the lower third with a soft, wavering top edge.
   float wob = sin( vChopUv.x * 11.0 + dh * 6.28 ) * 0.035
             + sin( vChopUv.x * 26.0 + dh * 3.1 ) * 0.014;
-  float cond = smoothstep( 0.34 + wob, 0.05 + wob, vChopUv.y ) * ( 0.35 + 0.5 * dh );
+  // ROUND 9 — halved, and it is now PER DOOR rather than on every door. A
+  // reach-in merchandiser has anti-sweat heat in the frame and a low-e coat
+  // precisely so the customer can read the package through it; a whole run of
+  // twelve doors uniformly fogged across their bottom third is a run of twelve
+  // broken doors. Round 8 ran this at 0.35-0.85 on every pane, and combined
+  // with the 0.55 mix toward uHaze and the film*0.34 additive term below, the
+  // lower third of every door in the store was being milked toward white by
+  // about 0.45 before the mirror had a say. That, not the trace, is what blind
+  // test 8 was looking at when it said "just a low-alpha white wash".
+  float cond = smoothstep( 0.30 + wob, 0.05 + wob, vChopUv.y )
+             * max( 0.0, dh - 0.42 ) * 0.72;
   // FROST creeping out of the bottom corners, where the evaporator draws.
   float cx = min( vChopUv.x, 1.0 - vChopUv.x ) * uPaneAsp;
   float frost = smoothstep( 0.16, 0.0, cx + vChopUv.y * 0.55 );
@@ -58834,19 +60095,26 @@ void main() {
   float fres = uGF0 + ( 1.0 - uGF0 ) * pow( 1.0 - ct, 5.0 );
   float gloss = uGGloss * ( 1.0 - 0.50 * film );
 
-  vec3 refl = chopTrace( Pw, R, film );
+  vec3 refl = chopTrace( Pw, R, N, film );
   // the inner pane, 2 * gap * tan(theta) away in the plane of the glass. It
   // SHARES the reflected energy with the outer surface rather than doubling
   // it, so this is a mix, not a sum.
   vec3 Rp = R - N * dot( R, N );
-  float tanT = length( Rp ) / max( abs( dot( R, N ) ), 0.14 );
+  // ROUND 9 — tanT was clamped at 1/0.14 = 7.1, so at grazing the second
+  // surface was traced from 227 mm away in the plane of the glass. That is not
+  // a double-glazing ghost, it is a second reflection of a different part of
+  // the room, and it is the most likely source of blind test 8's "a faint cyan
+  // cast displaced to the LEFT of the bottles that would cast it". A 16 mm
+  // sealed unit offsets its two surfaces by a few pixels; 3.2 is about 100 mm
+  // at the most grazing angle a pane in this store is ever seen at.
+  float tanT = min( length( Rp ) / max( abs( dot( R, N ) ), 0.16 ), 3.2 );
   vec3 off = normalize( Rp + vec3( 0.0, 1e-5, 0.0 ) ) * ( 2.0 * uGap * tanT );
-  vec3 ghost = chopTrace( Pw + off, R, film );
+  vec3 ghost = chopTrace( Pw + off, R, N, film );
   refl = mix( refl, ghost, uGhost );
-  refl = mix( refl, uHaze * ( 0.55 + 0.85 * dot( refl, vec3( 0.33 ) ) ), film * 0.55 );
+  refl = mix( refl, uHaze * ( 0.55 + 0.85 * dot( refl, vec3( 0.33 ) ) ), film * 0.34 );
 
-  float A = clamp( fres * gloss + uTintA + film * 0.34, 0.0, 0.985 );
-  vec3 C = ( refl * ( fres * gloss ) + uTint * uTintA + uHaze * ( film * 0.34 ) ) / max( A, 1e-3 );
+  float A = clamp( fres * gloss + uTintA + film * 0.22, 0.0, 0.985 );
+  vec3 C = ( refl * ( fres * gloss ) + uTint * uTintA + uHaze * ( film * 0.22 ) ) / max( A, 1e-3 );
   gl_FragColor = vec4( C, A );
   #include <colorspace_fragment>
 }`,
@@ -58855,7 +60123,7 @@ void main() {
   return mat;
 }
 
-return { WALL_TOP, wallLUT, PROP_H, propLUT, burnishTex, tilePatchTex, CHOP_SCENE_GLSL, reflectiveFloor, reflectiveGlass };
+return { WALL_TOP, wallLUT, burnishTex, tilePatchTex, CHOP_SCENE_GLSL, reflectiveFloor, reflectiveGlass };
 })();
 
 /* ==== src/store/signs.js ==== */
@@ -63195,7 +64463,8 @@ return { seeOverCeiling, cameraRig, createCCTV };
 /* ==== src/store.js ==== */
 const M_src_store_js = (() => {
 const { AISLE_COUNT, AISLE_LEN, AISLE_GAP, SHELF_W, SHELF_H, CEIL_H, STORE, FRONT_WALK_Z, BACK_WALK_Z, EXIT, EXIT2, SERVICE_DESK, CAMERAS, aisleX } = M_src_config_js;
-const { makeRng, rr, ri, pick, Batch, Quads } = M_src_store_kit_js;
+const { makeRng, rr, ri, pick, Batch, Quads, setFieldSink } = M_src_store_kit_js;
+const LT = M_src_store_light_js;
 const { DEPTS, FROZEN, fillShelf, fillBackRow } = M_src_store_products_js;
 const TX = M_src_store_tex_js;
 const PK = M_src_store_pack_js;
@@ -63206,6 +64475,7 @@ const { cameraRig } = M_src_cctv_js;
 // CONTRACT — must keep exporting exactly this:
 //   buildStore(THREE, scene) -> { colliders: Box3[], powerupSpots: {x,z,kind}[] }
 // Read all layout numbers from ./config.js. Never hardcode aisle positions.
+
 
 
 
@@ -63262,23 +64532,22 @@ function textures(THREE) {
     can: PK.canAtlas(THREE, DEPT_KEYS),
     bottle: PK.bottleAtlas(THREE, DEPT_KEYS),
     tag: PK.tagAtlas(THREE),
-    cavity: PK.cavityTex(THREE),
     // round-3: ambient occlusion, gondola hardware, floor wear, ceiling clutter
-    ao: TX.shelfAOTex(THREE),
     slot: TX.slotTex(THREE),
     smear: TX.smearTex(THREE),
     peg: TX.pegTex(THREE),
-    wear: TX.floorWearTex(THREE),
+    // `wear` is NOT built here: it is derived from the store's own traffic
+    // plan and so cannot exist before the run layout does. See THE TRAFFIC
+    // PLAN below, where it is assigned onto T.
     dangle: TX.danglerAtlas(THREE),
     sign: TX.signAtlas(THREE, DEPTS),
     blade: TX.bladeAtlas(THREE, DEPTS),
     lane: TX.laneAtlas(THREE),
     promo: TX.promoAtlas(THREE),
     glow: TX.glowTex(THREE),
-    // round-6: the floor never got the contact-shadow treatment round 3 gave
-    // the inside of every shelf cavity. Both maps are authored for MULTIPLY.
-    contact: TX.contactTex(THREE),
-    gao: TX.groundAOTex(THREE),
+    // round-6's contact ramp and ground pool are gone — light.js computes the
+    // same darkening per fragment, everywhere, instead of on cards. See the
+    // GROUND SHADOWS note in the flush block.
     coolerBack: TX.coolerBackTex(THREE),
     // round-5: the two storefronts
     outside: TX.outsideTex(THREE),
@@ -63508,10 +64777,44 @@ function buildStore(THREE, scene) {
   root.add(ceilGroup); root.add(frontGroup);
   scene.add(root);
 
-  const solid = (x0, y0, z0, x1, y1, z1) => {
+  // =========================================================================
+  // THE WORLD LIGHT FIELD — see ./store/light.js. THE ROUND-8 HEADLINE.
+  // =========================================================================
+  // Installed before a single solid is emitted, because the whole argument for
+  // it is that nothing has to opt in. kit.js's Batch.push feeds it every
+  // instanced solid in the building; solid() below feeds it the big volumes
+  // that are walls and cases rather than instanced boxes. Everything that ends
+  // up occluding, reflecting or bouncing light does so because it was BUILT,
+  // not because it was remembered.
+  // ROUND 9 — 1024 -> 2048, i.e. 47 mm/texel -> 23 mm. The contact core in
+  // light.js resolves a two-to-five pixel dark line at a fixture base, which at
+  // the distance those bases are photographed from is 25-60 mm of floor. A
+  // 47 mm texel could not carry one however the shader asked.
+  const FIELD = LT.makeField(THREE, STORE.minX, STORE.minZ, SW, SD, 2048);
+  setFieldSink((x, z, w, l, y0, y1, r, g, b, round) =>
+    FIELD.box(x, z, w, l, y0, y1, r, g, b, round));
+
+  const solid = (x0, y0, z0, x1, y1, z1, fieldHex) => {
     colliders.push(new THREE.Box3(
       new THREE.Vector3(Math.min(x0, x1), Math.min(y0, y1), Math.min(z0, z1)),
       new THREE.Vector3(Math.max(x0, x1), Math.max(y0, y1), Math.max(z0, z1))));
+    // A collider IS a solid volume — that is what makes it a collider. So the
+    // occupancy field takes it for free, which is how the perimeter walls, the
+    // cooler cases and the checkout runs get into the reflection and the AO
+    // without a second list to keep in sync with this one.
+    //
+    // ROUND 9 — `fieldHex === false` means "collider only". There is exactly
+    // one kind of body where the two disagree: an OPEN WIRE frame. A cart's
+    // collider is a 0.84 x 1.20 x 1.00 box because that is what a body has to
+    // not walk through, but stamping that into the height field would drop a
+    // hard-edged rectangular shadow the size of the whole cart onto the floor —
+    // which is the round-8 barrel fault re-created by a different route, and it
+    // would be under the one prop the critic is watching. Every wire in that
+    // basket goes through Batch.push on its own, so the field already has the
+    // cart at 6.5 mm; the collider must not paint over it with a slab.
+    if (fieldHex === false) return;
+    FIELD.boxHex((x0 + x1) / 2, (z0 + z1) / 2, Math.abs(x1 - x0), Math.abs(z1 - z0),
+      Math.min(y0, y1), Math.max(y0, y1), fieldHex === undefined ? null : fieldHex);
   };
 
   // ---- shared geometry ----------------------------------------------------
@@ -63530,6 +64833,13 @@ function buildStore(THREE, scene) {
     bag: pillowGeo(THREE),
     tube: new THREE.CylinderGeometry(0.5, 0.5, 1, 7, 1, true),
     drum: new THREE.CylinderGeometry(0.5, 0.5, 1, 18, 1, true),
+    // CLOSED, unlike drum and tube. Both of those are open-ended because they
+    // are only ever seen standing up with something on top of them, and an
+    // open cylinder is two fewer triangle fans. A caster wheel is a cylinder
+    // lying on its SIDE and you look straight into the end of it, so the first
+    // build of the round-9 casters rendered four dark holes with a fork round
+    // them.
+    wheel: new THREE.CylinderGeometry(0.5, 0.5, 1, 14, 1, false),
     orb: new THREE.SphereGeometry(0.5, 7, 5),
     dome: new THREE.SphereGeometry(0.5, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
   };
@@ -63594,10 +64904,15 @@ function buildStore(THREE, scene) {
     const wrapP = new Batch(THREE, PG.wrap, M.pkgBox, PK.ATLAS.carton);
     const bagP = new Batch(THREE, PG.bag, M.pkgBag, PK.ATLAS.pouch);
     const gusP = new Batch(THREE, PG.gusset, M.pkgBag, PK.ATLAS.pouch);
+    // cans, jars, tubs and bottles are all lathes: round in plan, so round in
+    // the field. It matters less on a 60 mm can than on a 600 mm barrel, but
+    // it is the same rule and it costs nothing to be consistent about it.
     const cs = {};
-    for (const k of CSHAPES) cs[k] = new Batch(THREE, PG[k], M.pkgCan, PK.ATLAS.can);
+    for (const k of CSHAPES) cs[k] = new Batch(THREE, PG[k], M.pkgCan, PK.ATLAS.can, true);
     const bs = {};
-    for (const k of BSHAPES) bs[k] = new Batch(THREE, PG[k], M.pkgBottle, PK.ATLAS.bottle);
+    for (const k of BSHAPES) {
+      bs[k] = new Batch(THREE, PG[k], M.pkgBottle, PK.ATLAS.bottle, true);
+    }
     const router = (map, dflt) => ({
       push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell, shape) {
         (map[shape] || map[dflt]).push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell);
@@ -63628,13 +64943,16 @@ function buildStore(THREE, scene) {
   // global fixture batches (uprights, boards, counters, carts…)
   const Bfix = new Batch(THREE, G.box, M.fix);
   const Bwood = new Batch(THREE, G.box, M.wood);
-  const Btube = new Batch(THREE, G.tube, M.fix);
-  const Bdrum = new Batch(THREE, G.drum, M.steel);
-  const Borb = new Batch(THREE, G.orb, M.fix);
+  // the `true` on the three round families is the whole of the round-9 barrel
+  // fix that is not a deletion — see the note on FIELD_SINK in kit.js
+  const Btube = new Batch(THREE, G.tube, M.fix, null, true);
+  const Bdrum = new Batch(THREE, G.drum, M.steel, null, true);
+  const Borb = new Batch(THREE, G.orb, M.fix, null, true);
+  const Bwheel = new Batch(THREE, G.wheel, M.steel, null, true);
   // everything at ceiling height lives in its own batch so the whole lot can be
   // culled for the chase camera, which flies ABOVE the drop ceiling.
   const BfixC = new Batch(THREE, G.box, M.fix);
-  const BtubeC = new Batch(THREE, G.tube, M.fix);
+  const BtubeC = new Batch(THREE, G.tube, M.fix, null, true);
   const BfixF = new Batch(THREE, G.box, M.fix);
   const fix = (x, y, z, sx, sy, sz, hex, B = Bfix) => { col.setHex(hex); B.box(x, y, z, sx, sy, sz, col); };
   const tube = (x, y, z, ex, ey, ez, r, len, hex, B = Btube) => { col.setHex(hex); B.push(x, y, z, ex, ey, ez, r, len, r, col); };
@@ -63654,18 +64972,15 @@ function buildStore(THREE, scene) {
   const Qstrip = new Quads(true), Qglass = new Quads();
   // round-5 storefronts: the daylight plate, the door decals, the lit EXIT boxes
   const Qout = new Quads(), Qdecal = new Quads(), Qexit = new Quads();
-  const Qcool = new Quads(), Qshadow = new Quads();
+  const Qcool = new Quads();
   // Qtag: one shelf-edge tag per SKU run, width keyed to that SKU's facing.
-  // Qcav: the gradient that darkens the back of every shelf cavity.
-  const Qtag = new Quads(), Qcav = new Quads();
-  // ROUND-3 additions.
-  //   Qao     one multiply-blended AO card across the MOUTH of every shelf
-  //           cavity — near-black under the deck above, hard seam at the deck
+  const Qtag = new Quads();
+  // ROUND-3 additions. Qao and Qcav — the multiply cards across every cavity
+  // mouth and along every deck — were deleted in round 8; see the note where
+  // they used to be flushed.
   //   Qslot   punched-slot gondola uprights at every 4ft section joint
-  //   Qsmear  the polished-floor reflection streak under each gondola face,
-  //           tinted per streak with the colour of the product above it
   //   Qdangle cardboard promo danglers hanging on strings from the ceiling
-  const Qao = new Quads(), Qslot = new Quads(), Qpeg = new Quads();
+  const Qslot = new Quads(), Qpeg = new Quads();
   const Qdangle = new Quads();
   // ROUND-4 additions.
   //   Qwell   the inward-facing walls of every recessed troffer housing
@@ -63674,34 +64989,24 @@ function buildStore(THREE, scene) {
   //   Qpatch  tile-grid-aligned floor patches, a half-shade off the field
   const Qwell = new Quads(), Qtsh = new Quads(), Qbloom = new Quads();
   const Qpatch = new Quads();
-  // ROUND-6 additions.
-  //   Qcontact  the soft dark gradient every base throws onto the floor,
-  //             100-300 mm out. Multiply-blended, so it darkens the floor's
-  //             REFLECTION too rather than being pasted on top of it.
+  // ROUND-6 additions, COLLAPSED IN ROUND 8.
   //   Qled      the glow off a reach-in door's LED mullion strip. Its own soup
   //             because it has to render BEFORE the glass (renderOrder 3), and
   //             the ceiling bloom it used to share renders after everything.
-  // (Qshadow, the broad ambient pool, keeps its call sites but changes blend
-  // mode — see the flush block. A near-black normal-blended quad is a decal;
-  // multiplying is what a shadow physically is.)
-  const Qcontact = new Quads(), Qled = new Quads();
-  // A contact gradient hugging a base. v = 0 hard against the base, fading out
-  // over `dep` metres. Emitted 1 mm above the wear layer so nothing z-fights.
-  const CONT_Y = 0.0052;
-  const contactZ = (lipX, zmid, len, dir, dep = 0.30) => {
-    Qcontact.rect([lipX + dir * dep / 2, CONT_Y, zmid],
-      [0, 0, dir * len / 2], [dir * dep / 2, 0, 0], 0, 0, 1, 1);
-  };
-  const contactX = (lipZ, xmid, len, dir, dep = 0.30) => {
-    Qcontact.rect([xmid, CONT_Y, lipZ + dir * dep / 2],
-      [-dir * len / 2, 0, 0], [0, 0, dir * dep / 2], 0, 0, 1, 1);
-  };
-  // all four sides of a free-standing base — pallets, tables, barrels, carts.
-  // The corners double up, which is right: a corner is occluded twice.
-  const contactBox = (x, z, w, d, dep = 0.24) => {
-    contactZ(x - w / 2, z, d, -1, dep); contactZ(x + w / 2, z, d, 1, dep);
-    contactX(z - d / 2, x, w, -1, dep); contactX(z + d / 2, x, w, 1, dep);
-  };
+  //
+  // Qcontact and Qshadow are GONE, and this is the round-8 change stated in one
+  // place. Qcontact was a 100-340 mm multiply ramp emitted at every base; there
+  // were 46 of those call sites and every one was correct. Qshadow was a broad
+  // radial pool under every fixture. Blind test 7 still opened with "nothing in
+  // this store touches the ground... if you do exactly one thing, do this",
+  // because 46 remembered junctions is not the same set as the several hundred
+  // junctions in a frame — the gondola kick had a ramp and the upright foot
+  // beside it did not, the barrel had one and the pallet corner under it did
+  // not. There is no number of call sites that fixes that; the fix is to stop
+  // enumerating. ./store/light.js computes the same gradient analytically from
+  // the occupancy field, for every fragment of every surface, so a junction
+  // nobody has ever thought about is dark on both sides of the seam.
+  const Qled = new Quads();
 
   // =========================================================================
   // FLOOR — see ./store/floor.js. This is the round-4 headline change.
@@ -63737,6 +65042,44 @@ function buildStore(THREE, scene) {
   RUN_DEPTS.push({ x: -EDGE_X + 0.10, halfW: 0.62, colors: FROZEN.colors, lit: true });
   RUN_DEPTS.push({ x: EDGE_X, halfW: WRW / 2, colors: DEPTS[(AISLE_COUNT - 1) % DEPTS.length].colors });
 
+  // =========================================================================
+  // THE TRAFFIC PLAN — see TX.floorWearTex.
+  // =========================================================================
+  // Every number below already exists somewhere above; this is a VIEW of the
+  // floor plan, not a second copy of it. That is the whole point: blind test 8
+  // called the floor grime "low-frequency noise uncorrelated with where a cart
+  // could physically go", and it was, because the wear texture was authored
+  // against a generic supermarket rather than against this store. Handing it
+  // the actual lane centrelines, the actual cross-aisles including the
+  // mid-store walkway, the actual door positions and the actual fixture
+  // footprints means the wear cannot drift out of register with the building —
+  // move a run and the scuffing moves with it.
+  const WEAR_BODY = HALF - 0.62;
+  T.wear = TX.floorWearTex(THREE, {
+    minX: STORE.minX, minZ: STORE.minZ, spanX: SW, spanZ: SD,
+    // the eight shopping aisles. The two perimeter runs are nearly six metres
+    // wide, so their traffic spreads much further and never gets as hot in the
+    // middle as a 4 m aisle does.
+    lanes: [
+      ...Array.from({ length: AISLE_COUNT }, (_, i) => ({
+        x: aisleX(i),
+        w: (i === 0 || i === AISLE_COUNT - 1) ? 2.30 : 1.45,
+        a: (i === 0 || i === AISLE_COUNT - 1) ? 0.80 : 1.0,
+      })),
+    ],
+    cross: [
+      { z: FRONT_WALK_Z, w: 1.85, a: 1.0 },     // the checkout run: everybody
+      { z: CROSS_Z, w: 1.25, a: 0.86 },         // the mid-store walkway
+      { z: BACK_WALK_Z, w: 1.45, a: 0.90 },     // the dairy wall
+    ],
+    doors: [{ x: EXIT.x, z: EXIT.z + 2.2 }, { x: EXIT2.x, z: EXIT2.z + 2.2 }],
+    // where a cart physically cannot go
+    blocks: RUN_DEPTS.flatMap((r) => [
+      [r.x - r.halfW, -WEAR_BODY, r.x + r.halfW, XA0],
+      [r.x - r.halfW, XA1, r.x + r.halfW, WEAR_BODY],
+    ]),
+  });
+
   const FIX_L = 2.34, STRIP_GAP = 0.06;    // one 4 ft troffer + the joint after it
   T.floor.repeat.set(SW / 2.44, SD / 2.44);
   T.burn = FL.burnishTex(THREE);
@@ -63763,14 +65106,13 @@ function buildStore(THREE, scene) {
     crossZ: CROSS_Z, crossA: XA0, crossB: XA1, bodyZ: HALF - 0.62 + 0.58,
     minZ: STORE.minZ, spanZ: SD,
   });
-  // PROP REFLECTIONS. Everything hand-placed on the sales floor goes into a
-  // top-down colour+height map that the floor's mirror marches against, so the
-  // endcaps, the promo caps, the produce tables, the pallet drops, the barrels,
-  // the checkouts, the carts and the service desk all reflect. The list is
-  // collected during the build and the texture is made at the end, because
-  // almost none of it exists yet at this point. See FL.propLUT.
-  const PROPS = [];
-  const prop = (x, z, w, l, h, hex) => { PROPS.push({ x, z, w, l, h, c: hex }); };
+  // PROP REFLECTIONS used to be collected here into a hand-maintained PROPS[]
+  // list and rasterised into a 256 px colour+height map at the end of the
+  // build. Round 8 deletes the list: the same lookup is now the world
+  // occupancy field, filled by construction from every Batch.push and every
+  // solid(), so the mirror reflects the endcaps, the barrels, the carts, the
+  // checkout AND the product on the shelves — none of which the list had —
+  // without anybody maintaining it. See ./store/light.js.
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(SW, SD), floorMat);
   floor.rotation.x = -Math.PI / 2;
   floor.position.set(CX, 0, CZ);
@@ -64324,7 +65666,7 @@ function buildStore(THREE, scene) {
   // nothing and they put genuine detail into the top third of the frame, which
   // measured as the single flattest region in every round-2 render.
   const dangle = (x, z, y) => {
-    const uv = cellUV((rng() * 8) | 0, 4, 2);
+    const uv = cellUV((rng() * 16) | 0, 4, 4);
     const w = rr(rng, 0.26, 0.40), h = w * rr(rng, 0.68, 0.86);
     const yaw = rr(rng, -0.5, 0.5);
     const cs = Math.cos(yaw) * w / 2, sn = Math.sin(yaw) * w / 2;
@@ -64510,7 +65852,7 @@ function buildStore(THREE, scene) {
   function couponFlag(lip, y, a, dir, isZ) {
     const w = rr(rng, 0.070, 0.105), h = rr(rng, 0.046, 0.062);
     const out = lip + dir * (0.030 + w / 2);
-    const uv = cellUV((rng() * 4) | 0, 1, 4);
+    const uv = cellUV((rng() * 16) | 0, 4, 4);
     const tilt = rr(rng, -0.09, 0.09);
     // the card, both faces, standing out into the aisle
     for (const sgn of [1, -1]) {
@@ -64551,25 +65893,52 @@ function buildStore(THREE, scene) {
       couponFlag(cz, y, a, dir, false);
     }
   }
-  // The AO card lying ON a shelf deck, gradient running lip -> back panel.
-  // qUp/qDown map u across the run, and this needs v along the DEPTH, so the
-  // half-extents are built by hand.
-  const AOU = TX.AO_UV;
-  function deckAOz(lip, y, dir, dep, a0, a1) {
-    const L = (a1 - a0) / 2;
-    Qao.rect([lip - dir * dep / 2, y, (a0 + a1) / 2],
-      [0, 0, -dir * L], [-dir * dep / 2, 0, 0], AOU.deck[0], AOU.deck[1], AOU.deck[2], AOU.deck[3]);
-  }
-  function deckAOx(lipZ, y, dir, dep, a0, a1) {
-    const L = (a1 - a0) / 2;
-    Qao.rect([(a0 + a1) / 2, y, lipZ - dir * dep / 2],
-      [dir * L, 0, 0], [0, 0, -dir * dep / 2], AOU.deck[0], AOU.deck[1], AOU.deck[2], AOU.deck[3]);
-  }
-
   // 13 printed tag designs then 3 orphan states — see pack.js TAG_SKU.
   const tagUV = (kindT) => (kindT === 'orphan'
     ? cellUV(PK.TAG_SKU + ((rng() * (16 - PK.TAG_SKU)) | 0), 4, 4)
     : cellUV((rng() * PK.TAG_SKU) | 0, 4, 4));
+
+  // THE LABEL STRIP IS RAGGED. ROUND 9.
+  //
+  // Blind test 8: "the shelf-label strip is still one texture tiled edge to
+  // edge. Real strips are ragged — white, yellow sale, orange clearance,
+  // several missing, a few crooked, some hand-stickered."
+  //
+  // Half of that was already true and invisible: the atlas has thirteen SKU
+  // designs and three orphan states, and round 9 adds orange clearance to it.
+  // The half that was actually false is the GEOMETRY. Every tag in the store
+  // was emitted at exactly the rail's y, exactly flush, exactly 50 mm tall,
+  // and always present — so a metre of rail was sixteen rectangles whose top
+  // edges formed one dead-straight line, and at any distance that line reads
+  // as a printed ribbon whatever is drawn on the cards.
+  //
+  // What makes a real strip ragged is that a human put each card in by hand,
+  // one at a time, over a year: some sit 3 mm proud, one in six is visibly
+  // crooked, some are the short 35 mm size, and one in eighteen is simply
+  // missing because somebody pulled it and never replaced it. That is four
+  // numbers and it applies to every tag in the building, because it is done
+  // here rather than at seven call sites.
+  const ragged = (h) => {
+    if (rng() < 0.055) return null;                       // pulled and never replaced
+    return {
+      dy: rr(rng, -0.0045, 0.0035),
+      // one in six went in crooked; the rest are within half a degree
+      tilt: rng() < 0.17 ? rr(rng, -0.105, 0.105) : rr(rng, -0.012, 0.012),
+      h: h * (rng() < 0.13 ? rr(rng, 0.68, 0.78) : rr(rng, 0.94, 1.05)),
+    };
+  };
+  const ragX = (x, y, z, d, h, dir, kindT) => {
+    const g = ragged(h); if (!g) return;
+    const uv = tagUV(kindT), hd = dir > 0 ? -d / 2 : d / 2;
+    Qtag.rect([x, y + g.dy, z], [0, g.tilt * d * 0.5, hd], [0, g.h / 2, 0],
+      uv[0], uv[1], uv[2], uv[3]);
+  };
+  const ragZ = (x, y, z, w, h, dir, kindT) => {
+    const g = ragged(h); if (!g) return;
+    const uv = tagUV(kindT), hw = dir > 0 ? w / 2 : -w / 2;
+    Qtag.rect([x, y + g.dy, z], [hw, g.tilt * w * 0.5, 0], [0, g.h / 2, 0],
+      uv[0], uv[1], uv[2], uv[3]);
+  };
 
   function buildRun(idx, x, halfW, faces, opts = {}) {
     const B = newPkg();
@@ -64610,11 +65979,54 @@ function buildStore(THREE, scene) {
     // gondola is a strong VERTICAL gradient: the top deck is nearly twice as
     // bright as the bottom one. Round 3 spanned 0.88 to 1.08 and every render
     // sat in one value band because of it.
-    const LIT = DECK.map((_, i) => 0.73 + 0.46 * Math.pow(i / Math.max(1, DECK.length - 1), 0.82));
+    // ROUND 8 — MOSTLY COLLAPSED. This ramp was a hand-authored stand-in for a
+    // vertical falloff that light.js now COMPUTES: a bottom deck is darker
+    // than a top deck because it has 1.7 m of gondola standing over it, and
+    // the occlusion term reads that straight off the height field, per
+    // fragment, with the actual depth of each facing in the cavity included.
+    // Keeping the full 0.73-1.19 ramp on top of a real one double-counted it
+    // and drove the aisle to a mean luminance of 83 against 94-154 for the
+    // reference photographs. What is left is the part the field cannot know:
+    // stock rotation puts the fresher, glossier cases at eye level and the
+    // tired stuff on the bottom deck. A tenth of a stop, not most of one.
+    const LIT = DECK.map((_, i) => 0.95 + 0.12 * Math.pow(i / Math.max(1, DECK.length - 1), 0.82));
     const dd = deckDepths(halfW - 0.05, DECK.length);
 
-    // kick plate + base
-    fix(x, 0.075, zmid, halfW * 2 - 0.10, 0.15, len, P.kick);
+    // KICK PLATE + BASE. ROUND 9 — DENTED, AND DENTED IN SECTIONS.
+    //
+    // "Real stores are scraped at cart-bumper height: dented kickplates."
+    // A gondola kick is not one 25 m extrusion, it is a 1.2 m stamped steel
+    // section per bay, clipped on individually — so the joints between them
+    // are visible, no two sections are quite the same colour after eight years
+    // of scrubber splash, and the ones at the aisle ends have been reversed
+    // into by carts often enough to be visibly bowed. Emitting it as one box
+    // made the darkest, longest, most continuous line in every aisle frame
+    // perfectly straight and perfectly uniform, which is a manufacturing
+    // tolerance no supermarket has ever met.
+    {
+      const KSEC = 1.22;                       // one stamped section
+      const nk = Math.max(1, Math.round(len / KSEC));
+      for (let s = 0; s < nk; s++) {
+        const sl = len / nk;
+        const sz = zmid - len / 2 + (s + 0.5) * sl;
+        // how close this section is to an END of the run, where the turning
+        // traffic is and therefore where the damage is
+        const endness = 1 - Math.min(1, Math.min(s, nk - 1 - s) / 2.2);
+        const dent = rng() < 0.14 + 0.34 * endness;
+        // a dented section is pushed IN and sits a little low on its clips
+        const push = dent ? rr(rng, 0.010, 0.026) : 0;
+        col.setHex(P.kick);
+        col.offsetHSL(0, 0, rr(rng, -0.022, 0.030) - (dent ? 0.012 : 0));
+        Bfix.push(x, 0.075 - (dent ? rr(rng, 0.002, 0.007) : 0), sz,
+          0, 0, dent ? rr(rng, -0.030, 0.030) : 0,
+          halfW * 2 - 0.10 - push * 2, 0.15, sl * 0.995, col);
+        // the joint between two sections: a dark reveal, and the one thing
+        // that tells a viewer the kick is assembled rather than extruded
+        if (s) {
+          fix(x, 0.072, sz - sl / 2, halfW * 2 - 0.088, 0.13, 0.010, 0x15130f);
+        }
+      }
+    }
     // back panel / pegboard spine. Round 3 skins it with a real perforated
     // panel: it shows in the bottom of every cavity and across the whole of
     // any bare bay, and round 2 put a smooth beige slab there.
@@ -64661,16 +66073,13 @@ function buildStore(THREE, scene) {
         const head = (DECK[d + 1] !== undefined ? DECK[d + 1] : SHELF_H + 0.03) - DECK[d] - 0.036;
         // cavity gradient: dark under the shelf above, fading down. Also what
         // makes a sold-out void read as a black hole rather than a beige gap.
-        qX(Qcav, lip - f.dir * (dep - 0.01), DECK[d] + head * 0.5, zmid, len, head, f.dir, FULL);
         // CAVITY AMBIENT OCCLUSION — multiply-blended across the mouth of the
         // cavity, 6 mm proud of the deepest facing and 6 mm behind the rail.
         // Near-black under the deck above, clearing by mid-height, then a hard
         // seam at the deck. This is the round-3 headline change: without it
         // every product is lit identically and the run reads as a decal.
-        qX(Qao, lip - f.dir * 0.006, DECK[d] + head * 0.5, zmid, len, head, f.dir, AOU.mouth);
         // ...and the deck surface itself, which is the biggest flat region in
         // the frame on every shelf below eye level.
-        deckAOz(lip, DECK[d] + 0.0015, f.dir, dep, z0, z1);
         // deck brackets at the section joints, seen from below on high decks
         for (let z = z0 + 0.61; z < z1; z += 1.22) {
           fix(lip - f.dir * (dep * 0.30), DECK[d] - 0.056, z,
@@ -64701,7 +66110,7 @@ function buildStore(THREE, scene) {
             const tilt = rr(rng, -0.45, 0.45);
             fix(lip + f.dir * 0.035, DECK[d] - 0.006, wz, 0.055, 0.020, 0.006, P.metal);
             const wy = DECK[d] + 0.075, w = rr(rng, 0.085, 0.115);
-            const uv = cellUV((rng() * 8) | 0, 4, 2);
+            const uv = cellUV((rng() * 16) | 0, 4, 4);
             for (const sgn of [1, -1]) {
               Qdangle.rect([lip + f.dir * 0.075, wy, wz + sgn * 0.003],
                 [0, 0, sgn * f.dir * (w / 2) * Math.cos(tilt)],
@@ -64723,8 +66132,8 @@ function buildStore(THREE, scene) {
           deckY: DECK[d], headroom: head, depth: dep, lit: LIT[d], col, pull,
           vacancy: prof.vacancy, litAt: faceLit, stepAt,
           tag: (aStart, aw, kindT) => {
-            qX(Qtag, lip + f.dir * 0.020, DECK[d] - 0.021 + stepAt(aStart),
-              aStart + aw / 2, aw, 0.050, f.dir, tagUV(kindT));
+            ragX(lip + f.dir * 0.020, DECK[d] - 0.021 + stepAt(aStart),
+              aStart + aw / 2, aw, 0.050, f.dir, kindT);
           },
         });
         // BACK ROWS behind the facings, on every deck. See fillBackRow.
@@ -64804,8 +66213,6 @@ function buildStore(THREE, scene) {
       // Now: a real 1-D ramp, near-black hard against the kick plate and gone
       // by 300 mm, MULTIPLIED into the floor so it darkens the reflection as
       // well as the tile — which is what an occluded mirror does.
-      qUp(Qshadow, lip + f.dir * 0.06, 0.006, zmid, 2.6, len * 1.02, FULL);
-      contactZ(lip - f.dir * 0.03, zmid, len * 1.005, f.dir, 0.34);
       // rubber bumper along the foot of the run
       fix(lip - f.dir * 0.012, 0.048, zmid, 0.030, 0.058, len, 0x4a4640);
     }
@@ -64822,11 +66229,6 @@ function buildStore(THREE, scene) {
           fix(x, ECDECK[d] - 0.041, lip - dir * (EC_D / 2), halfW * 2 - 0.05, 0.020, EC_D, P.shelfUnder);
           railRunX(lip + dir * 0.012, ECDECK[d] - 0.020, x - halfW + 0.02, x + halfW - 0.02, dir);
           const head = (ECDECK[d + 1] !== undefined ? ECDECK[d + 1] : 2.02) - ECDECK[d] - 0.036;
-          qZ(Qcav, x, ECDECK[d] + head * 0.5, lip - dir * (EC_D - 0.01),
-            halfW * 2 - 0.04, head, dir, FULL);
-          qZ(Qao, x, ECDECK[d] + head * 0.5, lip - dir * 0.006,
-            halfW * 2 - 0.04, head, dir, AOU.mouth);
-          deckAOx(lip, ECDECK[d] + 0.0015, dir, EC_D, x - halfW + 0.02, x + halfW - 0.02);
           fillBackRow(B, rng, faces[0].dept, {
             axis: 'x', a0: x - halfW + 0.04, a1: x + halfW - 0.04,
             lip: lip - dir * 0.20, face: dir, deckY: ECDECK[d],
@@ -64837,30 +66239,25 @@ function buildStore(THREE, scene) {
             deckY: ECDECK[d], headroom: head, depth: EC_D * 0.92, lit: 1.05, col,
             pull: d / (ECDECK.length - 1), vacancy: 0.4,
             tag: (aStart, aw, kindT) => {
-              qZ(Qtag, aStart + aw / 2, ECDECK[d] - 0.021, lip + dir * 0.020, aw, 0.050,
-                dir, tagUV(kindT));
+              ragZ(aStart + aw / 2, ECDECK[d] - 0.021, lip + dir * 0.020, aw, 0.050,
+                dir, kindT);
             },
           });
         }
         // promo header
         fix(x, 2.34, zEnd + dir * 0.10, halfW * 2 + 0.18, 0.70, 0.06, 0xf4ecd8);
         qZ(Qpromo, x, 2.34, zEnd + dir * (0.10 + 0.045), halfW * 2 + 0.10, 0.62, dir,
-          cellUV((idx * 3 + (dir > 0 ? 1 : 0)) % 4, 1, 4));
+          cellUV((idx * 7 + (dir > 0 ? 5 : 0)) % 16, 4, 4));
         // stub uprights framing the endcap
         fix(x - halfW + 0.03, 1.06, lip - dir * 0.05, 0.06, 1.95, 0.09, P.upright);
         fix(x + halfW - 0.03, 1.06, lip - dir * 0.05, 0.06, 1.95, 0.09, P.upright);
         // ...and the contact shadow off its own plinth, which is what a shopper
         // standing in the cross-aisle is looking straight down at
-        contactX(zEnd + dir * (EC_D + 0.075), x, halfW * 2 - 0.06, dir, 0.32);
         // the endcap as a REFLECTOR. chopRunZ reports no gondola out here —
         // the endcap projects past the run body by design — so before round 7
         // the one brightly-lit, saturated, floor-standing object at the mouth
         // of every aisle put nothing whatever on the floor in front of it.
-        prop(x, zEnd + dir * (EC_D / 2 + 0.06), halfW * 2, EC_D + 0.12, 2.02, 0xa9967a);
-        prop(x, zEnd + dir * 0.22, halfW * 2 + 0.10, 0.34, 2.28, 0xb5301f);
         for (const sx2 of [-1, 1]) {
-          contactZ(x + sx2 * (halfW - 0.02), zEnd + dir * (EC_D / 2 + 0.05),
-            EC_D + 0.10, sx2, 0.26);
         }
       }
     }
@@ -64922,9 +66319,6 @@ function buildStore(THREE, scene) {
           for (const [dx, dz] of [[-0.15, -0.48], [0.15, -0.48], [-0.15, 0.48], [0.15, 0.48]]) {
             fix(ux + dx, 0.04, uz + dz, 0.07, 0.08, 0.08, 0x2f3237);
           }
-          qUp(Qshadow, ux, 0.006, uz, 1.3, 2.0, FULL);
-          prop(ux, uz, 0.82, 1.20, 1.30, 0xa89272);
-          contactBox(ux, uz, 0.46, 1.18, 0.20);
         }
       }
     }
@@ -64938,8 +66332,6 @@ function buildStore(THREE, scene) {
         fix(lip - dir * (halfW * 0.5), uy - 0.018, zmid, halfW + 0.02, 0.036, len, P.deck);
         fix(lip - dir * (halfW * 0.5), uy - 0.041, zmid, halfW, 0.020, len, P.shelfUnder);
         railRun(lip, uy - 0.020, z0, z1, dir);
-        qX(Qao, lip - dir * 0.006, uy + 0.19, zmid, len, 0.38, dir, AOU.mouth);
-        deckAOz(lip, uy + 0.0015, dir, halfW, z0, z1);
         fillBackRow(B, rng, faces[0].dept, {
           axis: 'z', a0: z0 + 0.05, a1: z1 - 0.05, lip: lip - dir * 0.22,
           face: dir, deckY: uy, headroom: 0.38, depth: 0.19, lit: 0.78, col,
@@ -64949,8 +66341,8 @@ function buildStore(THREE, scene) {
           deckY: uy, headroom: 0.38, depth: halfW * 0.9, lit: 0.96, col,
           pull: 0.8, vacancy: 1.1,
           tag: (aStart, aw, kindT) => {
-            qX(Qtag, lip + dir * 0.020, uy - 0.021, aStart + aw / 2, aw, 0.050,
-              dir, tagUV(kindT));
+            ragX(lip + dir * 0.020, uy - 0.021, aStart + aw / 2, aw, 0.050,
+              dir, kindT);
           },
         });
       }
@@ -64965,7 +66357,7 @@ function buildStore(THREE, scene) {
       for (let z = z0 + 1.4; z < z1 - 1.0; z += 3.55) {
         fix(lip + dir * 0.03, SHELF_H + 1.32, z, 0.03, 0.62, 2.30, 0xf3ecda);
         qX(Qpromo, lip + dir * 0.058, SHELF_H + 1.32, z, 2.22, 0.54, dir,
-          cellUV((rng() * 4) | 0, 1, 4));
+          cellUV((rng() * 16) | 0, 4, 4));
         for (const sgn of [-1, 1]) {
           fix(lip + dir * 0.02, SHELF_H + 1.32, z + sgn * 1.78, 0.03, 0.50, 0.9, P.terra);
         }
@@ -65055,8 +66447,6 @@ function buildStore(THREE, scene) {
       fix(mid, CD[d] - 0.016, cz, D - 0.16, 0.032, len - 0.1, 0xfbf6ea);
       fix(mid, CD[d] - 0.040, cz, D - 0.20, 0.018, len - 0.12, 0x7d7466);
       railRun(lip + dir * 0.014, CD[d] - 0.020, z0 + 0.1, z1 - 0.1, dir);
-      qX(Qao, lip - dir * 0.006, CD[d] + 0.17, cz, len - 0.1, 0.34, dir, AOU.mouth);
-      deckAOz(lip, CD[d] + 0.0015, dir, 0.80, z0 + 0.1, z1 - 0.1);
       for (let bk = 1; bk <= 2; bk++) {
         fillBackRow(B, rng, prof, {
           axis: 'z', a0: z0 + 0.15, a1: z1 - 0.15,
@@ -65079,7 +66469,7 @@ function buildStore(THREE, scene) {
         // than a dry one, not less.
         pull: d / Math.max(1, CD.length - 1), vacancy: 1.35,
         tag: (aStart, aw, kindT) => {
-          qX(Qtag, lip + dir * 0.020, CD[d] - 0.021, aStart + aw / 2, aw, 0.048, dir, tagUV(kindT));
+          ragX(lip + dir * 0.020, CD[d] - 0.021, aStart + aw / 2, aw, 0.048, dir, kindT);
         },
       });
     }
@@ -65124,8 +66514,6 @@ function buildStore(THREE, scene) {
       qX(Qwsign, wallX + dir * 0.19, 3.32, z, 4.90, 0.70, dir,
         cellUV(wsn++ < 2 ? 2 : 3, 1, 4));
     }
-    qUp(Qshadow, mid + dir * 0.35, 0.006, cz, 3.4, len, FULL);
-    contactZ(gx + dir * 0.03, cz, len, dir, 0.36);
     solid(wallX - 0.05 * dir, 0, z0 - 0.05, gx + dir * 0.06, 2.34, z1 + 0.05);
   }
 
@@ -65236,7 +66624,7 @@ function buildStore(THREE, scene) {
     fix(x - 0.55, 0.50, laneZ0 + 0.9, 0.52, 1.00, 0.8, P.metal);
     // lane number lightbox on a post
     tube(x, 1.6, laneZ1 - 0.2, 0, 0, 0, 0.05, 3.0, 0xb5ae9c);
-    const uv = cellUV(k % 8, 4, 2);
+    const uv = cellUV((k * 5 + 3) % 16, 4, 4);
     // the lightbox is a real box; the two printed faces stand 15 mm clear of it
     // (they used to sit INSIDE the 50 mm post and z-fought with it)
     fix(x, 2.62, laneZ1 - 0.20, 0.68, 0.68, 0.13, 0xece5d1);
@@ -65249,20 +66637,14 @@ function buildStore(THREE, scene) {
       fix(x - 0.42, y - 0.015, laneCZ + 0.4, 0.28, 0.03, 2.0, P.deck);
       fix(x - 0.42, y - 0.036, laneCZ + 0.4, 0.26, 0.016, 1.98, P.shelfUnder);
       railRun(x - 0.42 - 0.15, y - 0.018, laneCZ - 0.6, laneCZ + 1.4, -1);
-      qX(Qao, x - 0.42 - 0.146, y + 0.15, laneCZ + 0.4, 2.0, 0.30, -1, AOU.mouth);
-      deckAOz(x - 0.42 - 0.14, y + 0.0015, -1, 0.26, laneCZ - 0.6, laneCZ + 1.4);
       fillShelf(B, rng, DEPTS[3], {
         axis: 'z', a0: laneCZ - 0.6, a1: laneCZ + 1.4, lip: x - 0.42 - 0.14, face: -1,
         deckY: y, headroom: 0.30, depth: 0.26, lit: 1.02, col, pull: 0.9, vacancy: 0.5,
         tag: (aStart, aw, kindT) => {
-          qX(Qtag, x - 0.42 - 0.132, y - 0.019, aStart + aw / 2, aw, 0.044, -1, tagUV(kindT));
+          ragX(x - 0.42 - 0.132, y - 0.019, aStart + aw / 2, aw, 0.044, -1, kindT);
         },
       });
     }
-    qUp(Qshadow, x + 0.05, 0.006, laneCZ, 2.4, laneLen + 1.4, FULL);
-    prop(x, laneCZ, 0.80, laneLen, 1.00, 0xb0a68e);
-    contactZ(x - 0.34, laneCZ, laneLen, -1, 0.30);
-    contactZ(x + 0.34, laneCZ, laneLen, 1, 0.30);
     solid(x - 0.62, 0, laneZ0 - 0.1, x + 0.82, 1.1, laneZ1 + 0.1);
   }
 
@@ -65279,7 +66661,7 @@ function buildStore(THREE, scene) {
       if (Math.abs(px - EXIT2.x) < 4.0) continue;
       fix(px, py, STORE.minZ + 0.10, 2.05, 1.30, 0.05, 0xf1e9d5, BfixF);
       qZ(Qpromo, px, py + 0.02, STORE.minZ + 0.135, 1.92, 1.16, 1,
-        cellUV((rng() * 4) | 0, 1, 4));
+        cellUV((rng() * 16) | 0, 4, 4));
       fix(px, py + 0.70, STORE.minZ + 0.11, 2.20, 0.10, 0.07, P.terra, BfixF);
     }
     fix(CX, 1.16, STORE.minZ + 0.08, SW, 0.10, 0.05, P.woodDark, BfixF);   // rub rail
@@ -65395,8 +66777,6 @@ function buildStore(THREE, scene) {
     fix(cx, 2.88, fz + 1.86, 1.00, 0.34, 0.11, 0x2a2c30, BfixF);
     qZ(Qexit, cx, 2.88, fz + 1.925, 0.86, 0.26, 1, cellUV(label, 2, 1));
     fix(cx, 3.08, fz + 1.86, 1.10, 0.07, 0.24, 0x24262a, BfixF);
-    qUp(Qshadow, cx, 0.006, fz + 1.4, w + 1.2, 3.0, FULL);
-    contactX(fz + 1.92, cx, w + 0.2, 1, 0.34);
   }
   storefront(EXIT.x, 3.40, 0);
   // Door 2, on config.js's EXIT2 so there is exactly one source of truth for
@@ -65434,8 +66814,6 @@ function buildStore(THREE, scene) {
       fix(cmid, CD[d] - 0.016, coolZ + 0.06, cw - 0.1, 0.032, 0.86, 0xfbf6ea);
       fix(cmid, CD[d] - 0.040, coolZ + 0.06, cw - 0.12, 0.018, 0.84, 0x7d7466);
       railRunX(lip - 0.014, CD[d] - 0.020, coolX0 + 0.1, coolX1 - 0.1, -1);
-      qZ(Qao, cmid, CD[d] + 0.17, lip + 0.006, cw - 0.1, 0.34, -1, AOU.mouth);
-      deckAOx(lip, CD[d] + 0.0015, -1, 0.80, coolX0 + 0.1, coolX1 - 0.1);
       for (let bk = 1; bk <= 2; bk++) {
         fillBackRow(B, rng, FROZEN, {
           axis: 'x', a0: coolX0 + 0.15, a1: coolX1 - 0.15,
@@ -65448,7 +66826,7 @@ function buildStore(THREE, scene) {
         deckY: CD[d], headroom: 0.34, depth: 0.68, lit: 0.84, col,
         pull: d / Math.max(1, CD.length - 1), vacancy: 1.35,
         tag: (aStart, aw, kindT) => {
-          qZ(Qtag, aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048, -1, tagUV(kindT));
+          ragZ(aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048, -1, kindT);
         },
       });
     }
@@ -65478,9 +66856,6 @@ function buildStore(THREE, scene) {
     fix((coolX0 + coolX1) / 2, 1.18, gz, coolX1 - coolX0, 0.05, 0.07, 0xd7d1bf);
     fix((coolX0 + coolX1) / 2, 2.24, gz - 0.01, coolX1 - coolX0, 0.09, 0.09, 0xc9c3b1);
     fix((coolX0 + coolX1) / 2, 0.13, gz - 0.01, coolX1 - coolX0, 0.10, 0.09, 0x8b8574);
-    qUp(Qshadow, cmid, 0.006, coolZ - 0.35, cw, 3.4, FULL);
-    prop(cmid, coolZ - 0.30, cw, 0.30, 2.55, 0xbcd0d8);
-    contactX(gz - 0.03, cmid, cw, -1, 0.36);
     solid(coolX0, 0, coolZ - coolD / 2 - 0.1, coolX1, 2.3, coolZ + coolD / 2);
   }
 
@@ -65519,9 +66894,6 @@ function buildStore(THREE, scene) {
         Borb.push(px, py, pz, rng() * 3, rng() * 6.28, 0, s, s * rr(rng, 0.78, 1.06), s, col);
       }
     }
-    qUp(Qshadow, cx, 0.006, cz, w + 1.6, dpt + 1.6, FULL);
-    prop(cx, cz, w + 0.10, dpt + 0.10, 0.98, 0x7d6544);
-    contactBox(cx, cz, w - 0.3, dpt - 0.3, 0.32);
     solid(cx - w / 2, 0, cz - dpt / 2, cx + w / 2, 0.8, cz + dpt / 2);
   }
   produceTable(prodX0 + 2.6, STORE.maxZ - 3.2, 5.6, 2.0, 0);
@@ -65542,8 +66914,6 @@ function buildStore(THREE, scene) {
       fix(wmid, RD[d] - 0.016, wz + 0.05, ww - 0.1, 0.032, 0.72, 0xfbf6ea);
       fix(wmid, RD[d] - 0.040, wz + 0.05, ww - 0.12, 0.018, 0.70, 0x7d7466);
       railRunX(wz - 0.32, RD[d] - 0.020, wx0 + 0.1, wx1 - 0.1, -1);
-      qZ(Qao, wmid, RD[d] + 0.20, wz - 0.316, ww - 0.1, 0.40, -1, AOU.mouth);
-      deckAOx(wz - 0.31, RD[d] + 0.0015, -1, 0.68, wx0 + 0.1, wx1 - 0.1);
       for (let bk = 1; bk <= 2; bk++) {
         fillBackRow(B, rng, DEPTS[7], {
           axis: 'x', a0: wx0 + 0.1, a1: wx1 - 0.1,
@@ -65556,15 +66926,12 @@ function buildStore(THREE, scene) {
         deckY: RD[d], headroom: 0.40, depth: 0.60, lit: 1.0, col,
         pull: d / Math.max(1, RD.length - 1),
         tag: (aStart, aw, kindT) => {
-          qZ(Qtag, aStart + aw / 2, RD[d] - 0.021, wz - 0.31 - 0.020, aw, 0.048,
-            -1, tagUV(kindT));
+          ragZ(aStart + aw / 2, RD[d] - 0.021, wz - 0.31 - 0.020, aw, 0.048,
+            -1, kindT);
         },
       });
     }
     flushPkg(B, 'wetrack');
-    qUp(Qshadow, wmid, 0.006, wz, ww, 2.6, FULL);
-    prop(wmid, wz, ww - 0.9, 1.05, 1.85, 0x93a3a4);
-    contactX(wz - 0.45, wmid, ww, -1, 0.32);
     solid(wx0, 0, wz - 0.45, wx1, 2.1, wz + 0.45);
   }
 
@@ -65584,9 +66951,6 @@ function buildStore(THREE, scene) {
       }
       y += h;
     }
-    qUp(Qshadow, x, 0.006, z, w + 1.3, d + 1.3, FULL);
-    prop(x, z, w, d, Math.min(2.4, y + 0.1), 0xa08c68);
-    contactBox(x, z, w + 0.18, d + 0.18, 0.26);
     solid(x - w / 2 - 0.1, 0, z - d / 2 - 0.1, x + w / 2 + 0.1, Math.min(y, 1.3), z + d / 2 + 0.1);
   }
   // parked clear of x = aisleX(i): that centreline is the agents' nav spine
@@ -65616,8 +66980,18 @@ function buildStore(THREE, scene) {
       if (inCross(z, 1.5)) z = z < CROSS_Z ? XA0 - 1.9 : XA1 + 1.9;
       const px = wallFace + sgn * 0.72;
       if (k % 3 === 1) {
-        // a wire floor rack of case stock rather than another pallet
-        fix(px, 0.055, z, 1.05, 0.11, 1.05, 0x2a2620);
+        // a wire floor rack of case stock rather than another pallet.
+        // ROUND 9 — third and last `0x2a2620` slab. A wire rack does not stand
+        // on a black plate, it stands on four feet welded to the bottom of its
+        // own uprights, and you can see the floor between them. Same argument
+        // as the barrel: the darkness under it is light.js's job, and a solid
+        // that exists only to BE the darkness is an authored shadow whatever
+        // the comment beside it calls it.
+        for (const sx2 of [-1, 1]) for (const sz2 of [-1, 1]) {
+          fix(px + sx2 * 0.48, 0.045, z + sz2 * 0.48, 0.06, 0.09, 0.06, P.metal);
+          fix(px + sx2 * 0.48, 0.008, z + sz2 * 0.48, 0.10, 0.016, 0.10, 0x2b2823);
+        }
+        fix(px, 0.09, z, 1.00, 0.028, 0.06, 0x8d8878);
         for (let d2 = 0; d2 < 3; d2++) {
           const y = 0.34 + d2 * 0.44;
           fix(px, y - 0.016, z, 1.00, 0.03, 1.00, P.metal);
@@ -65631,9 +67005,6 @@ function buildStore(THREE, scene) {
         for (const sz2 of [-1, 1]) {
           fix(px, 0.78, z + sz2 * 0.50, 1.02, 1.45, 0.035, P.metal);
         }
-        qUp(Qshadow, px, 0.006, z, 2.2, 2.2, FULL);
-        prop(px, z, 1.10, 1.05, 1.55, 0x9c9482);
-        contactBox(px, z, 1.05, 1.05, 0.26);
         solid(px - 0.55, 0, z - 0.55, px + 0.55, 1.5, z + 0.55);
       } else {
         bulkStack(px, z, DEPTS[(k + 3) % DEPTS.length], 1.05, 1.05, ri(rng, 3, 6));
@@ -65711,13 +67082,27 @@ function buildStore(THREE, scene) {
     for (let b = -0.44; b <= 0.441; b += HP) {
       put(0, 0.423, b, 0.55, WR * 0.9, WR, bright);
     }
-    // the lower rack is a wire deck too, not a steel plate — it was one of the
-    // last solid grey slabs left on the cart
-    for (let a = -0.235; a <= 0.236; a += VP * 1.3) {
-      put(a, 0.175, 0, WR, WR, 0.86, dull);
+    // THE LOWER RACK. ROUND 9 — this is the second thing blind test 8 named as
+    // a surviving placed shadow: "the cart sits on a diagonal cross-hatch blob
+    // whose weave runs at 45 degrees to the basket's orthogonal wires." It is
+    // not a decal and it is not at 45 degrees to anything — it is this rack,
+    // seen from eye height through the basket above it. But the critic is
+    // reading the image, not the source, and the image was right: 13 bars one
+    // way at 49 mm and 12 the other at 77 mm, all 6.5 mm thick, at four metres,
+    // is two periodic patterns beating against each other and against the pixel
+    // grid. What that produces is moiré — a diagonal weave at neither bar
+    // angle — sitting exactly where a contact shadow belongs, on a cart whose
+    // real contact shadow was missing. Of course it read as the shadow.
+    //
+    // A real lower rack is not a fine mesh anyway. It is six or seven heavy
+    // longitudinals on 90 mm centres with two or three cross straps, because it
+    // carries a 24-pack. Fewer bars, thicker, no beat frequency, and now with
+    // an actual computed shadow under the cart for the eye to land on instead.
+    for (let a = -0.24; a <= 0.241; a += 0.096) {
+      put(a, 0.175, 0, WR * 1.7, WR * 1.7, 0.86, dull);
     }
-    for (let b = -0.41; b <= 0.411; b += HP * 1.4) {
-      put(0, 0.182, b, 0.50, WR, WR, bright);
+    for (const b of [-0.36, 0.0, 0.36]) {
+      put(0, 0.190, b, 0.50, WR * 1.6, WR * 1.9, bright);
     }
     // tube frame: top rail all round, corner posts, undercarriage, handle
     put(0, 0.815, -0.455, 0.58, 0.028, 0.028, 0xd6dae0);
@@ -65739,9 +67124,47 @@ function buildStore(THREE, scene) {
     put(0, 0.868, 0.545, 0.50, 0.016, 0.048, 0x53211b);          // shaded underside
     for (const sx of [-1, 1]) put(sx * 0.272, 0.885, 0.545, 0.048, 0.056, 0.056, 0x3a3d42);
     put(0, 0.135, 0, 0.44, 0.020, 0.10, 0x2f3339);               // ad frame
+    // THE CASTERS. ROUND 9. Blind test 8 named this the cleanest before/after
+    // target in the series: "the render cart's casters are untapered black
+    // cubes, against a real photo in the same set showing a swivel fork, a
+    // visible hub and a tire flat-spot with a dark contact core."
+    //
+    // A supermarket caster is four parts and every one of them is visible at
+    // two metres. The kingpin housing bolts to the frame. The FORK hangs off it
+    // and is offset from the kingpin axis — that offset is why a cart caster
+    // swivels, and it is the single most recognisable thing about the shape,
+    // because the wheel never sits under the post it hangs from. Between the
+    // fork legs is a grey polyolefin TIRE on a lighter HUB, and because a cart
+    // stands in one place for weeks the bottom of that tire is flat-spotted, so
+    // it meets the floor along a chord rather than at a point.
+    //
+    // Each caster also gets its own swivel angle, because a parked cart never
+    // has four casters pointing the same way. That is what makes a row of
+    // corralled carts read as parked rather than as instanced.
     for (const [dx, dz] of [[-0.225, -0.365], [0.225, -0.365], [-0.225, 0.365], [0.225, 0.365]]) {
-      put(dx, 0.075, dz, 0.055, 0.10, 0.11, 0x33363b);
-      put(dx, 0.045, dz, 0.085, 0.075, 0.085, 0x1e2024);         // castor
+      const sw = rr(rng, -1.1, 1.1);                             // swivel angle
+      const ox = Math.sin(sw) * 0.028, oz = -Math.cos(sw) * 0.028;
+      put(dx, 0.128, dz, 0.062, 0.040, 0.062, 0x4a4e55);         // kingpin housing
+      put(dx, 0.100, dz, 0.048, 0.022, 0.048, 0x6e737a);         // race
+      // fork legs, straddling the wheel and offset from the kingpin axis
+      for (const sl of [-1, 1]) {
+        const [px, pz] = at(dx + ox + Math.cos(sw) * sl * 0.030,
+          dz + oz + Math.sin(sw) * sl * 0.030);
+        col.setHex(0x3d4147);
+        Bfix.push(px, 0.062, pz, 0, yaw + sw, 0, 0.013, 0.078, 0.052, col);
+      }
+      const [wx, wz] = at(dx + ox, dz + oz);
+      col.setHex(0x2a2c30);
+      // the tire: a wheel on its side, so the cylinder axis lies along the
+      // fork's pivot. sy is the tread width, sx/sz the diameter.
+      Bwheel.push(wx, 0.042, wz, 0, yaw + sw, Math.PI / 2, 0.084, 0.036, 0.084, col);
+      col.setHex(0x8d9299);
+      Bwheel.push(wx, 0.042, wz, 0, yaw + sw, Math.PI / 2, 0.042, 0.041, 0.042, col);
+      // the flat spot. A 3 mm chord off an 84 mm tire is what weeks of standing
+      // still does to a polyolefin wheel, and it is the difference between a
+      // wheel resting on a floor and a wheel intersecting one.
+      col.setHex(0x232529);
+      Bfix.push(wx, 0.0055, wz, 0, yaw + sw, 0, 0.028, 0.011, 0.036, col);
     }
     if (loaded) {                       // shopping, which is what stops it
       for (let k = 0; k < ri(rng, 5, 9); k++) {                  // reading as a prop
@@ -65752,15 +67175,17 @@ function buildStore(THREE, scene) {
           rr(rng, 0.11, 0.20), rr(rng, 0.10, 0.22), rr(rng, 0.09, 0.17), col, (rng() * 24) | 0);
       }
     }
-    qUp(Qshadow, x, 0.006, z, 1.4, 1.8, FULL);
-    prop(x, z, 0.62, 0.98, 0.92, 0x9aa0a6);
-    // four castors, each with its own tight pool — that is what actually reads
-    // as a cart standing on a floor rather than hovering 20 mm over it
-    for (const [dx, dz] of [[-0.225, -0.365], [0.225, -0.365], [-0.225, 0.365], [0.225, 0.365]]) {
-      const [px, pz] = at(dx, dz);
-      contactBox(px, pz, 0.09, 0.09, 0.085);
-    }
-    solid(x - 0.42, 0, z - 0.6, x + 0.42, 1.0, z + 0.6);
+    // (Round 8 deleted the four hand-placed castor pools that used to be here
+    // and left the loop that emitted them, with an empty body. Gone.)
+    //
+    // The cart's collider is 0.84 x 1.20 and the field takes it, which is what
+    // puts a computed shadow under the whole footprint. That is deliberately
+    // NOT the same shape as the four contact patches the wheels make: a cart is
+    // an open wire frame, so the ground under it is in ambient shade from the
+    // basket above and in hard contact only at four small spots, and both of
+    // those now come out of the same field — the basket's own stamp for the
+    // broad one, the wheels' for the tight ones.
+    solid(x - 0.42, 0, z - 0.6, x + 0.42, 1.0, z + 0.6, false);
   }
   const Bcart = newPkg();
   // the corral by the doors: nested, so the pitch is a basket depth, not a cart
@@ -65786,9 +67211,6 @@ function buildStore(THREE, scene) {
   cart(aisleX(3) + PITCH / 2 + 1.05, XA1 + 1.15, 1.35, true);
   cart(aisleX(5) + PITCH / 2 - 1.05, XA0 - 1.25, -1.9, false);
   flushPkg(Bcart, 'cartload');
-  qUp(Qshadow, sd.x, 0.006, sd.z, 7.6, 3.0, FULL);
-  prop(sd.x, sd.z, 6.4, 1.10, 1.25, 0x8a6b45);
-  contactBox(sd.x, sd.z, 6.4, 1.10, 0.30);
 
   // =========================================================================
   // POWERUP SPOTS — REAL MERCHANDISING, not markers
@@ -65816,7 +67238,7 @@ function buildStore(THREE, scene) {
     tube(x, (y0 + y1) / 2, z, 0, 0, 0, 0.008, y1 - y0, 0x6f6a5e);
     fix(x, y, z, w + 0.05, 0.30, 0.035, 0xf3ebd6);
     for (const s of [-1, 1]) {
-      qZ(Qpromo, x, y, z + s * 0.026, w, 0.26, s, cellUV((rng() * 4) | 0, 1, 4));
+      qZ(Qpromo, x, y, z + s * 0.026, w, 0.26, s, cellUV((rng() * 16) | 0, 4, 4));
     }
   }
 
@@ -65826,7 +67248,17 @@ function buildStore(THREE, scene) {
     // the boost hovers in mid-air above it — which is exactly how the blind
     // critic read it ("floating above the crate stack").
     const w = 0.62, d = 0.58;
-    fix(x, 0.055, z, w + 0.10, 0.11, d + 0.10, 0x2a2620);          // black plinth
+    // ROUND 9 — the second of the three `0x2a2620` slabs, same recipe as the
+    // barrel's: a near-black rectangle 100 mm wider than the thing standing on
+    // it, in both axes, with crisp corners. A dump table's base is a recessed
+    // steel skirt that the top OVERHANGS, on four levelling feet, so the shadow
+    // line under it is broken by the feet and the skirt is in shade rather than
+    // being the shade.
+    fix(x, 0.075, z, w - 0.14, 0.15, d - 0.14, 0x4a423a);           // recessed skirt
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      fix(x + sx * (w / 2 - 0.06), 0.022, z + sz * (d / 2 - 0.06),
+        0.048, 0.044, 0.048, 0x26221d);                             // levelling feet
+    }
     fix(x, 0.40, z, w, 0.58, d, 0xffffff, Bwood);                   // wood body
     fix(x, 0.705, z, w + 0.07, 0.04, d + 0.07, P.woodDark);         // rim
     for (const s of [-1, 1]) {
@@ -65855,21 +67287,45 @@ function buildStore(THREE, scene) {
         Math.PI / 2, rng() * 6.28, 0, 0.052, 0.052, 0.030, col);
     }
     headerCard(x, 1.52, z, 0.46);
-    qUp(Qshadow, x, 0.006, z, w + 1.0, d + 1.0, FULL);
-    prop(x, z, w, d, 1.10, 0xb8875a);
-    contactBox(x, z, w + 0.10, d + 0.10, 0.22);
   }
 
   function energyBarrel(x, z) {
     const r = 0.30;
-    fix(x, 0.055, z, r * 2 + 0.06, 0.11, r * 2 + 0.06, 0x2a2620);
+    // ROUND 9 — THE SURVIVING PLACED SHADOW. This line used to be
+    //
+    //   fix(x, 0.055, z, r * 2 + 0.06, 0.11, r * 2 + 0.06, 0x2a2620)
+    //
+    // a 660 mm SQUARE slab in near-black under a 600 mm ROUND tub, overhanging
+    // it by an even 30 mm on all four sides. It was written as a plinth and it
+    // was read, correctly, as a hand-placed shadow: blind test 8's first call
+    // was "the red barrel sits on a hard-edged black rectangle that overhangs
+    // its cylindrical silhouette by an even margin on both sides and has crisp
+    // corners", and "one survivor undoes the credibility of the whole computed
+    // AO pass". It does, and it should — a rectangle under a cylinder can only
+    // have been authored, and once a viewer knows one shadow was drawn by hand
+    // they have no reason to believe any of the others were not.
+    //
+    // What is actually under a barrel merchandiser is a moulded base that is
+    // NARROWER than the tub, so the tub's belly overhangs IT, plus three
+    // levelling feet. The tub reads as sitting ON something instead of being
+    // outlined by something, the silhouette from any angle is round, and the
+    // darkness where it meets the floor is now entirely light.js's — computed
+    // from the ellipse the drum batch stamps, which is why the cylinder had to
+    // become a cylinder in the field as well as in the geometry.
+    drum(x, 0.075, z, r * 2 - 0.09, 0.15, 0x3b3630);                // moulded base
+    drum(x, 0.155, z, r * 2 - 0.05, 0.02, 0x2c2822);                // base lip
+    for (let f = 0; f < 3; f++) {
+      const a = f * 2.094 + 0.4;
+      fix(x + Math.cos(a) * (r - 0.09), 0.014, z + Math.sin(a) * (r - 0.09),
+        0.05, 0.028, 0.05, 0x1d1a16);
+    }
     drum(x, 0.52, z, r * 2, 0.82, 0xc0392b);                        // painted tub
     drum(x, 0.30, z, r * 2 + 0.012, 0.07, 0x8e2a1e);                // lower hoop
     drum(x, 0.70, z, r * 2 + 0.012, 0.05, 0x8e2a1e);                // upper hoop
     drum(x, 0.90, z, r * 2 + 0.05, 0.07, 0xe8e2d0);                 // rolled rim
     for (const sgn of [-1, 1]) {                                    // printed band
       qZ(Qpromo, x, 0.52, z + sgn * (r + 0.004), r * 1.4, 0.30, sgn,
-        cellUV((rng() * 4) | 0, 1, 4));
+        cellUV((rng() * 16) | 0, 4, 4));
     }
     fix(x, 0.885, z, r * 1.7, 0.02, r * 1.7, 0x33454e);             // dark interior
     // a heap of ice and slim cans breaking the rim
@@ -65887,12 +67343,9 @@ function buildStore(THREE, scene) {
         rng() * 3, rng() * 6.28, 0, 0.036, 0.030, 0.036, col);
     }
     headerCard(x, 1.50, z, 0.42);
-    qUp(Qshadow, x, 0.006, z, r * 2 + 1.0, r * 2 + 1.0, FULL);
     // the drum is 0xc0392b painted steel with a red promo band round it, so
     // that is what the floor under it has to be carrying — the blind test's
     // exact words were "a saturated red object produces no red smear at all."
-    prop(x, z, r * 2, r * 2, 1.05, 0xb03a2a);
-    contactBox(x, z, r * 2 + 0.06, r * 2 + 0.06, 0.22);
   }
 
   const putSpot = (x, z, kind) => {
@@ -65929,13 +67382,60 @@ function buildStore(THREE, scene) {
   // =========================================================================
   // FLUSH BATCHES + QUAD SOUPS
   // =========================================================================
-  for (const [b, n] of [[Bfix, 'fixtures'], [Bwood, 'wood'], [Btube, 'tubes'], [Borb, 'produce'], [Bdrum, 'drums']]) {
+  for (const [b, n] of [[Bfix, 'fixtures'], [Bwood, 'wood'], [Btube, 'tubes'],
+    [Borb, 'produce'], [Bdrum, 'drums'], [Bwheel, 'casters']]) {
     const m = b.build(n); if (m) root.add(m);
   }
   for (const [b, n] of [[BfixC, 'ceilFixtures'], [BtubeC, 'ceilPipes']]) {
     const m = b.build(n); if (m) ceilGroup.add(m);
   }
   { const m = BfixF.build('frontWallTrim'); if (m) frontGroup.add(m); }
+
+  // =========================================================================
+  // BAKE THE WORLD LIGHT FIELD
+  // =========================================================================
+  // Every Batch.push and every solid() above has already stamped itself; this
+  // is only the encode. It happens HERE, before the quad soups are flushed,
+  // because the freezer glass copies the floor's uniform bag at construction
+  // and both mirrors have to be pointed at the same texture.
+  const bakeT0 = performance.now();
+  const FLDU = LT.fieldUniforms(THREE, FIELD, {
+    // 0.92: this term is the entire dark end of the frame's histogram now.
+    // Measured against the reference set, the round-7 renders landed their
+    // darkest 1% of pixels at luminance 15-18 where the twelve reference
+    // photographs land theirs at 3-8. That gap was never a gamma problem — it
+    // was that nothing in the building occluded anything.
+    ao: 0.88,
+    // ...and the other half of the same fault. Occlusion ALONE produces the
+    // black voids the blind test measured on the bottom decks: "no light was
+    // sampled here" rather than a shadow. A shelf 250 mm off a lit sales floor
+    // is lit FROM BELOW, warm, by the tile it is standing over — so the same
+    // eight taps that ask how much sky a point can see also ask how much lit
+    // floor it can see, and that answer is added back with the floor's colour.
+    bounce: 0.52, bounceCol: 0xa8946f,
+    // ROUND 9 — THE CONTACT CORE. Everything about why this term exists and
+    // how the numbers were derived is in the chopCore note in light.js; the
+    // VALUES live here, next to ao and bounce, so there is exactly one place
+    // in the build that says how dark this store gets. Swept against the
+    // dairy-base luminance profile at 0.78 / 0.85 / 0.92 with the reference
+    // measurement open beside it.
+    core: 0.84, coreBias: 0.020, coreGain: 2.20, coreReach: 1.0,
+    // ...and the skirt's near radius, which is the single number that sets how
+    // WIDE the falloff is. 0.08 (round 8) put the whole ramp inside 10 px;
+    // 0.34 puts it at 40-50, which is where the reference photographs are.
+    skirtR: 0.34, skirtRatio: 1.95,
+  });
+  {
+    Object.assign(floorMat.userData.chop, FLDU);
+    floorMat.userData.chop.uPropOn.value = 1.0;
+    // exposed so a missing stamp can be LOOKED AT rather than guessed at:
+    //   open(__CHOP.scene.userData.chopField.field.debugURL())
+    scene.userData.chopField = {
+      field: FIELD, uniforms: FLDU, solids: FIELD.n,
+      bakeMs: +(performance.now() - bakeT0).toFixed(1),
+    };
+    setFieldSink(null);
+  }
 
   const soup = (Q, mat, name, parent = root) => {
     const g = Q.build(THREE); if (!g) return null;
@@ -65970,15 +67470,25 @@ function buildStore(THREE, scene) {
   soup(Qslot, sharp(new THREE.MeshLambertMaterial({ map: T.slot, color: 0xf6f0dd }), -0.9), 'uprights');
   soup(Qpeg, sharp(new THREE.MeshLambertMaterial({ map: T.peg, color: 0xece8dc }), -0.9), 'backPanels');
   soup(Qdangle, SM(T.dangle, {
-    color: 0xeae3d2, side: THREE.DoubleSide, grid: [4, 2],
+    color: 0xeae3d2, side: THREE.DoubleSide, grid: [4, 4],
     near: 4.5, far: 13.0, lod: 3.0, gloss: 0.44, top: 0.20, foot: 0.10,
     name: 'dangleMat',
   }), 'danglers');
-  // shelf cavities: dark under the shelf above, clearing toward the deck
-  const cavMat = new THREE.MeshBasicMaterial({
-    map: T.cavity, transparent: true, depthWrite: false,
-  });
-  const cv2 = soup(Qcav, cavMat, 'shelfCavities'); if (cv2) cv2.renderOrder = -1;
+  // SHELF CAVITY CARDS — DELETED IN ROUND 8, WITH THE FLOOR CONTACT RAMPS.
+  //
+  // Round 3 drew a multiply gradient across the mouth of every cavity (Qcav)
+  // and a second one lying on every deck (Qao). Both were right and both are
+  // now the third copy of a measurement the field already makes: light.js's
+  // visibility term reads DARK inside a cavity because the column above it is
+  // 2.05 m of gondola, and it reads BRIGHT on a facing at the lip because that
+  // facing can see the aisle — with, crucially, the actual per-unit depth in
+  // it, which a card stretched across the whole mouth never had. A unit shoved
+  // 200 mm back is darker than the one beside it now because it IS further
+  // inside the hole, not because products.js multiplies its colour down.
+  //
+  // Removing them is also what let the product wall come back up: three
+  // occlusion models stacked multiplicatively is how the aisle got to a mean
+  // luminance of 83 against 94-154 for the reference photographs.
   // one tag per SKU run — irregular rhythm, keyed to the facing above it
   soup(Qtag, SM(T.tag, {
     color: 0xf6f1e4, grid: [4, 4], near: 1.6, far: 5.6, lod: 5.0,
@@ -66003,14 +67513,14 @@ function buildStore(THREE, scene) {
     gloss: 0.30, top: 0.14, foot: 0.08, name: 'laneMat',
   }), 'laneSigns');
   soup(Qpromo, SM(T.promo, {
-    color: 0xfbf3e2, grid: [1, 4], near: 5.0, far: 15.0, lod: 4.0,
+    color: 0xfbf3e2, grid: [4, 4], near: 5.0, far: 15.0, lod: 4.0,
     gloss: 0.60, top: 0.22, foot: 0.16, name: 'promoMat',
   }), 'promoSigns');
   soup(Qflag, SM(T.promo, {
     // Same atlas as the endcap boards, a twentieth of the size, so it needs its
     // own acuity curve: a 100 mm coupon flag is an unreadable red fleck at four
     // metres and a 2.2 m BOGO board is not.
-    color: 0xfbf3e2, grid: [1, 4], near: 1.4, far: 4.6, lod: 4.0,
+    color: 0xfbf3e2, grid: [4, 4], near: 1.4, far: 4.6, lod: 4.0,
     gloss: 0.70, tilt: 0.10, top: 0.16, foot: 0.10, name: 'flagMat',
   }), 'couponFlags');
   soup(Qwsign, SM(T.wallSign, {
@@ -66025,6 +67535,7 @@ function buildStore(THREE, scene) {
   // coarser lower-contrast ladder in stripTex fixes it at the source.
   soup(Qstrip, new THREE.MeshBasicMaterial({
     map: T.strip, color: 0xffffff, vertexColors: true,
+    userData: { chopNoAO: true },
   }), 'lightLenses', ceilGroup);
   soup(Qwell, new THREE.MeshBasicMaterial({ map: T.well, color: 0xffffff }),
     'trofferHousings', ceilGroup);
@@ -66039,32 +67550,17 @@ function buildStore(THREE, scene) {
   });
   const bl = soup(Qbloom, bloomMat, 'lightBloom', ceilGroup);
   if (bl) bl.renderOrder = 5;
-  // GROUND SHADOWS. ROUND 6 — both of these used to be one normal-blended
-  // near-black card at 0.70 opacity. A dark card PAINTED over a floor is a
-  // decal: it flattens the tile, it flattens the reflection under it, and where
-  // the card ends it ends at the card's edge rather than at a physical
-  // gradient. Multiply is what a shadow actually is — it scales whatever the
-  // floor was already returning, reflection included — so an occluded patch of
-  // mirror goes dim instead of going matte black.
-  //   Qshadow   the broad ambient pool, radial map, one per fixture
-  //   Qcontact  the tight ramp hugging every base, 100-340 mm out
-  const shadowMat = new THREE.MeshBasicMaterial({
-    map: T.gao, color: 0xffffff, transparent: true, depthWrite: false,
-    blending: THREE.MultiplyBlending,
-  });
-  const sm = soup(Qshadow, shadowMat, 'groundShadows'); if (sm) sm.renderOrder = 1;
-  const contactMat = new THREE.MeshBasicMaterial({
-    map: T.contact, color: 0xffffff, transparent: true, depthWrite: false,
-    blending: THREE.MultiplyBlending,
-  });
-  const cm = soup(Qcontact, contactMat, 'contactShadows'); if (cm) cm.renderOrder = 2;
+  // GROUND SHADOWS — DELETED IN ROUND 8, and this is where they used to be
+  // flushed. The round-6 argument for them was right as far as it went: a
+  // shadow multiplies whatever the surface was already returning, so it has to
+  // be a multiply card and not a dark decal. What it could not fix is that a
+  // card exists only where somebody emitted one. The occlusion those two soups
+  // produced is now produced by ./store/light.js for every fragment of every
+  // opaque surface in the building, from the same occupancy field the mirror
+  // marches — so it is one measurement, it agrees with the reflection under it
+  // by construction, and it covers the junctions nobody enumerated.
+  // T.gao and T.contact are gone with them; see textures().
   soup(Qpatch, new THREE.MeshBasicMaterial({ map: T.patch, color: 0xd6d1c3 }), 'floorPatches');
-  // CAVITY AMBIENT OCCLUSION — multiplied over the product, so it has to run
-  // after every opaque package and before the glass.
-  const aoMat = new THREE.MeshBasicMaterial({
-    map: T.ao, transparent: true, depthWrite: false, blending: THREE.MultiplyBlending,
-  });
-  const ao = soup(Qao, aoMat, 'shelfAO'); if (ao) ao.renderOrder = 3;
   // FREEZER GLASS. Round 4 shipped this as a flat 0.20-opacity blue quad: the
   // same veil head-on as at eighty degrees, which is the one behaviour glass
   // never has. It now runs the floor's analytic mirror — sharing the floor's
@@ -66093,22 +67589,35 @@ function buildStore(THREE, scene) {
   });
   const gl = soup(Qglass, glassMat, 'coolerGlass'); if (gl) gl.renderOrder = 4;
   scene.userData.chopGlass = glassMat.userData.chop;
-  {
-    const U = floorMat.userData.chop;
-    U.uProp.value = FL.propLUT(THREE, PROPS, STORE.minX, SW, STORE.minZ, SD);
-    U.uPropOn.value = 1.0;
-  }
   // STOREFRONTS. The round-4 flat 0xd9e6ee plate is gone; what is outside is
   // now a real image with a value range in it, and the door decals and the lit
   // EXIT boxes ride on top of it. Basic materials throughout — daylight and a
   // fluorescent EXIT box are both emitters, and neither takes room light.
-  soup(Qout, new THREE.MeshBasicMaterial({ map: T.outside, color: 0xffffff }),
-    'outside', frontGroup);
+  soup(Qout, new THREE.MeshBasicMaterial({
+    map: T.outside, color: 0xffffff, userData: { chopNoAO: true },
+  }), 'outside', frontGroup);
   soup(Qdecal, new THREE.MeshBasicMaterial({
     map: T.decal, color: 0xffffff, transparent: true, depthWrite: false,
   }), 'doorDecals', frontGroup);
-  soup(Qexit, new THREE.MeshBasicMaterial({ map: T.exit, color: 0xffffff }),
-    'exitSigns', frontGroup);
+  soup(Qexit, new THREE.MeshBasicMaterial({
+    map: T.exit, color: 0xffffff, userData: { chopNoAO: true },
+  }), 'exitSigns', frontGroup);
+
+  // LIGHT EVERYTHING WITH THE FIELD. See the bake, up in the flush block.
+  //
+  // The walk is the point. applyAO does not know what a gondola is; it knows
+  // what a normal-blended opaque material is. A prop added in a later round is
+  // occluded, contact-shadowed and bounce-lit because it was BUILT, not
+  // because this line was updated to mention it. Emitters opt OUT — a lamp
+  // lens, an EXIT box and the daylight outside the doors are sources, and
+  // shading a source with the room's occlusion is backwards.
+  for (const m of [glassMat, bloomMat, ledMat, tshMat]) m.userData.chopNoAO = true;
+  {
+    const t0 = performance.now();
+    const census = LT.applyAO(THREE, root, FLDU);
+    scene.userData.chopField.census = census;
+    scene.userData.chopField.aoMs = +(performance.now() - t0).toFixed(1);
+  }
 
   // =========================================================================
   // LIGHTING
@@ -66146,7 +67655,18 @@ function buildStore(THREE, scene) {
   // stay exactly as warm as they were, and the packaging is allowed to be the
   // colour it is printed. The ground bounce keeps a little warmth because it
   // genuinely is bouncing off a brown floor.
-  scene.add(new THREE.AmbientLight(0xfff4e6, 0.36));
+  // ROUND 8 — 0.36 -> 0.44. Raising ambient used to be the wrong lever: a
+  // metre of flat fill behind every occlusion card is what stopped the cards
+  // from ever getting dark, which is the whole argument in the round-4b note
+  // below. That trade is gone. light.js's term multiplies the FINAL colour of
+  // every opaque fragment, after all lighting, so ambient no longer fights the
+  // occlusion — it sets the level of the OPEN parts of the room while the
+  // occluded parts stay exactly as dark as the geometry says. Which is what
+  // fill light physically is. The wall-facing frames were landing at a mean
+  // luminance of 89 against 94-154 for the reference set; a vertical facing
+  // takes almost nothing from a key coming in at 68 degrees, so ambient is the
+  // only term that reaches it.
+  scene.add(new THREE.AmbientLight(0xfff4e6, 0.44));
   const hemi = new THREE.HemisphereLight(0xfcfdff, 0x736a58, 0.66);
   hemi.position.set(0, CEIL_H, 0);
   scene.add(hemi);
