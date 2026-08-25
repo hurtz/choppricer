@@ -128,6 +128,26 @@ export const TUNING = {
   annHold: 4.5,        // s a 'hold' call pins him for
   annHuff: 0.55,       // x remaining shopT — a customer shouted at in public shops less
 
+  // --- Round 8: "oh shit" — the third answer to the PA, and the only one worth
+  // points. Carved out of the SHRUG interval of round 7's SINGLE roll, so every
+  // compliance rate is unmoved: set annBolt and annBoltCold to 0 and this build IS
+  // round 7, every row to the decimal. Put-back likelihood ratio 1.98 vs 1.95.
+  //
+  // The gate is GEOMETRY, not a mode check — beatsCopToDoor(). He does not run at a
+  // door you are standing in front of, so the flush is available exactly when you
+  // are too far away to use it: 29.2% from the service desk, 22.5% from 8m behind,
+  // 0.0% from the aisle mouth you were just dispatched to, 0.0% from the door,
+  // 0.0% for innocents anywhere. That kills the walk-to-10m-and-scan exploit.
+  // Announcing at a man you have already made is worth 8.4 expected points against
+  // a dispatch's 77.0 — nine times worse. That is the price of the information.
+  annBolt: 0.30,       // P(run) — guilty, already has it in his coat
+  annBoltCold: 0.13,   // ...and before he has committed. He takes it with him.
+  annBoltNerve: 0.35,  // nerve tilt, INVERTED against the compliance tilt
+  annShakeHz: 2.10,    // head shake, Hz. Clip owns amplitude, renderer owns the rate.
+  annHuffT: 7.0,       // s of visible annoyance after a shrug — guilty or not, or the
+                       //   huff would be the tell the shrug is not.
+  annHuffPace: 1.18,   // x walk while huffing
+
   // --- Round 4: two doors, and going through a man ---
   // One door made the thief's destination public knowledge, and public knowledge
   // beats a scouting report — a camper scored 80.7% at wrong-aisle-by-1. Two doors

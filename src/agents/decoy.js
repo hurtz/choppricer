@@ -22,11 +22,16 @@
 //   - a subject who does NOT plays one of the three `react` clips below: heads
 //     up, shoulder check, a look at the ceiling for the speaker, a shrug, and
 //     back to the shelf. A guilty man who decides to brazen it out plays these
-//     too, and so does every bystander in earshot.
+//     too, and so does every bystander in earshot. ROUND 8 rebuilt all three
+//     into the four-beat sequence the client described; see the block above
+//     them.
 // `tell: 'react'` keeps them out of the DECOY pool ON PURPOSE — pickGesture's
 // modulo over seven decoys is what round 6's whole distribution was measured
 // on, and quietly making it eight would have moved every number in the file.
-// They are only ever started by id, which costs no rng at all.
+// They are only ever started by id, which costs no rng at all. Round 8's fourth
+// reaction, the startle `whoMeRun`, carries tell:'startle' for the identical
+// reason one level down: a fourth entry in the REACT pool would be rolled one
+// time in four by a man who is not going anywhere.
 // ---------------------------------------------------------------------------
 //
 // ---------------------------------------------------------------------------
@@ -71,9 +76,12 @@
 // every steal is 1.9 s, the durations ARE the tell and a player with a
 // stopwatch beats the game. So the durations overlap on purpose: steals run
 // 1.75-2.60 s, decoys 1.60-2.70 s, and the shortest SPONTANEOUS clip in the
-// file is a decoy while the longest is also a decoy. (Round 7's react clips
-// are 1.55-2.75 s and bracket both pools, but nothing rolls one by accident —
-// they only ever play in answer to the PA, so they are not in that contest.)
+// file is a decoy while the longest is also a decoy. (Round 8's react clips are
+// 1.95-2.80 s and bracket both pools, but nothing rolls one by accident — they
+// only ever play in answer to the PA, so they are not in that contest. The
+// 0.98 s startle is shorter than anything else here and that is safe for the
+// same reason: it is never rolled, only ever named, and by the time its length
+// is observable the man is running and the length is moot.)
 // ---------------------------------------------------------------------------
 
 // Neutral. Anything a clip does not mention returns to this.
@@ -96,6 +104,16 @@ export const POSE = {
   neck: 0.0,                  // pitch: + is looking down
   look: 0.0,                  // yaw: the shoulder check
   turn: 0.0,                  // body yaw offset: turning away from the shelf
+  // ROUND 8 — THE HEAD SHAKE, AS AN ENVELOPE RATHER THAN AS KEYFRAMES.
+  // Client: "they're shaking their head and they're just pissed off". A shake
+  // is a 2 Hz oscillation and this table samples at whatever rate the segment
+  // between two keys implies, so authoring it as keys would need eight of them
+  // per shake and would still be eaten by the ed(9) lerp animateShopper puts on
+  // the neck. So the CLIP owns the amplitude and the RENDERER owns the
+  // oscillation: agents.js adds sin(elapsed * K.annShakeHz * 2PI) * shake to the
+  // neck yaw, unlagged, on top of `look`. Costs one sin per body per frame and
+  // only while a clip with a non-zero shake is running.
+  shake: 0.0,                 // radians of "no", amplitude only
   item: [1, 1, 1],            // prop scale
 };
 
@@ -112,6 +130,27 @@ const kf = (u, o) => ({ u, ...o });
 // 1.75 m body and the arm is 0.72 long, so rotation.x maps to hand height:
 //   -0.60 hip, -0.95 cart bar, -1.55 chest/forward, -1.90 sternum,
 //   -2.20 shoulder, -2.45 ear.
+// ---------------------------------------------------------------------------
+// ROUND 8 — THE FIRST HALF-SECOND OF EVERY REACTION IN THIS GAME.
+//
+// Three keyframes at ABSOLUTE times — 0.00, 0.22 and 0.50 seconds — divided
+// into whatever normalised span the clip that uses them needs. `applyGesture`
+// parameterises each segment by (u - a.u)/(b.u - a.u), so two clips of
+// different lengths that share these keys are IDENTICAL frame for frame out to
+// 0.50 s. That is the guarantee the whole bolt outcome rests on: an innocent
+// being annoyed, a thief brazening it out and a thief about to run are one
+// picture for half a second, and the earliest any of them can be told apart is
+// 0.62 s — by which time the PA latency has already spent 0.35-0.95 s of the
+// player's attention.
+//
+// He is at the shelf with his chin down (neck +0.20), the head comes up and off
+// (neck -0.12) with a check over the right shoulder at 0.22, and a longer one
+// the other way at 0.50 with the body starting to come round with it.
+const heard = (dur) => [
+  kf(0.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, neck: 0.20 }),
+  kf(0.22 / dur, { vis: 0, armR: -0.92, armL: -0.93, neck: -0.12, look: 0.60 }),
+  kf(0.50 / dur, { vis: 0, armR: -0.90, armL: -0.91, neck: -0.10, look: -0.66, turn: -0.26 }),
+];
 export const GESTURES = [
   // =========================================================================
   // THE STEAL. Three of them, because one clip played by every thief in the
@@ -293,58 +332,167 @@ export const GESTURES = [
   },
 
   // =========================================================================
-  // ROUND 7 — WHAT SOMEBODY DOES WHEN A VOICE SAYS THEIR NAME OVER THE PA AND
-  // THEY CANNOT SEE WHO SAID IT. Three of them, because one look-around played
-  // by every body in the store is a silhouette to learn rather than a reaction
-  // to read. NONE of them contains an object, a reach or a concealment: the
-  // information a player is allowed to take off a react clip is "he heard it",
-  // never "he did it". The clip a HEEDING subject plays is `putback` above, and
-  // innocents play that one too.
-  // =========================================================================
+  // ROUND 8 — THE PUT-BACK, WITH THE HALF-SECOND IN FRONT OF IT.
+  //
+  // `putback` above is round 6's clip and it starts with his hand already
+  // inside his coat, because the thing that triggers it there is a uniform
+  // stood on the door and he has been looking at that uniform for three
+  // seconds. A man answering a PA has not: he heard a voice, and the sequence
+  // is heard it -> could not place it -> found the speaker -> and THEN decided.
+  //
+  // So the announcement's compliance clip is this one, and the reason it exists
+  // at all is an anti-oracle reason rather than an animation one. If a heeding
+  // subject played round 6's putback, the outcome would be legible from the
+  // FIRST FRAME — hand in coat versus hands on the bar — and a player could read
+  // his answer 0.9 s before the man had finished having it. Sharing heard()
+  // puts every one of the four possible answers behind the same half-second.
+  // The item does not appear until 1.42 s.
+  //
+  // GUILTY AND INNOCENT ALIKE, which is the round-7 rule and is now load
+  // bearing in a second place: reactToPA's innocent-heed branch names this clip
+  // too, and abortTheft/dumpGoods name it when `why` is 'announce'. A posted
+  // guard still gets round 6's putback, unchanged, because nobody said anything
+  // to him.
   {
-    // THE CEILING CHECK. Head comes up off the shelf, one shoulder check, then
-    // he looks straight up for the speaker — which is the single most human
-    // beat in this whole file and it is worth the two keyframes it costs. Then
-    // back down and on with the shopping.
-    id: 'whoMe', tell: 'react', dur: 2.30, item: SMALL,
+    id: 'putbackPA', tell: 'putbackPA', dur: 2.65, item: BOX,
     keys: [
-      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.20 }),
-      kf(0.14, { vis: 0, armR: -0.90, armL: -0.92, neck: -0.14, look: 0.62 }),
-      kf(0.34, { vis: 0, armR: -0.88, armL: -0.90, neck: -0.10, look: -0.70, turn: -0.28 }),
-      kf(0.56, { vis: 0, armR: -0.86, armL: -0.88, neck: -0.52, look: 0.16, turn: -0.10 }),
-      kf(0.74, { vis: 0, armR: -1.02, armL: -1.00, neck: -0.30, look: 0.44, chest: -0.06 }),
-      kf(0.90, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.06, look: -0.20 }),
+      ...heard(2.65),
+      kf(0.72 / 2.65, { armR: -0.92, armL: -0.93, neck: -0.40, look: 0.20, turn: -0.12 }),
+      kf(0.95 / 2.65, { armR: -0.96, armL: -0.94, neck: -0.50, look: 0.0, chest: -0.06 }),
+      kf(1.18 / 2.65, { armR: -1.30, armRz: 0.60, armL: -0.96, neck: -0.06, look: 0.30, chest: 0.04 }),
+      // ...and from here it is `putback` above, keyframe for keyframe.
+      kf(1.42 / 2.65, { vis: 1, armR: -1.45, armRz: 0.92, off: [0.0, 0.0, -0.24], look: 0.55, neck: 0.10 }),
+      kf(1.68 / 2.65, { vis: 1, armR: -1.62, armRz: 0.10, look: -0.40 }),
+      kf(2.06 / 2.65, { vis: 1, armR: -1.80, armRz: -0.30, neck: 0.08 }),
+      kf(2.30 / 2.65, { vis: 1, armR: -1.70, armRz: -0.40, neck: 0.22, chest: 0.10 }),
+      kf(2.38 / 2.65, { vis: 0, armR: -1.55, armRz: -0.38, neck: 0.20 }),
       kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
+    ],
+  },
+
+  // =========================================================================
+  // ROUND 8 — THE REACTION IS A PERFORMANCE, AND ITS FIRST HALF-SECOND IS A
+  // FUNCTION.
+  //
+  // Client, verbatim: "They look around, they're not sure where the sound is
+  // coming from, and then they realize that maybe they're being watched.
+  // They're shaking their head and they're just pissed off — unless they're a
+  // real thief, and then the thief is like 'oh shit', and gets scared and
+  // starts running."
+  //
+  // That is FOUR BEATS and round 7 only had one of them. Every react clip below
+  // now runs the whole sequence:
+  //
+  //   1  HEARD IT      head comes up off the shelf, one shoulder check
+  //   2  CAN'T PLACE IT a sweep of the aisle for whoever said that
+  //   3  FINDS IT      he looks UP — at the speaker, at the dome — and STOPS.
+  //                    This is the beat the client is describing when he says
+  //                    "they realize that maybe they're being watched", and it
+  //                    is a HOLD, not a pose: he is still for a third of a
+  //                    second while it lands.
+  //   4  NOT HAVING IT the head shake, and then a shoulder hitch and back to
+  //                    the shelf in a huff. `shake` is an envelope; see POSE.
+  //
+  // ---- AND THE FOURTH CLIP, WHICH IS THE SAME CLIP FOR HALF A SECOND -------
+  // `whoMeRun` is what a man with a bottle in his coat does instead, and the
+  // whole design risk in it is that it becomes a tell you can read off the
+  // first frame. So THE FIRST HALF-SECOND OF EVERY REACTION IN THIS GAME IS
+  // DRAWN BY heard(), below. Not "similar to": the same three keyframes at the
+  // same ABSOLUTE times, which — because applyGesture parameterises each
+  // segment by (u - a.u)/(b.u - a.u) — makes the pose identical frame for frame
+  // out to t = 0.50 s regardless of how long the clip runs. Add the 0.35-0.95 s
+  // PA latency and the player has keyed the handset and watched between 0.85 s
+  // and 1.45 s of footage that cannot tell him anything. The tell is in what
+  // happens NEXT: at 0.62 s one of these four men drops his hands off the cart
+  // bar, and by 0.98 s he is running.
+  //
+  // If you edit heard(), you are editing all FIVE — the three shrugs, the
+  // startle and `putbackPA` above — which is the point of it. The day somebody
+  // makes the startle read better they make the annoyed man read better too,
+  // and there is no keyframe either of them owns alone.
+  //
+  // NONE of these contains an object, a reach or a concealment: the information
+  // a player is allowed to take off a react clip is "he heard it", never "he did
+  // it". The clip a HEEDING subject plays is `putback` above, and innocents play
+  // that one too.
+  // =========================================================================
+  // Beat 1 lives in heard(), above the table, in SECONDS. `dur` divides those
+  // seconds into each clip's own normalised time, so a 0.98 s startle and a
+  // 2.80 s huff open on the identical picture.
+
+  {
+    // THE CEILING CHECK. He sweeps the aisle, finds the speaker, holds on it —
+    // and the hold is the realisation. Then he tells the ceiling no.
+    id: 'whoMe', tell: 'react', dur: 2.45, item: SMALL,
+    keys: [
+      ...heard(2.45),
+      kf(0.78 / 2.45, { armR: -0.90, armL: -0.92, neck: -0.34, look: 0.52, turn: -0.08 }),
+      kf(1.05 / 2.45, { armR: -1.00, armL: -0.94, neck: -0.62, look: 0.10 }),
+      kf(1.38 / 2.45, { armR: -1.00, armL: -0.94, neck: -0.58, look: -0.06, chest: -0.08 }),
+      kf(1.62 / 2.45, { armR: -0.86, armL: -0.92, neck: -0.20, chest: -0.10 }),
+      kf(1.75 / 2.45, { armR: -0.88, armL: -0.92, neck: 0.02, chest: -0.06, shake: 0.34 }),
+      kf(2.05 / 2.45, { armR: -1.06, armL: -0.98, neck: 0.06, chest: -0.04, shake: 0.34 }),
+      kf(2.22 / 2.45, { armR: -1.02, armL: -1.00, neck: 0.24, chest: 0.14 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
     ],
   },
   {
     // "ME?" Hand off the bar and onto his own chest, a half turn to see who is
-    // behind him, and a headshake. Mildly affronted, which is the note: he is
-    // not frightened, he is a man who has just been spoken to in public.
-    id: 'whoMeAffront', tell: 'react', dur: 2.75, item: SMALL,
+    // behind him, nobody, then up to the ceiling — and the affront lands on the
+    // camera rather than on a person, which is worse. Longest of the four.
+    id: 'whoMeAffront', tell: 'react', dur: 2.80, item: SMALL,
     keys: [
-      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95, neck: 0.16 }),
-      kf(0.12, { vis: 0, armR: -1.10, armL: -0.94, neck: -0.16, look: -0.66 }),
-      kf(0.30, { vis: 0, armR: -1.62, armRz: 0.62, armL: -0.92, look: -0.30, turn: -0.62, chest: -0.04 }),
-      kf(0.48, { vis: 0, armR: -1.58, armRz: 0.66, armL: -1.05, look: 0.58, turn: -0.86 }),
-      kf(0.62, { vis: 0, armR: -1.50, armRz: 0.58, armL: -1.10, look: -0.34, turn: -0.70, neck: -0.08 }),
-      kf(0.78, { vis: 0, armR: -1.24, armRz: 0.30, armL: -1.00, look: 0.30, turn: -0.30, neck: 0.04 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+      ...heard(2.80),
+      kf(0.72 / 2.80, { armR: -1.62, armRz: 0.62, armL: -0.92, look: -0.30, turn: -0.62, chest: -0.04 }),
+      kf(1.00 / 2.80, { armR: -1.58, armRz: 0.66, armL: -1.05, look: 0.62, turn: -0.90, neck: -0.20 }),
+      kf(1.32 / 2.80, { armR: -1.54, armRz: 0.62, armL: -1.02, look: 0.14, turn: -0.62, neck: -0.56 }),
+      kf(1.60 / 2.80, { armR: -1.50, armRz: 0.58, armL: -1.00, look: -0.02, turn: -0.40, neck: -0.52, chest: -0.10 }),
+      kf(1.82 / 2.80, { armR: -1.30, armRz: 0.44, armL: -0.98, turn: -0.30, neck: -0.14, chest: -0.12 }),
+      kf(1.96 / 2.80, { armR: -1.24, armRz: 0.40, armL: -0.98, turn: -0.26, neck: 0.04, chest: -0.08, shake: 0.40 }),
+      kf(2.34 / 2.80, { armR: -1.10, armRz: 0.20, armL: -0.96, turn: -0.10, neck: 0.06, chest: -0.02, shake: 0.40 }),
+      kf(2.55 / 2.80, { armR: -1.00, armRz: 0.02, armL: -1.00, neck: 0.26, chest: 0.16 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
     ],
   },
   {
-    // THE QUICK DOUBLE-CHECK. Shortest react in the file: two shoulder checks
-    // and straight back to the shelf. This is what a man who is not going to do
-    // anything about it does, and it is deliberately almost nothing to look at
-    // — a player who announces and watches for a big reaction gets this and
-    // learns that the absence of one means nothing either.
-    id: 'whoMeGlance', tell: 'react', dur: 1.55, item: SMALL,
+    // THE SHORT ONE. Round 7 made this "deliberately almost nothing to look at"
+    // and that stays true — it is 0.85 s shorter than the affront and the shake
+    // is a third smaller — but it runs the same four beats, because a clip that
+    // SKIPPED the realisation would be a clip a player could learn to read as
+    // "that one is not the shake, so it is not going anywhere".
+    id: 'whoMeGlance', tell: 'react', dur: 1.95, item: SMALL,
     keys: [
-      kf(0.00, { vis: 0, armR: -1.05, armRz: -0.22, neck: 0.24 }),
-      kf(0.20, { vis: 0, armR: -1.00, armRz: -0.18, neck: 0.02, look: -0.72 }),
-      kf(0.44, { vis: 0, armR: -0.98, armRz: -0.16, neck: -0.04, look: 0.68, turn: -0.16 }),
-      kf(0.66, { vis: 0, armR: -1.02, armRz: -0.20, neck: 0.14, look: 0.10 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, turn: 0.0 }),
+      ...heard(1.95),
+      kf(0.70 / 1.95, { armR: -0.94, armL: -0.94, neck: -0.46, look: 0.18, turn: -0.12 }),
+      kf(0.95 / 1.95, { armR: -0.96, armL: -0.94, neck: -0.34, look: 0.0, chest: -0.06 }),
+      kf(1.10 / 1.95, { armR: -0.98, armL: -0.95, neck: 0.0, chest: -0.05, shake: 0.24 }),
+      kf(1.40 / 1.95, { armR: -1.00, armL: -0.96, neck: 0.08, chest: -0.03, shake: 0.24 }),
+      kf(1.58 / 1.95, { armR: -0.98, armL: -0.96, neck: 0.22, chest: 0.12 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, look: 0.0, turn: 0.0 }),
+    ],
+  },
+  {
+    // "OH SHIT."
+    //
+    // The startle, and the shortest clip in the file by two thirds of a second.
+    // Beats 1 and 2 are heard() and are therefore the same picture the three
+    // clips above draw. Then, at 0.62 s, BOTH HANDS COME OFF THE CART BAR —
+    // which is the actual tell, and it is a tell about his hands rather than
+    // about his face, so it survives being 214 px wide. He picks his way out at
+    // 0.76 and by 1.00 he is in the crouch a sprint starts from; agents.js
+    // flips him to `bolt` on the frame this ends.
+    //
+    // tell: 'startle' and NOT 'react', deliberately. pickGesture rolls a pool by
+    // modulo, so a fourth entry with tell:'react' would hand a shrugging
+    // innocent the run-up clip one time in four. Round 7 kept these three out of
+    // the DECOY pool for exactly this reason; this is the same rule one level
+    // down. It is only ever started by id, by paBolt().
+    id: 'whoMeRun', tell: 'startle', dur: 0.98, item: SMALL,
+    keys: [
+      ...heard(0.98),
+      kf(0.62 / 0.98, { armR: -0.66, armRz: 0.20, armL: -0.64, armLz: -0.20, neck: -0.22, look: 0.30, chest: -0.16 }),
+      kf(0.76 / 0.98, { armR: -0.40, armRz: 0.04, armL: -0.38, armLz: -0.04, neck: 0.02, look: 0.0, chest: 0.10, turn: -0.30 }),
+      kf(1.00, { armR: -0.16, armRz: -0.10, armL: -0.14, armLz: 0.10, neck: -0.04, chest: 0.24, turn: -0.18 }),
     ],
   },
 ];
@@ -369,7 +517,7 @@ export function pickGesture(rng, kind) {
 const lerp = (a, b, t) => a + (b - a) * t;
 const _out = {
   off: [0, 0, 0], vis: 0, armR: 0, armRz: 0, armL: 0, armLz: 0,
-  chest: 0, neck: 0, look: 0, turn: 0, item: [1, 1, 1], id: '', tell: '',
+  chest: 0, neck: 0, look: 0, turn: 0, shake: 0, item: [1, 1, 1], id: '', tell: '',
 };
 
 // Sample a clip. Returns a SHARED object — read it, do not keep it.
@@ -398,7 +546,7 @@ export function applyGesture(g, u) {
   _out.armR = mix('armR'); _out.armRz = mix('armRz');
   _out.armL = mix('armL'); _out.armLz = mix('armLz');
   _out.chest = mix('chest'); _out.neck = mix('neck');
-  _out.look = mix('look'); _out.turn = mix('turn');
+  _out.look = mix('look'); _out.turn = mix('turn'); _out.shake = mix('shake');
   _out.item = g.item || POSE.item;
   _out.id = g.id; _out.tell = g.tell;
   return _out;

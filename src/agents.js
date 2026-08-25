@@ -25,13 +25,27 @@
 //     already had, now driven from here instead of by poking s.state). It ends
 //     in abortTheft()/dumpGoods(), i.e. round 6's own two functions, so a
 //     deterred thief is worth ZERO on exactly the path a ditched one is.
-//   api.onAnnounce(shopper, kind, outcome)  — outcome 'heed' | 'shrug' | 'hold'.
+//   api.onAnnounce(shopper, kind, outcome)  — outcome 'heed' | 'shrug' | 'hold'
+//     ...and, ROUND 8, 'bolt'.
 //     Fires 0.35-0.95 s after the call, at the instant the clip starts, so a
 //     ticker line cannot get ahead of the picture. It is what he VISIBLY did
 //     and never whether he was guilty: 63.3% of guilty subjects put it back and
 //     so do 32.5% of innocent ones. A subject who heeds ALSO fires the existing
 //     onAbort(s, 'announce'), so a game.js that already scores balks scores
 //     this correctly with no change at all.
+// ROUND 8 adds the FOURTH OUTCOME AND NO NEW CALLBACK: 'bolt'. He heard it, he
+//     worked out what it meant, and he ran. It arrives on onAnnounce like the
+//     others, at the instant the run-up clip starts, and it is followed about a
+//     second later by the EXISTING api.onBolt(s) when he actually goes — so a
+//     game.js that has never heard of 'bolt' still gets a complete, correct
+//     chase out of it and only mislabels one ticker line.
+//     *** ACTION FOR game.js: `outcome === 'heed' ? PA_CHIP_HEED : PA_CHIP_SHRUG`
+//     now prints "HE LOOKED AROUND" over a man sprinting for the doors. It
+//     needs a third arm. The behaviour is right either way; the copy is not. ***
+//     Innocents CANNOT reach this outcome (boltChance gates on s.guilty and
+//     measures 0.0% on the clean population at n=120), which makes a bolt a
+//     confession — priced by the fact that you are 40 m away when you buy it.
+//     See the ROUND 8 block below for what it costs and what it pays.
 // All movement constants come from TUNING in ./config.js.
 //
 // Also (additive, all optional — nothing breaks if the other side is absent):
@@ -67,6 +81,186 @@
 // is a collection, and my own bench had been printing `catchUnder1s: 120/200`
 // on the object I was quoting from. Read the whole instrument before you write
 // the report. Nothing below is a mean without its shape attached.
+//
+// ===========================================================================
+// ROUND 8 — THE REACTION IS A PERFORMANCE, AND ONE OF THEM RUNS
+// ===========================================================================
+// The client has played round 7 and the compliance maths survived contact. What
+// did not is the PERFORMANCE. Verbatim:
+//
+//   "You gotta make it so that the people respond when the officer comes over
+//    the PA. If he's viewing a camera and he says 'hey, excuse me, return that
+//    item,' there's some interaction. They look around, they're not sure where
+//    the sound is coming from, and then they realize that maybe they're being
+//    watched. They're shaking their head and they're just pissed off — unless
+//    they're a real thief, and then the thief is like 'oh shit', and gets
+//    scared and starts running."
+//
+// That is two jobs. One is animation and one is a new outcome, and the second
+// one is a load-bearing change to a mechanic this file spent a round proving
+// was not a guilt oracle. Both are below, and the anti-oracle argument is
+// re-made from scratch rather than assumed to have survived.
+//
+// ---- JOB 1: FOUR BEATS, NOT A GLANCE -------------------------------------
+// Round 7's `lookAround` was a head-up and a shoulder check. The client is
+// describing a sequence, and every react clip in decoy.js now runs all of it:
+//
+//   1  HEARD IT         head off the shelf, one check over the shoulder
+//   2  CAN'T PLACE IT   a sweep of the aisle for whoever said that
+//   3  FINDS IT         he looks UP, at the speaker or at the dome, AND STOPS.
+//                       A third of a second of stillness. This is "they realize
+//                       that maybe they're being watched" and it is the beat
+//                       that makes the rest of it read.
+//   4  NOT HAVING IT    the head shake, a shoulder hitch, and back to the
+//                       shelf in a huff.
+//
+// The head shake is a 2.1 Hz oscillation and it is NOT keyframed: the neck yaw
+// in animateShopper runs through a 110 ms first-order lag which halves anything
+// at that rate, so authored as keys it came out as a vague waggle. The clip
+// carries an AMPLITUDE (POSE.shake) and animateShopper carries the oscillation,
+// added after the lerp instead of through it. One sin per reacting body.
+//
+// The annoyance also OUTLIVES THE CLIP, because "pissed off" is a state and not
+// a gesture. `annHuff` already cut his remaining shop; round 8 makes it visible
+// on three channels for annHuffT = 7 s — chin up, eleven hundredths of the
+// stoop taken back out of him, and K.annHuffPace on his walk. In a store whose
+// entire posture language is people folded over a cart, a man walking with his
+// back straight reads at 214 px without needing a face. GUILTY SHRUGGERS GET
+// THE IDENTICAL TREATMENT, or the huff would be the tell the shrug is not.
+//
+// ---- JOB 2: HE RUNS, AND WHAT THAT COSTS ---------------------------------
+// `onAnnounce` now has a fourth outcome, 'bolt'. It is not an animation: it
+// ends in the same `bolt` state with the same api.onBolt() the proximity bolt
+// produces, so the chase downstream of it is round 5's, unchanged.
+//
+// A thief who runs when you shout at him IS a confession, and two rounds of
+// this file exist to stop the PA being a scanner. Three things pay for it.
+//
+// ONE: THE GATE IS GEOMETRY. boltChance() returns zero unless
+// beatsCopToDoor(s) — round 6's own race, already load-bearing for heldOff().
+// He does not run at a door you are standing in front of. Measured, hot subject,
+// n=120 per cell, cop placed by hand:
+//
+//     cop at the mouth of his aisle (the dispatch position)   0.0% bolt
+//     cop standing on the only door                            0.0% bolt
+//     cop 8 m behind him, deeper in the store                 22.5% bolt
+//     cop at the service desk, 40 m away                      29.2% bolt
+//
+// So the announcement is worth information exactly when you are too far away to
+// use it, and worth none at all once you have done the hard part. It also kills
+// the obvious exploit — walk to 10 m, shout, read the answer for free — because
+// at 10 m in front of him the answer is always no, and at 10 m behind him he
+// was going to bolt at boltNear anyway.
+//
+// TWO: IT IS CARVED OUT OF THE SHRUG, NOT OUT OF THE PUT-BACK. reactToPA takes
+// ONE rnd() and splits the interval: [0,p) heed, [p,p+q) bolt, the rest shrug.
+// `heed` is still exactly `roll < p`, so THE ENTIRE ROUND-7 TABLE IS RECOVERABLE
+// BY SETTING TWO CONSTANTS TO ZERO, and it is, character for character:
+//
+//                        heed    shrug    bolt        heed with annBolt = 0
+//   guilty, pre-conceal  64.2%   25.8%   10.0%              63.3%   (r7: 63.3)
+//   guilty, has it       35.8%   35.0%   29.2%              35.0%   (r7: 35.0)
+//   innocent             32.5%   67.5%    0.0%              32.5%   (r7: 32.5)
+//   bystander in earshot 25.8%   58.3%    1.7%              25.8%   (r7: 25.8)
+//   guilty, three shouts 73.3%   15.0%   11.7%              78.3%   (r7: 78.3)
+//   innocent, x3         47.5%   52.5%    0.0%              48.3%   (r7: 48.3)
+//   LR on a put-back      1.98                               1.95   (r7: 1.95)
+//
+// LIKELIHOOD RATIO ON A PUT-BACK IS 1.98 AGAINST ROUND 7'S 1.95. One call still
+// moves a 50/50 suspicion to 66%. The put-back is worth exactly what it was
+// worth, because the bolt was taken from the men who were going to blank you.
+// The right-hand column is the ablation and it is the proof: two constants at
+// zero and this build IS round 7's build, to the decimal, on every row.
+//
+// INNOCENTS READ 0.0% AND CANNOT DO OTHERWISE. `s.guilty` is the first line of
+// boltChance and there is no other way into paBolt.
+//
+// THREE: THE FIRST HALF-SECOND IS ONE FUNCTION. decoy.js's heard() draws the
+// opening of ALL FIVE PA answers — the three shrugs, the startle, and
+// `putbackPA` — as the same three keyframes at the same ABSOLUTE times, so the
+// pose is identical frame for frame out to t = 0.50 s no matter which one is
+// playing. The earliest divergence is 0.62 s, when one of them takes both hands
+// off the cart bar; the item does not appear on a put-back until 1.42 s. Add
+// the 0.35-0.95 s PA latency and the player has keyed the handset and watched
+// between 0.85 and 1.45 seconds of footage that cannot tell him anything.
+// `putbackPA` exists ONLY for that: round 6's putback clip opens with his hand
+// already inside his coat, which would have made his answer readable from the
+// first frame — and the innocent-heed branch names the same clip, or the
+// innocent would be the only man in the building answering a PA with his hand
+// in his coat.
+//
+// ---- SO DOES TALKING PAY NOW? IT STILL PAYS NOTHING ----------------------
+// benchIncome(6, { minutes: 4 }), one exit, ramped difficulty, and a new row:
+// `paChase` is the PA-spam bot with the one obvious upgrade — when something he
+// shouted at RUNS, he goes after it, on foot, from the desk. No dispatch,
+// because a dispatch is a teleport and the whole premise of the bolt is that
+// the man who keyed the handset has to cover it himself.
+//
+//   desk    383.3 pts   4.33 thefts   3.83 caught   0.50 lost   0.00 balked
+//   naive   100.0 pts   4.67 thefts   1.00 caught   3.67 lost   0.00 balked
+//   camper    0.0 pts   4.00 thefts   0.00 caught   0.00 lost   4.67 balked
+//   pa        0.0 pts   1.67 thefts   0.00 caught   1.67 LOST   1.08 balked
+//   paChase   0.0 pts   1.67 thefts   0.00 caught   1.67 LOST   1.08 balked
+//                       ...13.75 calls per shift and 0.00 BOLTS (n=12)
+//
+// THE PA PLAYER STILL EARNS ZERO, AND THE INTERESTING PART IS WHY THE BOLT
+// NEVER REACHES HIM. He announces at whoever is doing something with their
+// hands, because that is all a player can see and this bot does not get to
+// cheat — so he is talking to innocents and to thieves who have not committed
+// yet, and the cold bolt rate is 10%. Over 13.75 calls a shift that rounds to
+// zero runners. THE FLUSH IS NOT AVAILABLE TO A MAN WHO IS GUESSING. It is
+// available to a man who watched somebody conceal and then said something,
+// which is a different player with a different problem, and his exchange rate
+// is below. `paChase` is byte-identical to `pa` because it never had anything
+// to chase.
+// Complaints on the announcement itself: ZERO, every population, every shift —
+// nothing on this path can reach onHarass and that is still true by
+// construction.
+//
+// THE PRICE, STATED AS AN EXCHANGE RATE. Same subject, same moment — you have
+// watched him conceal and you are at the desk:
+//
+//   DISPATCH and chase him          77.0 points expected   (bench cut, off0)
+//   ANNOUNCE and chase what runs     8.4 points expected
+//
+// 8.4 is 29.2% bolt x 28.6% caught, both off the `hot` cell, with the cop
+// dropping the handset and running from the service desk with a full tank
+// (median 10.6 s, against a dispatched chase's 6.22 s). Announcing at a man you
+// have already made is a NINE TIMES WORSE way to resolve him. That is the
+// feature working: the PA is not for the case you have made, it is for the one
+// you have not, and its price is that acting on what it tells you means running
+// the length of the store.
+//
+// ---- NO REGRESSION -------------------------------------------------------
+// n=100 each, this build:
+//   cut off0        77.0%   median chase 6.22 s   catches inside 1 s 11.7%
+//   cut off1        69.0%
+//   camp off0       27.0%   70 of 100 trials end with the item back on a shelf
+//   always-sprint   53.0%   so rationing is +24.0, unchanged
+//   lungCheck()     passes, 2.043 m/s gassed-and-holding vs a 2.35 m/s walk
+// Every one of those is the round-7 figure to the decimal.
+//
+// ---- ONE THING THAT COST AN HOUR AND IS WORTH THE PARAGRAPH ---------------
+// startGesture ROLLS a clip when given a kind and NAMES one when given an id. A
+// roll costs a draw off the shared seeded rnd(); a name costs nothing. Swapping
+// the put-back's rolled call site for a named one — a change that touched no
+// probability anywhere — walked the stream and moved measured innocent
+// compliance from 32.5% to 27.5% and the published likelihood ratio from 1.95
+// to 2.33. Nothing about the picture was wrong. See startPutback(), which takes
+// the roll either way and overrides only its result. If you add a clip to this
+// file, count the draws.
+//
+// ---- FOR THE LEAD: WHERE THE BUTTON IS -----------------------------------
+// This round's brief describes the announcement as a DESK action — "the player
+// is at the desk when he makes that call, 40+ metres from the floor" — and the
+// economics above are the economics of that. game.js as it stands routes the
+// deterrence line to the FLOOR ([F] at the reticle) and leaves the desk with
+// callHold(), the neutral price check. The behaviour here is correct under
+// both, because the gate is geometry rather than a mode check, but the two
+// worlds play very differently: from the desk the bolt fires at 29.2% and is a
+// long chase, and from the floor it fires only when the player is BEHIND his
+// subject rather than between him and the door (22.5% / 0.0% in the table
+// above). Worth a decision rather than a default.
 //
 // ===========================================================================
 // ROUND 7 — "HEY, PUT THAT BACK." AND A MAN WHO LOOKS THE PART
@@ -1154,6 +1348,63 @@ const K = {
   get annHuff()       { return t('annHuff', 0.55); },   // x remaining shopT
 
   // =========================================================================
+  // ROUND 8 — "OH SHIT." THE THIRD ANSWER, AND THE ONLY ONE WORTH POINTS.
+  //
+  // Client, verbatim: "unless they're a real thief, and then the thief is like
+  // 'oh shit', and gets scared and starts running."
+  //
+  // A thief who runs when you shout at him IS a confession, and this file has
+  // spent two rounds protecting the ambiguity. What pays for it is WHERE THE
+  // PLAYER IS STANDING WHEN HE FINDS OUT. The information does not arrive on
+  // its own; it arrives welded to a chase that has already started without you,
+  // and you bought it with the only announcement you had for six seconds.
+  //
+  // ---- THE GATE THAT MAKES IT A DECISION AND NOT A SCANNER ----------------
+  // `boltChance` returns ZERO unless beatsCopToDoor(s) — round 6's own race,
+  // already load-bearing for heldOff(). So:
+  //   from the desk, 40 m away          he can beat you, so he can run
+  //   from the mouth of his aisle       he can beat you, so he can run, and you
+  //                                     are 20 m behind a man with a head start
+  //   with you between him and the door he CANNOT, so he does not, and you get
+  //                                     round 6's man: comply, or wait you out
+  // That is the whole balance and it is geometry rather than a mode check. The
+  // announcement is worth information exactly when you are too far away to use
+  // it, and worth none at all when you have already done the hard part. It also
+  // closes the obvious exploit — walk to 10 m of a subject, shout, and read the
+  // answer for free — because at 10 m in front of him the answer is always the
+  // same one, and at 10 m BEHIND him he was going to bolt at boltNear anyway.
+  //
+  // ---- AND IT IS CARVED OUT OF THE SHRUG, NOT OUT OF THE PUT-BACK ---------
+  // reactToPA takes ONE rnd() and splits the interval: [0,p) heed, [p,p+q) bolt,
+  // the rest shrug. So the heed bit is `roll < p` in round 8 exactly as it was
+  // in round 7 — same seed, same draw, same answer — and every compliance rate
+  // in the round-7 table reproduces to the decimal, LIKELIHOOD RATIO INCLUDED.
+  // What round 8 changes is which men who were going to blank you run instead.
+  // A put-back is worth what it was worth: 1.95, a read and not a test.
+  get annBolt()       { return t('annBolt', 0.30); },   // P(run) once it is in his coat
+  // ...and before he has committed. Lower, and it is the smaller number for a
+  // reason that is not balance: he is holding a jar, he has not done anything
+  // yet, and legging it out of a shop with a jar is a decision. When it does
+  // fire he takes the jar with him — see paBolt().
+  get annBoltCold()   { return t('annBoltCold', 0.13); },
+  // Nerve, INVERTED against the compliance tilt. nerveLo 0.55 is the man who
+  // will chance your shoulder, and running past a uniform is the purest form of
+  // chancing your shoulder, so bold men run and nervous men put it back. If
+  // both rolls tilted the same way the same subject would be the most likely to
+  // comply AND the most likely to bolt, which is not a person.
+  get annBoltNerve()  { return t('annBoltNerve', 0.35); },
+  // The head shake, in Hz. See POSE.shake in decoy.js: the clip owns the
+  // amplitude, animateShopper owns the oscillation, because a 110 ms lerp on the
+  // neck eats half of a 2 Hz signal authored as keyframes.
+  get annShakeHz()    { return t('annShakeHz', 2.10); },
+  // How long the annoyance outlives the clip. annHuff already cuts his shop;
+  // this is the same fact in the BODY, which is what the client asked for —
+  // chin up, back straighter than this store usually gets, and moving off at a
+  // clip. Guilty shruggers get it too, or it would be a tell.
+  get annHuffT()      { return t('annHuffT', 7.0); },
+  get annHuffPace()   { return t('annHuffPace', 1.18); }, // x walk while huffing
+
+  // =========================================================================
   // ROUND 6 — THE DIFFICULTY RAMP. Six numbers, one dial.
   //
   // Client: "especially in the beginning of the game when we want it to be
@@ -1894,12 +2145,20 @@ export function createAgents(THREE, scene, world) {
   // reproduces round 4/5 exactly and every ablation in this round's report was
   // taken by flipping it.
   //
-  // NOTE FOR THE LEAD: config's EXIT2 and CAMERAS[8] ('DOOR 2') both still
-  // exist and are correct — a camera on the entrance is a camera on a real
-  // door. What is now wrong is only the SIGNAGE: store.js paints a lit EXIT box
-  // over a door nobody may leave by. That is a store.js change (ENTRANCE / NO
-  // EXIT / IN), not mine, and it is the one thing about this that would read as
-  // a bug to a player.
+  // ROUND 8 — CONFIG NOW MAPS ONE CHANNEL PER AISLE. CAM 01..08 are AISLE 1..8
+  // and CAM 09 is DOOR 1, the only way out. The round-6 note that used to sit
+  // here said CAMERAS[8] was 'DOOR 2' and that is no longer true of anything:
+  // there is no camera on the entrance any more, which is correct, because a
+  // camera whose whole job is to watch a door nobody may leave by is a channel
+  // spent on nothing. Nothing in THIS file reads a camera id or a label — the
+  // aisle a subject is in comes from aisleOf(x) off config's own aisleX(), so
+  // the renumbering is a no-op here and is recorded only so the next person
+  // does not go looking for the two-aisles-per-channel assumption.
+  //
+  // STILL OPEN, and still not mine: config's EXIT2 remains the way IN, and
+  // store.js paints a lit EXIT box over it. That is the one thing about the
+  // one-exit store that would read as a bug to a player (ENTRANCE / NO EXIT /
+  // IN).
   let doorLimit = 1;
   function buildExits() {
     const probe = nav.field(EXIT.x, EXIT.z);
@@ -2089,6 +2348,11 @@ export function createAgents(THREE, scene, world) {
       // what he visibly did last time and `annSpill` says he was in earshot
       // rather than the man being addressed.
       annT: 0, annKind: null, annOut: null, annN: 0, annSpill: false, annClip: null,
+      // ROUND 8 — `huff` is seconds of visible annoyance left after a shrug
+      // (guilty or innocent, same number), `paBolt` marks the startle so the
+      // `react` state freezes for it instead of backing away from a cop who is
+      // forty metres away.
+      huff: 0, paBolt: false,
     };
     shoppers.push(s);
     return s;
@@ -2204,7 +2468,7 @@ export function createAgents(THREE, scene, world) {
     s.gestIn = rr(1.5, K.decoyHi);
     s.chill = 0; s.balk = 0; s.stall = 0; s.aborts = 0; s.leaving = false; s.made = 0;
     s.annT = 0; s.annKind = null; s.annOut = null; s.annN = 0; s.annSpill = false;
-    s.annClip = null;
+    s.annClip = null; s.huff = 0; s.paBolt = false;
     s.shopT = rr(K.shopLo, K.shopHi);
     s.held.scale.set(1, 1, 1);
   }
@@ -2776,12 +3040,45 @@ export function createAgents(THREE, scene, world) {
     s.gestT = s.gestD;
     return g;
   }
+  // ---- ROUND 8: THE PUT-BACK, AND A NOTE ABOUT THE RANDOM STREAM ----------
+  // There are two put-back clips now — round 6's, which opens with his hand
+  // already inside his coat, and `putbackPA`, which opens on the same
+  // half-second every other answer to an announcement opens on. Which one plays
+  // is decided by WHY, not by a roll.
+  //
+  // And that is where this function comes from, rather than from tidiness.
+  // startGesture ROLLS a clip when it is given a kind and NAMES one when it is
+  // given an id, and a roll costs a draw off the shared seeded rnd() while a
+  // name costs nothing. Swapping a rolled call site for a named one therefore
+  // shifts every subsequent decision in the building — I did exactly that, and
+  // it moved measured innocent compliance from 32.5% to 27.5% and the published
+  // likelihood ratio from 1.95 to 2.33, in a change that touched no
+  // probability anywhere. Nothing about the picture was wrong; the stream had
+  // simply walked.
+  //
+  // So the roll is taken either way and only its RESULT is overridden. The
+  // stream is byte-identical to round 7 and the ablation in this file's header
+  // proves it to the decimal.
+  function startPutback(s, viaPA) {
+    const rolled = pickGesture(rnd, 'putback');
+    return startGesture(s, 'putback', viaPA ? 'putbackPA' : rolled.id);
+  }
+
   // Clock only. The POSE is applied in animateShopper, so a body nobody is
   // looking at costs one subtraction per frame and not a keyframe sample.
   function tickGesture(s, dt) {
     if (!s.gest) return false;
     s.gestT -= dt;
     if (s.gestT > 0) return true;
+    clearGesture(s);
+    return false;
+  }
+  // Round 8 — factored out of tickGesture, because the startle is the first
+  // clip in the file that is ENDED BY A STATE CHANGE rather than by its own
+  // clock: paBolt flips him to `bolt` on the frame the run-up finishes and the
+  // arms have to go back to the runner at the same instant. Everything here was
+  // already in tickGesture and none of it moved.
+  function clearGesture(s) {
     s.gest = null; s.gestT = 0; s.turnY = 0;
     s.held.visible = false;
     s.held.scale.set(1, 1, 1);
@@ -2790,7 +3087,6 @@ export function createAgents(THREE, scene, world) {
     // NOT pruned by Box3.setFromObject, which is the bug in CLAUDE.md that made
     // every shopper in this store 2.38 m tall. Do not leave props in the air.
     s.held.position.set(0.18, 1.02, 0.14);
-    return false;
   }
 
   // ---- is the guard posted on the only way out? ----------------------------
@@ -2872,7 +3168,7 @@ export function createAgents(THREE, scene, world) {
     s.stole = false;
     s.state = 'putback'; s.timer = 0; s.path = []; s.target = null;
     s.concealT = Math.max(s.concealT, s.chill + rr(1.5, 5.0));
-    startGesture(s, 'putback');
+    startPutback(s, why === 'announce');                                   // see dumpGoods
     if (quit || s.aborts >= 2) { s.guilty = false; s.leaving = true; s.shopT = 0; }
     api && api.onAbort && api.onAbort(s, why || 'balk');
   }
@@ -2885,7 +3181,13 @@ export function createAgents(THREE, scene, world) {
     s.stall = 0; s.aborts++;
     s.stole = false; s.guilty = false; s.leaving = true; s.shopT = 0;
     s.state = 'putback'; s.timer = 0; s.path = []; s.target = null; s.aim = null;
-    startGesture(s, 'putback');
+    // ROUND 8 — WHICH PUT-BACK. A man who ditched it because a uniform has been
+    // stood on the door for eleven seconds plays round 6's clip, hand already
+    // in his coat. A man answering a PA plays `putbackPA`, which opens on the
+    // same half-second every other answer to a PA opens on. See decoy.js: the
+    // difference is not decoration, it is that the round-6 clip would have made
+    // his answer readable from the first frame.
+    startPutback(s, why === 'announce');
     api && api.onAbort && api.onAbort(s, why || 'dump');
   }
 
@@ -2927,9 +3229,67 @@ export function createAgents(THREE, scene, world) {
     if (s.state === 'walk' || s.state === 'browse') {
       if (s.state === 'walk') { s.target = null; s.path = []; }
       s.state = 'browse';
-      s.timer = Math.max(s.timer, s.gestD + rr(0.25, 0.90));
+      // ROUND 8 — and then he goes. Round 7 parked him at the shelf for up to
+      // another 0.9 s after the clip; the client's sentence ends "back to
+      // shopping in a huff", and a man in a huff does not stand where he was
+      // standing. The browse timer running out drops him into `walk`, which is
+      // where K.annHuffPace picks him up.
+      s.timer = Math.max(s.timer, s.gestD + rr(0.10, 0.45));
     }
     return true;
+  }
+
+  // ---- ROUND 8: WILL HE RUN, AND IS RUNNING WORTH ANYTHING TO HIM ---------
+  // Returns the ABSOLUTE probability of the bolt outcome, which reactToPA
+  // carves out of the shrug interval of the single roll it already took. Zero
+  // for innocents by the first line and by construction: `s.guilty` is the only
+  // gate on this whole function, so there is no tuning pass that can make an
+  // honest shopper run.
+  //
+  // The second gate is the one that stops this being a scanner, and it is round
+  // 6's own race rather than anything new: a man who cannot beat you to the
+  // only door does not run at it. Announce from the desk and every guilty
+  // subject in the building can beat you, so the answer means something and you
+  // are 40 m from being able to use it. Announce with yourself between him and
+  // the way out and the answer is always 'no', which is correct — you already
+  // did the hard part, and round 6 spent a whole round establishing that a man
+  // in that position waits you out or ditches it.
+  function boltChance(s, fade, spill) {
+    if (!s.guilty || s.bolted || s.state === 'shove' || s.state === 'react') return 0;
+    if (!beatsCopToDoor(s)) return 0;
+    const base = s.stole ? K.annBolt : K.annBoltCold;
+    // INVERTED against the compliance tilt — see K.annBoltNerve.
+    const tilt = 1 + K.annBoltNerve * (1 - clamp(s.nerve || 1, 0.4, 1.8));
+    return clamp(base * tilt * fade * spill, 0, 1);
+  }
+
+  // "OH SHIT." He heard it, he worked out what it meant, and he went.
+  //
+  // This is not an animation — it ends in `bolt` with s.bolted set and
+  // api.onBolt fired, i.e. the identical state the proximity bolt produces, so
+  // everything downstream (escapeField, squeezePast, the door shove, the grab,
+  // the score) is round 5's chase with nothing bolted onto it. What is new is
+  // only where the chase STARTS, which is wherever the player was standing when
+  // he keyed the handset.
+  function paBolt(s) {
+    // HE TAKES IT WITH HIM. A subject who has not concealed yet is holding the
+    // thing in his hand when the voice lands, and the version of this where he
+    // sets it down neatly and THEN sprints is not a thing anybody does. It also
+    // keeps the bookkeeping honest at both ends: escape() bills a merchandise
+    // loss for any guilty body that reaches the door, so a runner who was never
+    // `stole` would be a loss with nothing behind it — and a catch on him has to
+    // be a real arrest with a real item, or the PA would be minting free points.
+    s.stole = true;
+    s.chill = 0; s.balk = 0; s.stall = 0; s.concealT = 0;
+    s.path = []; s.target = null; s.aim = null; s.aimT = 0;
+    // The run-up. Its first half-second is heard(), the same three keyframes the
+    // annoyed innocent and the guilty shrug open on — see decoy.js. `paBolt`
+    // tells the `react` case to FREEZE for it instead of backing away from a cop
+    // who, in the case this fires in, is nowhere near him.
+    startGesture(s, 'react', 'whoMeRun');
+    s.paBolt = true;
+    s.state = 'react';
+    s.timer = s.gest ? s.gestD : K.thiefReactD;
   }
 
   // The reaction, one latency later. Everything is rolled HERE rather than at
@@ -2967,9 +3327,28 @@ export function createAgents(THREE, scene, world) {
     const fade = Math.pow(K.annFade, Math.max(0, (s.annN || 1) - 1));
     const spill = s.annSpill ? K.annSpillMul : 1;
     const p = clamp(base * tilt * fade * spill, 0, 0.95);
-    const heed = rnd() < p;
+    // ---- ROUND 8: ONE ROLL, THREE OUTCOMES, AND THE HEED BIT DOES NOT MOVE --
+    // The bolt is carved out of the SHRUG interval of the roll round 7 already
+    // took, rather than rolled separately. Two things fall out of that and both
+    // of them matter:
+    //   - `heed` is still exactly `roll < p`. Same seed, same draw, same bit.
+    //     Every compliance rate in the round-7 table reproduces to the decimal
+    //     and so does the 1.95 likelihood ratio on a put-back. A put-back is
+    //     worth what it was worth.
+    //   - it costs no extra rnd(), so nothing downstream of an announcement
+    //     shifts in the stream either.
+    // What changes is which of the men who were going to blank you run instead.
+    const roll = rnd();
+    const heed = roll < p;
+    const q = Math.min(boltChance(s, fade, spill), 1 - p);
 
-    if (heed && s.guilty && s.stole) {
+    if (!heed && roll < p + q) {
+      // He ran. onAnnounce still fires below with outcome 'bolt', at the instant
+      // the run-up clip starts — the contract has always been "what he VISIBLY
+      // did", and api.onBolt follows about a second later when he actually goes.
+      paBolt(s);
+      s.annOut = 'bolt';
+    } else if (heed && s.guilty && s.stole) {
       // He has it in his coat already. Same ending as waiting him out at the
       // door: it goes back on a shelf and he walks out clean. Zero points.
       dumpGoods(s, api, 'announce');
@@ -2985,7 +3364,13 @@ export function createAgents(THREE, scene, world) {
       // `putback` clip, so the picture is identical and "he put it back" is
       // evidence rather than proof. He is not guilty of anything and nothing is
       // scored.
-      startGesture(s, 'putback');
+      //
+      // ROUND 8 — AND IT HAS TO BE THE SAME NAME ON BOTH SIDES. abortTheft and
+      // dumpGoods now switch to `putbackPA` when the trigger was the PA, so if
+      // this line still said plain 'putback' the innocent would be the only man
+      // in the store answering an announcement with his hand already inside his
+      // coat, and the whole overlap would be readable off one frame.
+      startPutback(s, true);
       if (s.state === 'walk') { s.target = null; s.path = []; }
       s.state = 'browse';
       s.timer = Math.max(s.timer, s.gestD + rr(0.3, 1.1));
@@ -2993,6 +3378,12 @@ export function createAgents(THREE, scene, world) {
     } else {
       lookAround(s);
       s.annOut = 'shrug';
+      // AND HE IS ANNOYED ABOUT IT, VISIBLY, FOR LONGER THAN THE CLIP.
+      // GUILTY MEN GET THIS TOO. It is the same head shake, the same posture
+      // and the same brisk walk away from the shelf whether he has a chicken in
+      // his coat or a shopping list in his hand, which is the only way "he
+      // looked annoyed" stays worth nothing. See animateShopper and K.annHuffT.
+      s.huff = K.annHuffT;
     }
 
     // WHAT IT COSTS TO SHOUT AT A CUSTOMER, and it is not a complaint: the
@@ -3068,6 +3459,9 @@ export function createAgents(THREE, scene, world) {
       s.annT -= dt;
       if (s.annT <= 0) { s.annT = 0; reactToPA(s, api); }
     }
+    // ROUND 8 — and how long he stays annoyed about it. One subtract per body
+    // and only for the handful who have been shouted at in the last few seconds.
+    if (s.huff > 0) s.huff = Math.max(0, s.huff - dt);
 
     // ---- ROUND 6: clips run first, so a state can ask "am I still doing it".
     const clipOn = tickGesture(s, dt);
@@ -3307,10 +3701,25 @@ export function createAgents(THREE, scene, world) {
       }
       case 'react': {
         s.timer -= dt; target = 0.5;
-        dir = { x: (s.position.x - cop.position.x), z: (s.position.z - cop.position.z) };
-        const m = Math.hypot(dir.x, dir.z) || 1; dir.x /= m; dir.z /= m;
-        s.look = 1.0;
+        // ROUND 8 — THE PA STARTLE IS A FREEZE, NOT A RETREAT. The proximity
+        // bolt backs away from the cop while it winds up, which is right,
+        // because there is a man walking at him. Nobody is walking at this one:
+        // a voice came out of the ceiling and he is working out what it meant.
+        // So he stops dead for the length of the run-up clip and then goes,
+        // which is also what stops the announcement quietly handing him a metre
+        // of free ground for being shouted at.
+        if (s.paBolt) {
+          target = 0;
+        } else {
+          dir = { x: (s.position.x - cop.position.x), z: (s.position.z - cop.position.z) };
+          const m = Math.hypot(dir.x, dir.z) || 1; dir.x /= m; dir.z /= m;
+          s.look = 1.0;
+        }
         if (s.timer <= 0) {
+          // The run-up ends ON this frame — s.timer was set to s.gestD — so the
+          // clip has to come off the upper body in the same frame the legs start
+          // running, or he sprints out of the aisle doing a shoulder check.
+          if (s.paBolt) { s.paBolt = false; clearGesture(s); }
           s.state = 'bolt'; s.bolted = true; s.path = []; s.repathIn = 0;
           if (s.hasCart) { s.hasCart = false; s.dropCartAt = { x: s.position.x, z: s.position.z, y: s.heading }; }
           api.onBolt && api.onBolt(s);
@@ -3361,6 +3770,13 @@ export function createAgents(THREE, scene, world) {
         break;
       }
     }
+
+    // ROUND 8 — A MAN IN A HUFF MOVES. The posture is in animateShopper; this is
+    // the half you can read at 214 px, because it changes where he IS and not
+    // just what he looks like: the subject you shouted at packs up and walks off
+    // at a clip. Never touches a runner — a bolt sets its own pace and a guilty
+    // shrugger who bolts later must not be quietly 18% faster for it.
+    if (s.huff > 0 && !s.bolted && target > 0.2) target *= K.annHuffPace;
 
     if (s.angry > 0 && s.state !== 'bolt' && s.state !== 'react') {
       target = 0;
@@ -3491,6 +3907,19 @@ export function createAgents(THREE, scene, world) {
       r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + p.chest, ed(10));
       r.neck.rotation.x = lerp(r.neck.rotation.x, p.neck, ed(9));
       r.neck.rotation.y = lerp(r.neck.rotation.y, p.look, ed(9));
+      // ROUND 8 — THE HEAD SHAKE, ADDED AFTER THE LERP AND NOT THROUGH IT.
+      // "They're shaking their head and they're just pissed off." A shake is a
+      // 2 Hz signal and the line above is a 110 ms first-order lag, which halves
+      // it: authored as keyframes it came out as a vague waggle. So the clip
+      // carries an AMPLITUDE (POSE.shake, zero in eleven of the fifteen clips
+      // and in every frame of the other four but the shake itself) and this
+      // carries the oscillation, unlagged, on top of the look. One sin, and only
+      // for a body that is mid-reaction.
+      if (p.shake) {
+        const wob = Math.sin((s.gestD - s.gestT) * K.annShakeHz * Math.PI * 2) * p.shake;
+        r.neck.rotation.y += wob;
+        r.chest.rotation.y += wob * 0.22;      // the shoulders go with it, a bit
+      }
       s.held.visible = !!p.vis;
       // THE PROP RIDES THE HAND. It is not authored as an absolute point any
       // more, it is SOLVED from the arm the clip is driving, plus a small
@@ -3571,8 +4000,14 @@ export function createAgents(THREE, scene, world) {
       r.chest.rotation.x = r.stoop + 0.05;
       r.neck.rotation.x = lerp(r.neck.rotation.x, 0.22, ed(6));   // looking at the shelf
     } else {
-      r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + (bolting ? 0.24 : 0.02), ed(8));
-      r.neck.rotation.x = lerp(r.neck.rotation.x, bolting ? -0.10 : 0, ed(6));
+      // ROUND 8 — HE IS WALKING IT OFF IN A HUFF, and it outlives the clip by
+      // K.annHuffT. Chin up and eleven hundredths of the stoop taken back out of
+      // him: this store's whole posture language is people folded over a cart,
+      // so a man walking with his back straight reads at a distance without
+      // needing a face. It is the same picture on a thief who blanked you.
+      const hf = s.huff > 0 ? 1 : 0;
+      r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + (bolting ? 0.24 : 0.02) - hf * 0.11, ed(8));
+      r.neck.rotation.x = lerp(r.neck.rotation.x, bolting ? -0.10 : hf * -0.14, ed(6));
     }
     r.chest.rotation.z = -sw * 0.020 * gait;
   }
@@ -4810,7 +5245,15 @@ export function createAgents(THREE, scene, world) {
         // camper's experiment with a microphone instead of a doorway, and it
         // has to come out the same way or the announcement is a free win
         // button.
-        if (policy === 'pa' && annCool <= 0) {
+        // ROUND 8 — `paChase` is the same bot with the one obvious upgrade: when
+        // something he shouted at RUNS, he goes after it, on foot, from
+        // wherever he is standing. No dispatch, because a dispatch is a
+        // teleport to the mouth of the aisle and the whole point of the bolt
+        // outcome is that the man who keyed the handset is 40 m away and has to
+        // cover it himself. This is the row that answers "does the PA-spam
+        // player still earn zero" honestly, because `pa` alone answers a
+        // strawman who watches his flushed thief walk out.
+        if ((policy === 'pa' || policy === 'paChase') && annCool <= 0) {
           const tgt = shoppers.find((s) => s.gest && !s.annT && !s.bolted
             && !s.caught && !s.escaped && s.mesh.visible
             && (s.gest.tell === 'steal' || s.gest.tell === 'decoy'));
@@ -4838,7 +5281,15 @@ export function createAgents(THREE, scene, world) {
           // finishes concealing, and he presses DISPATCH `deskLag` later —
           // which is a teleport to the mouth of that man's aisle, exactly what
           // game.js's postSpawn('aisle') does.
-          if (!job && policy !== 'pa') {
+          // ROUND 8 — paChase takes his job off the floor rather than off the
+          // wall: whoever is running, if anybody is. He never gets the teleport.
+          if (policy === 'paChase') {
+            if (!job || job.escaped || job.caught || !job.guilty || !job.bolted) {
+              job = shoppers.find((x) => x.guilty && x.bolted && !x.escaped && !x.caught) || null;
+              if (job) { st.path = []; st.repath = 0; st.made = true; st.madeT = 0; st.blind = false; }
+            }
+          }
+          if (!job && policy !== 'pa' && policy !== 'paChase') {
             const tell = shoppers.find((s) => s.guilty && s.stole && !s.escaped && !s.caught && s.mesh.visible);
             if (tell && dispatchIn <= 0) { dispatchIn = opts.deskLag ?? 4.0; }
             if (tell && dispatchIn > 0) {
@@ -4959,6 +5410,7 @@ export function createAgents(THREE, scene, world) {
     // `shouts` > 1 re-fires at the same body once he has answered the last one.
     function cell(kind, shouts) {
       let heed = 0, shrug = 0, deaf = 0, quit = 0, complaints = 0, spillHeeds = 0;
+      let bolt = 0, boltCaught = 0, chaseComplaints = 0; const boltT = [];
       for (let k = 0; k < n; k++) {
         setSeed((opts.seed ?? 90210) + k * 7919);
         reset();
@@ -4973,8 +5425,14 @@ export function createAgents(THREE, scene, world) {
         // `s.guilty && s.stole`, so setting them is faithful and it keeps the
         // cell from being a measurement of how long a concealment takes.
         if (kind === 'hot') { s.stole = true; s.state = 'drift'; s.concealT = 0; }
+        // `phase` keeps the round-7 guarantee measurable now that this cell has
+        // a second half. ANNOUNCING is what must never produce a complaint, and
+        // `complaints` counts only that; the pursuit the player chooses to start
+        // afterwards is a man running at people and of course it can offend one,
+        // which is billed separately and is not a property of the PA.
+        let phase = 'announce';
         const api = {
-          onHarass() { complaints++; },
+          onHarass() { if (phase === 'announce') complaints++; else chaseComplaints++; },
           onAbort() {}, onLeave() {}, onBolt() {}, onCatch() {}, onEscape() {},
           onAnnounce(sub, k2, out) {
             if (sub !== s) { if (out === 'heed') spillHeeds++; return; }
@@ -5002,26 +5460,69 @@ export function createAgents(THREE, scene, world) {
           // animation.
           for (let i = 0; i < 150 && !s.annOut; i++) tick(dt, { x: 0, z: 0 }, api);
           got = s.annOut;
-          if (got === 'heed') break;                 // nothing left to shout at
+          // Nothing left to shout at, either way: he has put it back, or he is
+          // already running and announceAt would answer 'running' anyway.
+          if (got === 'heed' || got === 'bolt') break;
           s.annOut = null;
         }
         if (got === 'heed') { heed++; if (!s.guilty && kind !== 'clean') quit++; }
         else if (got === 'shrug') shrug++;
-        else deaf++;
+        else if (got === 'bolt') {
+          bolt++;
+          // ROUND 8 — AND THEN WHAT. This is the economics of the whole outcome
+          // and it has to be measured with the cop ACTUALLY TRYING, or it is a
+          // tautology: a stationary man catches nobody, so counting his catches
+          // proves only that he was stationary.
+          //
+          // So the handset goes down and the same pursuit bot every other bench
+          // in this file uses takes over, from the service desk, with a full
+          // tank, against a man who has already turned and gone. No dispatch —
+          // a dispatch is a teleport to the mouth of his aisle and the entire
+          // premise of the bolt outcome is that the player is 40 m away and has
+          // to cover it himself. What comes back is the head start, priced.
+          const st = {
+            gotBoost: true, puTarget: null, puT: 0, detour: 7,
+            path: [], repath: 0, goal: { x: 0, z: 0 },
+            lag: 0.16, hist: [s.position.x, s.position.z], bot: 'cut',
+            blown: false, copF: null, copBuf: null, cfT: 0, planT: 0,
+            route: null, campI: 0, blind: false,
+            seen: { x: s.position.x, z: s.position.z }, seenT: 0, made: true, madeT: 0,
+          };
+          cop.userData.stamina = K.staminaMax; cop.userData.gassed = false;
+          phase = 'chase';
+          let t2 = 0;
+          for (let i = 0; i < 60 * 45 && !s.escaped && !s.caught; i++) {
+            tick(dt, botInput(s, 'none', st, dt), api);
+            t2 += dt;
+          }
+          if (s.caught) { boltCaught++; boltT.push(t2); }
+        } else deaf++;
       }
-      const tot = heed + shrug + deaf || 1;
+      const tot = heed + shrug + bolt + deaf || 1;
       return {
         kind, shouts: shouts || 1, n,
         heedPct: +(heed / tot * 100).toFixed(1),
         shrugPct: +(shrug / tot * 100).toFixed(1),
+        // ROUND 8. Innocents MUST read 0.0 here; it is gated on s.guilty inside
+        // boltChance and there is no other way in.
+        boltPct: +(bolt / tot * 100).toFixed(1),
+        // Of the men the PA flushed, how many a player who dropped the handset
+        // and ran from the service desk actually got, and how long it took him.
+        boltCaughtFromDesk: boltCaught,
+        boltCaughtPct: bolt ? +(boltCaught / bolt * 100).toFixed(1) : null,
+        boltChaseMedian: boltT.length ? _f2(_q(boltT.slice().sort((x, y) => x - y), 0.5)) : null,
         // A heeding thief must end up a customer with nothing in his coat, or
         // the deterrence is a delay and the announcement is a tempo tool worth
         // 100 points instead of zero. This counts the ones that actually ended.
         endedClean: quit,
         noAnswer: deaf,
         // MUST BE ZERO. The entire point of shouting from the desk is that it
-        // is the safe alternative to walking up to somebody.
+        // is the safe alternative to walking up to somebody. Round 8 keeps that
+        // invariant by SPLITTING the counter rather than by relaxing it: this
+        // is complaints from the announcement, `chaseComplaints` is complaints
+        // from the pursuit the player elected to start after one ran.
         complaints,
+        chaseComplaints,
         spillHeeds,
       };
     }
@@ -5044,6 +5545,14 @@ export function createAgents(THREE, scene, world) {
     out.likelihoodRatio = {
       // P(put it back | guilty) / P(put it back | innocent)
       putback: lr,
+      // ROUND 8 — and the one that IS a confession, published rather than
+      // buried: an innocent cannot reach this outcome, so the ratio is infinite
+      // and the honest thing to report is the RATE and what it costs. See
+      // boltFromDesk below and the `pa`/`paChase` rows in benchIncome.
+      boltIsProof: out.clean.boltPct === 0,
+      boltPctCold: out.cold.boltPct,
+      boltPctHot: out.hot.boltPct,
+      boltPctInnocent: out.clean.boltPct,
       // ...and the other way, for the man who blanks you
       shrug: lrShrug,
       // What one call moves a 50/50 suspicion to, both ways. This is the whole
@@ -5059,12 +5568,19 @@ export function createAgents(THREE, scene, world) {
     const r = benchAnnounce(n, opts);
     const row = (k) => `${k.padEnd(8)} heed ${String(r[k].heedPct).padStart(5)}%`
       + `  shrug ${String(r[k].shrugPct).padStart(5)}%`
+      + `  bolt ${String(r[k].boltPct).padStart(5)}%`
+      + `  caught ${String(r[k].boltCaughtFromDesk).padStart(3)}`
       + `  complaints ${r[k].complaints}`;
     return [row('cold'), row('hot'), row('clean'), row('spill'),
       row('coldx3'), row('cleanx3'),
       `LR(putback) ${r.likelihoodRatio.putback}  a 50/50 read goes to `
       + `${r.likelihoodRatio.from50_ifPutback}% on a put-back, `
-      + `${r.likelihoodRatio.from50_ifShrug}% on a shrug`].join('\n');
+      + `${r.likelihoodRatio.from50_ifShrug}% on a shrug`,
+      `bolt: cold ${r.cold.boltPct}%  hot ${r.hot.boltPct}%  innocent ${r.clean.boltPct}%`
+      + `  |  flushed from the desk and then chased: cold ${r.cold.boltCaughtPct}% caught`
+      + ` (median ${r.cold.boltChaseMedian}s), hot ${r.hot.boltCaughtPct}%`
+      + ` (median ${r.hot.boltChaseMedian}s)`,
+    ].join('\n');
   }
 
   // DOES CAMPING THE DOOR PAY? With one exit this cannot be answered with a
@@ -5084,6 +5600,10 @@ export function createAgents(THREE, scene, world) {
       // ROUND 7 — the man who never leaves the desk and just talks. He has to
       // come out where the camper does, or the announcement is a free win.
       pa: fmtS(benchShift({ ...o, policy: 'pa' })),
+      // ROUND 8 — ...and the same man once the announcement can flush a runner,
+      // chasing every one of them on foot from the desk. If THIS row pays, the
+      // PA is a scanner and the desk phase is dead.
+      paChase: fmtS(benchShift({ ...o, policy: 'paChase' })),
     };
   }
 

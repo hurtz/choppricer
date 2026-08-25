@@ -327,11 +327,20 @@ void main() {
 
 // ---------------------------------------------------------------------------
 // A monitor with nothing on the other end of the cable. Two flavours:
-//   mode 0  analogue snow — an old composite input with no sync. Full-rate
-//           white noise, a coarse blotch under it, and a sync bar crawling up.
+//   mode 0  SWITCHED OFF — a dead tube, so a dark grey mirror with the room's
+//           own gradient in it and a whisper of static dust. Nothing moves.
 //   mode 1  the manufacturer's blue NO SIGNAL card on a modern panel.
 // Same panel physics tail as ScreenShader so a dark monitor sits in the same
 // room as the live ones: backlight leak, white point, sheen, polariser lip.
+//
+// ROUND 6 REPLACED MODE 0's ANALOGUE SNOW. The snow was a full-rate animated
+// noise field on a 116x87 panel, running 100% of every shift and quantised to
+// 30 Hz so it flickered rather than crawled. Measured against the round-6
+// question — "what fraction of a shift is this element animating, and what does
+// it say?" — it scored 100% and nothing. A switched-off tube keeps every bit of
+// the character (the crooked bracket, the beige plastic, the TEST silkscreen,
+// the tape over the LED) and costs the eye one glance instead of all of them.
+// It is also what actually happens to a test set nobody has used since 2014.
 // ---------------------------------------------------------------------------
 export const DeadShader = {
   name: 'CCTVDead',
@@ -364,22 +373,16 @@ void main() {
   vec3 col;
 
   if (uMode < 0.5) {
-    // Snow. Two octaves so it has grain AND blotch — one octave of pure hash
-    // reads as a flat grey rectangle once it is 136px wide on the wall.
-    float n  = h21(fc * 1.31 + vec2(uSeed * 13.1, uSeed * 7.7));
-    float n2 = h21(floor(fc * 0.34) + vec2(uSeed * 3.3, 91.0));
-    float s = mix(n, n2, 0.30);
-    // A dead composite input on a twelve-year-old CRT in an unlit room is a
-    // DIM grey fizz, not a lightbox. Full-amplitude snow out-shone every live
-    // feed on the wall and pulled the eye straight to the one panel that has
-    // nothing to say.
-    col = vec3(s * 0.40 + 0.032);
-    col *= 0.86 + 0.30 * n2;
-    // the sync bar that never quite locks, crawling up the picture
-    float rb = fract(l.y + uTime * 0.21);
-    float bar = smoothstep(0.0, 0.018, rb) * (1.0 - smoothstep(0.018, 0.085, rb));
-    col *= 1.0 + 0.55 * bar;
-    col *= vec3(0.985, 1.0, 1.020);
+    // Switched off. A dead tube is a slightly green-grey mirror: it reflects the
+    // room, so it is darkest at the top where the wall is and lifts a little at
+    // the bottom where the desk lamp is. uSeed is deliberately NOT used — the
+    // dust speckle is a function of position alone, so this panel is bit-identical
+    // from frame to frame and your eye parks it after one look.
+    float dust = h21(floor(fc * 0.5)) * 0.5 + h21(fc) * 0.5;
+    col = mix(vec3(0.020, 0.023, 0.026), vec3(0.041, 0.045, 0.047), l.y);
+    col += (dust - 0.5) * 0.010;
+    // the faint band of room light the curved glass gathers across its middle
+    col += 0.010 * exp(-pow((l.y - 0.42) * 3.4, 2.0));
   } else {
     col = mix(vec3(0.030, 0.049, 0.132), vec3(0.015, 0.026, 0.079), l.y);
     col += 0.008 * (h21(fc * 0.9 + uSeed) - 0.5);

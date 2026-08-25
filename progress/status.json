@@ -84,7 +84,7 @@
    "verdict": "Edge density mean 41.0 -> 44.2, spread 5.6 -> 7.0. Warm-band pixels 37.7-40.7% -> 7.7-11.3% (references 5.6-11.4%). Mean saturation 0.33-0.35 -> 0.23-0.25 (references 0.27-0.32)."
   },
   "cctv": {
-   "round": 5,
+   "round": 6,
    "state": "passed",
    "shots": [
     {
@@ -116,6 +116,11 @@
      "round": 5,
      "path": "../shots/cctv_r5.png",
      "t": 1787523333.274982
+    },
+    {
+     "round": 6,
+     "path": "../shots/cctv_r6_desk.png",
+     "t": 1787617771.171815
     }
    ],
    "gaps": [
@@ -124,13 +129,13 @@
      "text": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
     }
    ],
-   "updated": 1787523434.891823,
-   "note": "It explained WHY the camera builder's measurement was misleading rather than just correcting it: the reported 'x~659 centre' is an artefact of fitting a 1-D affine model to a 2-D radial field, and it reproduced the artefact - fitting right-hand samples alone gives an apparent centre of 409, while a symmetric fit recovers 640.1 to a tenth of a pixel. Its own method defeats the contamination that spoiled two of the camera builder's three attempts: a white-marker-minus-black-marker difference, so background cancels exactly and neither an occluder nor magenta product can leak in. Kept the lens and PUBLISHED the mapping, on precedent - boxOf has warped the wall's analytics boxes into feed space since round 4, and removing the barrel would make the on-foot view the only picture in the game shot through a rectilinear lens. New warp.js is the single definition and track.js's duplicate unbarrel was DELETED and re-imported from it, so this removes a duplicated derivation rather than adding one. Also fixed a latent crash: paintFloorBurnIn referenced an undefined LINE, throwing out of renderFloor once a second plus every REC blink, which took step() down BEFORE game.render() and dropped the entire HUD for that frame.",
+   "updated": 1787617914.299802,
+   "note": "THE BIGGEST WIN WAS NOT AN OVERLAY: the spot monitor was REPOINTING 14.7 times a minute - the largest picture on screen panning and re-zooming onto a different body every four seconds, all shift. Now 5.6/min, with a 1.6s grace before a lost lock is replaced because he usually walks back into frame. The wall is now a map: one row ordered by world X so the Nth panel from the left IS aisle N, door on its own larger panel because it is not an aisle. It had independently found the aisle signs blocking the picture at 4.35m and my drop to 2.62m fixed it before it filed the request - at 4.35m the near sign hid the near 16m of every 26m aisle, and at 2.62m the camera passes under its bottom edge and the sign reads as a category header across the top of each tile, so every thumbnail labels itself. Removed nine per-panel OSD canvases: ~3.4MB/s of texture traffic, now zero.",
    "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself.",
-   "verdict": "PASS. The offset is real and it is ONE term: uBarrel in GradeShader. projectFromCop vs the GRADED frame was 24.5px mean / 31.6px worst; via warpFloor it is 0.19px / 1.15px. Set barrel:0 and graded returns to raw within 0.19px, so every other round-3 grade term is geometrically neutral - and no grade constant was touched (scan .078 / vignette .37 / bloom 1.00 / chroma .62 all intact)."
+   "verdict": "PASS on the clutter note. Cut by duty cycle: per-tile motion meter lit 98.1% of a shift, VMD alarm frame 59.4%, blob boxes 95.9% (~26 on the wall at all times), record pip blinking 100%, spot trails 97.5%. Its reasoning: 'an indicator lit 98% of a shift carries 0.14 bits; eight side by side carry no more.' The small panels now allocate no OSD canvas at all - what is left is the picture and the channel number on the plastic below it."
   },
   "agents": {
-   "round": 7,
+   "round": 8,
    "state": "passed",
    "shots": [
     {
@@ -192,6 +197,11 @@
      "round": 7,
      "path": "../shots/agents_r7_announce.png",
      "t": 1787522906.628931
+    },
+    {
+     "round": 8,
+     "path": "../shots/agents_r8.png",
+     "t": 1787617634.941173
     }
    ],
    "gaps": [
@@ -216,10 +226,10 @@
      "text": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it."
     }
    ],
-   "updated": 1787523772.4811578,
-   "note": "announce evidence sheet",
+   "updated": 1787617914.346347,
+   "note": "The bolt is carved out of the SHRUG interval of round 7's single roll, so heed is still exactly roll < p, same draw, same bit. Innocent reaction is a four-beat performance with beat 3 a real third-of-a-second HOLD, which is what makes 'they realize maybe they're being watched' land. The head shake is an envelope not keyframes - the renderer's 110ms neck lag halved a 2Hz signal, so authored keys came out a vague waggle. The annoyance OUTLIVES the clip by 7s (chin up, stoop taken out, 1.18x pace) and guilty shruggers get the identical treatment, or the huff would be the tell the shrug is not. Economics: announcing at a man you have already made is worth 8.4 expected points against a dispatch's 77.0. AN HOUR LOST, WORTH KNOWING: startGesture ROLLS a clip given a kind and NAMES one given an id - a roll costs a draw off the shared seeded RNG. Swapping one call site for the other, touching no probability anywhere, walked the stream and moved measured innocent compliance 32.5% -> 27.5% and the published LR 1.95 -> 2.33.",
    "gap": "61.3% of correct dispatches end with the grab inside 1 SECOND of the bolt (84.4% of all catches). Median time-to-catch went 1.7s -> 1.13s: the catches got FASTER. The 68->73% headline came entirely from adding an escape hatch (the back route), not from making the catch harder. Chase is bimodal and each branch is near-deterministic: 449/600 run AT the cop -> 97.1% caught in 0.85s; 151/600 go out the back -> 0 caught, 0 for 270 unboosted. Builder's own bench prints catchUnder1s 120/200 and the report never mentions it.",
-   "verdict": "CORRECTION to the round-6 record. Its report quoted desk 250.0 pts / 4.50 thefts / 2.50 caught. Round 7 restored the round-6 commit's agents.js, figures.js and decoy.js and re-ran benchShift: the round-6 build actually prints 383.33 / 4.33 / 3.83 / 0.50 with 9.17 complaints, character for character with today's build. config.js has not changed since that commit either. The original table was mis-transcribed; these are the numbers that reproduce."
+   "verdict": "PASS. Third outcome 'bolt' gated on GEOMETRY not a mode check - beatsCopToDoor(). 29.2% from the desk, 22.5% from 8m behind, 0.0% from the aisle mouth, 0.0% from the door, 0.0% for innocents anywhere. Likelihood ratio 1.98 against round 7's 1.95, and a live ablation proves it: set annBolt to 0 and the build IS round 7, every row to the decimal."
   },
   "game": {
    "round": 9,
@@ -365,6 +375,38 @@
   }
  },
  "log": [
+  {
+   "t": 1787617914.346349,
+   "piece": "agents",
+   "role": "builder",
+   "round": 8,
+   "state": "passed",
+   "text": "The bolt is carved out of the SHRUG interval of round 7's single roll, so heed is still exactly roll < p, same draw, same bit. Innocent reaction is a four-beat performance with beat 3 a real third-of-a-second HOLD, which is what makes 'they realize maybe they're being watched' land. The head shake is an envelope not keyframes - the renderer's 110ms neck lag halved a 2Hz signal, so authored keys came out a vague waggle. The annoyance OUTLIVES the clip by 7s (chin up, stoop taken out, 1.18x pace) and guilty shruggers get the identical treatment, or the huff would be the tell the shrug is not. Economics: announcing at a man you have already made is worth 8.4 expected points against a dispatch's 77.0. AN HOUR LOST, WORTH KNOWING: startGesture ROLLS a clip given a kind and NAMES one given an id - a roll costs a draw off the shared seeded RNG. Swapping one call site for the other, touching no probability anywhere, walked the stream and moved measured innocent compliance 32.5% -> 27.5% and the published LR 1.95 -> 2.33."
+  },
+  {
+   "t": 1787617914.299805,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 6,
+   "state": "passed",
+   "text": "THE BIGGEST WIN WAS NOT AN OVERLAY: the spot monitor was REPOINTING 14.7 times a minute - the largest picture on screen panning and re-zooming onto a different body every four seconds, all shift. Now 5.6/min, with a 1.6s grace before a lost lock is replaced because he usually walks back into frame. The wall is now a map: one row ordered by world X so the Nth panel from the left IS aisle N, door on its own larger panel because it is not an aisle. It had independently found the aisle signs blocking the picture at 4.35m and my drop to 2.62m fixed it before it filed the request - at 4.35m the near sign hid the near 16m of every 26m aisle, and at 2.62m the camera passes under its bottom edge and the sign reads as a category header across the top of each tile, so every thumbnail labels itself. Removed nine per-panel OSD canvases: ~3.4MB/s of texture traffic, now zero."
+  },
+  {
+   "t": 1787617771.171815,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 6,
+   "state": "building",
+   "text": "SUBTRACTION + THE WALL IS A MAP. Aisle channels are one row across the top ordered by camera world X, so the Nth panel from the left IS aisle N; door gets its own 320x180 panel; spot 676x380 (SUBJ_FRAC 0.32->0.36 holds the subject at 137px). CUT, with 900s duty cycles measured at 4Hz: per-tile motion meter (98.1% lit), VMD alarm frame (59.4%), blob boxes (95.9%, mean 3.2/tile), record pip (100%), burnt-in channel number (moved to the chin); spot trails (97.5%), TRACK n OF m (97.5%), WIDE 1.0X (100%), labels on every stopped blob (now lock only), 6 box slots -> 4; dead test monitor's animated snow (100%) -> switched off; rolling interference band off the thumbnails; glitch tics 3.7s -> 18s. Biggest single win: the PTZ was repointing 11-15x/min, now 5.6-7.2x/min at the same ~88% lock rate (HOLD 2.2->7.0s, margin 1.25x+4 -> 1.6x+10, plus a 1.6s grace before a lost lock is replaced). ALSO FIXED: channelsFor() returned [] until something had rendered - the cameras had no matrixWorldInverse - so every paused/backgrounded bench measured an empty desk. Cameras now updateMatrixWorld at construction and channelsFor refreshes unconditionally; verified correct at renders:0 on a fresh page."
+  },
+  {
+   "t": 1787617634.941173,
+   "piece": "agents",
+   "role": "builder",
+   "round": 8,
+   "state": "building",
+   "text": "R8: the PA reaction is a four-beat performance and a thief can now run from it. (1) All three react clips rebuilt into heard-it / cant-place-it / finds-the-camera-and-STOPS / head-shake-and-huff. Shake is an envelope in the clip + a 2.1Hz oscillation in animateShopper (a 110ms neck lerp eats it if keyframed). annHuff is now visible for 7s: chin up, 0.11 of the stoop taken out, 1.18x walk pace - guilty shruggers get the identical treatment. (2) NEW OUTCOME 'bolt' on onAnnounce, routed into the existing react->bolt path so it is a real chase with the real onBolt. Carved out of the SHRUG interval of round 7's single roll, so the heed bit is untouched: set annBolt/annBoltCold to 0 and this build reproduces round 7's table to the decimal, LR 1.95. Live: cold 64.2/25.8/10.0, hot 35.8/35.0/29.2, INNOCENT 32.5/67.5/0.0, LR(putback) 1.98. Gated on beatsCopToDoor - 29.2% bolt from the desk, 22.5% from 8m behind, 0.0% from the aisle mouth, 0.0% from the door. PA-spam still earns 0 pts and loses 1.67 items with 0.00 bolts (it announces at the wrong population); a flushed runner chased from the desk is caught 28.6% (median 10.6s) vs a dispatched chase's 77.0% / 6.22s, so announcing at a man you have made is worth 8.4 pts against 77. No regression: cut off0 77.0/6.22s/11.7%, off1 69.0, camp 27.0 with 70/100 ditched, sprint 53.0, lungCheck passes. agents.update 0.070ms/frame; full frame 1.6-2.3ms of 16.67. NEEDS THE LEAD: game.js routes the putback line to the FLOOR, not the desk - the brief's economics assume the desk. And game.js's onAnnounce maps any non-heed outcome to PA_CHIP_SHRUG, so it will print HE LOOKED AROUND over a man sprinting."
+  },
   {
    "t": 1787617434.282464,
    "piece": "config",
@@ -1110,5 +1152,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787617434.2824671
+ "updated": 1787617914.3463502
 }

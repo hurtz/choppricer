@@ -87,6 +87,51 @@
 // spot monitor runs a MAINSTREAM (15 fps, clean) — which is both what a real DVR
 // does and what keeps the total under the old one.
 //
+// ===========================================================================
+// ROUND 6 — SUBTRACTION, AND THE WALL AS A MAP
+// ===========================================================================
+// "There is way too much going on on the screen in general that makes it really
+// kind of difficult to know what to pay attention to at any one time."
+//
+// Round 4 was right that the wall had to SAY something and wrong about how many
+// times it should say it. Everything below was measured over a 900-second shift
+// at 4 Hz before it was cut (harness: `signals` + the probe in the round-6
+// report). The test each element had to pass was one number: what fraction of a
+// shift is it lit, and does that fraction distinguish one tile from another.
+//
+//   PER-TILE, ALL EIGHT AISLE CHANNELS          duty          kept?
+//   motion meter                                mean 98.1%    CUT
+//   VMD alarm frame                             mean 59.4%    CUT
+//   blob boxes (mean 3.2/tile, peak 8)          mean 95.9%    CUT
+//   record pip, blinking at 1.6 s               100%          CUT
+//   burnt-in channel number                     100%          CUT (moved to
+//                                                             the chin, where
+//                                                             it costs no
+//                                                             picture)
+//   SPOT MONITOR
+//   subject trails, 25 dots                     97.5%         CUT
+//   "TRACK 2 OF 5"                              97.5%         CUT
+//   "WIDE 1.0X" when not zoomed                 100%          CUT
+//   analytics label per stopped blob (1.26)     97.5%         LOCK ONLY
+//   analytics boxes                             6 slots       4 slots
+//   THE ROOM
+//   dead test monitor, animated snow            100%          CUT (off)
+//   rolling interference band, every thumbnail  100%          CUT (spot keeps it)
+//   torn-band glitch, CH05 + CH07               every 3.7 s   every ~18 s
+//
+// AND THE ONE THAT MATTERED MOST. The spot monitor's PTZ was repointing 14.7
+// TIMES A MINUTE — the biggest picture on the screen panned and re-zoomed onto
+// a different body every four seconds, all shift, because HOLD_T was 2.2 s and
+// the switch margin was 1.25x. It is now 7.0 s, 1.6x + 10, plus a 1.6 s grace
+// before a lost lock is replaced, which takes it to 7.2 repoints a minute at the
+// same 90% lock rate. Half the motion, none of the coverage.
+//
+// The layout carries the other half of the answer and it is an ADDITION, not a
+// subtraction: the aisle channels are one row across the top, ordered by the
+// camera's own world X, so the Nth panel from the left IS aisle N. That deletes
+// a lookup table from the player's head, which is worth more than any overlay on
+// this list. See cctv/layout.js.
+//
 // NOTE TO LEAD: vendor/EffectComposer.js cannot load — it imports
 // '../shaders/CopyShader.js' and './MaskPass.js', neither of which exists on the
 // server (both 404). ShaderPass.js and Pass.js are fine. This file therefore
@@ -98,8 +143,7 @@ import { GradeShader, ScreenShader, DeadShader } from './cctv/shaders.js';
 import { layoutWall, WALL } from './cctv/layout.js';
 import { createTracker, project } from './cctv/track.js';
 import {
-  makeCanvas, paintFurniture, paintFloorBurnIn, paintDeadCards,
-  paintThumbOsd, paintSpotOsd,
+  makeCanvas, paintFurniture, paintFloorBurnIn, paintDeadCards, paintSpotOsd,
 } from './cctv/overlay.js';
 import {
   setFloorLens, floorLens, warpFloor, unwarpFloor, floorMagAt,
@@ -139,9 +183,42 @@ const SPOT_W = 768, SPOT_H = 432, SPOT_FPS = 15;
 //                 stops being surveillance and becomes a cutscene.
 // MAX_ZOOM caps it so a subject at the far end of a 26 m aisle does not turn the
 // dome into a telescope with a two-metre field of view.
-const SUBJ_FRAC = 0.32, MIN_ZOOM = 1.0, MAX_ZOOM = 3.4;
-const HOLD_T = 2.2;                 // seconds before the tracker may switch lock
+//
+// ROUND 6: the aisle run above the spot monitor took it from 431 px of panel to
+// 380, so 0.32 would now put the subject at 122 px — under the 138 that round 4
+// measured its way to. 0.36 puts him back at 137. The FRACTION moved so the
+// PIXELS would not; those are the units the readability argument was made in.
+const SUBJ_FRAC = 0.36, MIN_ZOOM = 1.0, MAX_ZOOM = 3.4;
 const ZOOM_TAU = 0.45, AIM_TAU = 0.22;
+
+// --- how still the dome sits -------------------------------------------------
+// THE SINGLE LOUDEST THING ON THIS SCREEN WAS THE SPOT MONITOR ITSELF. With
+// HOLD_T at 2.2 s and a 1.25x switch margin, the biggest picture on the wall
+// repointed 14.7 times a minute across a 900-second shift: a pan and a re-zoom
+// onto a different body every four seconds, forever, whether or not anything had
+// happened. A player cannot read a picture that will not sit still, and "too
+// much going on" is exactly what that looks like from the chair.
+//
+// Measured, same harness, 400-second shifts:
+//   HOLD  margin      repoints/min   lock held
+//   2.2   1.25x + 4       14.7          90%     round 4-5, shipped
+//   7.0   1.25x + 4       11.3          86%     stickier alone is not enough:
+//                                               the lock stays on a man who then
+//                                               walks out and forces a jump
+//   7.0   1.6x + 10        8.5          87%     ...margin as well
+//   7.0   1.6x + 10 + G    7.2          90%     ...and DON'T jump the instant he
+//                                               steps behind a gondola. LOST_T
+//                                               holds the aim, and most of the
+//                                               time he walks back into frame.
+//   12.0  2.0x + 18        9.5          87%     too sticky: fewer choices, but
+//                                               the lock goes stale and every
+//                                               loss becomes a reacquire.
+// A manual pick ([C] -> cycleTrack) still overrides all of this and sticks until
+// the subject leaves, which is the one case where the player, not the recorder,
+// decided who matters.
+const HOLD_T = 7.0;                 // seconds before the tracker may switch lock
+const SWITCH_MUL = 1.6, SWITCH_ADD = 10;
+const LOST_T = 1.6;                 // seconds of aim held after a lock drops out
 
 // --- per-channel personality ------------------------------------------------
 // Real DVR walls are never uniform: different camera generations, different
@@ -159,17 +236,22 @@ const ZOOM_TAU = 0.45, AIM_TAU = 0.22;
 // a real substream is slower as well as smaller, and a mosaic that judders while
 // the spot monitor is smooth is both true and the clearest possible statement of
 // which picture you are supposed to be reading.
+// `glitch` is the mean SECONDS between torn bands on that channel. Round 4 had
+// two channels tearing every 5.5 s and 11 s, which is a visible flick somewhere
+// on the wall every 3.7 seconds — a tic, not a fault. At 26 s and 47 s it is
+// still the same two cameras with the same problem and you notice it perhaps
+// twice a shift, which is what makes it character instead of noise.
 const SUB_FPS = 0.62;
 const CHAN = [
   { fps: 10, hfov: 98,  gain: 1.00, tint: [1.035, 1.000, 0.955], noise: 0.038, barrel: 0.30, sat: 0.92, scan: 0.062, blocky: 0.16, sharp:  1.00, bloom: 1.00, glitch: 0 },
   { fps: 8,  hfov: 97,  gain: 0.95, tint: [0.955, 1.030, 0.960], noise: 0.050, barrel: 0.34, sat: 0.84, scan: 0.072, blocky: 0.20, sharp:  1.27, bloom: 1.13, glitch: 0 },
   { fps: 12, hfov: 99,  gain: 1.10, tint: [1.010, 1.005, 0.990], noise: 0.030, barrel: 0.27, sat: 0.96, scan: 0.052, blocky: 0.12, sharp:  0.73, bloom: 0.87, glitch: 0 },
   { fps: 9,  hfov: 96,  gain: 0.80, tint: [0.950, 0.985, 1.070], noise: 0.070, barrel: 0.33, sat: 0.72, scan: 0.078, blocky: 0.26, sharp: -1.00, bloom: 1.45, glitch: 0 },
-  { fps: 14, hfov: 102, gain: 1.02, tint: [1.000, 1.000, 1.000], noise: 0.030, barrel: 0.34, sat: 0.93, scan: 0.050, blocky: 0.11, sharp:  1.05, bloom: 1.00, glitch: 5.5 },
+  { fps: 14, hfov: 102, gain: 1.02, tint: [1.000, 1.000, 1.000], noise: 0.030, barrel: 0.34, sat: 0.93, scan: 0.050, blocky: 0.11, sharp:  1.05, bloom: 1.00, glitch: 26.0 },
   { fps: 8,  hfov: 98,  gain: 0.90, tint: [1.045, 0.995, 0.945], noise: 0.058, barrel: 0.30, sat: 0.88, scan: 0.070, blocky: 0.30, sharp:  1.55, bloom: 0.91, glitch: 0 },
-  { fps: 12, hfov: 94,  gain: 1.05, tint: [0.965, 1.020, 0.975], noise: 0.036, barrel: 0.36, sat: 0.92, scan: 0.058, blocky: 0.14, sharp:  0.91, bloom: 1.05, glitch: 11.0 },
+  { fps: 12, hfov: 94,  gain: 1.05, tint: [0.965, 1.020, 0.975], noise: 0.036, barrel: 0.36, sat: 0.92, scan: 0.058, blocky: 0.14, sharp:  0.91, bloom: 1.05, glitch: 47.0 },
   { fps: 10, hfov: 96,  gain: 0.97, tint: [1.000, 1.010, 1.010], noise: 0.052, barrel: 0.33, sat: 0.86, scan: 0.082, blocky: 0.22, sharp:  1.18, bloom: 0.95, glitch: 0 },
-  // CAM 09 DOOR 2: bought this year, so it is the sharpest and least noisy thing
+  // CAM 09 DOOR 1: bought this year, so it is the sharpest and least noisy thing
   // on the wall and its lens is tighter than the 2011 domes.
   { fps: 13, hfov: 90,  gain: 1.04, tint: [0.992, 1.000, 1.008], noise: 0.026, barrel: 0.22, sat: 0.95, scan: 0.046, blocky: 0.09, sharp:  1.34, bloom: 0.94, glitch: 0 },
 ];
@@ -225,7 +307,13 @@ const GRADE_PRESET = {
     bloom: 1.06, bloomThr: 0.64,
     gain: 1.0, black: 0.072, pivot: 0.50, contrast: 1.35, knee: 0.75,
     highlight: 0.40, sat: 0.82,
-    noise: 0.060, scan: 0.070, roll: 0.050, rollSpeed: 0.055, vign: 0.40,
+    // `roll` is 0 here and 0.040 on the spot monitor, which is round 6 doing to
+    // the grade what it did to the overlays. The rolling interference band is a
+    // slow bright stripe crawling up the picture, 100% of the time, on every
+    // panel at once — eight of them out of phase is eight things moving on a
+    // wall where nothing has happened. On the ONE picture you are reading it is
+    // a nice tell that this is recorded; on eight thumbnails it is weather.
+    noise: 0.060, scan: 0.070, roll: 0.0, rollSpeed: 0.055, vign: 0.40,
   },
   // THE SPOT MONITOR — the mainstream, and the one picture in this game that has
   // to hold evidence. Everything that costs a READ is pulled back and everything
@@ -288,6 +376,27 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   const spotAspect = spotP.w / spotP.h;
 
   // ---- cameras ------------------------------------------------------------
+  // A THREE camera has no `matrixWorld` — and therefore no `matrixWorldInverse`
+  // — until something updates it, and the only thing that normally does is
+  // renderer.render(). Vector3.project() reads matrixWorldInverse, so EVERY
+  // projection through these cameras silently produced garbage (or nothing)
+  // until the first wall frame had been drawn.
+  //
+  // That is not a cosmetic ordering bug, it is a whole class of measurement
+  // being wrong: `snap()` and `run()` are documented to work with the tab
+  // backgrounded and without rAF, so a bench that paused, stepped the sim and
+  // asked channelsFor() "who is on camera" got [] for every subject, forever.
+  // The game builder's observer bot dispatched ZERO times in ten shift-minutes
+  // because of this. It is the same shape as a /shot sink that returns a
+  // reassuring string and writes no file: a clean answer from a function that
+  // did nothing.
+  //
+  // These cameras are static — they are set here and never moved again — so one
+  // updateMatrixWorld() at construction is the whole fix. channelsFor() refreshes
+  // them anyway on every call, unconditionally, because it is a PUBLIC entry
+  // point that other files call at times this one does not control, and a 4x4
+  // compose-and-invert per channel is nothing next to being silently wrong. Do
+  // not "optimise" that away without a profile that says it matters.
   const cams = CAMS.map((c, i) => {
     const t = tiles[i];
     const aspect = t.w / t.h;
@@ -296,6 +405,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     cam.position.set(...c.pos);
     cam.lookAt(new THREE.Vector3(...c.look));
     cam.updateProjectionMatrix();
+    cam.updateMatrixWorld(true);
     return cam;
   });
   // The dome, as the operator drives it. Same body as the selected channel — it
@@ -382,14 +492,26 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     mesh.rotation.z = -(p.rot || 0);
   }
 
-  // Each live panel now owns its OSD canvas, at the resolution of its own
-  // stream, so the text on a 138px thumbnail is 138px text. See overlay.js.
-  function makeScreen(p, feedTex, osdW, osdH, lines, scan) {
-    const cv = makeCanvas(osdW, osdH);
-    const tex = new THREE.CanvasTexture(cv);
-    tex.colorSpace = THREE.SRGBColorSpace;
-    tex.minFilter = tex.magFilter = THREE.NearestFilter;
-    tex.generateMipmaps = false;
+  // A 1x1 fully transparent texture, shared by every panel that has no OSD.
+  // ROUND 6: that is now every panel except the spot monitor. Nine per-panel
+  // canvases and nine texture uploads a second went with the overlays they were
+  // carrying — the small panels composite nothing at all, so ScreenShader's
+  // `mix(col, b.rgb, b.a)` is a no-op on them and the picture is the picture.
+  const blankTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1);
+  blankTex.needsUpdate = true;
+
+  // The spot monitor owns an OSD canvas at the resolution of its own STREAM, so
+  // the analytics box and the timestamp are composited by the recorder into the
+  // 768x432 stream and get upscaled onto the glass with the picture. That one
+  // decision is why the big monitor still reads as footage.
+  function makeScreen(p, feedTex, osd, lines, scan) {
+    const cv = osd ? makeCanvas(osd[0], osd[1]) : null;
+    const tex = cv ? new THREE.CanvasTexture(cv) : blankTex;
+    if (cv) {
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.minFilter = tex.magFilter = THREE.NearestFilter;
+      tex.generateMipmaps = false;
+    }
     const m = new THREE.ShaderMaterial({
       name: ScreenShader.name,
       uniforms: THREE.UniformsUtils.clone(ScreenShader.uniforms),
@@ -416,17 +538,15 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   const screens = [];                 // index-aligned to CAMERAS
   for (const p of plan.live) {
     const i = p.cam;
-    screens[i] = makeScreen(p, feedRT[i].texture, p.w, p.h, p.h, chanFor(i).scan);
+    screens[i] = makeScreen(p, feedRT[i].texture, null, p.h, chanFor(i).scan);
   }
-  // The spot monitor's OSD is drawn at STREAM resolution, not panel resolution:
-  // the analytics box and the timestamp are composited by the recorder into the
-  // 768x432 stream, so they get upscaled onto the glass with the picture. That
-  // one decision is why the big monitor still reads as footage.
-  const spot = makeScreen(spotP, spotRT.texture, SPOT_W, SPOT_H, SPOT_H, 0.052);
+  const spot = makeScreen(spotP, spotRT.texture, [SPOT_W, SPOT_H], SPOT_H, 0.052);
   spot.m.uniforms.uDim.value = 1.0;
   spot.m.uniforms.uActive.value = 1.0;
 
-  const deads = plan.dead.map((p) => {
+  // Nothing holds on to these: a dark panel is drawn once and never touched
+  // again. See the note in renderWall about why there is no per-frame update.
+  plan.dead.forEach((p) => {
     const m = new THREE.ShaderMaterial({
       name: DeadShader.name,
       uniforms: THREE.UniformsUtils.clone(DeadShader.uniforms),
@@ -440,13 +560,12 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     m.uniforms.uMode.value = p.deadMode;
     m.uniforms.uSheen.value = p.sheen;
     m.uniforms.uPhase.value = p.slot * 1.37;
-    m.uniforms.uScan.value = p.deadMode === 0 ? 0.10 : 0.05;
+    m.uniforms.uScan.value = p.deadMode === 0 ? 0.04 : 0.05;
     m.uniforms.uPanel.value = new THREE.Vector3(...p.white);
     const mesh = new THREE.Mesh(quadGeo, m);
     placeQuad(mesh, p);
     mesh.renderOrder = 1;
     wallScene.add(mesh);
-    return { mesh, m, p };
   });
 
   const furnMesh = new THREE.Mesh(quadGeo, new THREE.MeshBasicMaterial({
@@ -531,7 +650,6 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       frames: i * 3,
       glitchAt: ch.glitch ? ch.glitch * (0.3 + 0.1 * i) : -1,
       glitchY: -1,
-      energy: 0, alarm: 0, osdKey: '',
     };
   });
   const spotFeed = { interval: 1 / SPOT_FPS, due: 0, frames: 0 };
@@ -547,7 +665,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   const aim = new THREE.Vector3();          // where the dome is looking, smoothed
   const aimWant = new THREE.Vector3();
   let zoom = 1, zoomWant = 1;
-  let lock = null, lockAt = -99, trackI = 0, trackN = 0;
+  let lock = null, lockAt = -99, lostAt = -99, trackN = 0;
 
   // Shadow maps cost a full extra pass per renderer.render(); with up to three
   // renders a frame that triples the bill. Update them once per frame instead.
@@ -630,7 +748,6 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     renderThrough(cams[i], rawFor(t.w, t.h, FEED_SS), feedRT[i],
       params.wall, chanFor(i), [t.w, t.h],
       f.frames * 0.6180339 + i * 7.13, f.glitchY);
-    paintThumb(i, osdCommon());
     stats.thumbRenders++;
   }
 
@@ -710,7 +827,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     const here = visibleOn(active, 0, 0);
     trackN = here.filter((e) => e.tr.kind === 'person').length;
 
-    // keep the lock if it is still in frame and nothing is much better
+    // keep the lock if it is still in frame and nothing is MUCH better
     const camPos = { x: camDef.pos[0], z: camDef.pos[2] };
     let best = null, bestS = -1e9;
     for (const e of here) {
@@ -718,16 +835,29 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       if (s > bestS) { bestS = s; best = e.tr; }
     }
     const stillHere = lock && here.some((e) => e.tr.key === lock.key);
-    if (!stillHere) { lock = best; lockAt = tWall; }
-    else if (best && best.key !== lock.key && tWall - lockAt > HOLD_T) {
-      const cur = tracker.score(lock, camPos);
-      if (bestS > cur * 1.25 + 4) { lock = best; lockAt = tWall; }
+    if (stillHere) {
+      lostAt = -99;
+      if (best && best.key !== lock.key && tWall - lockAt > HOLD_T) {
+        const cur = tracker.score(lock, camPos);
+        if (bestS > cur * SWITCH_MUL + SWITCH_ADD) { lock = best; lockAt = tWall; }
+      }
+    } else if (lock) {
+      // He stepped behind a gondola, or off the end of the aisle. A real dome
+      // does not whip onto somebody else the same frame, and neither does this:
+      // hold the aim through LOST_T, and most of the time he walks back into it.
+      if (lostAt < 0) lostAt = tWall;
+      if (tWall - lostAt > LOST_T) {
+        lock = best; lockAt = tWall; lostAt = -99;
+      }
+    } else if (best) {
+      lock = best; lockAt = tWall; lostAt = -99;
     }
-    trackI = Math.max(0, here.filter((e) => e.tr.kind === 'person')
-      .findIndex((e) => lock && e.tr.key === lock.key));
 
-    // where to point, and how tight
-    if (lock) {
+    // where to point, and how tight. A lock inside its grace period is not in
+    // frame, so there is nothing to aim at — the dome simply stays put.
+    if (lock && lostAt >= 0) {
+      /* holding the last aim */
+    } else if (lock) {
       aimWant.set(lock.x, lock.h * 0.56, lock.z);
       const d = Math.hypot(lock.x - camDef.pos[0], lock.z - camDef.pos[2],
         lock.h * 0.56 - camDef.pos[1]);
@@ -748,16 +878,18 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     spotCam.aspect = spotAspect;
     spotCam.lookAt(aim);
     spotCam.updateProjectionMatrix();
+    spotCam.updateMatrixWorld(true);   // same reason as `cams`; the dome moves
   }
 
   function snapSpot() {
     const camDef = CAMS[active];
-    lock = null; lockAt = -99; zoom = 1; zoomWant = 1;
+    lock = null; lockAt = -99; lostAt = -99; zoom = 1; zoomWant = 1;
     aim.set(...camDef.look); aimWant.copy(aim);
     spotCam.position.set(...camDef.pos);
     spotCam.fov = vfovFor(chanFor(active).hfov, spotAspect);
     spotCam.lookAt(aim);
     spotCam.updateProjectionMatrix();
+    spotCam.updateMatrixWorld(true);
   }
 
   // ---- OSD ----------------------------------------------------------------
@@ -766,9 +898,12 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     return { now, blink: (now.getTime() % 1600) < 1000 };
   }
 
-  // The spot monitor's tracker slots. SIX, which is what a picture this dense
-  // will carry, and the six biggest — the ones near enough to be worth a box.
-  const SPOT_SLOTS = 6, SPOT_MIN_H = 18;
+  // The spot monitor's tracker slots. Round 4 said six; a 900-second shift puts
+  // a mean of 2.6 blobs on this picture, so six only ever bound in the busiest
+  // moments — which are exactly the moments the player most needs the picture to
+  // be legible. FOUR, biggest first, which is also nearest first.
+  const SPOT_SLOTS = 4, SPOT_MIN_H = 18;
+  let spotBoxN = 0, spotLabelN = 0;
   function paintSpot(common) {
     const k = chanFor(active).barrel / (0.55 + 0.45 * zoom);
     const pos = CAMS[active].pos;
@@ -783,50 +918,32 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
 
     const boxes = found.map(({ tr, b }) => {
       const tracked = !!(lock && lock.key === tr.key);
-      const trail = [];
-      // A trail on a man who is walking is the useful one; on six of them at
-      // once it is a bowl of spaghetti. Only the locked subject gets a path.
-      if (tracked) {
-        for (const s of tr.trail) {
-          _p.set(s.x, 0.05, s.z);
-          const q = project(spotCam, _p, spotAspect, k, {});
-          if (q) trail.push({ x: q.x * SPOT_W, y: q.y * SPOT_H });
-        }
-      }
       const L = tracker.labelFor(tr);
       return {
-        ...b, moving: tr.moving, tracked, trail,
+        ...b, moving: tr.moving, tracked,
         code: (L && L.code) || tr.code,
-        // "MOTION" over a man who is visibly walking is the recorder telling
-        // you what you can already see. Text is spent only where it says
-        // something: on the lock, and on anyone who has STOPPED.
-        token: (tracked || !tr.moving) ? tracker.tokensFor(tr) : '',
+        // ROUND 6: text goes on the LOCK and nowhere else. Round 4 also
+        // labelled anyone who had stopped, which measured at 1.26 labels on the
+        // picture at all times, landing wherever a body happened to be. One
+        // caption, in a fixed relationship to the one subject the dome is on,
+        // is a caption you read; four scattered ones are a picture you skim.
+        //
+        // And the lock's caption is the CODE plus a token only when the token
+        // says something. "SUBJ-10 MOTION" over a man you can watch walking is
+        // the recorder reading the picture back to you; "SUBJ-10" is the
+        // cross-reference to the roster row, which you cannot get any other way,
+        // and it grows a "STOPPED 0:04" at the moment that becomes true.
+        token: (tracked && !(tr.kind === 'person' && tr.moving))
+          ? tracker.tokensFor(tr) : '',
       };
     });
+    spotBoxN = boxes.length;
+    spotLabelN = boxes.reduce((n, b) => n + (b.token ? 1 : 0), 0);
     paintSpotOsd(spot.cv, {
-      ...common, cam: CAMS[active], zoom, trackI, trackN, boxes,
+      ...common, cam: CAMS[active], zoom, boxes,
       stream: `MAIN  ${SPOT_W}X${SPOT_H}  ${SPOT_FPS}FPS  H264`,
     });
     spot.tex.needsUpdate = true;
-  }
-
-  function paintThumb(i, common) {
-    const s = screens[i];
-    if (!s) return;
-    const f = feeds[i];
-    const here = visibleOn(i, 4, 8);
-    let energy = 0, fresh = 0;
-    const boxes = here.map((e) => {
-      energy += Math.min(1, e.tr.speed / 1.6);
-      if (e.tr.flag) fresh = 1;
-      return { x: e.b.x, y: e.b.y, w: e.b.w, h: e.b.h, moving: e.tr.moving };
-    });
-    f.energy += (Math.min(1, energy * 0.5) - f.energy) * 0.25;
-    if (fresh) f.alarm = 1;
-    paintThumbOsd(s.cv, {
-      ...common, chan: i + 1, boxes, energy: f.energy, alarm: f.alarm,
-    });
-    s.tex.needsUpdate = true;
   }
 
   const api = {
@@ -848,6 +965,25 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       stream: [SPOT_W, SPOT_H, SPOT_FPS],
     },
     get tracks() { return tracker.tracks; },
+    // WHAT EACH PANEL IS CURRENTLY SAYING, for measuring duty cycles. Read-only,
+    // additive, and nothing in the game reads it: round 6 is a subtraction round
+    // and "is this element effectively always on?" is a question you answer with
+    // a number, not an opinion. See the table in the round-6 note at the top.
+    get signals() {
+      const out = feeds.map((f, i) => ({
+        chan: i + 1, fps: 1 / f.interval, glitch: f.glitchY >= 0,
+        // Round 4's four per-tile indicators (motion meter, alarm frame, blob
+        // boxes, record pip) are all gone, so these are 0 by construction now.
+        // The fields stay so a critic can diff a round-5 capture against this
+        // one with the same probe and see the zeroes.
+        boxes: 0, energy: 0, alarm: 0, stopped: 0,
+      }));
+      out.spot = {
+        zoom, lock: !!lock, held: lostAt >= 0, trackN,
+        boxes: spotBoxN, labels: spotLabelN, trails: 0,
+      };
+      return out;
+    },
     // The detector itself, for critics and for the harness: detector.sees(i,
     // CAMERAS[i].pos, track) is the same line-of-sight test the boxes use, so a
     // test can ask "is this subject actually on a monitor" without guessing.
@@ -866,6 +1002,10 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     // "NO SUBJECTS IN FRAME" for CAM 06. Every one of those is the player being
     // taught that the pictures and the list are unrelated, which is the same
     // complaint that started this round wearing different clothes.
+    // WORKS ON A PAUSED, BACKGROUNDED, NEVER-RENDERED PAGE. See the note above
+    // the `cams` construction: project() needs matrixWorldInverse and only
+    // renderer.render() normally supplies it, so this used to answer [] for
+    // every subject in exactly the conditions the harness runs in.
     channelsFor(x, z, h = 1.7) {
       ensureOccluders();
       const y = h * 0.55;
@@ -873,6 +1013,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       for (let i = 0; i < cams.length; i++) {
         const pos = CAMS[i].pos;
         if (!tracker.clear(pos, x, y, z)) continue;
+        cams[i].updateMatrixWorld();
         _p.set(x, y, z).project(cams[i]);
         if (_p.z > 1 || Math.abs(_p.x) > 0.94 || Math.abs(_p.y) > 0.94) continue;
         const d = Math.hypot(pos[0] - x, pos[1] - y, pos[2] - z);
@@ -889,6 +1030,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       const at = here.findIndex((e) => lock && e.tr.key === lock.key);
       lock = here[(at + 1) % here.length].tr;
       lockAt = tWall + 1e6;                 // manual pick sticks until it leaves
+      lostAt = -99;
       return lock;
     },
 
@@ -966,19 +1108,10 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
         }
       }
 
-      // Snow is a field-rate thing, so the dark panels are the one part of this
-      // wall that is NOT juddering — quantised to 30 Hz so it flickers rather
-      // than crawls.
-      const snowSeed = Math.floor(tWall * 30);
-      for (const d of deads) {
-        d.m.uniforms.uSeed.value = snowSeed;
-        d.m.uniforms.uTime.value = tWall;
-      }
-
-      // Every OSD is painted by the render that produced its frame — see the
-      // note above renderFeed. All that is left here is the alarm decay and
-      // clearing the detector's one-shot STOPPED flags.
-      for (const f of feeds) if (f.alarm > 0) f.alarm = Math.max(0, f.alarm - dt * 0.5);
+      // ROUND 6: the dark panels are not updated at all any more. Mode 0 is a
+      // switched-off tube and mode 1 is a static card, so neither reads uSeed or
+      // uTime; setting them every frame was uploading a uniform to animate
+      // nothing. The whole per-frame tail of renderWall is now one wall draw.
 
       const auto = renderer.autoClear;
       renderer.autoClear = true;
@@ -1020,8 +1153,10 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       feedRT.forEach((r) => r.dispose());
       gradeQuad.dispose(); quadGeo.dispose();
       furnTex.dispose(); fBurnTex.dispose(); deadTex.dispose();
-      spot.tex.dispose();
-      screens.forEach((s) => s && s.tex.dispose());
+      spot.tex.dispose(); blankTex.dispose();
+      // Small panels share blankTex and own no canvas of their own — see
+      // makeScreen. Only a panel with its own OSD canvas has a texture to drop.
+      screens.forEach((s) => s && s.cv && s.tex.dispose());
     },
   };
 
