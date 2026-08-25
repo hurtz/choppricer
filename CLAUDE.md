@@ -6,12 +6,31 @@ before the exit. See PROMPT.md for the original brief, AGENTS_BRIEF.md for the
 quality bar and the harness.
 
 ## Running it
-No build step. Plain ESM + three.js vendored in `vendor/`.
-
     python3 tools/serve.py 8171
 
-Game: http://127.0.0.1:8171/index.html
+The server hands out TWO different builds of the same game:
+
+| | what it is | who it is for |
+|---|---|---|
+| `/index.html` | **dev** — 39 separate ES modules, no build step, edit-and-reload | builders, critics, all testing |
+| `/docs/index.html` | **built** — one self-contained 3 MB file, every module and three.js inlined | what ships |
+
+`https://hurtz.github.io/choppricer/` is GitHub Pages serving that committed
+`docs/index.html`. **Share that URL** — public, no login, HTTPS (the push-to-talk
+mic needs it).
+
 Live gauntlet progress: http://127.0.0.1:8171/progress/index.html
+
+### The three can drift, silently
+The dev build is always current. The shipped one is only as current as the last
+`python3 tools/bundle.py docs/index.html` plus a push. A build that did not even
+parse reached the player once this way.
+
+    python3 tools/check-live.py
+
+verifies source -> bundle -> live URL and names the fix for whichever link is
+stale. Run it before telling anyone the link is updated. The bundler itself
+`node --check`s its output and refuses to write a bundle that does not parse.
 
 ## Layout
 - `src/config.js`  — shared world contract (aisle math, TUNING, camera rig). LEAD-OWNED.
