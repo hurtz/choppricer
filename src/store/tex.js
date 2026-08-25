@@ -251,70 +251,145 @@ export function ceilTex(THREE) {
 
 
 // ---------------------------------------------------------------------------
-// LIGHT STRIP ATLAS — 4 states of one 4ft 2-tube fluorescent troffer, in a
-// 4x1 grid. The quad's u runs ACROSS the fixture and v runs along its length,
-// so each cell is drawn tall: canvas x = the 0.44 m width, canvas y = the run.
+// LIGHT STRIP ATLAS — 4 states of one 4ft fluorescent troffer, in a 4x1 grid.
+// The quad's u runs ACROSS the fixture and v runs along its length, so each
+// cell is drawn tall: canvas x = the 0.60 m aperture, canvas y = the 2.34 m run.
 // ROUND 3: a perfect grid of identically bright fixtures is one of the loudest
 // CG tells there is. Real rows carry dead tubes, aged-warm tubes and dim ones,
 // so store.js picks a cell per fixture and jitters the spacing.
-//   0 bright   1 dim/cool   2 aged warm   3 one tube out
+//
+// ROUND 10 — "SINGLE FLAT WHITE RECTANGLES". Blind test 9 called all four
+// renders on the ceiling before it looked at a floor, a shelf base or a pane of
+// glass, and one of the two things it named was that these read as one flat
+// white slab rather than as 2-4 discrete tubes with dark gaps, a visible
+// reflector trough, and neighbouring fixtures at visibly different colour
+// temperatures.
+//
+// Measuring the round-9 map explains it exactly, and it was not the tube
+// drawing — it was the HALO painted over it. Round 4 laid a 30%-alpha bar of
+// lamp colour 2 x the tube width over every tube. The tubes sit 34 px apart on
+// a 96 px cell and are 20 px wide, so each halo was 40 px wide: consecutive
+// halos overlapped each other AND covered every gap between them. The reflector
+// was authored at #cfcbb8 against a #ffffff lamp — 62% in linear light, already
+// a weak trough — and the halo lifted what was left of it to about 85%. At
+// 15% contrast on a 96 px cell seen at four metres there is nothing to resolve.
+//
+// So: the halo is narrow and weak, the reflector carries a real specular
+// section (a dark valley on the midline between tubes, a bright secondary image
+// of the tube either side of it, which is what a painted-steel parabolic trough
+// actually does), and the four cells stop being four brightnesses of the same
+// lamp and become four DIFFERENT FIXTURES:
+//   0  three T8s, 4100K, fresh                     — the house standard
+//   1  TWO tubes: the middle one pulled, 5000K     — a de-lamp retrofit, and
+//      the reason it is here is that it puts a 200 mm dark stripe up the
+//      middle of one fixture in five, which no amount of tinting can fake
+//   2  three T8s, 3000K, end-banded                — end of life: the cathode
+//      blackening 150 mm in from each socket is the single most recognisable
+//      thing an old fluorescent tube does
+//   3  one tube lit, two out                       — the "dead" state, which is
+//      far more common in a real store than a fixture with no light in it
 export function stripTex(THREE) {
-  // ROUND 4. Three changes here, all from the blind critique.
-  //  * The prismatic ladder was a 3 px pitch at 22% contrast. Sampled at 70
-  //    degrees off normal that undersamples catastrophically and breaks into
-  //    hard black shards — which is what the critic saw and read as a failed
-  //    map. It is now a 7 px pitch at half the contrast, and ../store.js no
-  //    longer forces a negative mip bias on it.
-  //  * Three T8 lamps, not two undifferentiated "lens halves": a real 2x4
-  //    troffer shows three parallel bright tubes with the reflector visible
-  //    between them.
-  //  * Cell 3 is now a completely DEAD fixture (both lamps out, grey acrylic),
-  //    because store.js needs a state to draw for a dead unit.
   const CW = 96, CH = 256, COLS = 4;
   const [c, g] = cv(CW * COLS, CH);
   const rng = makeRng(0x11467);
+  // per cell: lamp colours [core, mid, edge], reflector [valley, field, ridge]
   const LAMPS = [
-    ['#ffffff', '#fdfbef', '#eef0dd'],     // 4100K, the default
-    ['#e6ece2', '#f2f6ec', '#cdd6c8'],     // aged, gone slightly green
-    ['#fff1d2', '#ffe8ba', '#f0d7a2'],     // 3000K warm
-    ['#9d9c90', '#aaa99d', '#8c8b80'],     // dead
+    ['#ffffff', '#fbfcff', '#e6ecf2'],     // 4100K, the house standard
+    ['#f4f9ff', '#e8f1ff', '#cfdcea'],     // 5000K, cool
+    ['#fff0cf', '#ffe4b0', '#eed294'],     // 3000K, warm
+    ['#ffffff', '#fbfbf4', '#e8e8dc'],     // the one survivor in cell 3
   ];
+  // which of the three lamp positions are actually lit, per cell
+  const LIT = [[1, 1, 1], [1, 0, 1], [1, 1, 1], [0, 1, 0]];
+  const BANDED = [false, false, true, false];
   for (let i = 0; i < COLS; i++) {
-    const dead = i === 3;
     g.save();
     g.translate(i * CW, 0);
     g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
-    // the painted-steel reflector behind the lamps
-    g.fillStyle = dead ? '#6d6b60' : '#cfcbb8';
-    g.fillRect(0, 0, CW, CH);
+    const L = LAMPS[i], lit = LIT[i];
+    const pos = [14, 48, 82];              // the three lamp axes, 0.21 m apart
+    // THE REFLECTOR. A troffer's inside is a folded painted-steel trough, not
+    // a flat card: on the midline between two tubes you are looking straight
+    // at the fold and it is the darkest thing in the fixture, and either side
+    // of each tube the sheet turns toward you and throws a secondary image of
+    // the tube back out. Drawn across u as a piecewise gradient through the
+    // three lamp axes so the ladder survives its own mip chain.
     const grd0 = g.createLinearGradient(0, 0, CW, 0);
-    grd0.addColorStop(0, 'rgba(70,66,56,0.42)');
-    grd0.addColorStop(0.5, 'rgba(255,253,244,0.30)');
-    grd0.addColorStop(1, 'rgba(70,66,56,0.42)');
+    // ROUND 10b — these are authored THREE STOPS UNDER the lamp on purpose;
+    // see LENS_HEAD in ../store.js. A fluorescent lens runs 30-50x the
+    // luminance of the tile beside it, so a camera exposed for the room clips
+    // the tube by four or five stops and the tube stays clipped through a
+    // two-stop angular cutoff — which is why the far strips in
+    // reference/store_05 still read 0.99 at the peak. What falls off with
+    // angle and actually carries the distance cue is the REFLECTOR, which is
+    // nowhere near clipping. Authoring the trough dark and giving the lamp
+    // real headroom is the only arrangement where a near fixture is a bright
+    // ladder on a mid ground and a far one is a thin white line on a dark
+    // one — and where the mip chain, averaging the two, delivers the falloff.
+    const VALLEY = '#4a4842', FIELD = '#635f57', RIDGE = '#82806f';
+    grd0.addColorStop(0.000, '#3e3c36');
+    grd0.addColorStop(0.085, RIDGE);       // just outboard of lamp 0
+    grd0.addColorStop(0.180, FIELD);
+    grd0.addColorStop(0.320, VALLEY);      // the fold between lamps 0 and 1
+    grd0.addColorStop(0.450, FIELD);
+    grd0.addColorStop(0.500, RIDGE);       // beside lamp 1
+    grd0.addColorStop(0.560, FIELD);
+    grd0.addColorStop(0.680, VALLEY);      // the fold between lamps 1 and 2
+    grd0.addColorStop(0.820, FIELD);
+    grd0.addColorStop(0.915, RIDGE);
+    grd0.addColorStop(1.000, '#3e3c36');
     g.fillStyle = grd0; g.fillRect(0, 0, CW, CH);
-    // THREE lamps across the 2 ft dimension
-    const L = LAMPS[i];
+    // a de-lamped position leaves the empty socket and the bare trough behind
+    // it, which is darker still than the fold
     for (let t = 0; t < 3; t++) {
-      const cx = 14 + t * ((CW - 28) / 2), w = 20;
-      const grd = g.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
-      grd.addColorStop(0.00, L[2]); grd.addColorStop(0.24, L[1]);
-      grd.addColorStop(0.50, L[0]); grd.addColorStop(0.78, L[1]);
+      if (lit[t]) continue;
+      const gx = g.createLinearGradient(pos[t] - 15, 0, pos[t] + 15, 0);
+      gx.addColorStop(0.0, 'rgba(38,36,32,0.0)');
+      gx.addColorStop(0.5, 'rgba(38,36,32,0.92)');
+      gx.addColorStop(1.0, 'rgba(38,36,32,0.0)');
+      g.fillStyle = gx; g.fillRect(pos[t] - 15, 6, 30, CH - 12);
+      if (i === 3) {                        // a tube that is in but not lit
+        g.fillStyle = 'rgba(78,76,70,0.60)';
+        g.fillRect(pos[t] - 9, 12, 18, CH - 24);
+      }
+    }
+    // THE TUBES.
+    for (let t = 0; t < 3; t++) {
+      if (!lit[t]) continue;
+      const cx0 = pos[t], w = 19;
+      const grd = g.createLinearGradient(cx0 - w / 2, 0, cx0 + w / 2, 0);
+      grd.addColorStop(0.00, L[2]); grd.addColorStop(0.22, L[1]);
+      grd.addColorStop(0.50, L[0]); grd.addColorStop(0.80, L[1]);
       grd.addColorStop(1.00, L[2]);
       g.fillStyle = grd;
-      g.fillRect(cx - w / 2, 10, w, CH - 20);
-      if (!dead) {                        // the halo the tube throws on the lens
-        g.globalAlpha = 0.30;
-        g.fillStyle = L[1];
-        g.fillRect(cx - w, 10, w * 2, CH - 20);
-        g.globalAlpha = 1;
+      g.fillRect(cx0 - w / 2, 9, w, CH - 18);
+      // ROUND 10 — the halo, one third as wide as round 4's and one third the
+      // alpha, so it softens the tube edge without reaching the fold. A halo
+      // that reaches the fold IS the flat white rectangle.
+      const gh = g.createLinearGradient(cx0 - 14, 0, cx0 + 14, 0);
+      gh.addColorStop(0.00, 'rgba(255,255,255,0.0)');
+      gh.addColorStop(0.50, 'rgba(255,255,255,0.20)');
+      gh.addColorStop(1.00, 'rgba(255,255,255,0.0)');
+      g.fillStyle = gh; g.fillRect(cx0 - 14, 9, 28, CH - 18);
+      // CATHODE BANDS. A tube near end of life blackens 120-180 mm in from
+      // each socket, and it is asymmetric — one end always goes first.
+      if (BANDED[i]) {
+        for (const [v, a] of [[0.075, 0.80], [0.925, 0.58]]) {
+          const y = CH * v;
+          const gb = g.createLinearGradient(0, y - 16, 0, y + 16);
+          gb.addColorStop(0.0, 'rgba(58,52,40,0.0)');
+          gb.addColorStop(0.5, 'rgba(58,52,40,' + a + ')');
+          gb.addColorStop(1.0, 'rgba(58,52,40,0.0)');
+          g.fillStyle = gb; g.fillRect(cx0 - w / 2 - 2, y - 16, w + 4, 32);
+        }
       }
     }
     // prismatic acrylic over the top: a coarse low-contrast ladder that still
     // survives to twenty metres but no longer aliases into shards up close
     for (let y = 12; y < CH - 12; y += 7) {
-      g.fillStyle = dead ? 'rgba(96,94,86,0.13)' : 'rgba(150,152,138,0.11)';
+      g.fillStyle = 'rgba(30,30,26,0.13)';
       g.fillRect(0, y, CW, 2.4);
-      g.fillStyle = 'rgba(255,255,255,0.13)';
+      g.fillStyle = 'rgba(255,255,255,0.09)';
       g.fillRect(0, y + 2.8, CW, 1.8);
     }
     // dead flies and a dust line, because every diffuser in the world has them
@@ -327,8 +402,8 @@ export function stripTex(THREE) {
     }
     // socket end caps at both ends — unlit metal, and the thing that makes the
     // joint between two units in a continuous strip legible
-    g.fillStyle = '#83806f'; g.fillRect(0, 0, CW, 11); g.fillRect(0, CH - 11, CW, 11);
-    g.fillStyle = '#5b584d'; g.fillRect(0, 0, CW, 3.5); g.fillRect(0, CH - 3.5, CW, 3.5);
+    g.fillStyle = '#4c4a41'; g.fillRect(0, 0, CW, 11); g.fillRect(0, CH - 11, CW, 11);
+    g.fillStyle = '#2e2d28'; g.fillRect(0, 0, CW, 3.5); g.fillRect(0, CH - 3.5, CW, 3.5);
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
@@ -356,20 +431,41 @@ export function wellTex(THREE) {
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
 }
 
-// The soft shadow a recessed housing throws onto the tiles either side of it.
-// Multiply-blended: white leaves the tile alone, so only the ring matters.
+// CEILING SHADOW ATLAS, 2x1. Multiply-blended: white leaves the tile alone.
+//   cell 0  the soft square vignette a recessed housing throws onto the tiles
+//           either side of it
+//   cell 1  ROUND 10 — a soft LINEAR band, for the things that hang below a
+//           drop ceiling and shade it. Blind test 9: the sprinkler main
+//           "casts no shadow on the deck 150 mm below it". A 150 mm pipe
+//           hanging 300 mm under a tile field lit by area sources spread over
+//           the whole plane does not throw a hard line, it throws a broad
+//           shallow penumbra two or three pipe-diameters wide, and the reason
+//           it matters is that it is the only thing anchoring the pipe to the
+//           surface behind it. u runs across the band; v along it, and the
+//           ends taper so a band can be laid down a whole run without a
+//           rectangular termination.
+export const TSH_CELLS = 2;
 export function trofferShadowTex(THREE) {
-  const N = 64;
-  const [c, g] = cv(N, N);
-  const im = g.createImageData(N, N);
+  const N = 64, C = TSH_CELLS;
+  const [c, g] = cv(N * C, N);
+  const im = g.createImageData(N * C, N);
   for (let y = 0; y < N; y++) {
-    for (let x = 0; x < N; x++) {
-      const u = Math.abs(x / (N - 1) - 0.5) * 2, v = Math.abs(y / (N - 1) - 0.5) * 2;
-      const d = Math.max(u, v);
-      // dark right at the housing edge, clearing by the outside of the quad
-      const t = Math.min(1, Math.max(0, (d - 0.40) / 0.58));
-      const k = 0.55 + 0.45 * (t * t * (3 - 2 * t));
-      const o = (y * N + x) * 4;
+    for (let x = 0; x < N * C; x++) {
+      const cell = Math.floor(x / N), lx = x - cell * N;
+      const u = Math.abs(lx / (N - 1) - 0.5) * 2, v = Math.abs(y / (N - 1) - 0.5) * 2;
+      let k;
+      if (cell === 0) {
+        const d = Math.max(u, v);
+        // dark right at the housing edge, clearing by the outside of the quad
+        const t = Math.min(1, Math.max(0, (d - 0.40) / 0.58));
+        k = 0.55 + 0.45 * (t * t * (3 - 2 * t));
+      } else {
+        const t = Math.min(1, Math.max(0, (u - 0.06) / 0.90));
+        const e = Math.min(1, Math.max(0, (v - 0.72) / 0.28));
+        const core = 0.80 + 0.20 * (t * t * (3 - 2 * t));
+        k = core + (1 - core) * (e * e * (3 - 2 * e));
+      }
+      const o = (y * N * C + x) * 4;
       im.data[o] = im.data[o + 1] = im.data[o + 2] = Math.round(k * 255);
       im.data[o + 3] = 255;
     }

@@ -38,6 +38,28 @@ export const pick = (rng, arr) => arr[Math.floor(rng() * arr.length) % arr.lengt
 let FIELD_SINK = null;
 export function setFieldSink(fn) { FIELD_SINK = fn; }
 
+// ROUND 10 — THE SECOND SINK, AND WHY THERE HAS TO BE ONE.
+//
+// Batch.push is the funnel every SOLID goes through, which is why the round-8
+// field fills itself. It is not the funnel every SURFACE goes through: the
+// price rails, the aisle blades, the promo boards, the hanging danglers and the
+// wall signs are all quad soups, and a quad soup has never touched the field at
+// all. That was invisible for two rounds because those things are decals on
+// solids that are themselves stamped — until blind test 9 asked why the freezer
+// glass reflects no image, and the answer turned out to be that the one class
+// of object in the store with enough contrast to be legible in a reflection is
+// the class that goes through Quads rather than Batch.
+//
+// So Quads gets a sink too, and it is deliberately COLOUR ONLY. A sign is not
+// an occluder: it has no thickness worth modelling, it is usually hanging in
+// mid-air, and stamping one into the height channel would drop a pillar of
+// shadow onto the aisle floor underneath it. What a mirror needs from it is
+// what colour is standing there, at what height — which is exactly the two
+// colour bands and nothing else.
+//   paint(x, z, w, l, y0, y1, r, g, b)
+let FIELD_PAINT = null;
+export function setFieldPaint(fn) { FIELD_PAINT = fn; }
+
 // --- instanced batch -------------------------------------------------------
 // Collect transforms first, allocate the InstancedMesh once at build().
 export class Batch {
@@ -123,6 +145,9 @@ export class Quads {
     this.p = []; this.n = []; this.uv = []; this.idx = []; this.v = 0;
     this.colored = colored; this.c = colored ? [] : null;
     this.tint = { r: 1, g: 1, b: 1 };
+    // Set to a THREE.Color (working space) to paint every quad pushed into
+    // this soup into the field's colour bands. See setFieldPaint.
+    this.field = null;
   }
   // a,b,c,d world-space corners, CCW seen from the visible side.
   // uv corners map a->(u0,v0) b->(u1,v0) c->(u1,v1) d->(u0,v1)
@@ -141,6 +166,19 @@ export class Quads {
     const o = this.v;
     this.idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
     this.v += 4;
+    if (FIELD_PAINT && this.field) {
+      const xs = [a[0], b[0], c[0], d[0]], ys = [a[1], b[1], c[1], d[1]];
+      const zs = [a[2], b[2], c[2], d[2]];
+      const x0 = Math.min(...xs), x1 = Math.max(...xs);
+      const z0 = Math.min(...zs), z1 = Math.max(...zs);
+      const f = this.field;
+      // A pane-thin quad has no footprint to speak of, so it is given the
+      // 60 mm a signboard actually is; without it a sign seen edge-on lands
+      // between texels and paints nothing.
+      FIELD_PAINT((x0 + x1) / 2, (z0 + z1) / 2,
+        Math.max(0.06, x1 - x0), Math.max(0.06, z1 - z0),
+        Math.min(...ys), Math.max(...ys), f.r, f.g, f.b);
+    }
   }
   // axis-aligned-ish rect from a centre + half-extent vectors R and U.
   rect(c, R, U, u0, v0, u1, v1) {

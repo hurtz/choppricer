@@ -80,7 +80,34 @@ export const FIELD_H = 3.40;
 //
 // So the column now carries a LOW band and a HIGH band, and the two mirrors
 // blend between them at the height their ray actually passes through.
-const REFL_LO = 0.04, REFL_MID = 1.30, REFL_HI = 2.70;
+// ROUND 10 — REFL_HI 2.70 -> 3.80, AND HANGING SOLIDS NOW PAINT COLOUR.
+// Blind test 9: the freezer glass is "veiling glare, not an image", at 53% of
+// the real bay-to-bay variance. I had already found the blocker myself and
+// reported it: the `y0 > 2.90` rule below keeps hanging signage out of the
+// field entirely, so the one class of object in the store with enough contrast
+// to be legible in a reflection was the one class a pane could not reflect.
+//
+// The rule was doing two jobs at once and only one of them was right. A
+// hanging sign must not enter the HEIGHT channel — a height field is a model
+// of what stands on the floor, and stamping a sign into it drops a pillar of
+// shadow down the middle of the aisle. But it must enter the COLOUR channel,
+// because a mirror is not an occluder: it does not care whether the thing it
+// reflects is holding itself up. Splitting the rule is one line at the sink
+// and it is the whole of the glass fix.
+//
+// Raising the top of the high band from 2.70 to 3.80 is what lets the band
+// actually contain them: aisle blades sit at 2.50-4.14, danglers at 2.86-3.60,
+// promo headers at 2.6. Ceiling hardware is unaffected — a troffer at 5.19 m
+// and a sprinkler main at 4.85 are both above 3.80 and contribute zero, so
+// nothing double-counts against the analytic ceiling the mirrors already
+// trace. The alpha normalisation deliberately does NOT follow the band up
+// (see finish): dividing the fill fraction by a band 79% taller would have
+// quietly weakened every reflected gondola header that already worked.
+const REFL_LO = 0.04, REFL_MID = 1.30, REFL_HI = 3.80;
+// ...and what the fill fraction is measured against. Round 9's REFL_HI - MID.
+const REFL_NORM = 1.40;
+// Above this a solid hangs from the ceiling rather than standing on the floor.
+const HANG_Y = 2.90;
 
 export class Field {
   // N is the HEIGHT resolution. Round 9 doubles it to 2048 over a 47.7 m room
@@ -105,6 +132,8 @@ export class Field {
     this.hb = new Float32Array(M * M);
     this.hw = new Float32Array(M * M);
     this.n = 0;
+    this.nHang = 0;
+    this.nPaint = 0;
   }
 
   // One axis-aligned solid. w/l are FULL extents about (x,z); y0..y1 vertical.
@@ -134,7 +163,15 @@ export class Field {
     // stamped into it would black out the aisle underneath as if it were a
     // pillar. One rule, applied at the sink, covers every ceiling prop anyone
     // ever adds — which is the whole point of doing this at the funnel.
-    if (y0 > 2.90) return;
+    // ROUND 10 — colour only, height skipped. See REFL_HI above.
+    if (y0 > HANG_Y) {
+      if (r >= 0) {
+        const cwH = Math.max(0, Math.min(y1, REFL_HI) - Math.max(y0, REFL_MID));
+        if (cwH > 0) this.colour(x, z, w, l, 0, cwH, r, g, b, round);
+        this.nHang++;
+      }
+      return;
+    }
     const N = this.N;
     let i0 = Math.floor((x - w / 2 - this.minX) * this.kx);
     let i1 = Math.ceil((x + w / 2 - this.minX) * this.kx);
@@ -221,6 +258,17 @@ export class Field {
     }
   }
 
+  // COLOUR ONLY, no height. The Quads sink (see kit.js) — a sign, a blade, a
+  // dangler, a price rail: things a mirror must see and a shadow must not.
+  paint(x, z, w, l, y0, y1, r, g, b) {
+    if (!(r >= 0)) return;
+    const cwL = Math.max(0, Math.min(y1, REFL_MID) - Math.max(y0, REFL_LO));
+    const cwH = Math.max(0, Math.min(y1, REFL_HI) - Math.max(y0, REFL_MID));
+    if (cwL <= 0 && cwH <= 0) return;
+    this.colour(x, z, w, l, cwL, cwH, r, g, b, false);
+    this.nPaint++;
+  }
+
   // sRGB hex convenience for the call sites that still think in swatches.
   boxHex(x, z, w, l, y0, y1, hex, round) {
     if (hex == null) return this.box(x, z, w, l, y0, y1, -1, 0, 0, round);
@@ -270,7 +318,7 @@ export class Field {
       const o = k * 4, w = HW[k];
       if (w > 0) {
         hx[o] = enc(HR[k] / w); hx[o + 1] = enc(HG[k] / w); hx[o + 2] = enc(HB[k] / w);
-        hx[o + 3] = Math.min(255, Math.round(w / (REFL_HI - REFL_MID) * 255));
+        hx[o + 3] = Math.min(255, Math.round(w / REFL_NORM * 255));
       } else { hx[o] = er; hx[o + 1] = eg; hx[o + 2] = eb; hx[o + 3] = 0; }
     }
     const mk = (data, n) => {
@@ -347,6 +395,7 @@ uniform vec4 uFldMap;      // 1/spanX, minX, 1/spanZ, minZ
 uniform vec4 uFldCfg;      // FIELD_H, texels/m, aoStrength, bounceStrength
 uniform vec4 uFldCore;     // coreStrength, coreBias, coreGain, coreReach
 uniform vec4 uFldSk;       // skirt near radius, radius ratio, -, -
+uniform vec4 uFldCav;      // cavity strength, crevice strength, -, crevice height
 uniform vec3 uFldBounce;   // colour of the light coming back off the floor
 uniform float uFldDbg;     // 0 off, 1 visibility, 2 bounce, 3 height, 4 core
 
@@ -629,6 +678,67 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
   // floor bounce falls off hard with height: it is light that has already lost
   // most of its energy to one diffuse reflection.
   b *= 1.0 / ( 1.0 + P.y * P.y * 0.80 );
+
+  // -------------------------------------------------------------------------
+  // ROUND 10, TERM THREE — THE CAVITY. A DOWN-FACING SURFACE TOOK NO
+  // OCCLUSION AT ALL, and that is arithmetic rather than a tuning miss.
+  //
+  // The skirt weights each azimuth by wu = max( 0, dot( vec3( d.x, 0.70, d.y
+  // ), N ) ). For N = ( 0, -1, 0 ) that is max( 0, -0.70k ) = 0 in every one
+  // of the eight azimuths, so wsum is zero, occ / wsum is zero and a shelf
+  // underside comes back at visibility 1.0 however deep inside a gondola it
+  // is. Worse, the BOUNCE lobe points down, so the same underside takes the
+  // full floor bounce and is actively brightened by it. That is the whole of
+  // "the undersides are light grey" against "in a real photo the darkest
+  // pixels in the frame are under the shelf lip".
+  //
+  // The estimator was not wrong about the hemisphere. It is that a shelf
+  // underside's hemisphere contains no sky: it is the ceiling of a box open on
+  // one side, and the honest measure of a box is how far inside it you are —
+  // which the height field already holds, at the shading point itself, for one
+  // tap. inCol - Pin.y is the depth of solid standing over this fragment, 1.05
+  // m for an underside halfway up a gondola and 0 for anything in the open.
+  //
+  // The bounce is killed by the same number, and that is the physical half:
+  // an underside cannot see the floor because the fixture's own base is
+  // between it and the floor. Reflected light does not arrive through a
+  // gondola.
+  float dn = max( 0.0, - N.y );
+  float inCol = chopFldTop( Pin.xz, 0.0 );
+  float inside = smoothstep( 0.10, 0.45, inCol - Pin.y - 0.02 );
+  vis *= 1.0 - uFldCav.x * dn * inside;
+  b *= 1.0 - dn * inside;
+
+  // TERM FOUR — THE FIXTURE SIDE OF THE CONTACT, i.e. the other arm of the V.
+  //
+  // Blind test 9 measured an 18-19 px band of near-constant black on our kick
+  // plates with a hard step at its top edge, against a REAL kick that is LIT
+  // and darkens over only ~6 px into the line: "physically the occlusion is
+  // mutual and continuous across the junction — a smooth V, not a black slab
+  // followed by a ramp."
+  //
+  // Two causes and only one of them was the shader. The pigment was the other:
+  // P.kick was authored near-black in round 4 as a stand-in for an occlusion
+  // model that did not exist yet. It exists now, so the plate goes back to
+  // painted steel (see ../store.js) and the darkness is computed.
+  //
+  // The shader half: chopCore pushes a VERTICAL surface 155 mm out along its
+  // own normal, so that a product facing is not occluded by the fixture it is
+  // sitting inside. A kick plate is vertical too, so it took no core, and the
+  // junction became a step — authored slab above, computed ramp below.
+  //
+  // A vertical face meeting a floor loses half its hemisphere to the floor at
+  // EVERY height; that part is flat and the ambient already carries it. What
+  // is not flat is the crevice: in the last few centimetres the two surfaces
+  // trade light back and forth and each bounce is absorbed, so both sides go
+  // dark together and neither one can be dark on its own. It is short range on
+  // BOTH surfaces, which is why the real fixture-side falloff is 6 px when the
+  // real floor-side falloff is 48. 90 mm of kick at the distance a kick plate
+  // is photographed from is five to seven pixels.
+  float crev = ( 1.0 - abs( N.y ) )
+             * ( 1.0 - smoothstep( 0.0, uFldCav.w, Pin.y ) );
+  vis *= 1.0 - uFldCav.y * crev;
+
   return vec2( clamp( vis, 0.0, 1.0 ), clamp( b, 0.0, 1.0 ) );
 }
 
@@ -637,6 +747,29 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
 // height y. One function so the floor and the glass cannot disagree about what
 // is standing in the room, the way the analytic gondola test and the
 // hand-placed prop list used to.
+// ROUND 10 — OCCUPANCY AS A MIRROR SEES IT, which is not the same question as
+// occupancy as the FLOOR sees it, and conflating the two is what kept the
+// freezer glass at half the real bay-to-bay variance.
+//
+// The height channel deliberately does not carry hanging signage (see box()),
+// so a reflected ray climbing toward an aisle blade finds height 0 at that
+// column, registers no hit, and falls through to the analytic room average —
+// a wash. But the HIGH COLOUR BAND does carry it now, and its alpha is exactly
+// "how much of 1.30-3.80 m is filled here", which is the occupancy a mirror
+// wants. The two populations separate cleanly on that number: an aisle sign
+// fills 1.30 m of the 1.40 m normalisation and reads ~0.93, a gondola tops out
+// at 2.05 m and reads ~0.54, so the gate sits between them and a header is
+// never mistaken for a sign hanging over the aisle in front of it.
+float chopFldFill( vec2 p, float y, float lod ) {
+  vec4 s = chopFldAt( p, lod );
+  float h = s.a * uFldCfg.x;
+  float solid = ( 1.0 - smoothstep( h - 0.10, h + 0.06, y ) ) * step( 0.012, s.a );
+  float hi = textureLod( uFldHi, chopFldUV( p ), max( 0.0, lod - 1.0 ) ).a;
+  float hang = smoothstep( 0.66, 0.88, hi )
+             * smoothstep( 2.25, 2.95, y ) * ( 1.0 - smoothstep( 3.70, 4.30, y ) );
+  return max( solid, hang );
+}
+
 vec4 chopFldHit( vec3 Q, float lod, float soft ) {
   vec4 s = chopFldAt( Q.xz, lod );
   float h = s.a * uFldCfg.x;
@@ -771,11 +904,38 @@ export function fieldUniforms(THREE, field, opts = {}) {
       // 0.92 sits eight to fifteen counts UNDER the reference all the way out
       // to 40 px; 0.78 is over it by about the same; 0.84 tracks it to within
       // the width of a grout line. See the round-9 report for the numbers.
+      // ROUND 10 — reach 1.0 -> 1.90, and skirtR 0.34 -> 0.46 with it, because
+      // the two have to tile or a gap opens between them. Swept live against
+      // reference/store_04's freezer plinth, both images at 1280 px so the
+      // pixel counts are comparable, contact row snapped to the local minimum
+      // in BOTH so the two are measured the same way:
+      //   px from the line      0     4     8    12    16    24    32    48
+      //   REAL store_04       0.02  0.08  0.16  0.15  0.17  0.34  0.39  0.65
+      //   round 9             0.02  0.07  0.10  0.21  0.39  0.60  0.73  0.90
+      //   reach 1.0           0.02  0.13  0.11  0.14  0.26  0.42  0.61  0.89
+      //   reach 1.90          0.02  0.12  0.09  0.10  0.18  0.31  0.46  0.81
+      // r90 47 -> 62 against a real 68. 1.90 with skirtR 0.58 gets the cooler
+      // to 66 but costs the GONDOLA four pixels, and the gondola class was
+      // already at parity, so 0.46 is the pair that improves one without
+      // paying for it out of the other.
       value: new THREE.Vector4(opts.core ?? 0.84, opts.coreBias ?? 0.020,
-        opts.coreGain ?? 2.20, opts.coreReach ?? 1.0),
+        opts.coreGain ?? 2.20, opts.coreReach ?? 1.90),
     },
     uFldSk: {
-      value: new THREE.Vector4(opts.skirtR ?? 0.34, opts.skirtRatio ?? 1.95, 0, 0),
+      value: new THREE.Vector4(opts.skirtR ?? 0.46, opts.skirtRatio ?? 1.95, 0, 0),
+    },
+    // ROUND 10. cavity strength / crevice strength / - / crevice height.
+    // cav 0.78: a shelf underside 1 m up inside a 2.05 m gondola lands at
+    // 0.22 of open, which is what puts the darkest pixels in an aisle frame
+    // under the shelf lip where the reference has them. Swept at 0.60 / 0.78 /
+    // 0.90 — 0.90 closes the bottom two decks into a single black band and
+    // loses the deck edges with them, which is the round-8 fault coming back.
+    // crev 0.72 over 0.090 m: measured against reference/store_04's freezer
+    // sill, which is LIT cream to within about 12 mm of the floor and then
+    // falls to the darkest value in the frame.
+    uFldCav: {
+      value: new THREE.Vector4(opts.cav ?? 0.78, opts.crev ?? 0.72, 0,
+        opts.crevH ?? 0.090),
     },
     uFldBounce: { value: new THREE.Color(opts.bounceCol ?? 0xb9a887) },
     uFldDbg: { value: 0 },

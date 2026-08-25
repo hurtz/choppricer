@@ -54488,6 +54488,28 @@ const pick = (rng, arr) => arr[Math.floor(rng() * arr.length) % arr.length];
 let FIELD_SINK = null;
 function setFieldSink(fn) { FIELD_SINK = fn; }
 
+// ROUND 10 — THE SECOND SINK, AND WHY THERE HAS TO BE ONE.
+//
+// Batch.push is the funnel every SOLID goes through, which is why the round-8
+// field fills itself. It is not the funnel every SURFACE goes through: the
+// price rails, the aisle blades, the promo boards, the hanging danglers and the
+// wall signs are all quad soups, and a quad soup has never touched the field at
+// all. That was invisible for two rounds because those things are decals on
+// solids that are themselves stamped — until blind test 9 asked why the freezer
+// glass reflects no image, and the answer turned out to be that the one class
+// of object in the store with enough contrast to be legible in a reflection is
+// the class that goes through Quads rather than Batch.
+//
+// So Quads gets a sink too, and it is deliberately COLOUR ONLY. A sign is not
+// an occluder: it has no thickness worth modelling, it is usually hanging in
+// mid-air, and stamping one into the height channel would drop a pillar of
+// shadow onto the aisle floor underneath it. What a mirror needs from it is
+// what colour is standing there, at what height — which is exactly the two
+// colour bands and nothing else.
+//   paint(x, z, w, l, y0, y1, r, g, b)
+let FIELD_PAINT = null;
+function setFieldPaint(fn) { FIELD_PAINT = fn; }
+
 // --- instanced batch -------------------------------------------------------
 // Collect transforms first, allocate the InstancedMesh once at build().
 class Batch {
@@ -54573,6 +54595,9 @@ class Quads {
     this.p = []; this.n = []; this.uv = []; this.idx = []; this.v = 0;
     this.colored = colored; this.c = colored ? [] : null;
     this.tint = { r: 1, g: 1, b: 1 };
+    // Set to a THREE.Color (working space) to paint every quad pushed into
+    // this soup into the field's colour bands. See setFieldPaint.
+    this.field = null;
   }
   // a,b,c,d world-space corners, CCW seen from the visible side.
   // uv corners map a->(u0,v0) b->(u1,v0) c->(u1,v1) d->(u0,v1)
@@ -54591,6 +54616,19 @@ class Quads {
     const o = this.v;
     this.idx.push(o, o + 1, o + 2, o, o + 2, o + 3);
     this.v += 4;
+    if (FIELD_PAINT && this.field) {
+      const xs = [a[0], b[0], c[0], d[0]], ys = [a[1], b[1], c[1], d[1]];
+      const zs = [a[2], b[2], c[2], d[2]];
+      const x0 = Math.min(...xs), x1 = Math.max(...xs);
+      const z0 = Math.min(...zs), z1 = Math.max(...zs);
+      const f = this.field;
+      // A pane-thin quad has no footprint to speak of, so it is given the
+      // 60 mm a signboard actually is; without it a sign seen edge-on lands
+      // between texels and paints nothing.
+      FIELD_PAINT((x0 + x1) / 2, (z0 + z1) / 2,
+        Math.max(0.06, x1 - x0), Math.max(0.06, z1 - z0),
+        Math.min(...ys), Math.max(...ys), f.r, f.g, f.b);
+    }
   }
   // axis-aligned-ish rect from a centre + half-extent vectors R and U.
   rect(c, R, U, u0, v0, u1, v1) {
@@ -54613,7 +54651,7 @@ class Quads {
   }
 }
 
-return { makeRng, rr, ri, pick, setFieldSink, Batch, Quads };
+return { makeRng, rr, ri, pick, setFieldSink, setFieldPaint, Batch, Quads };
 })();
 
 /* ==== src/store/light.js ==== */
@@ -54701,7 +54739,34 @@ const FIELD_H = 3.40;
 //
 // So the column now carries a LOW band and a HIGH band, and the two mirrors
 // blend between them at the height their ray actually passes through.
-const REFL_LO = 0.04, REFL_MID = 1.30, REFL_HI = 2.70;
+// ROUND 10 — REFL_HI 2.70 -> 3.80, AND HANGING SOLIDS NOW PAINT COLOUR.
+// Blind test 9: the freezer glass is "veiling glare, not an image", at 53% of
+// the real bay-to-bay variance. I had already found the blocker myself and
+// reported it: the `y0 > 2.90` rule below keeps hanging signage out of the
+// field entirely, so the one class of object in the store with enough contrast
+// to be legible in a reflection was the one class a pane could not reflect.
+//
+// The rule was doing two jobs at once and only one of them was right. A
+// hanging sign must not enter the HEIGHT channel — a height field is a model
+// of what stands on the floor, and stamping a sign into it drops a pillar of
+// shadow down the middle of the aisle. But it must enter the COLOUR channel,
+// because a mirror is not an occluder: it does not care whether the thing it
+// reflects is holding itself up. Splitting the rule is one line at the sink
+// and it is the whole of the glass fix.
+//
+// Raising the top of the high band from 2.70 to 3.80 is what lets the band
+// actually contain them: aisle blades sit at 2.50-4.14, danglers at 2.86-3.60,
+// promo headers at 2.6. Ceiling hardware is unaffected — a troffer at 5.19 m
+// and a sprinkler main at 4.85 are both above 3.80 and contribute zero, so
+// nothing double-counts against the analytic ceiling the mirrors already
+// trace. The alpha normalisation deliberately does NOT follow the band up
+// (see finish): dividing the fill fraction by a band 79% taller would have
+// quietly weakened every reflected gondola header that already worked.
+const REFL_LO = 0.04, REFL_MID = 1.30, REFL_HI = 3.80;
+// ...and what the fill fraction is measured against. Round 9's REFL_HI - MID.
+const REFL_NORM = 1.40;
+// Above this a solid hangs from the ceiling rather than standing on the floor.
+const HANG_Y = 2.90;
 
 class Field {
   // N is the HEIGHT resolution. Round 9 doubles it to 2048 over a 47.7 m room
@@ -54726,6 +54791,8 @@ class Field {
     this.hb = new Float32Array(M * M);
     this.hw = new Float32Array(M * M);
     this.n = 0;
+    this.nHang = 0;
+    this.nPaint = 0;
   }
 
   // One axis-aligned solid. w/l are FULL extents about (x,z); y0..y1 vertical.
@@ -54755,7 +54822,15 @@ class Field {
     // stamped into it would black out the aisle underneath as if it were a
     // pillar. One rule, applied at the sink, covers every ceiling prop anyone
     // ever adds — which is the whole point of doing this at the funnel.
-    if (y0 > 2.90) return;
+    // ROUND 10 — colour only, height skipped. See REFL_HI above.
+    if (y0 > HANG_Y) {
+      if (r >= 0) {
+        const cwH = Math.max(0, Math.min(y1, REFL_HI) - Math.max(y0, REFL_MID));
+        if (cwH > 0) this.colour(x, z, w, l, 0, cwH, r, g, b, round);
+        this.nHang++;
+      }
+      return;
+    }
     const N = this.N;
     let i0 = Math.floor((x - w / 2 - this.minX) * this.kx);
     let i1 = Math.ceil((x + w / 2 - this.minX) * this.kx);
@@ -54842,6 +54917,17 @@ class Field {
     }
   }
 
+  // COLOUR ONLY, no height. The Quads sink (see kit.js) — a sign, a blade, a
+  // dangler, a price rail: things a mirror must see and a shadow must not.
+  paint(x, z, w, l, y0, y1, r, g, b) {
+    if (!(r >= 0)) return;
+    const cwL = Math.max(0, Math.min(y1, REFL_MID) - Math.max(y0, REFL_LO));
+    const cwH = Math.max(0, Math.min(y1, REFL_HI) - Math.max(y0, REFL_MID));
+    if (cwL <= 0 && cwH <= 0) return;
+    this.colour(x, z, w, l, cwL, cwH, r, g, b, false);
+    this.nPaint++;
+  }
+
   // sRGB hex convenience for the call sites that still think in swatches.
   boxHex(x, z, w, l, y0, y1, hex, round) {
     if (hex == null) return this.box(x, z, w, l, y0, y1, -1, 0, 0, round);
@@ -54891,7 +54977,7 @@ class Field {
       const o = k * 4, w = HW[k];
       if (w > 0) {
         hx[o] = enc(HR[k] / w); hx[o + 1] = enc(HG[k] / w); hx[o + 2] = enc(HB[k] / w);
-        hx[o + 3] = Math.min(255, Math.round(w / (REFL_HI - REFL_MID) * 255));
+        hx[o + 3] = Math.min(255, Math.round(w / REFL_NORM * 255));
       } else { hx[o] = er; hx[o + 1] = eg; hx[o + 2] = eb; hx[o + 3] = 0; }
     }
     const mk = (data, n) => {
@@ -54968,6 +55054,7 @@ uniform vec4 uFldMap;      // 1/spanX, minX, 1/spanZ, minZ
 uniform vec4 uFldCfg;      // FIELD_H, texels/m, aoStrength, bounceStrength
 uniform vec4 uFldCore;     // coreStrength, coreBias, coreGain, coreReach
 uniform vec4 uFldSk;       // skirt near radius, radius ratio, -, -
+uniform vec4 uFldCav;      // cavity strength, crevice strength, -, crevice height
 uniform vec3 uFldBounce;   // colour of the light coming back off the floor
 uniform float uFldDbg;     // 0 off, 1 visibility, 2 bounce, 3 height, 4 core
 
@@ -55250,6 +55337,67 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
   // floor bounce falls off hard with height: it is light that has already lost
   // most of its energy to one diffuse reflection.
   b *= 1.0 / ( 1.0 + P.y * P.y * 0.80 );
+
+  // -------------------------------------------------------------------------
+  // ROUND 10, TERM THREE — THE CAVITY. A DOWN-FACING SURFACE TOOK NO
+  // OCCLUSION AT ALL, and that is arithmetic rather than a tuning miss.
+  //
+  // The skirt weights each azimuth by wu = max( 0, dot( vec3( d.x, 0.70, d.y
+  // ), N ) ). For N = ( 0, -1, 0 ) that is max( 0, -0.70k ) = 0 in every one
+  // of the eight azimuths, so wsum is zero, occ / wsum is zero and a shelf
+  // underside comes back at visibility 1.0 however deep inside a gondola it
+  // is. Worse, the BOUNCE lobe points down, so the same underside takes the
+  // full floor bounce and is actively brightened by it. That is the whole of
+  // "the undersides are light grey" against "in a real photo the darkest
+  // pixels in the frame are under the shelf lip".
+  //
+  // The estimator was not wrong about the hemisphere. It is that a shelf
+  // underside's hemisphere contains no sky: it is the ceiling of a box open on
+  // one side, and the honest measure of a box is how far inside it you are —
+  // which the height field already holds, at the shading point itself, for one
+  // tap. inCol - Pin.y is the depth of solid standing over this fragment, 1.05
+  // m for an underside halfway up a gondola and 0 for anything in the open.
+  //
+  // The bounce is killed by the same number, and that is the physical half:
+  // an underside cannot see the floor because the fixture's own base is
+  // between it and the floor. Reflected light does not arrive through a
+  // gondola.
+  float dn = max( 0.0, - N.y );
+  float inCol = chopFldTop( Pin.xz, 0.0 );
+  float inside = smoothstep( 0.10, 0.45, inCol - Pin.y - 0.02 );
+  vis *= 1.0 - uFldCav.x * dn * inside;
+  b *= 1.0 - dn * inside;
+
+  // TERM FOUR — THE FIXTURE SIDE OF THE CONTACT, i.e. the other arm of the V.
+  //
+  // Blind test 9 measured an 18-19 px band of near-constant black on our kick
+  // plates with a hard step at its top edge, against a REAL kick that is LIT
+  // and darkens over only ~6 px into the line: "physically the occlusion is
+  // mutual and continuous across the junction — a smooth V, not a black slab
+  // followed by a ramp."
+  //
+  // Two causes and only one of them was the shader. The pigment was the other:
+  // P.kick was authored near-black in round 4 as a stand-in for an occlusion
+  // model that did not exist yet. It exists now, so the plate goes back to
+  // painted steel (see ../store.js) and the darkness is computed.
+  //
+  // The shader half: chopCore pushes a VERTICAL surface 155 mm out along its
+  // own normal, so that a product facing is not occluded by the fixture it is
+  // sitting inside. A kick plate is vertical too, so it took no core, and the
+  // junction became a step — authored slab above, computed ramp below.
+  //
+  // A vertical face meeting a floor loses half its hemisphere to the floor at
+  // EVERY height; that part is flat and the ambient already carries it. What
+  // is not flat is the crevice: in the last few centimetres the two surfaces
+  // trade light back and forth and each bounce is absorbed, so both sides go
+  // dark together and neither one can be dark on its own. It is short range on
+  // BOTH surfaces, which is why the real fixture-side falloff is 6 px when the
+  // real floor-side falloff is 48. 90 mm of kick at the distance a kick plate
+  // is photographed from is five to seven pixels.
+  float crev = ( 1.0 - abs( N.y ) )
+             * ( 1.0 - smoothstep( 0.0, uFldCav.w, Pin.y ) );
+  vis *= 1.0 - uFldCav.y * crev;
+
   return vec2( clamp( vis, 0.0, 1.0 ), clamp( b, 0.0, 1.0 ) );
 }
 
@@ -55258,6 +55406,29 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
 // height y. One function so the floor and the glass cannot disagree about what
 // is standing in the room, the way the analytic gondola test and the
 // hand-placed prop list used to.
+// ROUND 10 — OCCUPANCY AS A MIRROR SEES IT, which is not the same question as
+// occupancy as the FLOOR sees it, and conflating the two is what kept the
+// freezer glass at half the real bay-to-bay variance.
+//
+// The height channel deliberately does not carry hanging signage (see box()),
+// so a reflected ray climbing toward an aisle blade finds height 0 at that
+// column, registers no hit, and falls through to the analytic room average —
+// a wash. But the HIGH COLOUR BAND does carry it now, and its alpha is exactly
+// "how much of 1.30-3.80 m is filled here", which is the occupancy a mirror
+// wants. The two populations separate cleanly on that number: an aisle sign
+// fills 1.30 m of the 1.40 m normalisation and reads ~0.93, a gondola tops out
+// at 2.05 m and reads ~0.54, so the gate sits between them and a header is
+// never mistaken for a sign hanging over the aisle in front of it.
+float chopFldFill( vec2 p, float y, float lod ) {
+  vec4 s = chopFldAt( p, lod );
+  float h = s.a * uFldCfg.x;
+  float solid = ( 1.0 - smoothstep( h - 0.10, h + 0.06, y ) ) * step( 0.012, s.a );
+  float hi = textureLod( uFldHi, chopFldUV( p ), max( 0.0, lod - 1.0 ) ).a;
+  float hang = smoothstep( 0.66, 0.88, hi )
+             * smoothstep( 2.25, 2.95, y ) * ( 1.0 - smoothstep( 3.70, 4.30, y ) );
+  return max( solid, hang );
+}
+
 vec4 chopFldHit( vec3 Q, float lod, float soft ) {
   vec4 s = chopFldAt( Q.xz, lod );
   float h = s.a * uFldCfg.x;
@@ -55392,11 +55563,38 @@ function fieldUniforms(THREE, field, opts = {}) {
       // 0.92 sits eight to fifteen counts UNDER the reference all the way out
       // to 40 px; 0.78 is over it by about the same; 0.84 tracks it to within
       // the width of a grout line. See the round-9 report for the numbers.
+      // ROUND 10 — reach 1.0 -> 1.90, and skirtR 0.34 -> 0.46 with it, because
+      // the two have to tile or a gap opens between them. Swept live against
+      // reference/store_04's freezer plinth, both images at 1280 px so the
+      // pixel counts are comparable, contact row snapped to the local minimum
+      // in BOTH so the two are measured the same way:
+      //   px from the line      0     4     8    12    16    24    32    48
+      //   REAL store_04       0.02  0.08  0.16  0.15  0.17  0.34  0.39  0.65
+      //   round 9             0.02  0.07  0.10  0.21  0.39  0.60  0.73  0.90
+      //   reach 1.0           0.02  0.13  0.11  0.14  0.26  0.42  0.61  0.89
+      //   reach 1.90          0.02  0.12  0.09  0.10  0.18  0.31  0.46  0.81
+      // r90 47 -> 62 against a real 68. 1.90 with skirtR 0.58 gets the cooler
+      // to 66 but costs the GONDOLA four pixels, and the gondola class was
+      // already at parity, so 0.46 is the pair that improves one without
+      // paying for it out of the other.
       value: new THREE.Vector4(opts.core ?? 0.84, opts.coreBias ?? 0.020,
-        opts.coreGain ?? 2.20, opts.coreReach ?? 1.0),
+        opts.coreGain ?? 2.20, opts.coreReach ?? 1.90),
     },
     uFldSk: {
-      value: new THREE.Vector4(opts.skirtR ?? 0.34, opts.skirtRatio ?? 1.95, 0, 0),
+      value: new THREE.Vector4(opts.skirtR ?? 0.46, opts.skirtRatio ?? 1.95, 0, 0),
+    },
+    // ROUND 10. cavity strength / crevice strength / - / crevice height.
+    // cav 0.78: a shelf underside 1 m up inside a 2.05 m gondola lands at
+    // 0.22 of open, which is what puts the darkest pixels in an aisle frame
+    // under the shelf lip where the reference has them. Swept at 0.60 / 0.78 /
+    // 0.90 — 0.90 closes the bottom two decks into a single black band and
+    // loses the deck edges with them, which is the round-8 fault coming back.
+    // crev 0.72 over 0.090 m: measured against reference/store_04's freezer
+    // sill, which is LIT cream to within about 12 mm of the floor and then
+    // falls to the darkest value in the frame.
+    uFldCav: {
+      value: new THREE.Vector4(opts.cav ?? 0.78, opts.crev ?? 0.72, 0,
+        opts.crevH ?? 0.090),
     },
     uFldBounce: { value: new THREE.Color(opts.bounceCol ?? 0xb9a887) },
     uFldDbg: { value: 0 },
@@ -56440,70 +56638,145 @@ function ceilTex(THREE) {
 
 
 // ---------------------------------------------------------------------------
-// LIGHT STRIP ATLAS — 4 states of one 4ft 2-tube fluorescent troffer, in a
-// 4x1 grid. The quad's u runs ACROSS the fixture and v runs along its length,
-// so each cell is drawn tall: canvas x = the 0.44 m width, canvas y = the run.
+// LIGHT STRIP ATLAS — 4 states of one 4ft fluorescent troffer, in a 4x1 grid.
+// The quad's u runs ACROSS the fixture and v runs along its length, so each
+// cell is drawn tall: canvas x = the 0.60 m aperture, canvas y = the 2.34 m run.
 // ROUND 3: a perfect grid of identically bright fixtures is one of the loudest
 // CG tells there is. Real rows carry dead tubes, aged-warm tubes and dim ones,
 // so store.js picks a cell per fixture and jitters the spacing.
-//   0 bright   1 dim/cool   2 aged warm   3 one tube out
+//
+// ROUND 10 — "SINGLE FLAT WHITE RECTANGLES". Blind test 9 called all four
+// renders on the ceiling before it looked at a floor, a shelf base or a pane of
+// glass, and one of the two things it named was that these read as one flat
+// white slab rather than as 2-4 discrete tubes with dark gaps, a visible
+// reflector trough, and neighbouring fixtures at visibly different colour
+// temperatures.
+//
+// Measuring the round-9 map explains it exactly, and it was not the tube
+// drawing — it was the HALO painted over it. Round 4 laid a 30%-alpha bar of
+// lamp colour 2 x the tube width over every tube. The tubes sit 34 px apart on
+// a 96 px cell and are 20 px wide, so each halo was 40 px wide: consecutive
+// halos overlapped each other AND covered every gap between them. The reflector
+// was authored at #cfcbb8 against a #ffffff lamp — 62% in linear light, already
+// a weak trough — and the halo lifted what was left of it to about 85%. At
+// 15% contrast on a 96 px cell seen at four metres there is nothing to resolve.
+//
+// So: the halo is narrow and weak, the reflector carries a real specular
+// section (a dark valley on the midline between tubes, a bright secondary image
+// of the tube either side of it, which is what a painted-steel parabolic trough
+// actually does), and the four cells stop being four brightnesses of the same
+// lamp and become four DIFFERENT FIXTURES:
+//   0  three T8s, 4100K, fresh                     — the house standard
+//   1  TWO tubes: the middle one pulled, 5000K     — a de-lamp retrofit, and
+//      the reason it is here is that it puts a 200 mm dark stripe up the
+//      middle of one fixture in five, which no amount of tinting can fake
+//   2  three T8s, 3000K, end-banded                — end of life: the cathode
+//      blackening 150 mm in from each socket is the single most recognisable
+//      thing an old fluorescent tube does
+//   3  one tube lit, two out                       — the "dead" state, which is
+//      far more common in a real store than a fixture with no light in it
 function stripTex(THREE) {
-  // ROUND 4. Three changes here, all from the blind critique.
-  //  * The prismatic ladder was a 3 px pitch at 22% contrast. Sampled at 70
-  //    degrees off normal that undersamples catastrophically and breaks into
-  //    hard black shards — which is what the critic saw and read as a failed
-  //    map. It is now a 7 px pitch at half the contrast, and ../store.js no
-  //    longer forces a negative mip bias on it.
-  //  * Three T8 lamps, not two undifferentiated "lens halves": a real 2x4
-  //    troffer shows three parallel bright tubes with the reflector visible
-  //    between them.
-  //  * Cell 3 is now a completely DEAD fixture (both lamps out, grey acrylic),
-  //    because store.js needs a state to draw for a dead unit.
   const CW = 96, CH = 256, COLS = 4;
   const [c, g] = cv(CW * COLS, CH);
   const rng = makeRng(0x11467);
+  // per cell: lamp colours [core, mid, edge], reflector [valley, field, ridge]
   const LAMPS = [
-    ['#ffffff', '#fdfbef', '#eef0dd'],     // 4100K, the default
-    ['#e6ece2', '#f2f6ec', '#cdd6c8'],     // aged, gone slightly green
-    ['#fff1d2', '#ffe8ba', '#f0d7a2'],     // 3000K warm
-    ['#9d9c90', '#aaa99d', '#8c8b80'],     // dead
+    ['#ffffff', '#fbfcff', '#e6ecf2'],     // 4100K, the house standard
+    ['#f4f9ff', '#e8f1ff', '#cfdcea'],     // 5000K, cool
+    ['#fff0cf', '#ffe4b0', '#eed294'],     // 3000K, warm
+    ['#ffffff', '#fbfbf4', '#e8e8dc'],     // the one survivor in cell 3
   ];
+  // which of the three lamp positions are actually lit, per cell
+  const LIT = [[1, 1, 1], [1, 0, 1], [1, 1, 1], [0, 1, 0]];
+  const BANDED = [false, false, true, false];
   for (let i = 0; i < COLS; i++) {
-    const dead = i === 3;
     g.save();
     g.translate(i * CW, 0);
     g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
-    // the painted-steel reflector behind the lamps
-    g.fillStyle = dead ? '#6d6b60' : '#cfcbb8';
-    g.fillRect(0, 0, CW, CH);
+    const L = LAMPS[i], lit = LIT[i];
+    const pos = [14, 48, 82];              // the three lamp axes, 0.21 m apart
+    // THE REFLECTOR. A troffer's inside is a folded painted-steel trough, not
+    // a flat card: on the midline between two tubes you are looking straight
+    // at the fold and it is the darkest thing in the fixture, and either side
+    // of each tube the sheet turns toward you and throws a secondary image of
+    // the tube back out. Drawn across u as a piecewise gradient through the
+    // three lamp axes so the ladder survives its own mip chain.
     const grd0 = g.createLinearGradient(0, 0, CW, 0);
-    grd0.addColorStop(0, 'rgba(70,66,56,0.42)');
-    grd0.addColorStop(0.5, 'rgba(255,253,244,0.30)');
-    grd0.addColorStop(1, 'rgba(70,66,56,0.42)');
+    // ROUND 10b — these are authored THREE STOPS UNDER the lamp on purpose;
+    // see LENS_HEAD in ../store.js. A fluorescent lens runs 30-50x the
+    // luminance of the tile beside it, so a camera exposed for the room clips
+    // the tube by four or five stops and the tube stays clipped through a
+    // two-stop angular cutoff — which is why the far strips in
+    // reference/store_05 still read 0.99 at the peak. What falls off with
+    // angle and actually carries the distance cue is the REFLECTOR, which is
+    // nowhere near clipping. Authoring the trough dark and giving the lamp
+    // real headroom is the only arrangement where a near fixture is a bright
+    // ladder on a mid ground and a far one is a thin white line on a dark
+    // one — and where the mip chain, averaging the two, delivers the falloff.
+    const VALLEY = '#4a4842', FIELD = '#635f57', RIDGE = '#82806f';
+    grd0.addColorStop(0.000, '#3e3c36');
+    grd0.addColorStop(0.085, RIDGE);       // just outboard of lamp 0
+    grd0.addColorStop(0.180, FIELD);
+    grd0.addColorStop(0.320, VALLEY);      // the fold between lamps 0 and 1
+    grd0.addColorStop(0.450, FIELD);
+    grd0.addColorStop(0.500, RIDGE);       // beside lamp 1
+    grd0.addColorStop(0.560, FIELD);
+    grd0.addColorStop(0.680, VALLEY);      // the fold between lamps 1 and 2
+    grd0.addColorStop(0.820, FIELD);
+    grd0.addColorStop(0.915, RIDGE);
+    grd0.addColorStop(1.000, '#3e3c36');
     g.fillStyle = grd0; g.fillRect(0, 0, CW, CH);
-    // THREE lamps across the 2 ft dimension
-    const L = LAMPS[i];
+    // a de-lamped position leaves the empty socket and the bare trough behind
+    // it, which is darker still than the fold
     for (let t = 0; t < 3; t++) {
-      const cx = 14 + t * ((CW - 28) / 2), w = 20;
-      const grd = g.createLinearGradient(cx - w / 2, 0, cx + w / 2, 0);
-      grd.addColorStop(0.00, L[2]); grd.addColorStop(0.24, L[1]);
-      grd.addColorStop(0.50, L[0]); grd.addColorStop(0.78, L[1]);
+      if (lit[t]) continue;
+      const gx = g.createLinearGradient(pos[t] - 15, 0, pos[t] + 15, 0);
+      gx.addColorStop(0.0, 'rgba(38,36,32,0.0)');
+      gx.addColorStop(0.5, 'rgba(38,36,32,0.92)');
+      gx.addColorStop(1.0, 'rgba(38,36,32,0.0)');
+      g.fillStyle = gx; g.fillRect(pos[t] - 15, 6, 30, CH - 12);
+      if (i === 3) {                        // a tube that is in but not lit
+        g.fillStyle = 'rgba(78,76,70,0.60)';
+        g.fillRect(pos[t] - 9, 12, 18, CH - 24);
+      }
+    }
+    // THE TUBES.
+    for (let t = 0; t < 3; t++) {
+      if (!lit[t]) continue;
+      const cx0 = pos[t], w = 19;
+      const grd = g.createLinearGradient(cx0 - w / 2, 0, cx0 + w / 2, 0);
+      grd.addColorStop(0.00, L[2]); grd.addColorStop(0.22, L[1]);
+      grd.addColorStop(0.50, L[0]); grd.addColorStop(0.80, L[1]);
       grd.addColorStop(1.00, L[2]);
       g.fillStyle = grd;
-      g.fillRect(cx - w / 2, 10, w, CH - 20);
-      if (!dead) {                        // the halo the tube throws on the lens
-        g.globalAlpha = 0.30;
-        g.fillStyle = L[1];
-        g.fillRect(cx - w, 10, w * 2, CH - 20);
-        g.globalAlpha = 1;
+      g.fillRect(cx0 - w / 2, 9, w, CH - 18);
+      // ROUND 10 — the halo, one third as wide as round 4's and one third the
+      // alpha, so it softens the tube edge without reaching the fold. A halo
+      // that reaches the fold IS the flat white rectangle.
+      const gh = g.createLinearGradient(cx0 - 14, 0, cx0 + 14, 0);
+      gh.addColorStop(0.00, 'rgba(255,255,255,0.0)');
+      gh.addColorStop(0.50, 'rgba(255,255,255,0.20)');
+      gh.addColorStop(1.00, 'rgba(255,255,255,0.0)');
+      g.fillStyle = gh; g.fillRect(cx0 - 14, 9, 28, CH - 18);
+      // CATHODE BANDS. A tube near end of life blackens 120-180 mm in from
+      // each socket, and it is asymmetric — one end always goes first.
+      if (BANDED[i]) {
+        for (const [v, a] of [[0.075, 0.80], [0.925, 0.58]]) {
+          const y = CH * v;
+          const gb = g.createLinearGradient(0, y - 16, 0, y + 16);
+          gb.addColorStop(0.0, 'rgba(58,52,40,0.0)');
+          gb.addColorStop(0.5, 'rgba(58,52,40,' + a + ')');
+          gb.addColorStop(1.0, 'rgba(58,52,40,0.0)');
+          g.fillStyle = gb; g.fillRect(cx0 - w / 2 - 2, y - 16, w + 4, 32);
+        }
       }
     }
     // prismatic acrylic over the top: a coarse low-contrast ladder that still
     // survives to twenty metres but no longer aliases into shards up close
     for (let y = 12; y < CH - 12; y += 7) {
-      g.fillStyle = dead ? 'rgba(96,94,86,0.13)' : 'rgba(150,152,138,0.11)';
+      g.fillStyle = 'rgba(30,30,26,0.13)';
       g.fillRect(0, y, CW, 2.4);
-      g.fillStyle = 'rgba(255,255,255,0.13)';
+      g.fillStyle = 'rgba(255,255,255,0.09)';
       g.fillRect(0, y + 2.8, CW, 1.8);
     }
     // dead flies and a dust line, because every diffuser in the world has them
@@ -56516,8 +56789,8 @@ function stripTex(THREE) {
     }
     // socket end caps at both ends — unlit metal, and the thing that makes the
     // joint between two units in a continuous strip legible
-    g.fillStyle = '#83806f'; g.fillRect(0, 0, CW, 11); g.fillRect(0, CH - 11, CW, 11);
-    g.fillStyle = '#5b584d'; g.fillRect(0, 0, CW, 3.5); g.fillRect(0, CH - 3.5, CW, 3.5);
+    g.fillStyle = '#4c4a41'; g.fillRect(0, 0, CW, 11); g.fillRect(0, CH - 11, CW, 11);
+    g.fillStyle = '#2e2d28'; g.fillRect(0, 0, CW, 3.5); g.fillRect(0, CH - 3.5, CW, 3.5);
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
@@ -56545,20 +56818,41 @@ function wellTex(THREE) {
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
 }
 
-// The soft shadow a recessed housing throws onto the tiles either side of it.
-// Multiply-blended: white leaves the tile alone, so only the ring matters.
+// CEILING SHADOW ATLAS, 2x1. Multiply-blended: white leaves the tile alone.
+//   cell 0  the soft square vignette a recessed housing throws onto the tiles
+//           either side of it
+//   cell 1  ROUND 10 — a soft LINEAR band, for the things that hang below a
+//           drop ceiling and shade it. Blind test 9: the sprinkler main
+//           "casts no shadow on the deck 150 mm below it". A 150 mm pipe
+//           hanging 300 mm under a tile field lit by area sources spread over
+//           the whole plane does not throw a hard line, it throws a broad
+//           shallow penumbra two or three pipe-diameters wide, and the reason
+//           it matters is that it is the only thing anchoring the pipe to the
+//           surface behind it. u runs across the band; v along it, and the
+//           ends taper so a band can be laid down a whole run without a
+//           rectangular termination.
+const TSH_CELLS = 2;
 function trofferShadowTex(THREE) {
-  const N = 64;
-  const [c, g] = cv(N, N);
-  const im = g.createImageData(N, N);
+  const N = 64, C = TSH_CELLS;
+  const [c, g] = cv(N * C, N);
+  const im = g.createImageData(N * C, N);
   for (let y = 0; y < N; y++) {
-    for (let x = 0; x < N; x++) {
-      const u = Math.abs(x / (N - 1) - 0.5) * 2, v = Math.abs(y / (N - 1) - 0.5) * 2;
-      const d = Math.max(u, v);
-      // dark right at the housing edge, clearing by the outside of the quad
-      const t = Math.min(1, Math.max(0, (d - 0.40) / 0.58));
-      const k = 0.55 + 0.45 * (t * t * (3 - 2 * t));
-      const o = (y * N + x) * 4;
+    for (let x = 0; x < N * C; x++) {
+      const cell = Math.floor(x / N), lx = x - cell * N;
+      const u = Math.abs(lx / (N - 1) - 0.5) * 2, v = Math.abs(y / (N - 1) - 0.5) * 2;
+      let k;
+      if (cell === 0) {
+        const d = Math.max(u, v);
+        // dark right at the housing edge, clearing by the outside of the quad
+        const t = Math.min(1, Math.max(0, (d - 0.40) / 0.58));
+        k = 0.55 + 0.45 * (t * t * (3 - 2 * t));
+      } else {
+        const t = Math.min(1, Math.max(0, (u - 0.06) / 0.90));
+        const e = Math.min(1, Math.max(0, (v - 0.72) / 0.28));
+        const core = 0.80 + 0.20 * (t * t * (3 - 2 * t));
+        k = core + (1 - core) * (e * e * (3 - 2 * e));
+      }
+      const o = (y * N * C + x) * 4;
       im.data[o] = im.data[o + 1] = im.data[o + 2] = Math.round(k * 255);
       im.data[o + 3] = 255;
     }
@@ -57639,7 +57933,7 @@ function exitSignAtlas(THREE) {
   return t;
 }
 
-return { floorTex, ceilTex, stripTex, WELL_UV, wellTex, trofferShadowTex, slotTex, pegTex, smearTex, floorWearTex, DANGLE_COLS, danglerAtlas, cartMeshTex, railTex, woodTex, boxMask, boxAtlas, bagAtlas, canMask, bottleMask, bagMask, cartonMask, signAtlas, bladeAtlas, wallSignAtlas, laneAtlas, PROMO_COLS, promoAtlas, glowTex, wallTex, coolerBackTex, outsideTex, doorDecalAtlas, exitSignAtlas };
+return { floorTex, ceilTex, stripTex, WELL_UV, wellTex, TSH_CELLS, trofferShadowTex, slotTex, pegTex, smearTex, floorWearTex, DANGLE_COLS, danglerAtlas, cartMeshTex, railTex, woodTex, boxMask, boxAtlas, bagAtlas, canMask, bottleMask, bagMask, cartonMask, signAtlas, bladeAtlas, wallSignAtlas, laneAtlas, PROMO_COLS, promoAtlas, glowTex, wallTex, coolerBackTex, outsideTex, doorDecalAtlas, exitSignAtlas };
 })();
 
 /* ==== src/store/brands.js ==== */
@@ -59213,13 +59507,22 @@ function tilePatchTex(THREE) {
         : v < 0.72 ? 'rgba(255,250,238,0.34)' : 'rgba(96,88,72,0.24)';
       g.fillRect(ox + rng() * S, rng() * S, rr(rng, 1.2, 3.6), rr(rng, 1.1, 3.0));
     }
-    g.strokeStyle = 'rgba(58,50,40,0.60)';
-    g.lineWidth = 3;
-    g.strokeRect(ox + 1.5, 1.5, S - 3, S - 3);
-    if (i === 2) {                      // repair patch: fresh grout, sharp edge
-      g.strokeStyle = 'rgba(30,26,20,0.75)';
-      g.lineWidth = 4;
-      g.strokeRect(ox + 3, 3, S - 6, S - 6);
+    // ROUND 10 — THE OUTLINE IS GONE, AND IT WAS HALF OF THE DECAL FAULT.
+    // Blind test 9, for the second round running: "two shadow decals survived
+    // — hard-edged pale quadrilaterals with seams not aligned to the tile
+    // grid." Both of the survivors are these, and this stroke is why they read
+    // as pasted-on: a 3 px near-black rectangle drawn around every cell, i.e.
+    // a grout line on ALL FOUR sides of a tile that already has grout drawn
+    // by the map underneath it. A replaced tile is a tile. It shares its
+    // neighbours' grout; it does not bring its own frame.
+    // What a real repair DOES show is one fresher, paler grout line where the
+    // new tile was cut in, and only on the two edges that were cut.
+    if (i === 2) {
+      g.strokeStyle = 'rgba(246,240,226,0.30)';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.moveTo(ox + 1.5, S); g.lineTo(ox + 1.5, 1.5); g.lineTo(ox + S, 1.5);
+      g.stroke();
     }
   }
   const t = new THREE.CanvasTexture(c);
@@ -59247,6 +59550,22 @@ uniform sampler2D uWall;
 
 float chopHash( vec2 p ) {
   return fract( sin( dot( p, vec2( 41.71, 289.33 ) ) ) * 43758.5453 );
+}
+// ROUND 10 — THE LENS CUTOFF, SHARED WITH THE FIXTURES THEMSELVES.
+// A recessed prismatic troffer has a photometric distribution: the prisms go to
+// grazing transmission past about 60 degrees off nadir and the door flange
+// occludes the far tube and then the near one as the angle keeps opening. The
+// lens material in ../store.js multiplies by exactly this curve, and so must
+// every mirror that reflects a lens — otherwise the ceiling correctly dims down
+// the aisle while its own reflection on the floor does not, which is the
+// arrangement that produced blind test 9's fourth floor fault: "the streaks get
+// STRONGER with distance". They were not getting stronger; everything else was
+// getting weaker around them.
+// ct is the cosine between the ray that reaches the lamp and the lamp's own
+// downward normal. For a floor fragment that is just ny, because a mirror in
+// the horizontal plane preserves the angle off vertical.
+float chopLensCut( float ct ) {
+  return 0.145 + 0.855 * smoothstep( 0.055, 0.62, clamp( ct, 0.0, 1.0 ) );
 }
 // Signed offset from x to the nearest gondola centreline, in metres, plus a
 // flag for whether a run actually stands there. The island runs ARE periodic
@@ -59619,7 +59938,8 @@ uniform sampler2D uBurn;
     float foot = camD * 0.0018 / max( ny, 0.02 );
     bz = max( bz, foot * 1.8 );
     bx = max( bx, foot * 0.30 );
-    vec3 refl = uCeilCol * chopCeilTile( QC, bz ) + uLightCol * chopLight( QC, bx, bz );
+    vec3 refl = uCeilCol * chopCeilTile( QC, bz )
+      + uLightCol * chopLight( QC, bx, bz ) * chopLensCut( ny );
 
     // --- is a gondola in the way before the ray clears the shelf tops? -----
     // Continuous occupancy, not a hit test: a reflection lobe has width, so
@@ -59699,7 +60019,23 @@ uniform sampler2D uBurn;
       // continuous strip four metres straight up, so a facing's top is over a
       // stop brighter than its kick. uFldGain is that illuminance.
       float pn = chopHash( vec2( floor( Pw.z * 2.2 ), floor( Pw.x * 1.5 ) ) );
-      vec3 lit = pcol * uFldGain * ( 0.74 + 0.62 * smoothstep( 0.0, 1.15, hitY ) );
+      // ROUND 10 — 0.74..1.36 -> 0.12..1.27, i.e. 0.9 stops of vertical range
+      // to 3.4. THE MIRROR DID NOT SHADE WHAT IT REFLECTED.
+      //
+      // uFldGain is the OPEN-ROOM illuminance, and multiplying an albedo by it
+      // says "this surface is lit as brightly as the middle of the aisle" —
+      // which is false for exactly the part of every fixture a floor mirror
+      // sees most of, namely the 200 mm of kickplate and plinth immediately
+      // above the contact line. That is the darkest band in the building, and
+      // the reflection of it was being painted at 74% of full room light right
+      // where the floor's own contact shadow is deepest. Measured: turning the
+      // mirror off entirely lengthened the reach-in run's r90 from 30 px to
+      // 46 px against a real 48 — the mirror was filling in the skirt it was
+      // supposed to be deepening, and that is the whole of why "your falloff
+      // is not reaching this fixture class" on the largest occluder in the set.
+      // 0.12 at the line to 1.27 by 900 mm is 3.4 stops, which is what a
+      // kickplate at L20 against a top facing at L150 actually measures.
+      vec3 lit = pcol * uFldGain * ( 0.12 + 1.15 * smoothstep( 0.02, 0.90, hitY ) );
       refl = mix( refl, lit * ( 0.72 + 0.58 * pn ), clamp( pocc * 1.45, 0.0, 1.0 ) );
       gloss *= 1.0 - 0.12 * pocc;
     }
@@ -59955,8 +60291,13 @@ vec3 chopTrace( vec3 O, vec3 R, vec3 PN, float haze ) {
     float ahead = dot( Q - O, PN );
     if ( uPropOn > 0.5 && fT > 1.0e8 && ahead > 0.30 ) {
       float lod = log2( max( 1.0, ( 0.05 + tf * 0.10 ) * uFldCfg.y ) );
-      vec4 fh = chopFldAt( Q.xz, lod );
-      if ( fh.a > 0.035 && Q.y < fh.a * uFldCfg.x ) {
+      // ROUND 10 — chopFldFill, not the raw height. A reflected ray climbing
+      // toward the aisle blades used to find height 0 up there (the height
+      // channel deliberately excludes anything hanging) and fall through to
+      // the room average, so the one class of object in the store with enough
+      // contrast to be legible in a pane was the one class a pane could not
+      // reflect. See chopFldFill in light.js.
+      if ( chopFldFill( Q.xz, Q.y, lod ) > 0.30 ) {
         fT = tf; fC = chopFldCol( Q.xz, Q.y, lod );
       }
     }
@@ -60033,13 +60374,15 @@ vec3 chopTrace( vec3 O, vec3 R, vec3 PN, float haze ) {
     // ceiling rows — so it is never flat, it is a dim copy of them
     vec2 Q = ( O + R * tFloor ).xz;
     float b = min( uGBlur.x + 0.09 * tFloor, 1.4 );
-    vec3 c = uFloorCol + uLightCol * chopLight( Q, b * 0.7, b * 2.4 ) * 0.30;
+    vec3 c = uFloorCol
+      + uLightCol * chopLight( Q, b * 0.7, b * 2.4 ) * 0.30 * chopLensCut( 0.62 );
     return mix( c, uRoomCol, smoothstep( 8.0, 26.0, tFloor ) );
   }
   vec2 Q = ( O + R * tCeil ).xz;
   float bx = min( uGBlur.x + uGBlur.x * tCeil * 0.30 + haze * 0.9, uGBlurMax.x );
   float bz = min( uGBlur.y + uGBlur.y * tCeil * 0.55 + haze * 1.8, uGBlurMax.y );
-  return uCeilCol * chopCeilTile( Q, bz ) + uLightCol * chopLight( Q, bx, bz );
+  return uCeilCol * chopCeilTile( Q, bz )
+    + uLightCol * chopLight( Q, bx, bz ) * chopLensCut( abs( R.y ) );
 }
 
 void main() {
@@ -64463,7 +64806,7 @@ return { seeOverCeiling, cameraRig, createCCTV };
 /* ==== src/store.js ==== */
 const M_src_store_js = (() => {
 const { AISLE_COUNT, AISLE_LEN, AISLE_GAP, SHELF_W, SHELF_H, CEIL_H, STORE, FRONT_WALK_Z, BACK_WALK_Z, EXIT, EXIT2, SERVICE_DESK, CAMERAS, aisleX } = M_src_config_js;
-const { makeRng, rr, ri, pick, Batch, Quads, setFieldSink } = M_src_store_kit_js;
+const { makeRng, rr, ri, pick, Batch, Quads, setFieldSink, setFieldPaint } = M_src_store_kit_js;
 const LT = M_src_store_light_js;
 const { DEPTS, FROZEN, fillShelf, fillBackRow } = M_src_store_products_js;
 const TX = M_src_store_tex_js;
@@ -64498,7 +64841,24 @@ const P = {
   // ROUND 4: the toe kick is the darkest thing in a supermarket. Round 3 had
   // it barely darker than the open floor, which is most of why the frame sat in
   // one narrow value band.
-  kick:     0x231f18,
+  //
+  // ROUND 10 — 0x231f18 -> 0x554e42, AND THIS IS NOT A LIGHTENING.
+  // Round 4 had no occlusion model, so the darkness at the base of every
+  // fixture had to be PIGMENT, and near-black pigment is what it took. Blind
+  // test 9 measured the cost: "renders paint an 18-19 px band of near-constant
+  // black onto the fixture kick with a hard step at its top edge. Real fixtures
+  // show a LIT kick plate that darkens over only 6 px into the contact line.
+  // You are over-darkening the fixture's own geometry and under-darkening the
+  // floor." Exactly right, and it is a swatch standing in for a term that now
+  // exists: light.js computes the crevice on both sides of the junction, so the
+  // plate goes back to being what it is — painted or anodised steel, a mid dark
+  // warm grey — and the darkness at the line is computed, continuous, and on
+  // the floor as well as on the fixture. Measured on reference/store_04, whose
+  // freezer sill is LIT cream to within about 12 mm of the floor.
+  kick:     0x554e42,
+  // ...and a refrigerated case's plinth is cream, not steel: it is the same
+  // painted panel as the rest of the cabinet, wiped a hundred times.
+  kickCool: 0xa79d88,
   wood:     0xc9a878,   // end panels
   woodDark: 0x8a6b45,
   metal:    0xb9b3a4,
@@ -64793,6 +65153,9 @@ function buildStore(THREE, scene) {
   const FIELD = LT.makeField(THREE, STORE.minX, STORE.minZ, SW, SD, 2048);
   setFieldSink((x, z, w, l, y0, y1, r, g, b, round) =>
     FIELD.box(x, z, w, l, y0, y1, r, g, b, round));
+  // ROUND 10 — the second sink, for quad soups. Colour only; see kit.js.
+  setFieldPaint((x, z, w, l, y0, y1, r, g, b) =>
+    FIELD.paint(x, z, w, l, y0, y1, r, g, b));
 
   const solid = (x0, y0, z0, x1, y1, z1, fieldHex) => {
     colliders.push(new THREE.Box3(
@@ -64982,6 +65345,24 @@ function buildStore(THREE, scene) {
   //   Qdangle cardboard promo danglers hanging on strings from the ceiling
   const Qslot = new Quads(), Qpeg = new Quads();
   const Qdangle = new Quads();
+  // ROUND 10 — WHICH SOUPS PAINT THEMSELVES INTO THE FIELD.
+  // Signage only, and that is the whole list on purpose. These are the surfaces
+  // a mirror needs and a shadow must not have: bright, high-contrast, mostly
+  // hanging in mid-air. Qrail and Qtag are deliberately NOT here even though
+  // they are the same kind of object — they sit inside a gondola whose solid
+  // stamp already owns that column, so painting them would cost forty thousand
+  // stamps at build for a colour the field already has.
+  const paintSoups = () => {
+    const c = (hex) => { const k = new THREE.Color(); k.setHex(hex); return k; };
+    Qsign.field = c(0xe4dcc4);      // aisle signs: cream board, orange header
+    Qblade.field = c(0xf2eee2);     // lit acrylic blades
+    Qdangle.field = c(0xd8cbb0);    // cardboard danglers, averaged over the atlas
+    Qpromo.field = c(0xd6ae4c);     // endcap promo boards run yellow/red
+    Qflag.field = c(0xd6a840);
+    Qlane.field = c(0xf0ead8);
+    Qwsign.field = c(0xdbd2bc);
+  };
+  paintSoups();
   // ROUND-4 additions.
   //   Qwell   the inward-facing walls of every recessed troffer housing
   //   Qtsh    the shadow each housing throws onto the tiles it is let into
@@ -65144,9 +65525,20 @@ function buildStore(THREE, scene) {
   // with fresher grout. Snapped to the real 12in grid the floor map lays down
   // (2.44 m repeat / 8), so a patch is a TILE and not a rectangle lying on top
   // of one.
+  //
+  // ROUND 10 — THE SECOND HALF OF THE SURVIVING-DECAL FAULT: THE GRID.
+  // "Seams not aligned to the tile grid" was literally true along Z and the
+  // arithmetic is short. The floor map repeats every 2.44 m and the plane's v
+  // runs from the BACK of the store forward, so the grout the map lays down
+  // sits at z = STORE.maxZ - n * TILE. This snapped to STORE.minZ + m * TILE
+  // instead. The store is 38.00 m deep and 38.00 / 0.305 = 124.59, so the two
+  // grids were 0.59 of a tile — 180 mm — out of phase down the entire sales
+  // floor, and every patch cut two real tiles in half. X was right all along
+  // (SW starts at the same edge u does), which is why the seams looked wrong
+  // in one direction only.
   const TILE = 2.44 / 8;
   const tileQuad = (n, m, cellIdx, w = 1, h = 1) => {
-    const x0 = STORE.minX + n * TILE, z0 = STORE.minZ + m * TILE;
+    const x0 = STORE.minX + n * TILE, z0 = STORE.maxZ - (m + h) * TILE;
     qUp(Qpatch, x0 + w * TILE / 2, 0.0028, z0 + h * TILE / 2, w * TILE, h * TILE,
       cellUV(cellIdx, 4, 1));
   };
@@ -65315,6 +65707,16 @@ function buildStore(THREE, scene) {
   // end. So the aisle body now carries one continuous strip over every aisle
   // centreline and one over every gondola — a clean 2.65 m pitch, no crossing
   // rows — and the front end and rear cross-aisle run perpendicular.
+  // the two cells of the ceiling-shadow atlas: housing vignette, pipe band.
+  const TSH0 = cellUV(0, TX.TSH_CELLS, 1), TSH1 = cellUV(1, TX.TSH_CELLS, 1);
+  // A pipe hanging under the tile shades it. `along` is the axis the pipe runs.
+  // u must run ACROSS the band and v along it, or the taper lands on the wrong
+  // pair of edges; hence the explicit half-extent vectors rather than qDown.
+  const pipeShade = (x, z, len, wide, along) => {
+    const R = along === 'x' ? [0, 0, -wide / 2] : [wide / 2, 0, 0];
+    const U = along === 'x' ? [len / 2, 0, 0] : [0, 0, len / 2];
+    Qtsh.rect([x, CEIL_H - 0.0016, z], R, U, TSH1[0], TSH1[1], TSH1[2], TSH1[3]);
+  };
   const AP_W = 0.60;                       // 2 ft aperture
   const TROF_D = 0.105;                    // recess: door plane below the tile
   const DOOR = CEIL_H - TROF_D;
@@ -65337,7 +65739,24 @@ function buildStore(THREE, scene) {
   // Widening the spread is what puts a genuine along-aisle brightness rhythm on
   // the shelves, and it is driven by the SAME per-unit state that picks the
   // lens cell, so a visibly aged lamp and the dimmer bay under it agree.
-  const LAMP_B = [1.14, 0.72, 0.94, 0.26];
+  // ROUND 10 — the four states are now four different FIXTURES rather than four
+  // brightnesses of one (see stripTex): 3 fresh tubes / 2 tubes with the middle
+  // one pulled / 3 aged and end-banded / 1 of 3 still lit. So the brightness
+  // table is no longer free — it is the tube count times the lumen depreciation,
+  // and 0.70 for the de-lamped unit is two thirds of three tubes minus the
+  // reflector loss that comes with an empty centre socket.
+  const LAMP_B = [1.16, 0.70, 0.86, 0.30];
+  // ...and how far over the clipping point a lens actually sits. This is NOT
+  // free brightness: the framebuffer is 8-bit UNORM with no tone mapping, so
+  // everything over 1.0 is thrown away, which is exactly what a camera exposed
+  // for a room full of 150 cd/m2 tile does with a 5000 cd/m2 lamp. The headroom
+  // is what lets the tube stay clipped while the reflector — authored three
+  // stops under it in stripTex — falls off with the cutoff angle. Without it
+  // the cutoff drags the tube down with the trough and the far strips go a flat
+  // grey, which is a different wrong answer from round 9's, not a better one.
+  // LAMP_B stays photometric, because lampAt() below feeds it to products.js as
+  // the illuminance on the shelves and that must not move.
+  const LENS_HEAD = 2.95;
   // axis 0 = long dimension along Z, axis 1 = along X.
   function troffer(x, z, axis, state) {
     const hx = (axis ? FIX_L : AP_W) / 2, hz = (axis ? AP_W : FIX_L) / 2;
@@ -65345,14 +65764,19 @@ function buildStore(THREE, scene) {
     // per-unit colour temperature and output. Warm 3000K through cool 5000K,
     // with the aged units (state 1/2) pulled toward the pink-amber a fluorescent
     // tube goes at the end of its life.
+    // ROUND 10. The atlas now carries the BIG colour-temperature difference —
+    // 3000K, 4100K and 5000K are three different pieces of artwork — so this
+    // tint is only the per-UNIT spread on top of it: two units of the same
+    // nominal lamp relamped four years apart, which is a further +-13% in r/b.
+    // Round 9 did the whole job here, which meant every unit in a state shared
+    // one hue and the variation only existed BETWEEN states.
     {
-      const t = rng();
-      const age = state === 1 ? 0.75 : state === 2 ? 0.35 : 0.0;
-      const b2 = LAMP_B[state] * rr(rng, 0.94, 1.06);
+      const t = rr(rng, -1, 1);
+      const b2 = LAMP_B[state] * LENS_HEAD * rr(rng, 0.90, 1.10);
       Qstrip.tint = {
-        r: Math.min(1.15, b2 * (0.985 + t * 0.055 + age * 0.070)),
-        g: Math.min(1.15, b2 * (0.995 + t * 0.010 - age * 0.010)),
-        b: Math.min(1.15, b2 * (1.030 - t * 0.085 - age * 0.115)),
+        r: Math.min(4.2, b2 * (1.000 + t * 0.058)),
+        g: Math.min(4.2, b2 * (1.000 + t * 0.006)),
+        b: Math.min(4.2, b2 * (1.000 - t * 0.072)),
       };
     }
     // the lamp: prismatic lens with two tubes behind it, seen face-on
@@ -65380,7 +65804,7 @@ function buildStore(THREE, scene) {
       fix(x, DOOR, z + sz * (hz + fw / 2), hx * 2, 0.022, fw, 0xd9d2bd, BfixC);
     }
     // the shadow the housing throws onto the tiles it is let into
-    qDown(Qtsh, x, CEIL_H - 0.0012, z, hx * 2 + 0.62, hz * 2 + 0.62, FULL);
+    qDown(Qtsh, x, CEIL_H - 0.0012, z, hx * 2 + 0.62, hz * 2 + 0.62, TSH0);
     // and the bloom. Additive, wider than the fixture, so at twenty metres a
     // strip of these stops resolving as separate lamps and becomes one line.
     //
@@ -65495,18 +65919,71 @@ function buildStore(THREE, scene) {
     if (Math.abs(d1) < 0.95) return c1 + Math.sign(d1 || 1) * 0.95;
     return x;
   };
+  // The same rule at the width a lamp aperture actually is, for things whose
+  // only problem with a fixture is that they must not hang across its face.
+  const offLamp = (x) => {
+    const k = Math.round(x / (PITCH / 2)), c = k * PITCH / 2, d = x - c;
+    return Math.abs(d) < 0.36 ? c + Math.sign(d || 1) * 0.36 : x;
+  };
 
   // SPRINKLER GRID. Round 2 ran seven dead-straight mains across X and nothing
   // along Z; a real wet system is a grid of mains and branch lines with a head
   // every ten feet, and it is one of the busiest things on a store ceiling.
+  //
+  // ROUND 10 — "The red sprinkler main has no heads, no couplings, no drop
+  // nipples, and casts no shadow on the deck 150 mm below it."
+  //
+  // All four true, and reading the round-2 code back shows the same fault
+  // three times: every fitting was placed by eye at an absolute height rather
+  // than off the pipe it belongs to, and every one of them landed INSIDE the
+  // pipe. The main sits at CEIL_H - 0.30 with a 75 mm radius, so it occupies
+  // CEIL_H - 0.375 to CEIL_H - 0.225; the "hanger" was at CEIL_H - 0.245, the
+  // plate at CEIL_H - 0.34, and the 200 mm drop at CEIL_H - 0.265 spanning
+  // CEIL_H - 0.365 to CEIL_H - 0.165 — i.e. buried, buried, and mostly buried.
+  // A hidden fitting is not a subtle fitting, it is an absent one, so the main
+  // rendered as a smooth extruded red line for nine rounds.
+  //
+  // Everything below is now placed RELATIVE to MAIN_Y +- MAIN_R, which is the
+  // only way this class of fault does not come back.
+  const MAIN_Y = CEIL_H - 0.30, MAIN_R = 0.072;
+  const MAIN_TOP = MAIN_Y + MAIN_R, MAIN_BOT = MAIN_Y - MAIN_R;
   for (let k = 0; k < 7; k++) {
     const z = STORE.minZ + 2.6 + k * (SD - 5) / 6 + rr(rng, -0.25, 0.25);
-    tube(CX, CEIL_H - 0.30, z, 0, 0, Math.PI / 2, 0.075, SW - 1.2, 0xb04a34, BtubeC);
-    for (let x = STORE.minX + 2.4; x < STORE.maxX - 2; x += 3.4) {
-      fix(x, CLUTTER_Y - 0.105, z, 0.05, 0.20, 0.05, 0x8f8a7c, BfixC);
-      fix(x, CEIL_H - 0.34, z, 0.13, 0.05, 0.13, 0xc9c2ae, BfixC);
-      fix(x, CEIL_H - 0.245, z, 0.10, 0.035, 0.10, 0xb04a34, BfixC);   // hanger
+    tube(CX, MAIN_Y, z, 0, 0, Math.PI / 2, MAIN_R, SW - 1.2, 0xb04a34, BtubeC);
+    // GROOVED COUPLINGS. A 150 mm main arrives in 6.4 m sticks and every joint
+    // is a Victaulic coupling: a collar a third wider than the pipe with two
+    // bolt pads standing off it. Eighty millimetres of a forty-metre run, and
+    // the only thing that makes it read as pipe rather than as extrusion.
+    for (let x = STORE.minX + 1.6; x < STORE.maxX - 1.4; x += 6.4) {
+      tube(x, MAIN_Y, z, 0, 0, Math.PI / 2, MAIN_R * 1.36, 0.115, 0x8c3a29, BtubeC);
+      for (const s of [-1, 1]) {
+        fix(x, MAIN_Y + s * MAIN_R * 1.46, z, 0.06, 0.045, 0.085, 0x6a5949, BfixC);
+      }
     }
+    // HANGERS. The rod goes UP to the structure and the saddle wraps the pipe.
+    for (let x = STORE.minX + 2.4; x < STORE.maxX - 2; x += 3.4) {
+      fix(x, (MAIN_TOP + CEIL_H) / 2, z, 0.015, CEIL_H - MAIN_TOP, 0.015, 0x8f8a7c, BfixC);
+      fix(x, MAIN_TOP - 0.012, z, 0.052, 0.075, 0.105, 0x7f7a6c, BfixC);
+      fix(x, MAIN_TOP + 0.045, z, 0.10, 0.026, 0.055, 0x9a9484, BfixC);
+    }
+    // HEADS, on a 3.05 m spacing — the code maximum for light hazard, which is
+    // what a supermarket sales floor is. Drop nipple off the BOTTOM of the main
+    // to a reducing tee, then the body, the two frame arms, and the deflector,
+    // which is the disc you actually see from the floor and the only part of
+    // the assembly that subtends more than a pixel at twenty metres.
+    for (let x = STORE.minX + 2.1 + rr(rng, 0, 0.7); x < STORE.maxX - 1.8; x += 3.05) {
+      const drop = rr(rng, 0.10, 0.16);
+      const hy = MAIN_BOT - drop;
+      tube(x, MAIN_BOT - drop / 2, z, 0, 0, 0, 0.014, drop + 0.01, 0xa89b84, BtubeC);
+      fix(x, hy - 0.018, z, 0.042, 0.055, 0.042, 0xcfc7b2, BfixC);        // body
+      for (const s of [-1, 1]) {                                          // frame arms
+        fix(x + s * 0.021, hy - 0.056, z, 0.009, 0.055, 0.012, 0xb6ae9a, BfixC);
+      }
+      fix(x, hy - 0.018, z, 0.011, 0.040, 0.011, 0xc06a2a, BfixC);        // glass bulb
+      fix(x, hy - 0.086, z, 0.068, 0.008, 0.068, 0xe2dbc6, BfixC);        // deflector
+    }
+    // ...and what a 150 mm pipe 300 mm under a tile field actually does to it.
+    pipeShade(CX, z, SW - 1.2, 0.44, 'x');
   }
   for (let k = 0; k < 6; k++) {                // branch lines running along Z
     const x = offRow(STORE.minX + 4.2 + k * (SW - 9) / 5 + rr(rng, -0.5, 0.5));
@@ -65518,10 +65995,21 @@ function buildStore(THREE, scene) {
     // about X sends +Y to +Z, which is what a branch line running along Z is.
     // (4b: and it hung at CEIL_H-0.155 with a 45 mm radius, so its crown sat
     // 5 mm inside the door plane — one of the shard sources.)
-    tube(x, CLUTTER_Y - 0.055, CZ, Math.PI / 2, 0, 0, 0.045, SD - 2.2, 0x9c4230, BtubeC);
+    const by = CLUTTER_Y - 0.055, br = 0.045;
+    tube(x, by, CZ, Math.PI / 2, 0, 0, br, SD - 2.2, 0x9c4230, BtubeC);
     for (let z = STORE.minZ + 3; z < STORE.maxZ - 2; z += 3.05) {
-      fix(x, CLUTTER_Y, z, 0.055, 0.14, 0.055, 0x8f8a7c, BfixC);
+      // hanger rod up to the tile, then the clevis on the pipe — same relative
+      // placement as the mains, for the same reason.
+      fix(x, (by + br + CEIL_H) / 2, z, 0.013, CEIL_H - by - br, 0.013, 0x8f8a7c, BfixC);
+      fix(x, by + br * 0.5, z, 0.042, 0.070, 0.075, 0x827d6f, BfixC);
+      // ...and an upright head off the branch, alternating with the main's
+      // pendents so the grid reads as a grid rather than as two unrelated runs.
+      if ((z | 0) % 2) {
+        fix(x, by - br - 0.030, z, 0.034, 0.050, 0.034, 0xcfc7b2, BfixC);
+        fix(x, by - br - 0.082, z, 0.056, 0.007, 0.056, 0xe2dbc6, BfixC);
+      }
     }
+    pipeShade(x, CZ, SD - 2.2, 0.30, 'z');
   }
   for (let k = 0; k < 12; k++) {
     const x = offRow(STORE.minX + 3 + (k % 6) * (SW - 6) / 5 + rr(rng, -0.5, 0.5));
@@ -65665,7 +66153,8 @@ function buildStore(THREE, scene) {
   // Cardboard cards on string at wildly varying heights. They cost almost
   // nothing and they put genuine detail into the top third of the frame, which
   // measured as the single flattest region in every round-2 render.
-  const dangle = (x, z, y) => {
+  const dangle = (x0, z, y) => {
+    const x = offLamp(x0);
     const uv = cellUV((rng() * 16) | 0, 4, 4);
     const w = rr(rng, 0.26, 0.40), h = w * rr(rng, 0.68, 0.86);
     const yaw = rr(rng, -0.5, 0.5);
@@ -65679,9 +66168,19 @@ function buildStore(THREE, scene) {
     // gondola has a 0.60 m aperture, so a good third of these threaded a 6 mm
     // sub-pixel dark cylinder straight up the middle of a lit troffer well —
     // the same black-shard mechanism as the conduit, just thinner and denser.
-    // A dangler hangs off the T-bar it is tied to, which is the door plane.
-    tube(x, (y + h / 2 + CLUTTER_Y) / 2, z, 0, 0, 0, 0.006,
-      CLUTTER_Y - y - h / 2, 0xb9b2a0);
+    //
+    // ROUND 10 — "hanging sale tags attach to nothing". They did: 4b stopped
+    // the string at CLUTTER_Y, which is 160 mm BELOW the tile, so every card in
+    // the store hung off a line that ended in mid-air. The right fix is not to
+    // shorten the string further, it is to move the card out from under the
+    // lamp — which is what offRow already does for conduit — and then let the
+    // line run to the grid and terminate in the spring clip it is actually
+    // tied to. The exclusion only has to clear the 0.60 m aperture, so it is
+    // 0.36 rather than conduit's 0.95.
+    tube(x, (y + h / 2 + CEIL_H - 0.014) / 2, z, 0, 0, 0, 0.005,
+      CEIL_H - 0.014 - y - h / 2, 0xd6cfba);
+    fix(x, CEIL_H - 0.026, z, 0.048, 0.016, 0.026, 0x9a9484, BfixC);
+    fix(x, y + h / 2 + 0.012, z, 0.018, 0.022, 0.008, 0xb2ab98, BfixC);
   };
   // Two tiers. The high ones sit up among the sprinkler grid; the low ones hang
   // at 2.9-3.5 m where a shopper's head would clear them, which puts them right
@@ -66439,7 +66938,7 @@ function buildStore(THREE, scene) {
     fix(bx, 1.20, cz, 0.10, 2.36, len, P.coolerIn);                        // back
     fix(mid, 2.34, cz, D, 0.16, len, P.cooler);                            // top
     fix(mid, 2.56, cz, D + 0.06, 0.34, len + 0.1, P.sage);                 // valance
-    fix(mid, 0.09, cz, D + 0.04, 0.18, len, P.kick);                       // kick
+    fix(mid, 0.09, cz, D + 0.04, 0.18, len, P.kickCool);                   // kick
     for (const e of [-1, 1]) fix(mid, 1.20, cz + e * (len / 2 + 0.05), D, 2.36, 0.10, P.cooler);
     const CD = [0.30, 0.68, 1.06, 1.44, 1.82];
     const lip = gx - dir * 0.20;
@@ -66805,7 +67304,7 @@ function buildStore(THREE, scene) {
     fix(cmid, 1.20, coolZ + coolD / 2 - 0.04, cw, 2.36, 0.08, P.coolerIn);   // back
     fix(cmid, 2.34, coolZ, cw, 0.16, coolD, P.cooler);                        // top
     fix(cmid, 2.56, coolZ, cw + 0.1, 0.34, coolD + 0.06, P.sage);             // valance
-    fix(cmid, 0.09, coolZ, cw, 0.18, coolD + 0.04, P.kick);                   // kick
+    fix(cmid, 0.09, coolZ, cw, 0.18, coolD + 0.04, P.kickCool);               // kick
     fix(coolX0 - 0.05, 1.20, coolZ, 0.10, 2.36, coolD, P.cooler);
     fix(coolX1 + 0.05, 1.20, coolZ, 0.10, 2.36, coolD, P.cooler);
     const CD = [0.30, 0.68, 1.06, 1.44, 1.82];
@@ -67419,11 +67918,30 @@ function buildStore(THREE, scene) {
     // in the build that says how dark this store gets. Swept against the
     // dairy-base luminance profile at 0.78 / 0.85 / 0.92 with the reference
     // measurement open beside it.
-    core: 0.84, coreBias: 0.020, coreGain: 2.20, coreReach: 1.0,
+    //
+    // ROUND 10 — coreReach 1.0 -> 1.90, skirtR 0.34 -> 0.46. Blind test 9 put
+    // the reach-in run, "the largest single occluder in the entire set", at
+    // 13-34 px of falloff against a real 48. Swept live with the reference
+    // beside it, both images at 1280 px so pixel counts compare, and the
+    // contact row snapped to the local minimum in BOTH so the two are measured
+    // the same way — floor luminance as a fraction of the open-floor asymptote:
+    //   px from the line     0     4     8    12    16    24    32    48   r90
+    //   REAL store_04      0.02  0.08  0.16  0.15  0.17  0.34  0.39  0.65   68
+    //   round 9            0.02  0.07  0.10  0.21  0.39  0.60  0.73  0.90   47
+    //   reach 1.90         0.02  0.12  0.09  0.10  0.18  0.31  0.46  0.81   62
+    // 1.90 with skirtR 0.58 takes the reach-in to 66 but costs the GONDOLA
+    // four pixels, and that class was already at parity, so 0.46 is the pair
+    // that improves one without paying for it out of the other. The two have
+    // to move together: the core covers 0 to reach*0.47 m and the skirt starts
+    // at skirtR, and if a gap opens between them the profile gets a shelf in it.
+    core: 0.84, coreBias: 0.020, coreGain: 2.20, coreReach: 1.90,
     // ...and the skirt's near radius, which is the single number that sets how
     // WIDE the falloff is. 0.08 (round 8) put the whole ramp inside 10 px;
-    // 0.34 puts it at 40-50, which is where the reference photographs are.
-    skirtR: 0.34, skirtRatio: 1.95,
+    // 0.34 put it at 40-50 and 0.46 at 60-70, which is where the reference is.
+    skirtR: 0.46, skirtRatio: 1.95,
+    // ROUND 10 — the cavity and the crevice. See chopAO in light.js for what
+    // each is and why a down-facing surface took no occlusion at all before.
+    cav: 0.78, crev: 0.72, crevH: 0.090,
   });
   {
     Object.assign(floorMat.userData.chop, FLDU);
@@ -67533,10 +68051,58 @@ function buildStore(THREE, scene) {
   // exactly the "hard black shards at grazing angle" the critic reported: pure
   // undersampling moire, not a texture failure. Full anisotropy, no bias, and a
   // coarser lower-contrast ladder in stripTex fixes it at the source.
-  soup(Qstrip, new THREE.MeshBasicMaterial({
+  // ROUND 10 — LUMINOUS INTENSITY DISTRIBUTION. THE ONE THE CRITIC CALLED
+  // "the cheapest and the most damaging."
+  //
+  // Blind test 9: "troffers show zero falloff with distance — the far troffer
+  // is as bright as the near one," and all four renders were given up on the
+  // ceiling before a floor or a shelf was looked at.
+  //
+  // The first instinct is wrong and worth writing down, because I spent a
+  // measurement on it: a Lambertian emitter's RADIANCE does not fall off with
+  // distance, and measuring peak lamp luminance in eleven bands of
+  // reference/store_05 confirms it — every strip in that photograph, near and
+  // far, clips at 0.99. So "the far one is as bright as the near one" is also
+  // true of the real photograph at the peak, and peak luminance cannot be the
+  // tell. That instrument is named in the report as one that failed.
+  //
+  // What DOES fall off is the angle. A troffer is not a Lambertian emitter: it
+  // is a prismatic lens recessed 105 mm behind a painted door flange, and both
+  // halves of that cut. The prisms redirect flux downward and go to grazing
+  // transmission past about 60 degrees; the flange physically occludes the far
+  // tube and then the near one as the angle opens. That is what a photometric
+  // cutoff angle IS. And looking down a 30 m aisle at a ceiling 3.6 m over your
+  // head, the far fixture is seen at 83 degrees off nadir and the near one at
+  // 20 — so in a corridor the angular falloff and the distance falloff are the
+  // same measurement, which is why the eye reads it as distance.
+  //
+  // Two stops between straight-under and the far end of the aisle. It costs one
+  // dot product on a material that was already one texture fetch.
+  const LENS_CUT = `
+{
+  vec3 Vv = vLensW - cameraPosition;
+  float ct = abs( Vv.y ) / max( length( Vv ), 1e-4 );   // cos off nadir
+  gl_FragColor.rgb *= CUT_LO + ( 1.0 - CUT_LO ) * smoothstep( 0.055, 0.62, ct );
+}
+`;
+  const lensCut = (m, lo) => {
+    m.onBeforeCompile = (sh) => {
+      sh.vertexShader = sh.vertexShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vLensW;')
+        .replace('#include <begin_vertex>',
+          '#include <begin_vertex>\n\tvLensW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;');
+      sh.fragmentShader = sh.fragmentShader
+        .replace('#include <common>', '#include <common>\nvarying vec3 vLensW;')
+        .replace('#include <tonemapping_fragment>',
+          LENS_CUT.replace(/CUT_LO/g, lo.toFixed(3)) + '#include <tonemapping_fragment>');
+    };
+    m.customProgramCacheKey = () => 'chopLensCut' + lo.toFixed(3);
+    return m;
+  };
+  soup(Qstrip, lensCut(new THREE.MeshBasicMaterial({
     map: T.strip, color: 0xffffff, vertexColors: true,
     userData: { chopNoAO: true },
-  }), 'lightLenses', ceilGroup);
+  }), 0.145), 'lightLenses', ceilGroup);
   soup(Qwell, new THREE.MeshBasicMaterial({ map: T.well, color: 0xffffff }),
     'trofferHousings', ceilGroup);
   const tshMat = new THREE.MeshBasicMaterial({
@@ -67544,10 +68110,19 @@ function buildStore(THREE, scene) {
   });
   const tsh = soup(Qtsh, tshMat, 'trofferShadows', ceilGroup);
   if (tsh) tsh.renderOrder = -2;
-  const bloomMat = new THREE.MeshBasicMaterial({
+  // ...and the halo takes the SAME cutoff, harder. Round 4b's wide layer was
+  // deliberately wider than a fixture so a distant run would sum across its
+  // joints into one continuous line, and that is right — a real strip does
+  // that. What it could not do was get DIMMER while it merged, so the far half
+  // of every aisle piled up into a white sheet brighter than the near fixtures,
+  // which is the other half of what "no falloff with distance" was measuring.
+  // A halo is scattered light from the same source through the same prisms, so
+  // it obeys the same distribution; it just has less of the flange in front of
+  // it, hence 0.10 rather than 0.145.
+  const bloomMat = lensCut(new THREE.MeshBasicMaterial({
     map: T.glow, color: 0xfff4dc, transparent: true, opacity: 0.34,
     depthWrite: false, blending: THREE.AdditiveBlending,
-  });
+  }), 0.100);
   const bl = soup(Qbloom, bloomMat, 'lightBloom', ceilGroup);
   if (bl) bl.renderOrder = 5;
   // GROUND SHADOWS — DELETED IN ROUND 8, and this is where they used to be
@@ -67560,7 +68135,19 @@ function buildStore(THREE, scene) {
   // marches — so it is one measurement, it agrees with the reflection under it
   // by construction, and it covers the junctions nobody enumerated.
   // T.gao and T.contact are gone with them; see textures().
-  soup(Qpatch, new THREE.MeshBasicMaterial({ map: T.patch, color: 0xd6d1c3 }), 'floorPatches');
+  // ...and the third half of it: the MATERIAL. An opaque unlit Basic decal
+  // laid on a lit, reflective, worn floor is not a replaced tile, it is a
+  // sticker — it overwrites the mirror, the wear layer and the light pools
+  // with a flat swatch, which is exactly the "pale quadrilateral" reading. A
+  // real repair is a shade difference in the same material, so it modulates
+  // instead of replacing. Normal-blended and low-alpha, so it still takes the
+  // field's occlusion with the floor under it rather than floating over the
+  // shadow at a fixture base.
+  const patchMesh = soup(Qpatch, new THREE.MeshBasicMaterial({
+    map: T.patch, color: 0xd6d1c3, transparent: true, opacity: 0.34,
+    depthWrite: false,
+  }), 'floorPatches');
+  if (patchMesh) patchMesh.renderOrder = -1;
   // FREEZER GLASS. Round 4 shipped this as a flat 0.20-opacity blue quad: the
   // same veil head-on as at eighty degrees, which is the one behaviour glass
   // never has. It now runs the floor's analytic mirror — sharing the floor's

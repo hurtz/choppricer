@@ -243,13 +243,22 @@ export function tilePatchTex(THREE) {
         : v < 0.72 ? 'rgba(255,250,238,0.34)' : 'rgba(96,88,72,0.24)';
       g.fillRect(ox + rng() * S, rng() * S, rr(rng, 1.2, 3.6), rr(rng, 1.1, 3.0));
     }
-    g.strokeStyle = 'rgba(58,50,40,0.60)';
-    g.lineWidth = 3;
-    g.strokeRect(ox + 1.5, 1.5, S - 3, S - 3);
-    if (i === 2) {                      // repair patch: fresh grout, sharp edge
-      g.strokeStyle = 'rgba(30,26,20,0.75)';
-      g.lineWidth = 4;
-      g.strokeRect(ox + 3, 3, S - 6, S - 6);
+    // ROUND 10 — THE OUTLINE IS GONE, AND IT WAS HALF OF THE DECAL FAULT.
+    // Blind test 9, for the second round running: "two shadow decals survived
+    // — hard-edged pale quadrilaterals with seams not aligned to the tile
+    // grid." Both of the survivors are these, and this stroke is why they read
+    // as pasted-on: a 3 px near-black rectangle drawn around every cell, i.e.
+    // a grout line on ALL FOUR sides of a tile that already has grout drawn
+    // by the map underneath it. A replaced tile is a tile. It shares its
+    // neighbours' grout; it does not bring its own frame.
+    // What a real repair DOES show is one fresher, paler grout line where the
+    // new tile was cut in, and only on the two edges that were cut.
+    if (i === 2) {
+      g.strokeStyle = 'rgba(246,240,226,0.30)';
+      g.lineWidth = 2.5;
+      g.beginPath();
+      g.moveTo(ox + 1.5, S); g.lineTo(ox + 1.5, 1.5); g.lineTo(ox + S, 1.5);
+      g.stroke();
     }
   }
   const t = new THREE.CanvasTexture(c);
@@ -277,6 +286,22 @@ uniform sampler2D uWall;
 
 float chopHash( vec2 p ) {
   return fract( sin( dot( p, vec2( 41.71, 289.33 ) ) ) * 43758.5453 );
+}
+// ROUND 10 — THE LENS CUTOFF, SHARED WITH THE FIXTURES THEMSELVES.
+// A recessed prismatic troffer has a photometric distribution: the prisms go to
+// grazing transmission past about 60 degrees off nadir and the door flange
+// occludes the far tube and then the near one as the angle keeps opening. The
+// lens material in ../store.js multiplies by exactly this curve, and so must
+// every mirror that reflects a lens — otherwise the ceiling correctly dims down
+// the aisle while its own reflection on the floor does not, which is the
+// arrangement that produced blind test 9's fourth floor fault: "the streaks get
+// STRONGER with distance". They were not getting stronger; everything else was
+// getting weaker around them.
+// ct is the cosine between the ray that reaches the lamp and the lamp's own
+// downward normal. For a floor fragment that is just ny, because a mirror in
+// the horizontal plane preserves the angle off vertical.
+float chopLensCut( float ct ) {
+  return 0.145 + 0.855 * smoothstep( 0.055, 0.62, clamp( ct, 0.0, 1.0 ) );
 }
 // Signed offset from x to the nearest gondola centreline, in metres, plus a
 // flag for whether a run actually stands there. The island runs ARE periodic
@@ -649,7 +674,8 @@ uniform sampler2D uBurn;
     float foot = camD * 0.0018 / max( ny, 0.02 );
     bz = max( bz, foot * 1.8 );
     bx = max( bx, foot * 0.30 );
-    vec3 refl = uCeilCol * chopCeilTile( QC, bz ) + uLightCol * chopLight( QC, bx, bz );
+    vec3 refl = uCeilCol * chopCeilTile( QC, bz )
+      + uLightCol * chopLight( QC, bx, bz ) * chopLensCut( ny );
 
     // --- is a gondola in the way before the ray clears the shelf tops? -----
     // Continuous occupancy, not a hit test: a reflection lobe has width, so
@@ -729,7 +755,23 @@ uniform sampler2D uBurn;
       // continuous strip four metres straight up, so a facing's top is over a
       // stop brighter than its kick. uFldGain is that illuminance.
       float pn = chopHash( vec2( floor( Pw.z * 2.2 ), floor( Pw.x * 1.5 ) ) );
-      vec3 lit = pcol * uFldGain * ( 0.74 + 0.62 * smoothstep( 0.0, 1.15, hitY ) );
+      // ROUND 10 — 0.74..1.36 -> 0.12..1.27, i.e. 0.9 stops of vertical range
+      // to 3.4. THE MIRROR DID NOT SHADE WHAT IT REFLECTED.
+      //
+      // uFldGain is the OPEN-ROOM illuminance, and multiplying an albedo by it
+      // says "this surface is lit as brightly as the middle of the aisle" —
+      // which is false for exactly the part of every fixture a floor mirror
+      // sees most of, namely the 200 mm of kickplate and plinth immediately
+      // above the contact line. That is the darkest band in the building, and
+      // the reflection of it was being painted at 74% of full room light right
+      // where the floor's own contact shadow is deepest. Measured: turning the
+      // mirror off entirely lengthened the reach-in run's r90 from 30 px to
+      // 46 px against a real 48 — the mirror was filling in the skirt it was
+      // supposed to be deepening, and that is the whole of why "your falloff
+      // is not reaching this fixture class" on the largest occluder in the set.
+      // 0.12 at the line to 1.27 by 900 mm is 3.4 stops, which is what a
+      // kickplate at L20 against a top facing at L150 actually measures.
+      vec3 lit = pcol * uFldGain * ( 0.12 + 1.15 * smoothstep( 0.02, 0.90, hitY ) );
       refl = mix( refl, lit * ( 0.72 + 0.58 * pn ), clamp( pocc * 1.45, 0.0, 1.0 ) );
       gloss *= 1.0 - 0.12 * pocc;
     }
@@ -985,8 +1027,13 @@ vec3 chopTrace( vec3 O, vec3 R, vec3 PN, float haze ) {
     float ahead = dot( Q - O, PN );
     if ( uPropOn > 0.5 && fT > 1.0e8 && ahead > 0.30 ) {
       float lod = log2( max( 1.0, ( 0.05 + tf * 0.10 ) * uFldCfg.y ) );
-      vec4 fh = chopFldAt( Q.xz, lod );
-      if ( fh.a > 0.035 && Q.y < fh.a * uFldCfg.x ) {
+      // ROUND 10 — chopFldFill, not the raw height. A reflected ray climbing
+      // toward the aisle blades used to find height 0 up there (the height
+      // channel deliberately excludes anything hanging) and fall through to
+      // the room average, so the one class of object in the store with enough
+      // contrast to be legible in a pane was the one class a pane could not
+      // reflect. See chopFldFill in light.js.
+      if ( chopFldFill( Q.xz, Q.y, lod ) > 0.30 ) {
         fT = tf; fC = chopFldCol( Q.xz, Q.y, lod );
       }
     }
@@ -1063,13 +1110,15 @@ vec3 chopTrace( vec3 O, vec3 R, vec3 PN, float haze ) {
     // ceiling rows — so it is never flat, it is a dim copy of them
     vec2 Q = ( O + R * tFloor ).xz;
     float b = min( uGBlur.x + 0.09 * tFloor, 1.4 );
-    vec3 c = uFloorCol + uLightCol * chopLight( Q, b * 0.7, b * 2.4 ) * 0.30;
+    vec3 c = uFloorCol
+      + uLightCol * chopLight( Q, b * 0.7, b * 2.4 ) * 0.30 * chopLensCut( 0.62 );
     return mix( c, uRoomCol, smoothstep( 8.0, 26.0, tFloor ) );
   }
   vec2 Q = ( O + R * tCeil ).xz;
   float bx = min( uGBlur.x + uGBlur.x * tCeil * 0.30 + haze * 0.9, uGBlurMax.x );
   float bz = min( uGBlur.y + uGBlur.y * tCeil * 0.55 + haze * 1.8, uGBlurMax.y );
-  return uCeilCol * chopCeilTile( Q, bz ) + uLightCol * chopLight( Q, bx, bz );
+  return uCeilCol * chopCeilTile( Q, bz )
+    + uLightCol * chopLight( Q, bx, bz ) * chopLensCut( abs( R.y ) );
 }
 
 void main() {

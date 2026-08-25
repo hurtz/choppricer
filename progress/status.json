@@ -1,8 +1,8 @@
 {
  "pieces": {
   "store": {
-   "round": 9,
-   "state": "gap",
+   "round": 10,
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -83,6 +83,11 @@
      "round": 9,
      "path": "../shots/b15_a.png",
      "t": 1787672843.444598
+    },
+    {
+     "round": 10,
+     "path": "../shots/b16_a.png",
+     "t": 1787676268.009802
     }
    ],
    "gaps": [
@@ -111,10 +116,10 @@
      "text": "THE CEILING gave up all four frames in two seconds, before a floor, a shelf base or a pane of glass was looked at: troffers show ZERO falloff with distance (the far one is as bright as the near one), they are single flat white rectangles where real ones show 2-4 discrete tubes with dark gaps and neighbouring fixtures at different colour temperatures, and the sprinkler main has no heads, no couplings and casts no shadow on the deck 150mm below it. Second: occlusion COVERAGE, not calibration - the refrigerated case run, the largest single occluder in the set, measures 31-58.5%, at or worse than last round's baseline, and several plain gondola bases have no measurable skirt at all. Third: the kick plate is an 18-19px band of near-constant black with a hard step, where real is a LIT kick darkening over 6px - occlusion is mutual and continuous across a junction, a smooth V, not a black slab followed by a ramp."
     }
    ],
-   "updated": 1787673664.255667,
-   "note": "FIVE placed shadows, not the two the critic named - all the same recipe, a 660mm near-black SQUARE under a 600mm ROUND tub, written as a 'plinth'. Then it closed the CLASS rather than the instances: cylinders were stamping their AABB into the occupancy field, so the new computed AO was about to draw a square shadow under the barrel by arithmetic. Batch now carries a 'round' flag and rasterises an antialiased ellipse - 'a property of the primitive, not the call site'. THE TRANSFERABLE MECHANISM: 'the smallest skirt radius is the entire falloff width', because horizon is a max() over the ray so far taps see the same wall from 0.1m as from 1m and only the nearest radius varies with distance. And the core's radius weights are the DERIVATIVE of the target profile - d/dx of a smoothstep is a parabola peaking at 300mm - 'which is why every monotone-decreasing weighting I tried first died inside 120mm: they put their mass where the profile is flat.' GLASS BUG: chopTrace's self-hit guard only covered runs lying along X, so the back-wall dairy run's march sample zero landed inside the pane's own case, latched, and skipped every remaining sample - all twelve doors returned their own case's column average, which is a low-alpha wash by construction.",
+   "updated": 1787676362.618434,
+   "note": "IT CORRECTED THE CRITIC WITH PHYSICS: 'a Lambertian emitter's radiance does not fall with distance, and every strip in reference/store_05 clips at 0.99 near AND far. The far troffer being as bright as the near one is true of the PHOTOGRAPH too. So peak luminance was never the tell.' What falls off is the ANGLE - a recessed prismatic troffer has a photometric cutoff, and down a 30m aisle the far fixture is seen at 83 degrees off nadir against the near one's 20. THE REFRIGERATED CASES WERE NOT ESCAPING THE AO: it ported chopAO to JS and measured visibility 0.075 at the reach-in base against a gondola's 0.078 - essentially identical, field stamped correctly. It was THE MIRROR FILLING THE SKIRT BACK IN: the reflected-prop term multiplied the case's albedo by open-room illuminance over a vertical range of only 0.74-1.36, so the reflection of the kickplate, the darkest band in the building, was painted at 74% of full room light exactly where the floor's contact shadow is deepest. Turning the mirror off lengthened r90 from 30px to 46 against a real 48. THE DECALS had three faults at once, including snapping to STORE.minZ while the floor map lays grout from STORE.maxZ - 38.00/0.305 = 124.59, so the two grids ran 180mm out of phase down the entire sales floor, cutting two real tiles in half every time. X was right, which is why the seams only looked wrong in one direction.",
    "gap": "THE CEILING gave up all four frames in two seconds, before a floor, a shelf base or a pane of glass was looked at: troffers show ZERO falloff with distance (the far one is as bright as the near one), they are single flat white rectangles where real ones show 2-4 discrete tubes with dark gaps and neighbouring fixtures at different colour temperatures, and the sprinkler main has no heads, no couplings and casts no shadow on the deck 150mm below it. Second: occlusion COVERAGE, not calibration - the refrigerated case run, the largest single occluder in the set, measures 31-58.5%, at or worse than last round's baseline, and several plain gondola bases have no measurable skirt at all. Third: the kick plate is an 18-19px band of near-constant black with a hard step, where real is a LIT kick darkening over 6px - occlusion is mutual and continuous across a junction, a smooth V, not a black slab followed by a ramp.",
-   "verdict": "10/10 again BUT THE BOTTLENECK MOVED \u2014 first time in nine rounds. 'Your occlusion work succeeded well enough that the floor is no longer the loudest tell, it's now roughly fourth. The bottleneck is now the ceiling.' Contact depth 36% -> 18.6% best case against a real reference of 22.1%: a 48% reduction in residual light at contact, about 0.95 stops, and that fixture class is now AT OR PAST PARITY with the real photo. Skirt length constant within 10% of real. Round primitives confirmed a true ellipse. Glass constant genuinely fixed, 0 -> 9.78 bay-to-bay spread."
+   "verdict": "PASS. Contact profile MAE against reference/store_04's freezer plinth: 0.163 -> 0.071, 2.3x closer, measured across the whole 2-64px profile rather than at one point. Ceiling ladder contrast p95/p20: 1.95 -> 4.58 against a real 5.98. Worst pose 137 calls / 4.32ms GPU with triangles DOWN 47k and no new soup, material or batch."
   },
   "cctv": {
    "round": 7,
@@ -438,6 +443,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787676362.6184351,
+   "piece": "store",
+   "role": "builder",
+   "round": 10,
+   "state": "passed",
+   "text": "IT CORRECTED THE CRITIC WITH PHYSICS: 'a Lambertian emitter's radiance does not fall with distance, and every strip in reference/store_05 clips at 0.99 near AND far. The far troffer being as bright as the near one is true of the PHOTOGRAPH too. So peak luminance was never the tell.' What falls off is the ANGLE - a recessed prismatic troffer has a photometric cutoff, and down a 30m aisle the far fixture is seen at 83 degrees off nadir against the near one's 20. THE REFRIGERATED CASES WERE NOT ESCAPING THE AO: it ported chopAO to JS and measured visibility 0.075 at the reach-in base against a gondola's 0.078 - essentially identical, field stamped correctly. It was THE MIRROR FILLING THE SKIRT BACK IN: the reflected-prop term multiplied the case's albedo by open-room illuminance over a vertical range of only 0.74-1.36, so the reflection of the kickplate, the darkest band in the building, was painted at 74% of full room light exactly where the floor's contact shadow is deepest. Turning the mirror off lengthened r90 from 30px to 46 against a real 48. THE DECALS had three faults at once, including snapping to STORE.minZ while the floor map lays grout from STORE.maxZ - 38.00/0.305 = 124.59, so the two grids ran 180mm out of phase down the entire sales floor, cutting two real tiles in half every time. X was right, which is why the seams only looked wrong in one direction."
+  },
+  {
+   "t": 1787676268.009803,
+   "piece": "store",
+   "role": "builder",
+   "round": 10,
+   "state": "building",
+   "text": "ROUND 10. Ceiling first, as instructed. (1) LENS CUTOFF: the troffer lens and its bloom now carry a photometric distribution \u2014 0.145 + 0.855*smoothstep(0.055,0.62,cos-off-nadir) \u2014 because in a corridor the angular falloff IS the distance falloff. The lamp also gets 2.95x headroom over the clipping point and stripTex's reflector is re-authored three stops under it, so a near fixture is a bright ladder on a mid ground and a far one is a thin line on a dark one. Tube ladder contrast p95/p20: 1.95 -> 4.58 against a real 5.98. (2) stripTex rebuilt: four different FIXTURES not four brightnesses (3-tube 4100K / de-lamped 2-tube 5000K / end-banded 3000K / one-of-three lit), narrow halo, real reflector fold. (3) Sprinkler main: every fitting was placed at an absolute height and every one landed INSIDE the pipe. All now relative to MAIN_Y +- MAIN_R \u2014 grooved couplings every 6.4 m, hangers rodded UP to the deck, pendent heads on drop nipples at 3.05 m, plus a soft shadow band on the tile from every main and branch. (4) Danglers run their line to the grid through a spring clip, routed off the lamp rows by offLamp(). OCCLUSION COVERAGE: the reach-in run was not escaping the AO \u2014 measured 0.075 visibility at its base \u2014 it was the MIRROR filling the skirt back in: uFldGain painted the reflected kickplate at 74% of open-room light right where the floor's contact is deepest. Vertical range 0.9 stops -> 3.4, plus chopLensCut on every reflected lamp. Contact profile MAE against reference/store_04's freezer plinth, 2-64 px: 0.163 -> 0.071, 2.3x closer. THE V: P.kick 0x231f18 -> 0x554e42 (pigment standing in for a term that now exists) and a new crevice term gives the fixture side ~6 px of falloff where round 9 had an 18 px black slab. TWO NEW AO TERMS: a down-facing surface took ZERO occlusion (wu = dot(vec3(d.x,0.70,d.y), (0,-1,0)) = 0 in all eight azimuths) and full floor bounce; cavity term fixes both, so the darkest pixels in an aisle frame are now under the shelf lip. DECALS: both survivors were floorPatches \u2014 opaque unlit Basic decals with a 3 px black stroke around every cell, snapped to STORE.minZ while the floor map lays grout from STORE.maxZ, 38.00/0.305 = 124.59, i.e. 180 mm out of phase down the whole floor. Grid fixed, stroke gone, material now 0.34-alpha so it modulates. GLASS: Quads never touched the field, so ALL signage was invisible to every mirror; added a colour-only paint sink and chopFldFill so a pane can reflect a thing that is not holding itself up. Bay-to-bay 7.13 -> 8.08 against a real 11.25-19.03 \u2014 built and wired, barely moved, reported as such. PERF: worst pose 137 calls / 4.32 ms GPU (budget 130/4.19); same call count as round 9 at the same pose, triangles DOWN 47k, no new soup/material/batch. Field bake 32.6 ms (budget 30.4), +0.7 from the second sink; bake timing on this machine varies 32-39 ms run to run, so I do not trust that number to 1 ms. INSTRUMENTS I DISTRUSTED: peak lamp luminance cannot separate render from real (every strip in reference/store_05 clips at 0.99 near AND far, so 'the far troffer is as bright as the near one' is true of the photograph too) \u2014 the call had to be re-derived as ladder contrast; and absolute min%-of-open-floor depends entirely on where the contact row is placed, so I report the whole profile and its MAE instead."
+  },
   {
    "t": 1787673664.2556689,
    "piece": "store",
@@ -1359,5 +1380,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787673664.255671
+ "updated": 1787676362.618436
 }
