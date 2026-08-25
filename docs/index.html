@@ -54379,6 +54379,18 @@ const TUNING = {
                        //   huff would be the tell the shrug is not.
   annHuffPace: 1.18,   // x walk while huffing
 
+  // --- The bird. Armed by annN ALONE, deliberately off the compliance roll.
+  // The first build put it in the rung-4 shrug pool and measured LR 0.26 — four
+  // times more likely from an innocent. The ladder was not leaking: a react clip is
+  // only reachable THROUGH the shrug, so it inherited the shrug's ratio to two
+  // decimals. It was not adding information, it was making existing information
+  // impossible to miss, which for a monitor-wall player is the same thing.
+  // Off the roll entirely, a man who COMPLIES and then flips you off gets one too,
+  // and LR(bird | armed) is 1.00. At 214x120 the finger does not read and never
+  // would — what reads is the body turned side-on to the aisle, held still 0.8s.
+  birdRung: 4,
+  birdGap: 0.55,
+
   // --- Round 4: two doors, and going through a man ---
   // One door made the thief's destination public knowledge, and public knowledge
   // beats a scouting report — a camper scored 80.7% at wrong-aisle-by-1. Two doors
@@ -70188,6 +70200,92 @@ const { cameraRig } = M_src_cctv_js;
 // with them — the dispatch is worth 40 points to a player who paces himself
 // and 22 to one who holds the key down, and both are true.
 // Re-run: window.__CHOP.agents.benchReal(200) / .benchCamp(200)
+//
+// ===========================================================================
+// ROUND 9 — THE SHOPPERS. POSE VOCABULARY, CHILDREN, AND THE BIRD.
+// ===========================================================================
+// The cop passed and then wrote this round's brief himself:
+//
+//   "They now have varied builds, ages, heights, hairstyles, sleeve lengths,
+//    shoes and hands — but they still share ONE POSE VOCABULARY. Fourteen
+//    people idle identically, hold a cart identically, and reach for a shelf
+//    identically, and that reads as clones far more than the geometry does."
+//
+// He was right, and the before-shot settled it: nine bodies in one aisle, every
+// single one in `walk+cart`, every one with both arms out at exactly -0.95 rad.
+// What shipped this round:
+//   - a per-person GAIT (stride, amplitude, bounce, hip roll, arm swing, arm
+//     lag, splay, toe-out), so nobody walks at anybody else's cadence
+//   - SEVEN IDLES, two or three per person, cycled off a clock
+//   - FIVE cart holds and THREE browse poses
+//   - CHILDREN, which the crowd had none of
+//   - the PA ESCALATION LADDER ending in a man calmly giving the camera the
+//     finger — see LADDER and decoy.js
+// All of it is in figures.js's rollPose() and this file's idlePose(),
+// animateChild() and animateShopper(). Where each thing lives and why is
+// written at the thing.
+//
+// ---- THE NO-REGRESSION ABLATION, AND THE MEASUREMENT BUG IT UNCOVERED ------
+// Every one of those is a POSE, and a pose must not move a chase. Proved by
+// running the identical suite on the round-8 build and on this one:
+//
+//                     ROUND 8                     ROUND 9
+//   cut off0          75% med6.22 u1 11 (14.7%)   75% med6.22 u1 11 (14.7%)
+//                     esc25 atCop n47 66% sq52    esc25 atCop n47 66% sq52
+//   camp              31% ditched 67              31% ditched 67
+//   always-sprint     50%  (so rationing is +25)  50%
+//   cut off2          74% med5.38                 74% med5.38
+//   lungCheck()       2.043 gassed vs 2.35 walk   identical, passes
+//
+// BYTE-IDENTICAL ON EVERY FIELD OF ALL FOUR ROWS. Not "within noise": the same
+// characters. That is not luck, it is the one design decision this round turned
+// on — every per-person number is rolled in figures.js's rollPerson(), which is
+// reachable only from makeShopper(), which is reachable only from the
+// `while (shoppers.length < K.shopperCount)` line in reset(), which is a no-op
+// after the fourteenth body exists. Rolls added there cost draws exactly once,
+// at module construction, before bench() ever calls setSeed(). CLAUDE.md's
+// standing warning is that even swapping a rolled call for a named one walked
+// the stream and moved a published number by five points; the way not to do
+// that is not to be careful, it is to roll somewhere the stream cannot reach.
+//
+// AND THE MEASUREMENT BUG, because it cost an hour and it will cost the next
+// person the same hour: THE FIRST FOUR ATTEMPTS AT THAT TABLE DISAGREED WITH
+// THEMSELVES. Same build, same seed, 85% / 87% / 75% on three page loads.
+// bench() inherits DIFF.level from whatever last set it, and game.js sets it
+// every frame from the shift clock — so a bench run started after the RAF loop
+// has ticked once is measured at difficultyForClock(0) = 0, and one started
+// before it is measured at the default 1. The tell, once I looked at the state
+// instead of the summary, was that every shopper's `nerve` was 1.55x — exactly
+// K.rampNerve — between two runs that should have been identical.
+//
+//   PASS `difficulty` TO EVERY BENCH CALL. An unpinned run is a measurement of
+//   an unknown difficulty, and it will look like your change.
+//
+// This is not a new bug and it is not in this round's code; it has been able to
+// corrupt any measurement in this file taken from a live page since round 6.
+//
+// ---- AND THE OTHER MEASUREMENT: IS THE FINGER A GUILT TELL? ---------------
+// benchBirdLine(120, { difficulty: 1 }), five announcements at one body:
+//
+//                bird | armed        bird      shrug      heed      bolt
+//   cold             ~100% (n 70)     45.0%     78.3%      1.7%     14.2%
+//   hot              ~100% (n 49)     25.8%     69.2%      1.7%     26.7%
+//   clean            ~100% (n116)     94.2%     99.2%      0.8%      0.0%
+//
+// `bird | armed` is the number the ladder controls and it is 1.00 across all
+// three populations: once armBird() has armed a body, whether he gives you the
+// finger does not depend on his guilt, because the function that decides has
+// never seen it. The unconditional column is dominated by a guilty man having
+// already run — 14.2% and 26.7% against an innocent's 0.0% — and that is round
+// 3's design, not this round's: RUNNING IS THE CONFESSION and no pose can be
+// conditioned to hide it.
+//
+// The first build of the ladder put the bird in the rung-4 shrug pool and
+// measured LR 0.26. It was not the ladder leaking, it was that a react clip is
+// only ever reached THROUGH the shrug, so it inherited the shrug's ratio to two
+// decimals (0.26 against 0.26). Decoupling it — the bird is now its own beat
+// that a heeding subject gets too — is what moved it. See armBird.
+// ===========================================================================
 
 
 // ROUND 6 — the figures moved out. agents.js owns how people MOVE; figures.js
@@ -70730,6 +70828,12 @@ const K = {
   get annSpook()      { return t('annSpook', 0.30); },
   get annNerve()      { return t('annNerve', 0.45); },  // nerve tilt on the roll
   get annSpill()      { return t('annSpill', 7.0); },   // m: bystanders who also look up
+  // ROUND 9 — THE ESCALATION LADDER. `birdRung` is how many times a body has to
+  // be shouted at before he gives the camera the finger, and it is the ONLY
+  // input to that decision: not his guilt, not his nerve, not what he did about
+  // the announcement. See armBird() and benchBird().
+  get birdRung()      { return t('birdRung', 4); },     // announcements at one body
+  get birdGap()       { return t('birdGap', 0.55); },   // s after the reaction ends
   get annLagLo()      { return t('annLagLo', 0.35); },  // s before he reacts at all
   get annLagHi()      { return t('annLagHi', 0.95); },
   get annCool()       { return t('annCool', 6.0); },    // s between PA calls
@@ -71813,7 +71917,7 @@ function createAgents(THREE, scene, world) {
       // ROUND 9 — where he is aiming a reaction. `annAt` is the body he is
       // gawping at (bystanders only, null for the man being addressed);
       // camYaw/camPitch are the solved world bearing to whatever he is aimed at.
-      annAt: null, camYaw: 0, camPitch: -0.3,
+      annAt: null, camYaw: 0, camPitch: -0.3, birdT: 0,
       // ROUND 8 — `huff` is seconds of visible annoyance left after a shrug
       // (guilty or innocent, same number), `paBolt` marks the startle so the
       // `react` state freezes for it instead of backing away from a cop who is
@@ -71952,7 +72056,7 @@ function createAgents(THREE, scene, world) {
     s.gestIn = rr(1.5, K.decoyHi);
     s.chill = 0; s.balk = 0; s.stall = 0; s.aborts = 0; s.leaving = false; s.made = 0;
     s.annT = 0; s.annKind = null; s.annOut = null; s.annN = 0; s.annSpill = false;
-    s.annAt = null;
+    s.annAt = null; s.birdT = 0;
     s.annClip = null; s.huff = 0; s.paBolt = false;
     s.shopT = rr(K.shopLo, K.shopHi);
     s.held.scale.set(1, 1, 1);
@@ -72744,12 +72848,64 @@ function createAgents(THREE, scene, world) {
   // is the trap CLAUDE.md records and which cost a previous builder an hour.
   // Verified rather than argued: bench(n=100) is byte-identical on every field.
   const LADDER = [
-    REACT_IDS,                                    // 1st and 2nd shout
-    ['whoMeHips', 'whoMeStare'],                  // 3rd
-    ['whoMeBird', 'whoMeBirdMouth'],              // 4th and 5th
-    ['whoMeFolded', 'whoMeBird', 'whoMeBirdMouth'], // 6th and beyond
+    REACT_IDS,                                       // 1st and 2nd shout
+    ['whoMeHips', 'whoMeStare'],                     // 3rd
+    ['whoMeHips', 'whoMeStare', 'whoMeFolded'],      // 4th and beyond
   ];
-  const ladderFor = (n) => LADDER[n <= 2 ? 0 : n === 3 ? 1 : n <= 5 ? 2 : 3];
+  const ladderFor = (n) => LADDER[n <= 2 ? 0 : n === 3 ? 1 : 2];
+
+  // ---- AND THE BIRD IS NOT ON THAT LADDER, WHICH IS THE SECOND VERSION ------
+  // The first build put `whoMeBird` in the rung-4 pool and benchBird measured it
+  // immediately: LR(bird) = 0.26. A man giving the camera the finger was FOUR
+  // TIMES more likely to be innocent, which is a guilt tell pointing the other
+  // way and is just as fatal.
+  //
+  // The ladder was not the leak. A react clip only ever plays when a subject
+  // SHRUGS, and the shrug probability does depend on guilt — that is round 7's
+  // design, it is what makes a put-back worth reading, and it is not mine to
+  // remove. Anything reachable only through the shrug inherits the shrug's
+  // likelihood ratio exactly, and the bench said exactly that: LR(bird) 0.26 and
+  // LR(shrug) 0.26, to the second decimal. The bird was not adding information;
+  // it was making information that was already there IMPOSSIBLE TO MISS, which
+  // for a player watching a monitor wall is the same thing.
+  //
+  // So the bird comes off the compliance roll altogether. It is a SEPARATE BEAT
+  // that plays after whatever he did, for anybody who has been shouted at
+  // `birdRung` times — the man who put it back, the man who blanked you, the
+  // bystander who was only in earshot. It is a function of annN and of nothing
+  // else, and P(bird | annN >= 4) is 1 for every population, so the ratio is
+  // 1.00 by construction rather than by tuning.
+  //
+  // It is also the better joke. A customer who does what you asked, puts the box
+  // back on the shelf, and THEN turns round and gives the camera the finger is
+  // funnier than one who was ignoring you anyway, and it is the shape the client
+  // asked for: deadpan, unhurried, and back to the shopping.
+  //
+  // NO DRAW. Which of the two bird clips plays is `(s.id + annN) & 1`, not a
+  // roll — a roll here would walk the stream inside reactToPA and move every
+  // announcement number in the file, which is the trap CLAUDE.md records.
+  function armBird(s) {
+    s.birdT = 0;
+    if ((s.annN || 0) < K.birdRung) return;
+    if (s.bolted || s.paBolt || s.state === 'shove' || s.caught || s.escaped) return;
+    // After whatever he is currently doing, plus a beat. The beat matters: the
+    // gesture is deadpan and a bird that starts on the frame the put-back ends
+    // reads as one continuous flail.
+    s.birdT = (s.gest ? s.gestT : 0) + K.birdGap;
+  }
+  function startBird(s) {
+    s.birdT = 0;
+    const id = ((s.id + (s.annN || 0)) & 1) ? 'whoMeBirdMouth' : 'whoMeBird';
+    startGesture(s, 'react', id);
+    if (!s.gest) return;
+    s.annAt = null;                    // this one is for the camera, not for him
+    aimAtCamera(s);
+    if (s.state === 'walk' || s.state === 'browse') {
+      if (s.state === 'walk') { s.target = null; s.path = []; }
+      s.state = 'browse';
+      s.timer = Math.max(s.timer, s.gestD + 0.2);
+    }
+  }
 
   // WHICH CAMERA IS WATCHING HIM. Solved once, when the clip starts, not per
   // frame: a subject answering a PA is standing still, and nine hypots a frame
@@ -72892,6 +73048,9 @@ function createAgents(THREE, scene, world) {
       s.timer = Math.max(s.timer, K.annHold);
       s.concealT = Math.max(s.concealT, K.annHold + 1.2);
       s.annOut = 'hold';
+      // Keying the price-check line at the same man four times counts too. It
+      // is a different sentence, not a different amount of being shouted at.
+      armBird(s);
       api && api.onAnnounce && api.onAnnounce(s, kind, 'hold');
       return;
     }
@@ -72972,6 +73131,10 @@ function createAgents(THREE, scene, world) {
     // instead — a body at the door sooner and one fewer subject the shift can
     // arm. Guilty men who shrugged are untouched; they have other plans.
     if (!s.guilty && s.shopT > 0) s.shopT = Math.max(4.0, s.shopT * K.annHuff);
+    // ROUND 9 — and if this was the fourth time, he owes the camera something.
+    // Armed for EVERY outcome — heed, shrug, hold — which is the whole point;
+    // see armBird.
+    armBird(s);
     api && api.onAnnounce && api.onAnnounce(s, kind, s.annOut);
   }
 
@@ -73049,6 +73212,18 @@ function createAgents(THREE, scene, world) {
     // ROUND 8 — and how long he stays annoyed about it. One subtract per body
     // and only for the handful who have been shouted at in the last few seconds.
     if (s.huff > 0) s.huff = Math.max(0, s.huff - dt);
+    // ROUND 9 — ...and whether he still owes the camera a gesture. One compare
+    // per body per frame in the overwhelmingly common case where nobody has been
+    // shouted at four times.
+    if (s.birdT > 0) {
+      s.birdT -= dt;
+      if (s.birdT <= 0 && !s.gest && !s.bolted && s.angry <= 0
+          && s.state !== 'shove' && s.state !== 'react' && s.state !== 'conceal') {
+        startBird(s);
+      } else if (s.birdT <= 0) {
+        s.birdT = 0.25;                 // busy; ask again shortly
+      }
+    }
 
     // ---- ROUND 6: clips run first, so a state can ask "am I still doing it".
     const clipOn = tickGesture(s, dt);
@@ -73565,17 +73740,48 @@ function createAgents(THREE, scene, world) {
         let d = s.camYaw - bodyYaw;
         while (d > Math.PI) d -= Math.PI * 2;
         while (d < -Math.PI) d += Math.PI * 2;
-        const HEAD_MAX = 1.35;
-        const head = clamp(d, -HEAD_MAX, HEAD_MAX);
+        // HOW MUCH OF THE TURN THE NECK TAKES, AND WHY IT SHRINKS AS HE COMMITS.
+        // A glance is 77 degrees of neck on a body that has not moved. A man
+        // deliberately giving a camera the finger has TURNED TO FACE IT, and
+        // the difference is not cosmetic: the arm hangs off `chest`, so it goes
+        // wherever the BODY goes and not where the head goes. Shipped at a flat
+        // 1.35 and the render settled it — he stood side-on to the aisle,
+        // looked at the dome over his shoulder, and thrust the bird at a
+        // shelf 77 degrees away from it. Fading the neck's share to 0.30 rad as
+        // `aim` reaches 1 puts the body — and therefore the arm — inside 17
+        // degrees of the lens, and leaves him just enough askance to still read
+        // as a person rather than as a turret.
+        const headMax = 1.35 - 1.05 * p.aim;
+        const head = clamp(d, -headMax, headMax);
         s.mesh.rotation.y = bodyYaw + (d - head) * p.aim;
         r.neck.rotation.y = lerp(r.neck.rotation.y, head, p.aim * 0.85);
         r.neck.rotation.x = lerp(r.neck.rotation.x, s.camPitch, p.aim * 0.85);
-        // The arm goes where the head goes. A bird held at the shoulder pitch
-        // the clip authored would point at the ceiling from close up and at the
-        // floor from down the aisle; this tips it by the same elevation the neck
-        // just took, at 70%, which lands it on the dome at both ends of an aisle
-        // without the clip having to know how far away he is standing.
-        if (p.armR < -1.7) r.armR.rotation.x += (s.camPitch + 0.30) * p.aim * 0.70;
+        // AND THE ARM'S ELEVATION IS SOLVED, NOT AUTHORED. A dome 11 m down the
+        // aisle is 5 degrees up; the same dome from 2 m away is 30. A clip
+        // cannot know which, so it authors the intent — armR past -1.7 means
+        // "this arm is up" — and the true elevation plus a 26-degree flourish is
+        // solved here. Without it he points at the ceiling from one end of an
+        // aisle and at the floor from the other, and the gesture stops being
+        // aimed at anything, which is the entire joke.
+        if (p.armR < -1.7) {
+          // IT ONLY EVER RAISES THE ARM, NEVER LOWERS IT, and getting that
+          // backwards is instructive. Solving the elevation outright pointed the
+          // bird at the dome correctly and dropped it from the 50 degrees the
+          // clip authored to 38, because a camera 5 m away down an aisle is
+          // nearly level. Which is geometrically right and visually wrong: NOBODY
+          // CAN TELL whether an arm is aimed 38 or 50 degrees at something 5 m
+          // away, and everybody can tell whether the hand is above the head. The
+          // shoulder is at 1.32 m and the arm is 0.72 long, so 38 degrees puts
+          // the hand 40 mm over a 1.72 m crown and 50 degrees puts it 150 mm
+          // over — at 22 px tall that is the difference between a lump on the
+          // silhouette and nothing at all. So the authored angle is a FLOOR and
+          // the solve only bites where it has to: close in, under a dome that is
+          // steeply overhead, where an arm at 50 degrees really would be aimed
+          // at the shelf behind it.
+          const authored = -p.armR - 1.57;
+          const wantEl = Math.max(authored, 0.45 + Math.abs(s.camPitch));
+          r.armR.rotation.x = lerp(p.armR, -(1.57 + wantEl), p.aim * 0.9);
+        }
       }
       // ---- and he is saying something you cannot hear ----------------------
       // Same construction as the shake, one storey down the face: an amplitude
@@ -73737,8 +73943,26 @@ function createAgents(THREE, scene, world) {
       // afternoon. The style is a property of the BODY and guilt is dealt out
       // fresh over the same fourteen bodies every reset, so across trials every
       // browse style is a thief exactly as often as every other.
+      // ---- AND THE IDLES LIVE HERE TOO, WHICH IS THE FIX FOR THE FIRST
+      // BUILD'S BEST-HIDDEN BUG. The seven idles shipped on the `else` branch
+      // below — the one that owns a body that is not browsing, not angry, not
+      // mid-clip. That reads as the right place and it is nearly empty: probe
+      // nine stationary shoppers and eight of them are in `browse` and the ninth
+      // is in `leave`. In this game A BODY THAT HAS STOPPED IS A BODY AT A
+      // SHELF, so `idleMix` measured 0.00 on all nine and the entire idle pool
+      // was decoration.
+      //
+      // So a browsing body ALTERNATES on the same clock everything else uses:
+      // one `idleHold` working the shelf, the next standing at it with its arms
+      // folded or a hand on its hip, and round again. Which is also what people
+      // do — nobody reaches at a shelf continuously for nine seconds — and it
+      // keeps the anti-oracle property exactly as it was, because the alternation
+      // is `floor(idleT / hold) % 2` off a clock no state transition can touch.
+      const standing = (Math.floor(r.idleT / P.idleHold) & 1) === 1;
       const bs = P.browse;
-      if (bs === 1) {
+      if (standing) {
+        idlePose(s, r, dt, ed, false);
+      } else if (bs === 1) {
         // A hand does not bob when it is resting on a shelf. Everything that
         // moves in this pose is the WEIGHT — the far hip carries it, the near
         // shoulder drops onto the braced arm — with a slow settle on top, which
@@ -73766,7 +73990,7 @@ function createAgents(THREE, scene, world) {
         r.chest.rotation.x = r.stoop + 0.05;
         r.neck.rotation.x = lerp(r.neck.rotation.x, 0.22, ed(6)); // looking at the shelf
       }
-      r.idleMix = Math.max(0, r.idleMix - dt * 5.5);
+      if (!standing) r.idleMix = Math.max(0, r.idleMix - dt * 5.5);
     } else {
       // ROUND 8 — HE IS WALKING IT OFF IN A HUFF, and it outlives the clip by
       // K.annHuffT. Chin up and eleven hundredths of the stoop taken back out of
@@ -75604,6 +75828,153 @@ function createAgents(THREE, scene, world) {
     return out;
   }
 
+  // =========================================================================
+  // ROUND 9 — benchBird. DOES THE FINGER TELL YOU ANYTHING?
+  // =========================================================================
+  // The whole risk in the escalation ladder, stated as a measurement. Shout at
+  // one body `shouts` times and record what he did the LAST time, for a guilty
+  // subject and an innocent one, and divide.
+  //
+  // The ladder itself is guilt-blind by construction — ladderFor() takes annN
+  // and nothing else — but that is NOT sufficient on its own and it is worth
+  // being precise about why. A subject only ever plays a react clip if he
+  // SHRUGS, and the shrug probability does depend on guilt (K.annSpook vs
+  // K.annHeed): that is round 7's design and it is what makes a put-back worth
+  // reading at all. So the bird inherits exactly the shrug's likelihood ratio
+  // and not one bit more — it is the shrug, animated differently, and it can
+  // carry no information the shrug did not already carry.
+  //
+  // And the interesting part is what K.annFade does to that inheritance. The
+  // fade discounts compliance by annFade^(annN-1), so by the fourth shout the
+  // heed probability has collapsed for BOTH populations and the shrug rate has
+  // gone to nearly 1 on both sides. The rung the bird lives on is precisely the
+  // rung where the compliance difference has already faded out. The number
+  // below is that argument as a fraction rather than as a paragraph.
+  function benchBird(n = 200, opts = {}) {
+    const dt = 1 / 60;
+    const saveLevel = DIFF.level;
+    const savePos = cop.position.clone(), saveUd = { ...cop.userData };
+    if (opts.difficulty != null) DIFF.level = clamp(+opts.difficulty || 0, 0, 1);
+    const shouts = opts.shouts ?? 5;
+    const BIRDS = new Set(['whoMeBird', 'whoMeBirdMouth']);
+    function cell(guilty, hot) {
+      let bird = 0, shrug = 0, heed = 0, bolt = 0, folded = 0, trials = 0, armed = 0;
+      const rung = new Map();
+      for (let k = 0; k < n; k++) {
+        setSeed((opts.seed ?? 5150) + k * 7919);
+        reset();
+        // The desk, not the door: this measures the handset, not the uniform.
+        cop.position.set(SERVICE_DESK.x, 0, SERVICE_DESK.z);
+        solids.resolve(cop.position, BODY_R);
+        cop.userData.vel.set(0, 0, 0); cop.userData.speed = 0;
+        const s = shoppers[k % shoppers.length];
+        resetShopper(s, guilty);
+        if (hot) { s.stole = true; s.state = 'drift'; s.concealT = 0; }
+        const api = { onHarass() {}, onAbort() {}, onLeave() {}, onBolt() {},
+          onCatch() {}, onEscape() {}, onAnnounce() {} };
+        let out = null, react = null, sawBird = false, wasArmed = false;
+        // WATCH THE WHOLE TRIAL, not just the frame the outcome commits. The
+        // bird is a SEPARATE BEAT that arrives after the reaction is over (see
+        // armBird), so a probe that samples s.gest at the moment s.annOut is set
+        // measures the reaction and reports 0% birds forever. The first version
+        // of this function did exactly that.
+        const watch = (frames) => {
+          for (let i = 0; i < frames; i++) {
+            tick(dt, { x: 0, z: 0 }, api);
+            if (s.gest && BIRDS.has(s.gest.id)) sawBird = true;
+          }
+        };
+        for (let sh = 0; sh < shouts; sh++) {
+          const r = announceAt(s, 'putback', { force: true });
+          if (!r.ok) break;
+          for (let i = 0; i < 150 && !s.annOut; i++) {
+            tick(dt, { x: 0, z: 0 }, api);
+            if (s.gest && BIRDS.has(s.gest.id)) sawBird = true;
+          }
+          out = s.annOut; react = s.gest ? s.gest.id : null;
+          // ARMED means armBird() actually armed him, checked on the frame the
+          // outcome commits and not after the watch — a drifting thief can reach
+          // the door and escape during the 7 s the beat is pending, and testing
+          // afterwards counted him as never-armed while still counting the bird
+          // he gave you on the way out. That is how the first version of this
+          // printed 128.6%.
+          if (s.birdT > 0) wasArmed = true;
+          // Run out the reaction AND the bird beat that follows it, whatever he
+          // decided — a man who put it back gets one too, which is the whole
+          // reason the ratio is 1.00.
+          watch(420);
+          // ONLY A RUNNER LEAVES THE LADDER. The first version also broke on
+          // 'heed', and that was a bench artifact rather than a rule: nothing in
+          // announceAt stops a player keying the handset again at a man who just
+          // put something back, and a player who is spamming the PA certainly
+          // will. Breaking on heed measured a different question — "what happens
+          // to a subject who is only shouted at until he complies" — and since
+          // guilty men comply sooner, it measured guilt with extra steps.
+          // ELIGIBLE means: he has now been shouted at enough times, and he is
+          // still a man standing in an aisle rather than a man running for the
+          // door. That is the population the player is actually looking at when
+          // he wonders what a raised arm means, and it is the conditional the
+          // ladder controls. The unconditional rate cannot be equalised and
+          // should not be — a guilty man runs, and running is the confession the
+          // whole game is built on.
+          if (out === 'bolt') break;
+        }
+        trials++;
+        if (wasArmed) armed++;
+        if (sawBird) bird++;
+        if (out === 'heed') heed++;
+        else if (out === 'bolt') bolt++;
+        else if (out === 'shrug') {
+          shrug++;
+          if (react === 'whoMeFolded') folded++;
+          rung.set(react, (rung.get(react) || 0) + 1);
+        }
+      }
+      const pc = (x) => +((x / Math.max(1, trials)) * 100).toFixed(1);
+      return { trials, birdPct: pc(bird), shrugPct: pc(shrug), heedPct: pc(heed),
+        boltPct: pc(bolt), foldedPct: pc(folded), armed,
+        birdGivenArmed: +((bird / Math.max(1, armed)) * 100).toFixed(1),
+        clips: [...rung.entries()].sort((a, b) => b[1] - a[1]).map(([c, v]) => c + ':' + v).join(' ') };
+    }
+    const cold = cell(true, false), hot = cell(true, true), clean = cell(false, false);
+    DIFF.level = saveLevel;
+    cop.position.copy(savePos); Object.assign(cop.userData, saveUd);
+    const lr = (a, b) => +(Math.max(a, 1e-9) / Math.max(b, 1e-9)).toFixed(2);
+    return {
+      shouts, cold, hot, clean,
+      // The headline. 1.00 means the finger is worth nothing to a player trying
+      // to work out who is stealing, which is the only acceptable answer.
+      likelihoodRatio: {
+        // THE ONE THAT ANSWERS THE QUESTION. Among subjects still standing in an
+        // aisle at the bird rung, does guilt change whether you get the finger?
+        birdGivenArmed: lr(cold.birdGivenArmed, clean.birdGivenArmed),
+        birdGivenArmedHot: lr(hot.birdGivenArmed, clean.birdGivenArmed),
+        // ...and the unconditional versions, which are dominated by the fact
+        // that a guilty man may have already run. Reported so nobody has to
+        // wonder whether they were quietly left out.
+        bird: lr(cold.birdPct, clean.birdPct),
+        birdHot: lr(hot.birdPct, clean.birdPct),
+        shrug: lr(cold.shrugPct, clean.shrugPct),
+      },
+    };
+  }
+  function benchBirdLine(n = 200, opts = {}) {
+    const r = benchBird(n, opts);
+    const row = (k) => `${k.padEnd(6)} bird|armed ${String(r[k].birdGivenArmed).padStart(5)}%`
+      + ` (n=${String(r[k].armed).padStart(3)})`
+      + `  bird ${String(r[k].birdPct).padStart(5)}%`
+      + `  shrug ${String(r[k].shrugPct).padStart(5)}%`
+      + `  heed ${String(r[k].heedPct).padStart(5)}%`
+      + `  bolt ${String(r[k].boltPct).padStart(5)}%`;
+    return [`after ${r.shouts} announcements at the same body:`,
+      row('cold'), row('hot'), row('clean'),
+      `LR(bird | still in the aisle at the rung) ${r.likelihoodRatio.birdGivenArmed}`
+      + `  hot ${r.likelihoodRatio.birdGivenArmedHot}`,
+      `LR(bird, unconditional) ${r.likelihoodRatio.bird}`
+      + `   LR(shrug) ${r.likelihoodRatio.shrug}`
+      + `   — both dominated by guilty men who already ran`].join('\n');
+  }
+
   function benchAnnounceLine(n = 400, opts = {}) {
     const r = benchAnnounce(n, opts);
     const row = (k) => `${k.padEnd(8)} heed ${String(r[k].heedPct).padStart(5)}%`
@@ -75704,6 +76075,8 @@ function createAgents(THREE, scene, world) {
     update: tick,
     bench, benchAll, benchLine, benchReal, benchCamp, benchShift, benchIncome,
     benchAnnounce, benchAnnounceLine,
+    // ROUND 9 — is the finger a guilt tell? See the block at benchBird.
+    benchBird, benchBirdLine,
 
     // ROUND 6 CONTRACT ADDITION — THE DIFFICULTY RAMP (additive; a game.js that
     // never calls this gets round 5's difficulty exactly, because level 1 IS
@@ -87262,6 +87635,11 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b0b0c);
 
 const world = buildStore(THREE, scene);
+// Everything in the scene at THIS instant is store. agents.js adds the cop, each
+// shopper rig, each cart, each child and the powerup props DIRECTLY to the scene at
+// five separate sites with no common group — so name- and material-based hide lists
+// kept missing one and leaking a character into a blind test. This is exact.
+const STORE_NODES = new Set(scene.children);
 const cctv = createCCTV(THREE, renderer, scene);
 const agents = createAgents(THREE, scene, world);
 const game = createGame(hud, { cctv, agents, world, THREE });
@@ -87391,7 +87769,17 @@ function run(seconds, opts = {}) {
 // Clean capture: raw scene through a posable camera, NO cctv grade and NO HUD.
 // Used to judge the store on its own merits against real photography.
 const probeCam = new THREE.PerspectiveCamera(52, RENDER_W / RENDER_H, 0.1, 200);
-async function snapClean(name, pose) {
+// storeOnly: hide everything the store did not build. Used for blind A/B captures,
+// where a stray character or placeholder prop hands the critic a free call.
+async function snapClean(name, pose, opts = {}) {
+  const reHide = [];
+  if (opts.storeOnly) {
+    for (const o of scene.children) {
+      if (!STORE_NODES.has(o) && o.visible && !o.isLight && !o.isCamera) {
+        o.visible = false; reHide.push(o);
+      }
+    }
+  }
   if (pose) {
     probeCam.fov = pose.fov ?? 52;
     probeCam.position.set(...pose.pos);

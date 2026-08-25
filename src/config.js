@@ -148,6 +148,18 @@ export const TUNING = {
                        //   huff would be the tell the shrug is not.
   annHuffPace: 1.18,   // x walk while huffing
 
+  // --- The bird. Armed by annN ALONE, deliberately off the compliance roll.
+  // The first build put it in the rung-4 shrug pool and measured LR 0.26 — four
+  // times more likely from an innocent. The ladder was not leaking: a react clip is
+  // only reachable THROUGH the shrug, so it inherited the shrug's ratio to two
+  // decimals. It was not adding information, it was making existing information
+  // impossible to miss, which for a monitor-wall player is the same thing.
+  // Off the roll entirely, a man who COMPLIES and then flips you off gets one too,
+  // and LR(bird | armed) is 1.00. At 214x120 the finger does not read and never
+  // would — what reads is the body turned side-on to the aisle, held still 0.8s.
+  birdRung: 4,
+  birdGap: 0.55,
+
   // --- Round 4: two doors, and going through a man ---
   // One door made the thief's destination public knowledge, and public knowledge
   // beats a scouting report — a camper scored 80.7% at wrong-aisle-by-1. Two doors

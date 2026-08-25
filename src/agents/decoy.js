@@ -114,6 +114,25 @@ export const POSE = {
   // neck yaw, unlagged, on top of `look`. Costs one sin per body per frame and
   // only while a clip with a non-zero shake is running.
   shake: 0.0,                 // radians of "no", amplitude only
+  // ROUND 9 — TWO MORE ENVELOPES, BOTH BUILT THE SAME WAY AND FOR THE SAME
+  // REASON AS `shake`: the clip owns the amplitude, the renderer owns the
+  // oscillation or the geometry, and neither costs anything on a body that is
+  // not doing it.
+  //
+  // `aim` is the one that matters. It is 0..1, and at 1 the subject's head — and
+  // past about 77 degrees his whole body — points AT THE NEAREST CAMERA IN THE
+  // BUILDING. Not at the screen, not at a baked yaw: agents.js reads the real
+  // rig out of cctv.js's cameraRig() and solves the bearing per subject, so a
+  // man in aisle 6 turns to the dome hanging in aisle 6, which is the one the
+  // player is looking through at the time. Authoring it as a keyframed `turn`
+  // instead would have aimed everybody the same way relative to their own
+  // heading, i.e. at nothing, and the joke only works if he is looking at YOU.
+  aim: 0.0,
+  // `mouth` is silent mouthing-off: a 3.2 Hz nod amplitude on the neck. There is
+  // no microphone on a shop camera and there is no jaw on these heads, so the
+  // read has to be the RHYTHM of a man saying something you cannot hear, which
+  // survives resolution the way any motion does and the way a mouth does not.
+  mouth: 0.0,
   item: [1, 1, 1],            // prop scale
 };
 
@@ -495,6 +514,157 @@ export const GESTURES = [
       kf(1.00, { armR: -0.16, armRz: -0.10, armL: -0.14, armLz: 0.10, neck: -0.04, chest: 0.24, turn: -0.18 }),
     ],
   },
+
+  // =========================================================================
+  // ROUND 9 — THE LADDER. "MAYBE EVEN THE CUSTOMER FLIPS THE BIRD AT THE
+  // SECURITY CAMERA."
+  // =========================================================================
+  // The four clips above are what a man does the FIRST time a voice comes out
+  // of the ceiling at him. This is what he does the second and the third, and
+  // the whole design of it is one sentence:
+  //
+  //   WHICH RUNG HE IS ON IS A FUNCTION OF HOW MANY TIMES YOU HAVE SHOUTED AT
+  //   HIM, AND OF NOTHING ELSE.
+  //
+  // agents.js's lookAround() picks the tier off `s.annN` — the per-body count of
+  // announcements that have landed on him — and takes THE SAME SINGLE rnd()
+  // DRAW round 7 took to choose within the tier. Guilt is not an input, not a
+  // tilt and not a weight. It is not that a guilty man is 5% less likely to give
+  // you the finger; it is that the function that decides does not receive his
+  // guilt, so there is no number anybody can tune to make him.
+  //
+  // That was worth being careful about, because the plausible version leaks
+  // badly. A shoplifter wants to keep his head down, so he should brazen it out
+  // LESS — and the moment that is true, THE BIRD IS A CONFESSION OF INNOCENCE.
+  // The player stops watching for a theft and starts spamming the handset at
+  // everybody, because the man who does not flip you off is your thief. Two
+  // rounds of work on a concealment that is indistinguishable from a phone call
+  // would have been given away by a joke. Measured either way; see the ablation
+  // in agents.js. Guilty 34.0%, innocent 33.0%, likelihood ratio 1.03.
+  //
+  // AND IT IS SELF-PUNISHING, WHICH IS WHY IT IS FUNNY. PA spam already earns
+  // nothing (annFade makes the second and third shout at a body worth steadily
+  // less) and costs 1.67 items a shift. Now it also fills the store with people
+  // giving the camera the finger — the player has built the mob himself, one
+  // free announcement at a time, and can watch it on nine monitors.
+  //
+  // `tell: 'escalate'`, NOT 'react', and that is the round-8 rule kept rather
+  // than a new one. OF('react') is the pool pickGesture rolls from by modulo;
+  // it had three entries when every distribution in this file was measured and
+  // it still has three. These are named, never rolled.
+  {
+    // TIER 2. He has heard this before. Beats 1 and 2 are heard(), same as
+    // everything else, but he finds the dome a third of a second earlier and
+    // then he does the thing people do when they are past being confused: hands
+    // go on the hips and he just LOOKS at it. The hold is the joke — three
+    // quarters of a second of a man staring down a camera is much longer than
+    // it sounds, and on the spot monitor it reads as being looked back at.
+    id: 'whoMeHips', tell: 'escalate', dur: 2.60, item: SMALL,
+    keys: [
+      ...heard(2.60),
+      kf(0.66 / 2.60, { armR: -0.90, armL: -0.92, neck: -0.30, look: 0.34, turn: -0.20, aim: 0.35 }),
+      // Hands to the hips as he comes round onto it.
+      kf(0.94 / 2.60, { armR: -0.74, armRz: -0.52, armL: -0.72, armLz: 0.52, neck: -0.24, aim: 0.80 }),
+      kf(1.20 / 2.60, { armR: -0.70, armRz: -0.60, armL: -0.68, armLz: 0.60, neck: -0.10, aim: 1.0, chest: -0.10 }),
+      // ...and the hold. Nothing moves for 0.75 s.
+      kf(1.95 / 2.60, { armR: -0.70, armRz: -0.60, armL: -0.68, armLz: 0.60, neck: -0.10, aim: 1.0, chest: -0.10 }),
+      kf(2.20 / 2.60, { armR: -0.80, armRz: -0.40, armL: -0.78, armLz: 0.40, neck: 0.06, aim: 0.55, chest: -0.02, shake: 0.30 }),
+      kf(2.42 / 2.60, { armR: -0.92, armRz: -0.22, armL: -0.90, armLz: 0.22, neck: 0.22, aim: 0.15, chest: 0.14 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+    ],
+  },
+  {
+    // TIER 2, the other one. No hands: he simply turns his whole body to the
+    // camera and stands there, and the affront is entirely in the stillness.
+    // Shorter than the hips version and it holds for longer, which is the
+    // trade — less to look at, and more time to look at it.
+    id: 'whoMeStare', tell: 'escalate', dur: 2.35, item: SMALL,
+    keys: [
+      ...heard(2.35),
+      kf(0.64 / 2.35, { armR: -0.92, armL: -0.93, neck: -0.36, look: 0.30, aim: 0.45 }),
+      kf(0.90 / 2.35, { armR: -0.90, armL: -0.92, neck: -0.16, aim: 1.0, chest: -0.12 }),
+      kf(1.86 / 2.35, { armR: -0.90, armL: -0.92, neck: -0.14, aim: 1.0, chest: -0.12 }),
+      kf(2.06 / 2.35, { armR: -0.94, armL: -0.94, neck: 0.08, aim: 0.40, chest: 0.02, shake: 0.22 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+    ],
+  },
+  {
+    // TIER 3. THE BIRD.
+    //
+    // The note that decided the timing: DEADPAN. A cartoon rage-shake is much
+    // less funny than a man calmly giving a camera the finger and going back to
+    // comparing two jars of sauce, so there is no shake anywhere in this clip.
+    // The arm goes up on a slow ease, holds dead still for eight tenths of a
+    // second aimed at the dome, comes down, and the last keyframe puts his hands
+    // back on the cart bar as if none of it happened.
+    //
+    // WHAT IT LOOKS LIKE AT 214x120, which is the only test that counts: the
+    // finger is sub-pixel and always was. What survives is ONE ARM STRAIGHT UP
+    // AND STILL, on a body that has turned side-on to the aisle to point it at
+    // the camera — a shape no other clip in this file makes, held for four times
+    // longer than the longest pose in any of them. agents.js swaps the right
+    // hand's geometry for a raised-finger bake while `aim` is up, so it is a
+    // real bird in a portrait and a raised arm on the wall, and neither of those
+    // costs a draw call.
+    id: 'whoMeBird', tell: 'escalate', dur: 2.90, item: SMALL,
+    keys: [
+      ...heard(2.90),
+      kf(0.68 / 2.90, { armR: -0.90, armL: -0.92, neck: -0.34, look: 0.32, turn: -0.16, aim: 0.40 }),
+      kf(0.92 / 2.90, { armR: -0.94, armL: -0.94, neck: -0.18, aim: 0.95, chest: -0.10 }),
+      // Up it goes, unhurried.
+      kf(1.34 / 2.90, { armR: -1.90, armRz: -0.14, armL: -0.92, neck: -0.16, aim: 1.0, chest: -0.10 }),
+      kf(1.56 / 2.90, { armR: -2.42, armRz: -0.06, armL: -0.90, neck: -0.14, aim: 1.0, chest: -0.12 }),
+      // The hold. 0.80 s of nothing at all.
+      kf(2.36 / 2.90, { armR: -2.44, armRz: -0.06, armL: -0.90, neck: -0.14, aim: 1.0, chest: -0.12 }),
+      kf(2.58 / 2.90, { armR: -1.50, armRz: -0.20, armL: -0.92, neck: -0.02, aim: 0.45, chest: -0.04 }),
+      kf(2.74 / 2.90, { armR: -1.02, armRz: -0.18, armL: -0.94, neck: 0.20, aim: 0.10, chest: 0.12 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+    ],
+  },
+  {
+    // TIER 3, the other one. The bird, and he is SAYING something while he does
+    // it, and there is no microphone on a shop camera so the player will never
+    // find out what. `mouth` is a 3.2 Hz nod amplitude — the rhythm of speech
+    // rather than a mouth, because at this budget there is no mouth to move and
+    // at this resolution there would be no point if there were. The free hand
+    // comes up and gestures with it, which is the half that reads at range: two
+    // arms doing different things is a silhouette, a moving jaw is four pixels.
+    id: 'whoMeBirdMouth', tell: 'escalate', dur: 3.10, item: SMALL,
+    keys: [
+      ...heard(3.10),
+      kf(0.66 / 3.10, { armR: -0.90, armL: -0.92, neck: -0.32, look: 0.30, turn: -0.18, aim: 0.45 }),
+      kf(0.92 / 3.10, { armR: -0.94, armL: -0.94, neck: -0.18, aim: 1.0, chest: -0.10 }),
+      kf(1.30 / 3.10, { armR: -1.86, armRz: -0.12, armL: -1.10, armLz: 0.30, neck: -0.16, aim: 1.0, chest: -0.12 }),
+      kf(1.52 / 3.10, { armR: -2.40, armRz: -0.04, armL: -1.34, armLz: 0.44, neck: -0.14, aim: 1.0, chest: -0.12, mouth: 0.09 }),
+      kf(2.10 / 3.10, { armR: -2.42, armRz: -0.04, armL: -1.52, armLz: 0.58, neck: -0.14, aim: 1.0, chest: -0.14, mouth: 0.11 }),
+      kf(2.52 / 3.10, { armR: -2.38, armRz: -0.08, armL: -1.28, armLz: 0.40, neck: -0.12, aim: 1.0, chest: -0.12, mouth: 0.08 }),
+      kf(2.78 / 3.10, { armR: -1.44, armRz: -0.20, armL: -1.02, armLz: 0.24, neck: 0.02, aim: 0.40, chest: -0.02 }),
+      kf(2.94 / 3.10, { armR: -1.00, armRz: -0.18, armL: -0.94, armLz: 0.18, neck: 0.20, aim: 0.10, chest: 0.12 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+    ],
+  },
+  {
+    // TIER 4, and it is the one the client's own note reached for last: he
+    // stops shopping, folds his arms, and stands there facing the camera waiting
+    // for you to say something else. No bird, no shake, no exit — the clip ends
+    // with him still folded and still aimed, because agents.js holds the browse
+    // timer past the end of it. The longest thing in the file by half a second.
+    //
+    // Folded arms are also the single strongest torso shape at monitor scale
+    // (see idlePose's note on idle 1): the two dark gaps either side of a light
+    // torso close up, and the body becomes one solid block with a bar across it.
+    // Turned side-on to the aisle, held for two seconds, it is the most legible
+    // pose any body in this store makes.
+    id: 'whoMeFolded', tell: 'escalate', dur: 3.60, item: SMALL,
+    keys: [
+      ...heard(3.60),
+      kf(0.62 / 3.60, { armR: -0.92, armL: -0.93, neck: -0.34, look: 0.28, aim: 0.50 }),
+      kf(0.88 / 3.60, { armR: -1.00, armL: -1.00, neck: -0.16, aim: 1.0, chest: -0.08 }),
+      kf(1.24 / 3.60, { armR: -1.36, armRz: 0.62, armL: -1.32, armLz: -0.58, neck: -0.12, aim: 1.0, chest: 0.02 }),
+      kf(3.30 / 3.60, { armR: -1.38, armRz: 0.62, armL: -1.34, armLz: -0.58, neck: -0.10, aim: 1.0, chest: 0.02 }),
+      kf(1.00, { armR: -1.38, armRz: 0.62, armL: -1.34, armLz: -0.58, neck: -0.10, aim: 1.0, chest: 0.02 }),
+    ],
+  },
 ];
 
 export const BY_ID = new Map(GESTURES.map((g) => [g.id, g]));
@@ -517,7 +687,8 @@ export function pickGesture(rng, kind) {
 const lerp = (a, b, t) => a + (b - a) * t;
 const _out = {
   off: [0, 0, 0], vis: 0, armR: 0, armRz: 0, armL: 0, armLz: 0,
-  chest: 0, neck: 0, look: 0, turn: 0, shake: 0, item: [1, 1, 1], id: '', tell: '',
+  chest: 0, neck: 0, look: 0, turn: 0, shake: 0, aim: 0, mouth: 0,
+  item: [1, 1, 1], id: '', tell: '',
 };
 
 // Sample a clip. Returns a SHARED object — read it, do not keep it.
@@ -547,6 +718,7 @@ export function applyGesture(g, u) {
   _out.armL = mix('armL'); _out.armLz = mix('armLz');
   _out.chest = mix('chest'); _out.neck = mix('neck');
   _out.look = mix('look'); _out.turn = mix('turn'); _out.shake = mix('shake');
+  _out.aim = mix('aim'); _out.mouth = mix('mouth');
   _out.item = g.item || POSE.item;
   _out.id = g.id; _out.tell = g.tell;
   return _out;

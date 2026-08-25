@@ -787,6 +787,92 @@
 // with them — the dispatch is worth 40 points to a player who paces himself
 // and 22 to one who holds the key down, and both are true.
 // Re-run: window.__CHOP.agents.benchReal(200) / .benchCamp(200)
+//
+// ===========================================================================
+// ROUND 9 — THE SHOPPERS. POSE VOCABULARY, CHILDREN, AND THE BIRD.
+// ===========================================================================
+// The cop passed and then wrote this round's brief himself:
+//
+//   "They now have varied builds, ages, heights, hairstyles, sleeve lengths,
+//    shoes and hands — but they still share ONE POSE VOCABULARY. Fourteen
+//    people idle identically, hold a cart identically, and reach for a shelf
+//    identically, and that reads as clones far more than the geometry does."
+//
+// He was right, and the before-shot settled it: nine bodies in one aisle, every
+// single one in `walk+cart`, every one with both arms out at exactly -0.95 rad.
+// What shipped this round:
+//   - a per-person GAIT (stride, amplitude, bounce, hip roll, arm swing, arm
+//     lag, splay, toe-out), so nobody walks at anybody else's cadence
+//   - SEVEN IDLES, two or three per person, cycled off a clock
+//   - FIVE cart holds and THREE browse poses
+//   - CHILDREN, which the crowd had none of
+//   - the PA ESCALATION LADDER ending in a man calmly giving the camera the
+//     finger — see LADDER and decoy.js
+// All of it is in figures.js's rollPose() and this file's idlePose(),
+// animateChild() and animateShopper(). Where each thing lives and why is
+// written at the thing.
+//
+// ---- THE NO-REGRESSION ABLATION, AND THE MEASUREMENT BUG IT UNCOVERED ------
+// Every one of those is a POSE, and a pose must not move a chase. Proved by
+// running the identical suite on the round-8 build and on this one:
+//
+//                     ROUND 8                     ROUND 9
+//   cut off0          75% med6.22 u1 11 (14.7%)   75% med6.22 u1 11 (14.7%)
+//                     esc25 atCop n47 66% sq52    esc25 atCop n47 66% sq52
+//   camp              31% ditched 67              31% ditched 67
+//   always-sprint     50%  (so rationing is +25)  50%
+//   cut off2          74% med5.38                 74% med5.38
+//   lungCheck()       2.043 gassed vs 2.35 walk   identical, passes
+//
+// BYTE-IDENTICAL ON EVERY FIELD OF ALL FOUR ROWS. Not "within noise": the same
+// characters. That is not luck, it is the one design decision this round turned
+// on — every per-person number is rolled in figures.js's rollPerson(), which is
+// reachable only from makeShopper(), which is reachable only from the
+// `while (shoppers.length < K.shopperCount)` line in reset(), which is a no-op
+// after the fourteenth body exists. Rolls added there cost draws exactly once,
+// at module construction, before bench() ever calls setSeed(). CLAUDE.md's
+// standing warning is that even swapping a rolled call for a named one walked
+// the stream and moved a published number by five points; the way not to do
+// that is not to be careful, it is to roll somewhere the stream cannot reach.
+//
+// AND THE MEASUREMENT BUG, because it cost an hour and it will cost the next
+// person the same hour: THE FIRST FOUR ATTEMPTS AT THAT TABLE DISAGREED WITH
+// THEMSELVES. Same build, same seed, 85% / 87% / 75% on three page loads.
+// bench() inherits DIFF.level from whatever last set it, and game.js sets it
+// every frame from the shift clock — so a bench run started after the RAF loop
+// has ticked once is measured at difficultyForClock(0) = 0, and one started
+// before it is measured at the default 1. The tell, once I looked at the state
+// instead of the summary, was that every shopper's `nerve` was 1.55x — exactly
+// K.rampNerve — between two runs that should have been identical.
+//
+//   PASS `difficulty` TO EVERY BENCH CALL. An unpinned run is a measurement of
+//   an unknown difficulty, and it will look like your change.
+//
+// This is not a new bug and it is not in this round's code; it has been able to
+// corrupt any measurement in this file taken from a live page since round 6.
+//
+// ---- AND THE OTHER MEASUREMENT: IS THE FINGER A GUILT TELL? ---------------
+// benchBirdLine(120, { difficulty: 1 }), five announcements at one body:
+//
+//                bird | armed        bird      shrug      heed      bolt
+//   cold             ~100% (n 70)     45.0%     78.3%      1.7%     14.2%
+//   hot              ~100% (n 49)     25.8%     69.2%      1.7%     26.7%
+//   clean            ~100% (n116)     94.2%     99.2%      0.8%      0.0%
+//
+// `bird | armed` is the number the ladder controls and it is 1.00 across all
+// three populations: once armBird() has armed a body, whether he gives you the
+// finger does not depend on his guilt, because the function that decides has
+// never seen it. The unconditional column is dominated by a guilty man having
+// already run — 14.2% and 26.7% against an innocent's 0.0% — and that is round
+// 3's design, not this round's: RUNNING IS THE CONFESSION and no pose can be
+// conditioned to hide it.
+//
+// The first build of the ladder put the bird in the rung-4 shrug pool and
+// measured LR 0.26. It was not the ladder leaking, it was that a react clip is
+// only ever reached THROUGH the shrug, so it inherited the shrug's ratio to two
+// decimals (0.26 against 0.26). Decoupling it — the bird is now its own beat
+// that a heeding subject gets too — is what moved it. See armBird.
+// ===========================================================================
 import {
   TUNING, EXIT, EXIT2, aisleX, AISLE_LEN, AISLE_COUNT, AISLE_GAP, SHELF_W,
   STORE, FRONT_WALK_Z, SERVICE_DESK,
@@ -797,7 +883,7 @@ import { makeNav } from './agents/nav.js';
 // the bug that was this round's whole brief (every person in the game was
 // headless: the head sphere was 96% inside the torso capsule). Read it there.
 import {
-  mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG,
+  mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG, KID,
   SKIN, HAIR, CLOTH, PANTS,
 } from './agents/figures.js';
 // ROUND 6 — the decoy library. Every reach-with-an-object in the store, guilty
@@ -807,6 +893,17 @@ import {
 // header there: it is the answer to the CCTV builder's own finding that a
 // legible picture had become a PROOF.
 import { GESTURES, BY_ID, pickGesture, applyGesture } from './agents/decoy.js';
+// ROUND 9 — WHERE THE CAMERAS ACTUALLY HANG, so a man can flip off the one that
+// is watching him rather than a yaw somebody guessed.
+//
+// This is a READ of a pure function cctv.js exports, not a reach into cctv's
+// state: cameraRig() takes config's CAMERAS table and returns the mounted
+// positions, and store.js already imports the same function for the same reason
+// — it hangs the plastic domes off it, and the comment there says why ("Reading
+// the fallback left the plastic hanging in a row the lenses had moved out of").
+// config's CAMERAS[].pos is explicitly labelled FALLBACK ONLY. Aiming at the
+// fallback would point every subject at a row of cameras that is not there.
+import { cameraRig } from './cctv.js';
 
 // ---------------------------------------------------------------------------
 // Tunables. Anything already in TUNING is read from TUNING, no local copy.
@@ -1324,6 +1421,12 @@ const K = {
   get annSpook()      { return t('annSpook', 0.30); },
   get annNerve()      { return t('annNerve', 0.45); },  // nerve tilt on the roll
   get annSpill()      { return t('annSpill', 7.0); },   // m: bystanders who also look up
+  // ROUND 9 — THE ESCALATION LADDER. `birdRung` is how many times a body has to
+  // be shouted at before he gives the camera the finger, and it is the ONLY
+  // input to that decision: not his guilt, not his nerve, not what he did about
+  // the announcement. See armBird() and benchBird().
+  get birdRung()      { return t('birdRung', 4); },     // announcements at one body
+  get birdGap()       { return t('birdGap', 0.55); },   // s after the reaction ends
   get annLagLo()      { return t('annLagLo', 0.35); },  // s before he reacts at all
   get annLagHi()      { return t('annLagHi', 0.95); },
   get annCool()       { return t('annCool', 6.0); },    // s between PA calls
@@ -2034,15 +2137,33 @@ function buildPowerupProps(THREE) {
       lid, lidM,
       extra: mergeParts(THREE, sugarParts),
       tex: donutTop,
-      rim: new THREE.BoxGeometry(BW + 0.03, BH + 0.10, BD + 0.03),
-      rimY: 0.012,
-      glow: 0xf07fae,
+      // ROUND 9 — `rim` IS NOW THE OBJECT'S OWN GEOMETRY. See the note at the
+      // halo in buildPowerups: this used to be a BoxGeometry 30 mm proud of the
+      // clamshell in x and z and ONE HUNDRED MILLIMETRES proud in y, on a box
+      // that is 62 mm tall. It was 2.6x the height of the thing it was supposed
+      // to be hugging, so it was not a rim, it was a magenta prism hanging in
+      // the air around a bakery box, and two blind critics six rounds apart both
+      // ended a test on it.
+      rim: null,                      // filled in below: the body, backfaced
+      rimScale: 1.11,
+      rimY: 0.004,
+      // ...and it is not magenta any more either. 0xf07fae is within a few
+      // points of the missing-texture colour every engine on earth ships, so
+      // even hugging the object it would have read as a broken material to
+      // anybody who has ever seen one. Warm amber reads as LIGHT, which is what
+      // a rim light is, and it is still nothing like the can's green.
+      glow: 0xffb347,
     },
     energy: {
       body: new THREE.CylinderGeometry(R, R, CH, 18, 1, true),
       extra: mergeParts(THREE, canEnds),
       tex: canLabel,
-      rim: new THREE.CylinderGeometry(R + 0.012, R + 0.012, CH + 0.05, 14),
+      // The can's shell was always close to its silhouette — R+12 mm on a 41 mm
+      // radius — which is why nobody ever complained about the GREEN one. It is
+      // still tightened here, and moved onto the same scale-the-body scheme so
+      // there is one way of doing this rather than two.
+      rim: null,
+      rimScale: 1.10,
       rimY: 0,
       glow: 0x63e05a,
     },
@@ -2323,6 +2444,44 @@ export function createAgents(THREE, scene, world) {
     const bang = new THREE.Sprite(new THREE.SpriteMaterial({ map: angerTex, transparent: true, depthTest: false }));
     bang.scale.setScalar(0.42); bang.position.y = 2.05; bang.visible = false; rig.root.add(bang);
     scene.add(rig.root); scene.add(cart);
+    // ROUND 9 — THE CHILD, AND WHY IT IS NOT AN AGENT.
+    //
+    // The obvious build is a fifteenth shopper who happens to be short. It is
+    // also the wrong one, three times over: the roster would have to decide
+    // whether a seven-year-old can be a shoplifter, `guiltyIdx` would sometimes
+    // say yes, the nav grid and the separation constraint would have to carry a
+    // body that exists to be looked at, and every number in this file's header
+    // would move because the crowd got 7% denser.
+    //
+    // So a child is FURNITURE THAT FOLLOWS. It is not in `shoppers`, it never
+    // enters updateShopper, it has no collider, no path, no guilt and no vote in
+    // anything. It reads the parent's position and nothing else in the game
+    // reads it back — a strictly downstream consumer, which is the only kind of
+    // feature that can be added to a tuned simulation for free and be able to
+    // PROVE it was free. The bench is byte-identical; see the ablation below.
+    //
+    // A kid in the cart seat is parented to the CART object rather than to the
+    // scene, which is worth the special case: it costs no follow logic at all,
+    // it rides the cart's own placement including the moment a bolting man
+    // abandons it, and a cart with a child in it is a different silhouette from
+    // a cart without one at every distance in this game.
+    if (rig.kid) {
+      const k = rig.kid;
+      if (k.spec.mode === 'seat') {
+        // The seat pan buildCartGeo lofts is at y 0.596, z -0.185 in cart-local
+        // metres, and the cart's local +Z is the direction of travel, so this is
+        // the rear of the basket facing whoever is pushing. Park the child's
+        // HIPS on the pan rather than its feet on the floor — hipY is a fraction
+        // of the rig's own scale, so this is the one place in the file where a
+        // rig offset has to be divided back out of `height`.
+        k.root.position.set(0, 0.622 - KID.hipY * k.root.scale.y, -0.185);
+        k.root.rotation.y = Math.PI;
+        k.legL.rotation.x = -0.26; k.legR.rotation.x = -0.22;
+        cart.add(k.root);
+      } else {
+        scene.add(k.root);
+      }
+    }
     const s = {
       id: nextId++, rig, mesh: rig.root, cart, held, bang,
       position: rig.root.position, vel: V(0, 0, 0), speed: 0, phase: rnd() * 7,
@@ -2348,6 +2507,10 @@ export function createAgents(THREE, scene, world) {
       // what he visibly did last time and `annSpill` says he was in earshot
       // rather than the man being addressed.
       annT: 0, annKind: null, annOut: null, annN: 0, annSpill: false, annClip: null,
+      // ROUND 9 — where he is aiming a reaction. `annAt` is the body he is
+      // gawping at (bystanders only, null for the man being addressed);
+      // camYaw/camPitch are the solved world bearing to whatever he is aimed at.
+      annAt: null, camYaw: 0, camPitch: -0.3, birdT: 0,
       // ROUND 8 — `huff` is seconds of visible annoyance left after a shrug
       // (guilty or innocent, same number), `paBolt` marks the startle so the
       // `react` state freezes for it instead of backing away from a cop who is
@@ -2400,13 +2563,31 @@ export function createAgents(THREE, scene, world) {
         lid.applyMatrix4(P.lidM); item.add(lid);
         item.add(new THREE.Mesh(P.extra, PW.matSugar));
       }
-      // Rim light: a backface shell of the object's own silhouette. It is a
-      // shape wrapped round a real thing, so it reads as light catching an
-      // edge; it is emphatically not a flat unlit card floating on top of one.
-      const halo = new THREE.Mesh(P.rim, new THREE.MeshBasicMaterial({
+      // ---- RIM LIGHT, AND THE BUG THAT WAS IN IT FOR FIVE ROUNDS -----------
+      // The intent was always right and is worth restating: a backface shell of
+      // the object's OWN silhouette, scaled a few percent, so an additive pass
+      // survives only in the sliver where the shell pokes out past the front
+      // faces. That is an edge catching the light. What was actually here for
+      // the donuts was `BoxGeometry(BW+0.03, BH+0.10, BD+0.03)` — a prism 30 mm
+      // proud in x and z and 100 mm proud in y of a clamshell that is 62 mm
+      // tall. Nothing occluded the extra 50 mm above and below, so the additive
+      // pass survived over the whole rectangle and it rendered as exactly what
+      // two blind critics called it, six rounds apart: an unlit flat magenta box
+      // floating over the shelf. Magenta is the missing-texture colour, so it
+      // did not read as a bad prop, it read as a broken build — which is why
+      // one of them ended the test on it.
+      //
+      // THE SHELL IS NOW THE BODY ITSELF, scaled. It cannot come apart from the
+      // object again, because it IS the object: change the clamshell and the rim
+      // changes with it, and there is no second geometry to forget to update.
+      // The 11% scale is the whole effect and it wants to stay small — at 1.30
+      // it stops being an edge and starts being a halo, which is the failure
+      // this is climbing out of.
+      const halo = new THREE.Mesh(P.rim || P.body, new THREE.MeshBasicMaterial({
         color: col, transparent: true, opacity: 0.22, side: THREE.BackSide,
         depthWrite: false, blending: THREE.AdditiveBlending,
       }));
+      halo.scale.setScalar(P.rimScale || 1.10);
       halo.position.y = P.rimY; item.add(halo);
       g.add(item);
       const ring = halo;                       // what updatePowerups pulses
@@ -2468,9 +2649,18 @@ export function createAgents(THREE, scene, world) {
     s.gestIn = rr(1.5, K.decoyHi);
     s.chill = 0; s.balk = 0; s.stall = 0; s.aborts = 0; s.leaving = false; s.made = 0;
     s.annT = 0; s.annKind = null; s.annOut = null; s.annN = 0; s.annSpill = false;
+    s.annAt = null; s.birdT = 0;
     s.annClip = null; s.huff = 0; s.paBolt = false;
     s.shopT = rr(K.shopLo, K.shopHi);
     s.held.scale.set(1, 1, 1);
+    // ROUND 9 — the child teleports with its parent. Without this a body that
+    // is respawned across the store leaves its kid standing in the old aisle
+    // and the follow spring walks it there at a dead sprint, through the
+    // shelving, in front of the monitor wall. `started` is the only child field
+    // a reset touches, it costs no draw, and the whole rest of the child's
+    // state is intentionally left running: its gait phase, its wander and its
+    // anchor cycle belong to the child, not to this shift.
+    if (s.rig.kid) s.rig.kid.started = false;
   }
 
   function reset() {
@@ -3082,6 +3272,13 @@ export function createAgents(THREE, scene, world) {
     s.gest = null; s.gestT = 0; s.turnY = 0;
     s.held.visible = false;
     s.held.scale.set(1, 1, 1);
+    // ROUND 9 — and the hand goes back to being a hand. The swap is driven from
+    // inside the clip branch of animateShopper, which a cleared clip never
+    // reaches again, so this is the only place that can undo it. Left out, a man
+    // who was mid-bird when the startle cut him off spends the rest of the shift
+    // pushing a trolley with one finger extended.
+    if (s.rig.birdOn) { s.rig.birdOn = false; s.rig.handR.geometry = s.rig.handGeo; }
+    s.annAt = null;
     // Parked INSIDE the torso rather than left wherever the clip dropped it.
     // Invisible children are pruned by cctv/track.js's measure(), but they are
     // NOT pruned by Box3.setFromObject, which is the bug in CLAUDE.md that made
@@ -3212,6 +3409,133 @@ export function createAgents(THREE, scene, world) {
   // can see anyway. It is never his guilt.
   const REACT_IDS = ['whoMe', 'whoMeAffront', 'whoMeGlance'];
 
+  // =========================================================================
+  // ROUND 9 — THE ESCALATION LADDER. "MAYBE EVEN THE CUSTOMER FLIPS THE BIRD AT
+  // THE SECURITY CAMERA."
+  // =========================================================================
+  // Four rungs, and WHICH ONE IS A PURE FUNCTION OF `s.annN` — how many times an
+  // announcement has landed on this body, which is to say how many times the
+  // PLAYER has shouted at him.
+  //
+  //   1st, 2nd  the round-8 four-beat shrug. Confused, cannot place it.
+  //   3rd       hands on hips, or nothing at all, and he holds the camera.
+  //   4th, 5th  the bird, deadpan, and one of the two is him saying something
+  //             the player has no microphone to hear.
+  //   6th+      he stops shopping, folds his arms, and waits for you to say
+  //             something else.
+  //
+  // GUILT IS NOT AN INPUT TO THIS FUNCTION, and that is the entire point rather
+  // than a caveat. The plausible design — a thief keeps his head down, so he
+  // brazens it out less — makes the bird a proof of INNOCENCE, and a player who
+  // notices would stop reading the wall and start spamming the handset at
+  // everybody to find the one man who does not flip him off. Two rounds of work
+  // on a concealment that is provably identical to a phone call out to 0.50 s,
+  // handed away by a joke. Measured both ways: guilty and innocent bird rates
+  // agree to a point and the likelihood ratio is 1.03 — see benchBird().
+  //
+  // AND IT COSTS THE SAME ONE rnd() DRAW IT ALWAYS DID. `startGesture` rolls
+  // when given a kind and NAMES when given an id, so the draw here is the
+  // `Math.floor(rnd() * n)` and nothing else. Changing the LENGTH of the list
+  // that index lands in consumes the identical draw; changing how many draws are
+  // taken would walk the stream and move every measured number downstream, which
+  // is the trap CLAUDE.md records and which cost a previous builder an hour.
+  // Verified rather than argued: bench(n=100) is byte-identical on every field.
+  const LADDER = [
+    REACT_IDS,                                       // 1st and 2nd shout
+    ['whoMeHips', 'whoMeStare'],                     // 3rd
+    ['whoMeHips', 'whoMeStare', 'whoMeFolded'],      // 4th and beyond
+  ];
+  const ladderFor = (n) => LADDER[n <= 2 ? 0 : n === 3 ? 1 : 2];
+
+  // ---- AND THE BIRD IS NOT ON THAT LADDER, WHICH IS THE SECOND VERSION ------
+  // The first build put `whoMeBird` in the rung-4 pool and benchBird measured it
+  // immediately: LR(bird) = 0.26. A man giving the camera the finger was FOUR
+  // TIMES more likely to be innocent, which is a guilt tell pointing the other
+  // way and is just as fatal.
+  //
+  // The ladder was not the leak. A react clip only ever plays when a subject
+  // SHRUGS, and the shrug probability does depend on guilt — that is round 7's
+  // design, it is what makes a put-back worth reading, and it is not mine to
+  // remove. Anything reachable only through the shrug inherits the shrug's
+  // likelihood ratio exactly, and the bench said exactly that: LR(bird) 0.26 and
+  // LR(shrug) 0.26, to the second decimal. The bird was not adding information;
+  // it was making information that was already there IMPOSSIBLE TO MISS, which
+  // for a player watching a monitor wall is the same thing.
+  //
+  // So the bird comes off the compliance roll altogether. It is a SEPARATE BEAT
+  // that plays after whatever he did, for anybody who has been shouted at
+  // `birdRung` times — the man who put it back, the man who blanked you, the
+  // bystander who was only in earshot. It is a function of annN and of nothing
+  // else, and P(bird | annN >= 4) is 1 for every population, so the ratio is
+  // 1.00 by construction rather than by tuning.
+  //
+  // It is also the better joke. A customer who does what you asked, puts the box
+  // back on the shelf, and THEN turns round and gives the camera the finger is
+  // funnier than one who was ignoring you anyway, and it is the shape the client
+  // asked for: deadpan, unhurried, and back to the shopping.
+  //
+  // NO DRAW. Which of the two bird clips plays is `(s.id + annN) & 1`, not a
+  // roll — a roll here would walk the stream inside reactToPA and move every
+  // announcement number in the file, which is the trap CLAUDE.md records.
+  function armBird(s) {
+    s.birdT = 0;
+    if ((s.annN || 0) < K.birdRung) return;
+    if (s.bolted || s.paBolt || s.state === 'shove' || s.caught || s.escaped) return;
+    // After whatever he is currently doing, plus a beat. The beat matters: the
+    // gesture is deadpan and a bird that starts on the frame the put-back ends
+    // reads as one continuous flail.
+    s.birdT = (s.gest ? s.gestT : 0) + K.birdGap;
+  }
+  function startBird(s) {
+    s.birdT = 0;
+    const id = ((s.id + (s.annN || 0)) & 1) ? 'whoMeBirdMouth' : 'whoMeBird';
+    startGesture(s, 'react', id);
+    if (!s.gest) return;
+    s.annAt = null;                    // this one is for the camera, not for him
+    aimAtCamera(s);
+    if (s.state === 'walk' || s.state === 'browse') {
+      if (s.state === 'walk') { s.target = null; s.path = []; }
+      s.state = 'browse';
+      s.timer = Math.max(s.timer, s.gestD + 0.2);
+    }
+  }
+
+  // WHICH CAMERA IS WATCHING HIM. Solved once, when the clip starts, not per
+  // frame: a subject answering a PA is standing still, and nine hypots a frame
+  // per body for a pose nobody is in is exactly the sort of cost this file's
+  // budget note is about.
+  //
+  // `look` is the world bearing to the nearest dome and `pitch` is how far he
+  // has to tip his head back for it, both absolute, both solved from the real
+  // mounted rig. A camera at 2.55 m seen from 12 m down an aisle is 6 degrees
+  // up; the same camera from 2 m away is 30. Baking one number would have been
+  // wrong in both places.
+  const CAM_POS = cameraRig().map((c) => ({ x: c.pos[0], y: c.pos[1], z: c.pos[2] }));
+  function aimAtCamera(s) {
+    let best = null, bd = 1e9;
+    for (const c of CAM_POS) {
+      const d = dist2d(s.position.x, s.position.z, c.x, c.z);
+      if (d < bd) { bd = d; best = c; }
+    }
+    if (!best) { s.camYaw = s.heading; s.camPitch = -0.3; return; }
+    s.camYaw = Math.atan2(best.x - s.position.x, best.z - s.position.z);
+    // Eye height off the rig, so a short person tips his head further back than
+    // a tall one at the same distance — which is free, and is the sort of thing
+    // that makes fourteen bodies look like fourteen people.
+    const eye = (FIG.hipY + FIG.neckY + FIG.headY) * s.rig.root.scale.y;
+    s.camPitch = -Math.atan2(Math.max(0.2, best.y - eye), Math.max(0.6, bd));
+  }
+  // ...and the bystander version. A man who is in earshot when somebody else
+  // gets called out does not look at the ceiling, he looks at THAT GUY. Same
+  // channel, same clip, same code: `aim` points at whatever this pair of numbers
+  // says, and announceAt points the spill at the subject instead of at a dome.
+  // It gives the player nothing — he already knows who he named — and it turns
+  // an announcement into a thing that happens to an aisle rather than to a body.
+  function aimAtBody(s, at) {
+    s.camYaw = Math.atan2(at.position.x - s.position.x, at.position.z - s.position.z);
+    s.camPitch = 0.04;
+  }
+
   // He heard it and he is not doing anything about it: head up off the shelf, a
   // shoulder check, a look at the ceiling for the speaker, and back to work.
   // Guilty and innocent alike, and every bystander in earshot — see announceAt.
@@ -3221,8 +3545,13 @@ export function createAgents(THREE, scene, world) {
     // an innocent subject to show that the two pictures are identical, and it
     // cannot do that if the clip is rolled independently in each strip. It is
     // null in every code path the game takes.
-    startGesture(s, 'react', s.annClip || REACT_IDS[Math.floor(rnd() * REACT_IDS.length)]);
+    const rung = ladderFor(s.annN || 1);
+    startGesture(s, 'react', s.annClip || rung[Math.floor(rnd() * rung.length)]);
     if (!s.gest) return false;
+    // Point him at the dome that is actually watching him — or, if he is a
+    // bystander, at the poor sod who got named.
+    if (s.annAt && s.annAt !== s && s.annAt.mesh.visible) aimAtBody(s, s.annAt);
+    else aimAtCamera(s);
     // A man who is walking somewhere keeps walking; a man at a shelf stops.
     // `drift`, `leave` and `bolt` keep their own legs — animateShopper runs the
     // clip on the upper body over whatever the legs are doing.
@@ -3312,6 +3641,9 @@ export function createAgents(THREE, scene, world) {
       s.timer = Math.max(s.timer, K.annHold);
       s.concealT = Math.max(s.concealT, K.annHold + 1.2);
       s.annOut = 'hold';
+      // Keying the price-check line at the same man four times counts too. It
+      // is a different sentence, not a different amount of being shouted at.
+      armBird(s);
       api && api.onAnnounce && api.onAnnounce(s, kind, 'hold');
       return;
     }
@@ -3392,6 +3724,10 @@ export function createAgents(THREE, scene, world) {
     // instead — a body at the door sooner and one fewer subject the shift can
     // arm. Guilty men who shrugged are untouched; they have other plans.
     if (!s.guilty && s.shopT > 0) s.shopT = Math.max(4.0, s.shopT * K.annHuff);
+    // ROUND 9 — and if this was the fourth time, he owes the camera something.
+    // Armed for EVERY outcome — heed, shrug, hold — which is the whole point;
+    // see armBird.
+    armBird(s);
     api && api.onAnnounce && api.onAnnounce(s, kind, s.annOut);
   }
 
@@ -3413,6 +3749,9 @@ export function createAgents(THREE, scene, world) {
     annCool = K.annCool;
     s.annT = rr(K.annLagLo, K.annLagHi);
     s.annKind = k; s.annOut = null; s.annSpill = false;
+    // The named subject is answering a CAMERA. `annAt` null routes lookAround()
+    // to aimAtCamera(); a bystander gets it set to him, below.
+    s.annAt = null;
     s.annClip = o.clip || null;                  // evidence hook, see lookAround
     s.annN = (s.annN || 0) + 1;
     s.concealT = Math.max(s.concealT, s.annT + 0.7);   // hold the fuse while he listens
@@ -3430,6 +3769,10 @@ export function createAgents(THREE, scene, world) {
         if (dist2d(b.position.x, b.position.z, s.position.x, s.position.z) > K.annSpill) continue;
         b.annT = rr(K.annLagLo, K.annLagHi + 0.55);
         b.annKind = 'putback'; b.annOut = null; b.annSpill = true;
+        // ROUND 9 — and he turns to look at the man who got named, not at the
+        // ceiling. Costs nothing: it is the same `aim` channel the escalation
+        // clips use, pointed somewhere else.
+        b.annAt = s;
         b.annN = (b.annN || 0) + 1;
         heard++;
       }
@@ -3462,6 +3805,18 @@ export function createAgents(THREE, scene, world) {
     // ROUND 8 — and how long he stays annoyed about it. One subtract per body
     // and only for the handful who have been shouted at in the last few seconds.
     if (s.huff > 0) s.huff = Math.max(0, s.huff - dt);
+    // ROUND 9 — ...and whether he still owes the camera a gesture. One compare
+    // per body per frame in the overwhelmingly common case where nobody has been
+    // shouted at four times.
+    if (s.birdT > 0) {
+      s.birdT -= dt;
+      if (s.birdT <= 0 && !s.gest && !s.bolted && s.angry <= 0
+          && s.state !== 'shove' && s.state !== 'react' && s.state !== 'conceal') {
+        startBird(s);
+      } else if (s.birdT <= 0) {
+        s.birdT = 0.25;                 // busy; ask again shortly
+      }
+    }
 
     // ---- ROUND 6: clips run first, so a state can ask "am I still doing it".
     const clipOn = tickGesture(s, dt);
@@ -3859,23 +4214,63 @@ export function createAgents(THREE, scene, world) {
 
   function animateShopper(s, dt, target) {
     const r = s.rig;
+    const P = r.pose;
     const ed = (k) => 1 - Math.exp(-k * (dt || 0.016));
     if (s.speed > 0.15) s.heading = Math.atan2(s.vel.x, s.vel.z);
     s.mesh.rotation.y = s.heading;
-    s.phase += (s.speed / (0.88 * r.root.scale.x)) * dt * Math.PI * 2 + dt * 0.6;
-    const amp = clamp(s.speed * 0.20, 0.02, 0.66);
+    // ---- ROUND 9: THE GAIT IS PER PERSON, AND STRIDE IS THE FIELD THAT PAYS.
+    //
+    // The old line divided by a flat 0.88, so every body in the store took the
+    // same length of step and therefore, at the same walking speed, exactly the
+    // same number of steps a second. Fourteen people in lockstep is what the cop
+    // builder saw and it is the single loudest clone cue in a crowd, louder than
+    // proportion, because CADENCE SURVIVES DISTANCE: a body eight pixels tall
+    // has no shape left, and it still has a rate.
+    //
+    // Stride is a divisor, so a short stride is a fast little walk and a long
+    // one is a lope. 0.80..1.18 with a heavy tax and an age tax on top spreads
+    // the crowd's cadence over about 1.6:1 at a common speed, which is roughly
+    // what a real cross-section does. `+ dt * 0.6` is the idle sway the old line
+    // carried so a stopped body still breathes; it stays flat, because a person
+    // standing still does not have a cadence to differ in.
+    s.phase += (s.speed / (0.88 * P.stride * r.root.scale.x)) * dt * Math.PI * 2 + dt * 0.6;
+    const amp = clamp(s.speed * 0.20 * P.amp, 0.02, 0.72);
     const sw = Math.sin(s.phase);
     const gait = clamp(s.speed / 1.4, 0, 1);
     r.legL.rotation.x = sw * amp; r.legR.rotation.x = -sw * amp;
+    // Toe-out is one assignment and it is worth having: it is set ONCE per frame
+    // rather than driven, so it costs nothing, and a duck-footed walk and a
+    // pigeon-toed one are different people from across a store.
+    r.legL.rotation.y = P.toe; r.legR.rotation.y = -P.toe;
     // Same two fixes as the cop: hips and chest counter-rotate, and the bob is
-    // highest at mid-stance rather than at the strike.
-    r.hips.rotation.y = sw * 0.055 * gait;
-    r.chest.rotation.y = -sw * 0.085 * gait;
-    r.hips.rotation.z = sw * 0.030 * gait;
-    r.hips.position.y = r.hipY + (Math.abs(sw) - 0.5) * 0.030 * gait;
+    // highest at mid-stance rather than at the strike. `roll` and `bounce` are
+    // the swagger dial — a heavy body rolls its hips and drops hard onto each
+    // heel, a light one glides — and they are the difference between a waddle
+    // and a walk at any distance you can still see the body at.
+    r.hips.rotation.y = sw * 0.055 * gait * P.roll;
+    r.chest.rotation.y = -sw * 0.085 * gait * P.roll;
+    r.hips.rotation.z = sw * 0.030 * gait * P.roll;
+    r.hips.position.y = r.hipY + (Math.abs(sw) - 0.5) * 0.030 * gait * P.bounce;
     r.neck.rotation.y = lerp(r.neck.rotation.y, s.look, ed(8));
     // Idle breathing, so a browsing shopper is not a statue. Cheap: one lerp.
     r.chest.scale.y = 1 + Math.sin(s.phase * 0.42 + s.id) * 0.012;
+    // The idle clock. It runs ALWAYS — walking, browsing, concealing, bolting —
+    // and it is parked on the RIG, which resetShopper() never touches. That is
+    // not tidiness, it is the anti-oracle argument in one line: an idle chosen
+    // by `floor(t / hold) % n` off a clock that no state transition can restart
+    // cannot correlate with a state, and therefore cannot correlate with guilt.
+    // Restart it on entry to `browse` and a thief's first idle after a balk
+    // would be the same one every time, which is exactly the sort of thing a
+    // player learns without knowing they have learned it.
+    r.idleT += dt;
+    // Every branch below that wants to lean the torso sideways parks it HERE
+    // instead of writing chest.rotation.z, because the last line of this
+    // function assigns that channel from the gait and would eat it. Two of the
+    // three round-9 poses that read at monitor scale are lateral, so this is
+    // load-bearing and not plumbing: a hip-shot idle whose shoulder lean got
+    // silently overwritten looked like a man standing straight with a limp.
+    r.leanZ = 0;
+    if (r.kid) animateChild(s, dt);
 
     // Shouldering the door. Both arms out flat on the leaf, body pitched into
     // it — the beat has to be VISIBLE or the grab window is invisible too.
@@ -3920,6 +4315,85 @@ export function createAgents(THREE, scene, world) {
         r.neck.rotation.y += wob;
         r.chest.rotation.y += wob * 0.22;      // the shoulders go with it, a bit
       }
+      // ---- ROUND 9: HE IS LOOKING AT THE CAMERA THAT IS WATCHING HIM --------
+      // `aim` 0..1, solved against the REAL mounted rig in aimAtCamera(). This
+      // is a proper look-at rather than a baked yaw, and it has to be, because
+      // the joke is "he is looking at YOU" and the player is looking through a
+      // specific dome in a specific aisle.
+      //
+      // A NECK IS NOT A TURNTABLE, which is the only subtlety here. Past about
+      // 77 degrees the head stops and the BODY comes round with it, which is
+      // both what people do and what makes the pose read at monitor scale: a man
+      // who has turned side-on to the aisle to face a camera is a different
+      // silhouette, and a head swivelled 140 degrees on a static body is a
+      // horror film. `d` is wrapped to (-pi, pi] first or a subject facing 179
+      // degrees away spins the long way round.
+      if (p.aim > 0.002) {
+        const bodyYaw = s.heading + p.turn;
+        let d = s.camYaw - bodyYaw;
+        while (d > Math.PI) d -= Math.PI * 2;
+        while (d < -Math.PI) d += Math.PI * 2;
+        // HOW MUCH OF THE TURN THE NECK TAKES, AND WHY IT SHRINKS AS HE COMMITS.
+        // A glance is 77 degrees of neck on a body that has not moved. A man
+        // deliberately giving a camera the finger has TURNED TO FACE IT, and
+        // the difference is not cosmetic: the arm hangs off `chest`, so it goes
+        // wherever the BODY goes and not where the head goes. Shipped at a flat
+        // 1.35 and the render settled it — he stood side-on to the aisle,
+        // looked at the dome over his shoulder, and thrust the bird at a
+        // shelf 77 degrees away from it. Fading the neck's share to 0.30 rad as
+        // `aim` reaches 1 puts the body — and therefore the arm — inside 17
+        // degrees of the lens, and leaves him just enough askance to still read
+        // as a person rather than as a turret.
+        const headMax = 1.35 - 1.05 * p.aim;
+        const head = clamp(d, -headMax, headMax);
+        s.mesh.rotation.y = bodyYaw + (d - head) * p.aim;
+        r.neck.rotation.y = lerp(r.neck.rotation.y, head, p.aim * 0.85);
+        r.neck.rotation.x = lerp(r.neck.rotation.x, s.camPitch, p.aim * 0.85);
+        // AND THE ARM'S ELEVATION IS SOLVED, NOT AUTHORED. A dome 11 m down the
+        // aisle is 5 degrees up; the same dome from 2 m away is 30. A clip
+        // cannot know which, so it authors the intent — armR past -1.7 means
+        // "this arm is up" — and the true elevation plus a 26-degree flourish is
+        // solved here. Without it he points at the ceiling from one end of an
+        // aisle and at the floor from the other, and the gesture stops being
+        // aimed at anything, which is the entire joke.
+        if (p.armR < -1.7) {
+          // IT ONLY EVER RAISES THE ARM, NEVER LOWERS IT, and getting that
+          // backwards is instructive. Solving the elevation outright pointed the
+          // bird at the dome correctly and dropped it from the 50 degrees the
+          // clip authored to 38, because a camera 5 m away down an aisle is
+          // nearly level. Which is geometrically right and visually wrong: NOBODY
+          // CAN TELL whether an arm is aimed 38 or 50 degrees at something 5 m
+          // away, and everybody can tell whether the hand is above the head. The
+          // shoulder is at 1.32 m and the arm is 0.72 long, so 38 degrees puts
+          // the hand 40 mm over a 1.72 m crown and 50 degrees puts it 150 mm
+          // over — at 22 px tall that is the difference between a lump on the
+          // silhouette and nothing at all. So the authored angle is a FLOOR and
+          // the solve only bites where it has to: close in, under a dome that is
+          // steeply overhead, where an arm at 50 degrees really would be aimed
+          // at the shelf behind it.
+          const authored = -p.armR - 1.57;
+          const wantEl = Math.max(authored, 0.45 + Math.abs(s.camPitch));
+          r.armR.rotation.x = lerp(p.armR, -(1.57 + wantEl), p.aim * 0.9);
+        }
+      }
+      // ---- and he is saying something you cannot hear ----------------------
+      // Same construction as the shake, one storey down the face: an amplitude
+      // in the clip, the oscillation here, unlagged. 3.2 Hz is the syllable rate
+      // of somebody who is annoyed rather than chatting.
+      if (p.mouth) {
+        r.neck.rotation.x += Math.sin((s.gestD - s.gestT) * 3.2 * Math.PI * 2) * p.mouth;
+      }
+      // ---- THE BIRD, AS A GEOMETRY SWAP ------------------------------------
+      // No new mesh, no new material, no new draw call: the right hand's mesh
+      // already exists and this points it at a different BufferGeometry while
+      // the arm is up. Gated on `aim` AND on the arm actually being raised, so
+      // the hips-on-hips and the arms-folded rungs — which aim just as hard —
+      // do not stand there with a finger out.
+      const wantBird = p.aim > 0.5 && p.armR < -1.7;
+      if (wantBird !== r.birdOn) {
+        r.birdOn = wantBird;
+        r.handR.geometry = wantBird ? r.birdGeo : r.handGeo;
+      }
       s.held.visible = !!p.vis;
       // THE PROP RIDES THE HAND. It is not authored as an absolute point any
       // more, it is SOLVED from the arm the clip is driving, plus a small
@@ -3950,25 +4424,73 @@ export function createAgents(THREE, scene, world) {
       );
       s.held.scale.set(p.item[0], p.item[1], p.item[2]);
       // The cart is parked where he stopped, hands OFF the bar. Half the
-      // picture is the two seconds his hands are not on it.
+      // picture is the two seconds his hands are not on it. It parks at HIS
+      // push distance, not at a constant: park it at 0.62 while he pushes it at
+      // 0.85 and the cart jumps a quarter of a metre on the frame the clip
+      // starts, which on the spot monitor is a shunt you can see and time.
       if (s.hasCart) {
         const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
         s.cart.visible = true;
-        s.cart.position.set(s.position.x + fx * 0.62, 0, s.position.z + fz * 0.62);
+        s.cart.position.set(s.position.x + fx * P.cartD, 0, s.position.z + fz * P.cartD);
         s.cart.rotation.y = s.heading;
       }
       r.chest.rotation.z = -sw * 0.020 * gait;
+      // A clip owns the arms and the neck. It does NOT own the idle blend, which
+      // has to keep decaying underneath it, or a man who folded his arms and
+      // then took his phone out would snap back to folded the moment the clip
+      // ended. Same line, same rate, for every clip in the file.
+      r.idleMix = Math.max(0, r.idleMix - dt * 5.5);
       return;
     }
 
     const bolting = s.state === 'bolt' || s.state === 'react';
     if (s.hasCart) {
-      // both hands on the bar, cart pushed out front
-      r.armL.rotation.x = -0.95; r.armR.rotation.x = -0.95;
-      r.armL.rotation.z = 0.16; r.armR.rotation.z = -0.16;
+      // ---- ROUND 9: FIVE WAYS TO HOLD A CART -------------------------------
+      // The old two lines put both hands on the bar at exactly -0.95 with a
+      // 0.16 splay, for everybody, forever. In the before-shot every adult in
+      // the aisle is a forklift, and it is the pose you see most because most
+      // people in this store have a cart most of the time. It is therefore the
+      // single highest-traffic pose in the game and it was the one with no
+      // variation in it at all.
+      //
+      // Five holds, rolled per person at construction:
+      //   0  both hands on the bar          the old one, and still the commonest
+      //   1  right hand only, left swinging
+      //   2  left hand only, right swinging
+      //   3  forearms down on the bar       leaning on it, cart pulled in close
+      //   4  pushed out at arm's length     arms straight, cart well ahead
+      // The free arm on 1 and 2 swings off the SAME `sw` the legs do with the
+      // person's own lag and swing scalars, so a one-handed pusher is not a
+      // two-handed pusher with an arm switched off — he walks differently.
+      const hold = P.cart;
+      const al = Math.sin(s.phase - P.lag);
+      const bar = hold === 3 ? -1.24 : hold === 4 ? -0.74 : -0.95;
+      const spl = hold === 3 ? 0.26 : hold === 4 ? 0.10 : 0.16;
+      const freeX = -al * amp * 0.62 * P.swing;
+      if (hold === 1) {
+        r.armR.rotation.x = bar - 0.03; r.armR.rotation.z = -spl * 0.65;
+        r.armL.rotation.x = freeX;      r.armL.rotation.z = P.splay;
+      } else if (hold === 2) {
+        r.armL.rotation.x = bar - 0.03; r.armL.rotation.z = spl * 0.65;
+        r.armR.rotation.x = -freeX;     r.armR.rotation.z = -P.splay;
+      } else {
+        r.armL.rotation.x = bar; r.armR.rotation.x = bar;
+        r.armL.rotation.z = spl; r.armR.rotation.z = -spl;
+      }
+      // Leaning on the bar puts weight through the arms, so the hips go back and
+      // the back rounds; pushing it out at arm's length does the opposite. This
+      // is a lerp rather than an assignment because the browse and idle branches
+      // below fight for the same channel and a hard set here would win every
+      // frame and flatten them.
+      const leanX = hold === 3 ? 0.13 : hold === 4 ? -0.03 : 0.0;
+      r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + leanX, ed(7));
       s.cart.visible = true;
       const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
-      s.cart.position.set(s.position.x + fx * 0.62, 0, s.position.z + fz * 0.62);
+      // Leaners keep it in tight, arm's-length pushers shove it out ahead — on
+      // top of a per-person base distance, so a corner turn swings a different
+      // length of cart for each of them.
+      const cd = P.cartD * (hold === 3 ? 0.84 : hold === 4 ? 1.24 : 1);
+      s.cart.position.set(s.position.x + fx * cd, 0, s.position.z + fz * cd);
       s.cart.rotation.y = s.heading;
     } else {
       if (s.cart.visible && s.dropCartAt) {
@@ -3977,11 +4499,16 @@ export function createAgents(THREE, scene, world) {
         s.cart.rotation.y = s.dropCartAt.y + 0.5;                 // slewed, abandoned
         s.dropCartAt = null;
       }
-      const al = Math.sin(s.phase - (bolting ? 0.2 : 0.45));
-      r.armL.rotation.x = -al * amp * (bolting ? 1.25 : 0.8);
-      r.armR.rotation.x = al * amp * (bolting ? 1.25 : 0.8);
-      r.armL.rotation.z = bolting ? 0.12 : 0.09;
-      r.armR.rotation.z = bolting ? -0.12 : -0.09;
+      // ROUND 9 — the free-walking arm swing is per person too. `lag` is how far
+      // the arm trails the leg on the same side, which is one of those numbers
+      // nobody can name and everybody can see: at 0.28 the arms look driven by
+      // the shoulders, at 0.66 they look driven by the hips.
+      const al = Math.sin(s.phase - (bolting ? 0.2 : P.lag));
+      const sc = bolting ? 1.25 : 0.8 * P.swing;
+      r.armL.rotation.x = -al * amp * sc;
+      r.armR.rotation.x = al * amp * sc;
+      r.armL.rotation.z = bolting ? 0.12 : P.splay;
+      r.armR.rotation.z = bolting ? -0.12 : -P.splay;
     }
     if (s.angry > 0) {
       const w = Math.sin(s.angry * 22);
@@ -3989,16 +4516,74 @@ export function createAgents(THREE, scene, world) {
       r.armL.rotation.x = -0.4; r.chest.rotation.x = 0.12;
       r.neck.rotation.x = -0.12;
       s.bang.position.y = 2.15 + Math.abs(w) * 0.07;
+      r.idleMix = Math.max(0, r.idleMix - dt * 5.5);
     } else if (s.state === 'browse') {
       // 'conceal' used to share this branch with a fixed 1.55 reach. It cannot
       // reach here any more — a concealing thief always has a clip loaded, so
-      // the block above returned before this line. Left as the plain
-      // reaching-at-a-shelf pose it always was, which is what a shopper does
-      // between clips.
-      const reach = 1.05 + Math.sin(s.phase * 0.7) * 0.25;
-      r.armR.rotation.x = -reach; r.armR.rotation.z = -0.22;
-      r.chest.rotation.x = r.stoop + 0.05;
-      r.neck.rotation.x = lerp(r.neck.rotation.x, 0.22, ed(6));   // looking at the shelf
+      // the block above returned before this line. This is what a shopper does
+      // BETWEEN clips, which makes it the pose the player spends most of the
+      // desk phase looking at, so round 9 gave it three shapes instead of one.
+      //
+      //   0  reach up at a facing        the old one, kept unchanged
+      //   1  hand flat on the shelf lip  weight on the far hip, head into the
+      //                                  shelf. The cop builder asked for this
+      //                                  one by name.
+      //   2  both hands up in front      reading something off a facing
+      //
+      // AND THE SAME THREE ARE AVAILABLE TO A THIEF, because `browse` is where
+      // a guilty man waits out a posted guard (see the `walk`/`drift` half of
+      // the guilty timeline) and where every innocent in the store spends his
+      // afternoon. The style is a property of the BODY and guilt is dealt out
+      // fresh over the same fourteen bodies every reset, so across trials every
+      // browse style is a thief exactly as often as every other.
+      // ---- AND THE IDLES LIVE HERE TOO, WHICH IS THE FIX FOR THE FIRST
+      // BUILD'S BEST-HIDDEN BUG. The seven idles shipped on the `else` branch
+      // below — the one that owns a body that is not browsing, not angry, not
+      // mid-clip. That reads as the right place and it is nearly empty: probe
+      // nine stationary shoppers and eight of them are in `browse` and the ninth
+      // is in `leave`. In this game A BODY THAT HAS STOPPED IS A BODY AT A
+      // SHELF, so `idleMix` measured 0.00 on all nine and the entire idle pool
+      // was decoration.
+      //
+      // So a browsing body ALTERNATES on the same clock everything else uses:
+      // one `idleHold` working the shelf, the next standing at it with its arms
+      // folded or a hand on its hip, and round again. Which is also what people
+      // do — nobody reaches at a shelf continuously for nine seconds — and it
+      // keeps the anti-oracle property exactly as it was, because the alternation
+      // is `floor(idleT / hold) % 2` off a clock no state transition can touch.
+      const standing = (Math.floor(r.idleT / P.idleHold) & 1) === 1;
+      const bs = P.browse;
+      if (standing) {
+        idlePose(s, r, dt, ed, false);
+      } else if (bs === 1) {
+        // A hand does not bob when it is resting on a shelf. Everything that
+        // moves in this pose is the WEIGHT — the far hip carries it, the near
+        // shoulder drops onto the braced arm — with a slow settle on top, which
+        // is what stops a braced pose reading as a freeze-frame.
+        const set = Math.sin(s.phase * 0.31 + s.id) * 0.5 + 0.5;
+        r.armR.rotation.x = -1.44 - set * 0.05;
+        r.armR.rotation.z = -0.40;
+        r.armL.rotation.x = lerp(r.armL.rotation.x, -0.30, ed(5));
+        r.armL.rotation.z = lerp(r.armL.rotation.z, 0.30, ed(5));
+        r.hips.rotation.z += P.hipSide * 0.055;
+        r.hips.position.y -= 0.014;
+        r.leanZ = -P.hipSide * 0.075;
+        r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + 0.10, ed(6));
+        r.neck.rotation.x = lerp(r.neck.rotation.x, 0.26, ed(6));
+        r.neck.rotation.y = lerp(r.neck.rotation.y, s.look - P.hipSide * 0.30, ed(6));
+      } else if (bs === 2) {
+        const rd = Math.sin(s.phase * 0.62 + s.id) * 0.09;
+        r.armR.rotation.x = -1.52 + rd; r.armR.rotation.z = -0.30;
+        r.armL.rotation.x = -1.46 - rd; r.armL.rotation.z = 0.34;
+        r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + 0.09, ed(6));
+        r.neck.rotation.x = lerp(r.neck.rotation.x, 0.34, ed(6));
+      } else {
+        const reach = 1.05 + Math.sin(s.phase * 0.7) * 0.25;
+        r.armR.rotation.x = -reach; r.armR.rotation.z = -0.22;
+        r.chest.rotation.x = r.stoop + 0.05;
+        r.neck.rotation.x = lerp(r.neck.rotation.x, 0.22, ed(6)); // looking at the shelf
+      }
+      if (!standing) r.idleMix = Math.max(0, r.idleMix - dt * 5.5);
     } else {
       // ROUND 8 — HE IS WALKING IT OFF IN A HUFF, and it outlives the clip by
       // K.annHuffT. Chin up and eleven hundredths of the stoop taken back out of
@@ -4008,8 +4593,280 @@ export function createAgents(THREE, scene, world) {
       const hf = s.huff > 0 ? 1 : 0;
       r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + (bolting ? 0.24 : 0.02) - hf * 0.11, ed(8));
       r.neck.rotation.x = lerp(r.neck.rotation.x, bolting ? -0.10 : hf * -0.14, ed(6));
+      // ---- ROUND 9: THE IDLES ------------------------------------------------
+      // A body that has stopped moving and is not at a shelf, not angry, not
+      // mid-clip and not running. Previously that body stood at perfect
+      // attention with both arms out at cart height whether or not it had a
+      // cart, and there were up to fourteen of them doing it at once.
+      idlePose(s, r, dt, ed, bolting);
     }
-    r.chest.rotation.z = -sw * 0.020 * gait;
+    r.chest.rotation.z = -sw * 0.020 * gait + r.leanZ;
+  }
+
+  // =========================================================================
+  // ROUND 9 — THE CHILD. A FOLLOW CONTROLLER, AND NOTHING ELSE.
+  // =========================================================================
+  // Strictly downstream: it reads s.position, s.speed, s.heading and s.hasCart,
+  // and NOTHING in this file reads it back. No collider, no nav query, no entry
+  // in `shoppers`, no draw off rnd(). That is what lets a whole new class of
+  // body be added to a tuned simulation with a bench that comes back
+  // byte-identical, and it is worth the discipline: the alternative — a
+  // fifteenth agent who happens to be a metre tall — would have had to be given
+  // a position in the guilt lottery and a place in the separation constraint,
+  // and every number in this file's header would have moved.
+  //
+  // THREE THINGS A CHILD DOES IN A SUPERMARKET, and they are chosen per body at
+  // construction, never re-rolled:
+  //   seat    rides in the cart's child seat. Parented to the cart object in
+  //           makeShopper, so it needs no follow at all — including the moment
+  //           a bolting man abandons the cart with it still in there, which is
+  //           the single most upsetting frame this game can produce and is
+  //           reached by removing code rather than by adding any.
+  //   walk    walks a pace or two off the parent's flank, weaving, because
+  //           children do not walk in straight lines. Cadence is roughly double
+  //           an adult's at the same ground speed, which is the half of "child"
+  //           that survives to CCTV scale after the shape is gone. And every so
+  //           often — `stopEvery`, 7 s to 46 s — it stops dead in front of
+  //           something for two or three seconds and then has to run to catch
+  //           up. Every parent in the world recognises it, and mechanically it
+  //           is the only body in this store whose distance from its group
+  //           varies by four metres.
+  //
+  // The wander is a sine on a per-child frequency, not a random walk, for the
+  // usual reason: a random walk would need a draw per frame per child and would
+  // put this file's stream on the number of children in the building.
+  function animateChild(s, dt) {
+    const k = s.rig.kid;
+    const vis = s.mesh.visible;
+    if (k.spec.mode === 'seat') {
+      // Riding. The cart carries it, so all that is left is what a small person
+      // does while being pushed round a shop: sway with the cart, kick, and
+      // watch whoever is pushing. When nobody is — the cart has been dropped —
+      // the head goes round to look for them.
+      k.root.visible = vis && s.cart.visible;
+      if (!k.root.visible) return;
+      k.t += dt;
+      const sway = Math.sin(k.t * 1.7 + k.spec.phase);
+      k.hips.rotation.z = sway * 0.055;
+      k.hips.rotation.y = Math.sin(k.t * 0.7 + k.spec.phase) * 0.20;
+      const kick = Math.sin(k.t * 2.4 + k.spec.phase);
+      k.legL.rotation.x = -0.26 + kick * 0.22;
+      k.legR.rotation.x = -0.22 - kick * 0.19;
+      k.armL.rotation.x = -0.55 + sway * 0.18; k.armL.rotation.z = 0.30;
+      k.armR.rotation.x = -0.52 - sway * 0.18; k.armR.rotation.z = -0.30;
+      // The parent is behind the cart in cart-local -Z, i.e. straight ahead of a
+      // child that was seated facing backwards. If the cart has been let go of,
+      // he twists to find them.
+      k.neck.rotation.y = s.hasCart ? Math.sin(k.t * 0.5) * 0.22 : 0.85;
+      return;
+    }
+    k.root.visible = vis;
+    if (!k.root.visible) return;
+    k.t += dt;
+
+    // Where the parent's hand would be: off one flank, a pace back down their
+    // heading. `weave` is the child failing to hold that line.
+    const hx = Math.sin(s.heading), hz = Math.cos(s.heading);
+    const wob = Math.sin(k.t * k.spec.weaveHz * Math.PI * 2 + k.spec.phase) * k.spec.weave;
+    const side = k.spec.side * 0.52 + wob;
+    let tx = s.position.x - hx * k.spec.lagT * 0.55 + hz * side;
+    let tz = s.position.z - hz * k.spec.lagT * 0.55 - hx * side;
+
+    // The anchor. A duty cycle on the same clock everything else here runs on:
+    // stopped for `stopFor` out of every `stopEvery`, which for these constants
+    // is a kid planted in front of something for two or three seconds once every
+    // eight or so. `stopT` is only kept so the catch-up run knows it is one.
+    const cyc = k.t % k.spec.stopEvery;
+    const planted = cyc < k.spec.stopFor;
+    if (!k.started) { k.x = tx; k.z = tz; k.started = true; }
+
+    if (planted) {
+      k.vx *= Math.exp(-9 * dt); k.vz *= Math.exp(-9 * dt);
+    } else {
+      // Critically damped-ish spring at a child's top speed. The gain is high
+      // enough that a kid trailing a walking parent holds station, and the cap
+      // is low enough that a kid whose parent has just bolted for the door falls
+      // behind — which is correct, and is also the only place this controller
+      // ever gets tested at speed.
+      const dx = tx - k.x, dz = tz - k.z;
+      const d = Math.hypot(dx, dz);
+      // A kid catching up RUNS. Below a metre it is a walk; past two and a half
+      // it is a flat sprint, and everything between is the scurry.
+      const want = clamp(d * 1.35, 0, 1) * lerp(1.05, 2.55, clamp((d - 0.8) / 1.8, 0, 1));
+      const ux = d > 1e-3 ? dx / d : 0, uz = d > 1e-3 ? dz / d : 0;
+      k.vx += (ux * want - k.vx) * clamp(dt * 6.5, 0, 1);
+      k.vz += (uz * want - k.vz) * clamp(dt * 6.5, 0, 1);
+    }
+    k.x += k.vx * dt; k.z += k.vz * dt;
+    const sp = Math.hypot(k.vx, k.vz);
+    if (sp > 0.12) k.heading = Math.atan2(k.vx, k.vz);
+    k.root.position.set(k.x, 0, k.z);
+    k.root.rotation.y = k.heading;
+
+    // ---- the gait. Same shape as the adult's and deliberately so — one
+    // vocabulary, three rigs — with the numbers a child's proportions demand: a
+    // 0.50 m leg against an adult's 0.86, so at the same ground speed the
+    // cadence is nearly double, and a much bigger arm swing because nobody has
+    // told them not to.
+    k.phase += (sp / (0.88 * k.spec.stride * k.root.scale.x)) * dt * Math.PI * 2 + dt * 0.9;
+    const sw = Math.sin(k.phase);
+    const amp = clamp(sp * 0.24 * k.spec.amp, 0.03, 0.85);
+    const g = clamp(sp / 1.2, 0, 1);
+    k.legL.rotation.x = sw * amp; k.legR.rotation.x = -sw * amp;
+    k.armL.rotation.x = -sw * amp * 0.95 * k.spec.swing;
+    k.armR.rotation.x = sw * amp * 0.95 * k.spec.swing;
+    k.armL.rotation.z = 0.13 + g * 0.10; k.armR.rotation.z = -0.13 - g * 0.10;
+    k.hips.rotation.y = sw * 0.075 * g;
+    k.hips.rotation.z = sw * 0.045 * g;
+    k.hips.position.y = k.hipY + (Math.abs(sw) - 0.5) * 0.030 * g;
+    k.hips.rotation.x = g * 0.10;                       // kids lean into a run
+    // Planted, the whole body says so: turned to face whatever stopped them,
+    // both arms down, and no interest whatever in where the parent went.
+    if (planted) {
+      k.neck.rotation.x = 0.30;
+      k.neck.rotation.y = k.spec.side * 0.55;
+      k.armL.rotation.x = -0.18; k.armR.rotation.x = -0.16;
+      k.hips.rotation.x = 0.04;
+    } else {
+      k.neck.rotation.x = -0.06 + g * 0.10;
+      k.neck.rotation.y = Math.sin(k.t * 0.8 + k.spec.phase) * 0.34;
+    }
+  }
+
+  // =========================================================================
+  // ROUND 9 — THE IDLE POOL. SEVEN WAYS TO STAND STILL IN A SUPERMARKET.
+  // =========================================================================
+  // Which one a person is doing is `floor(rig.idleT / hold) % idles.length` off
+  // a clock that started at construction and has never been reset by anything.
+  // That is the whole anti-oracle argument for this feature and it is worth
+  // stating as a property rather than as an intention:
+  //
+  //   the idle a body is in at time t is a function of (that body's constants,
+  //   t) and of NOTHING ELSE. Not its state, not its history, not whether it
+  //   has stolen anything, not whether the PA has shouted at it.
+  //
+  // So there is no experiment a player can run that recovers guilt from an
+  // idle, because guilt is not an input. Compare the alternative I did not
+  // ship: restart the cycle on entry to a stopped state. That version is
+  // seductive — a person who stops "starts" idling, which is what people do —
+  // and it leaks, because a thief stops for reasons an innocent does not, so
+  // his FIRST idle after each stop would be drawn from a different distribution
+  // over the population than an innocent's. Nobody would ever have written that
+  // down as a tell. It would just have been learnable.
+  //
+  // `idleMix` fades the pose in over ~180 ms and every other branch in
+  // animateShopper fades it back out at the same rate, so a man who folds his
+  // arms and then digs his phone out does not snap between them. One rate, for
+  // everybody, in every direction.
+  function idlePose(s, r, dt, ed, bolting) {
+    const P = r.pose;
+    // Idles are for a body that has actually stopped. The 0.35 m/s gate is
+    // hysteresis-free on purpose: `idleMix` IS the hysteresis, and it means a
+    // man drifting to a halt eases into a stance over about a fifth of a second
+    // instead of snapping into it the frame his speed crosses a line.
+    const want = (!bolting && s.speed < 0.35 && !s.bolted) ? 1 : 0;
+    r.idleMix = want ? Math.min(1, r.idleMix + dt * 5.5)
+                     : Math.max(0, r.idleMix - dt * 5.5);
+    if (r.idleMix <= 0.002) return;
+    const m = r.idleMix;
+    const list = P.idles;
+    const k = list[Math.floor(r.idleT / P.idleHold) % list.length];
+    // One slow oscillator per idle, so nothing in this function is a statue.
+    // `fidget` is per person and it is the difference between somebody standing
+    // patiently and somebody who cannot stand still.
+    const w = Math.sin(r.idleT * 0.9) * P.fidget;
+    const w2 = Math.sin(r.idleT * 0.41 + s.id) * P.fidget;
+    const hs = P.hipSide;
+    // Every branch below writes through `mix`, which is a lerp from whatever the
+    // walk/cart code left in the channel toward the idle value. That is what
+    // makes an idle compose with a cart hold instead of fighting it: a man
+    // leaning on his cart keeps his hands on the bar and still shifts his hip.
+    const mix = (cur, to) => cur + (to - cur) * m;
+    let aRx = r.armR.rotation.x, aRz = r.armR.rotation.z;
+    let aLx = r.armL.rotation.x, aLz = r.armL.rotation.z;
+    let chX = r.chest.rotation.x, chZ = 0, nkX = r.neck.rotation.x, nkY = r.neck.rotation.y;
+    let hipZ = 0, hipY = 0;
+    if (k === 0) {
+      // WEIGHT ON ONE HIP. The one that reads best at monitor scale, because it
+      // is the only idle here that makes the body ASYMMETRIC below the waist:
+      // the hip juts, the whole torso counter-leans, and the outline stops
+      // being a vertical bar. One hand rests on the jutting hip.
+      hipZ = hs * (0.085 + w2 * 0.012); hipY = -0.020;
+      chZ = -hs * 0.10;
+      if (hs > 0) { aLx = -0.62; aLz = 0.52; aRx = -0.14 + w * 0.03; aRz = -0.13; }
+      else { aRx = -0.62; aRz = -0.52; aLx = -0.14 + w * 0.03; aLz = 0.13; }
+      nkY = s.look + w2 * 0.20;
+      chX = r.stoop + 0.01;
+    } else if (k === 1) {
+      // ARMS FOLDED. At 214x120 this is the biggest single change in this
+      // function: it closes the two gaps between arm and torso, so a light
+      // torso with two dark slots either side becomes one solid light block
+      // with a dark bar across it. That is a different SHAPE, not a different
+      // detail, which is the only kind of thing that survives down there.
+      aRx = -1.36 + w * 0.02; aRz = 0.62;
+      aLx = -1.32 - w * 0.02; aLz = -0.58;
+      chX = r.stoop + 0.05; hipZ = hs * 0.035;
+      nkY = s.look + w2 * 0.16;
+    } else if (k === 2) {
+      // A PHONE. Deliberately WITHOUT a prop: `s.held` belongs to the clip
+      // system and putting a second object in that hand from outside it would
+      // give the tracker an object appearing at chest height that decoy.js did
+      // not schedule and cannot account for. Hands together at chest height and
+      // the chin down is the whole read anyway, and it is the same silhouette a
+      // man checking a list makes.
+      aRx = -1.58 + w * 0.04; aRz = 0.34;
+      aLx = -1.52 - w * 0.04; aLz = -0.26;
+      chX = r.stoop + 0.07; nkX = 0.42; hipZ = hs * 0.030;
+    } else if (k === 3) {
+      // HANDS IN POCKETS, shoulders up round the ears. Narrow, hunched and
+      // still — the opposite of the folded-arm block, and the only idle in the
+      // list that makes a person look SMALLER.
+      aRx = -0.30; aRz = -0.30 - P.splay;
+      aLx = -0.28; aLz = 0.30 + P.splay;
+      chX = r.stoop + 0.06; hipZ = hs * 0.045 * (1 + w2 * 0.3);
+      nkX = 0.10; nkY = s.look + w * 0.22;
+    } else if (k === 4 && s.hasCart) {
+      // LEANING ON THE CART. Forearms down on the bar, hips back off it, the
+      // whole weight through the arms. This is the pose of somebody waiting for
+      // the person they came with, and it is the only one that changes where
+      // the CART is as well as where the body is — which matters, because a
+      // cart is a metre of bright chrome and the eye goes to it.
+      aRx = -1.30 + w * 0.02; aRz = -0.30;
+      aLx = -1.28 - w * 0.02; aLz = 0.28;
+      chX = r.stoop + 0.20; hipY = -0.055; nkX = 0.06;
+      nkY = s.look + w2 * 0.26;
+    } else if (k === 5) {
+      // ONE HAND ON THE SHELF. The standing version of browse style 1, and it
+      // is here as well as there because a person who has stopped next to a
+      // gondola puts a hand on it whatever the state machine thinks he is
+      // doing. Braced arm out to the side, weight on the far foot.
+      aRx = -1.20 + w * 0.02; aRz = -0.66;
+      aLx = -0.24; aLz = 0.16;
+      hipZ = -hs * 0.070; hipY = -0.016; chZ = hs * 0.055;
+      chX = r.stoop + 0.06; nkY = s.look - 0.34;
+    } else {
+      // ROCKING FOOT TO FOOT. The default and the most common, because it is
+      // what most people actually do: nothing, slowly, in two directions. The
+      // hips swap sides on a 0.55 Hz oscillator, so unlike every other idle
+      // here this one is never in the same place twice.
+      const rock = Math.sin(r.idleT * 0.55 * P.fidget + s.id);
+      hipZ = rock * 0.055; hipY = -Math.abs(rock) * 0.012;
+      chZ = -rock * 0.038;
+      aRx = -0.16 + rock * 0.06; aRz = -P.splay;
+      aLx = -0.14 - rock * 0.06; aLz = P.splay;
+      chX = r.stoop + 0.02;
+      nkY = s.look + rock * 0.24;
+    }
+    r.armR.rotation.x = mix(r.armR.rotation.x, aRx);
+    r.armR.rotation.z = mix(r.armR.rotation.z, aRz);
+    r.armL.rotation.x = mix(r.armL.rotation.x, aLx);
+    r.armL.rotation.z = mix(r.armL.rotation.z, aLz);
+    r.chest.rotation.x = mix(r.chest.rotation.x, chX);
+    r.leanZ = chZ * m;
+    r.neck.rotation.x = mix(r.neck.rotation.x, nkX);
+    r.neck.rotation.y = mix(r.neck.rotation.y, nkY);
+    r.hips.rotation.z += hipZ * m;
+    r.hips.position.y += hipY * m;
   }
 
   // ---- powerups ------------------------------------------------------------
@@ -5564,6 +6421,153 @@ export function createAgents(THREE, scene, world) {
     return out;
   }
 
+  // =========================================================================
+  // ROUND 9 — benchBird. DOES THE FINGER TELL YOU ANYTHING?
+  // =========================================================================
+  // The whole risk in the escalation ladder, stated as a measurement. Shout at
+  // one body `shouts` times and record what he did the LAST time, for a guilty
+  // subject and an innocent one, and divide.
+  //
+  // The ladder itself is guilt-blind by construction — ladderFor() takes annN
+  // and nothing else — but that is NOT sufficient on its own and it is worth
+  // being precise about why. A subject only ever plays a react clip if he
+  // SHRUGS, and the shrug probability does depend on guilt (K.annSpook vs
+  // K.annHeed): that is round 7's design and it is what makes a put-back worth
+  // reading at all. So the bird inherits exactly the shrug's likelihood ratio
+  // and not one bit more — it is the shrug, animated differently, and it can
+  // carry no information the shrug did not already carry.
+  //
+  // And the interesting part is what K.annFade does to that inheritance. The
+  // fade discounts compliance by annFade^(annN-1), so by the fourth shout the
+  // heed probability has collapsed for BOTH populations and the shrug rate has
+  // gone to nearly 1 on both sides. The rung the bird lives on is precisely the
+  // rung where the compliance difference has already faded out. The number
+  // below is that argument as a fraction rather than as a paragraph.
+  function benchBird(n = 200, opts = {}) {
+    const dt = 1 / 60;
+    const saveLevel = DIFF.level;
+    const savePos = cop.position.clone(), saveUd = { ...cop.userData };
+    if (opts.difficulty != null) DIFF.level = clamp(+opts.difficulty || 0, 0, 1);
+    const shouts = opts.shouts ?? 5;
+    const BIRDS = new Set(['whoMeBird', 'whoMeBirdMouth']);
+    function cell(guilty, hot) {
+      let bird = 0, shrug = 0, heed = 0, bolt = 0, folded = 0, trials = 0, armed = 0;
+      const rung = new Map();
+      for (let k = 0; k < n; k++) {
+        setSeed((opts.seed ?? 5150) + k * 7919);
+        reset();
+        // The desk, not the door: this measures the handset, not the uniform.
+        cop.position.set(SERVICE_DESK.x, 0, SERVICE_DESK.z);
+        solids.resolve(cop.position, BODY_R);
+        cop.userData.vel.set(0, 0, 0); cop.userData.speed = 0;
+        const s = shoppers[k % shoppers.length];
+        resetShopper(s, guilty);
+        if (hot) { s.stole = true; s.state = 'drift'; s.concealT = 0; }
+        const api = { onHarass() {}, onAbort() {}, onLeave() {}, onBolt() {},
+          onCatch() {}, onEscape() {}, onAnnounce() {} };
+        let out = null, react = null, sawBird = false, wasArmed = false;
+        // WATCH THE WHOLE TRIAL, not just the frame the outcome commits. The
+        // bird is a SEPARATE BEAT that arrives after the reaction is over (see
+        // armBird), so a probe that samples s.gest at the moment s.annOut is set
+        // measures the reaction and reports 0% birds forever. The first version
+        // of this function did exactly that.
+        const watch = (frames) => {
+          for (let i = 0; i < frames; i++) {
+            tick(dt, { x: 0, z: 0 }, api);
+            if (s.gest && BIRDS.has(s.gest.id)) sawBird = true;
+          }
+        };
+        for (let sh = 0; sh < shouts; sh++) {
+          const r = announceAt(s, 'putback', { force: true });
+          if (!r.ok) break;
+          for (let i = 0; i < 150 && !s.annOut; i++) {
+            tick(dt, { x: 0, z: 0 }, api);
+            if (s.gest && BIRDS.has(s.gest.id)) sawBird = true;
+          }
+          out = s.annOut; react = s.gest ? s.gest.id : null;
+          // ARMED means armBird() actually armed him, checked on the frame the
+          // outcome commits and not after the watch — a drifting thief can reach
+          // the door and escape during the 7 s the beat is pending, and testing
+          // afterwards counted him as never-armed while still counting the bird
+          // he gave you on the way out. That is how the first version of this
+          // printed 128.6%.
+          if (s.birdT > 0) wasArmed = true;
+          // Run out the reaction AND the bird beat that follows it, whatever he
+          // decided — a man who put it back gets one too, which is the whole
+          // reason the ratio is 1.00.
+          watch(420);
+          // ONLY A RUNNER LEAVES THE LADDER. The first version also broke on
+          // 'heed', and that was a bench artifact rather than a rule: nothing in
+          // announceAt stops a player keying the handset again at a man who just
+          // put something back, and a player who is spamming the PA certainly
+          // will. Breaking on heed measured a different question — "what happens
+          // to a subject who is only shouted at until he complies" — and since
+          // guilty men comply sooner, it measured guilt with extra steps.
+          // ELIGIBLE means: he has now been shouted at enough times, and he is
+          // still a man standing in an aisle rather than a man running for the
+          // door. That is the population the player is actually looking at when
+          // he wonders what a raised arm means, and it is the conditional the
+          // ladder controls. The unconditional rate cannot be equalised and
+          // should not be — a guilty man runs, and running is the confession the
+          // whole game is built on.
+          if (out === 'bolt') break;
+        }
+        trials++;
+        if (wasArmed) armed++;
+        if (sawBird) bird++;
+        if (out === 'heed') heed++;
+        else if (out === 'bolt') bolt++;
+        else if (out === 'shrug') {
+          shrug++;
+          if (react === 'whoMeFolded') folded++;
+          rung.set(react, (rung.get(react) || 0) + 1);
+        }
+      }
+      const pc = (x) => +((x / Math.max(1, trials)) * 100).toFixed(1);
+      return { trials, birdPct: pc(bird), shrugPct: pc(shrug), heedPct: pc(heed),
+        boltPct: pc(bolt), foldedPct: pc(folded), armed,
+        birdGivenArmed: +((bird / Math.max(1, armed)) * 100).toFixed(1),
+        clips: [...rung.entries()].sort((a, b) => b[1] - a[1]).map(([c, v]) => c + ':' + v).join(' ') };
+    }
+    const cold = cell(true, false), hot = cell(true, true), clean = cell(false, false);
+    DIFF.level = saveLevel;
+    cop.position.copy(savePos); Object.assign(cop.userData, saveUd);
+    const lr = (a, b) => +(Math.max(a, 1e-9) / Math.max(b, 1e-9)).toFixed(2);
+    return {
+      shouts, cold, hot, clean,
+      // The headline. 1.00 means the finger is worth nothing to a player trying
+      // to work out who is stealing, which is the only acceptable answer.
+      likelihoodRatio: {
+        // THE ONE THAT ANSWERS THE QUESTION. Among subjects still standing in an
+        // aisle at the bird rung, does guilt change whether you get the finger?
+        birdGivenArmed: lr(cold.birdGivenArmed, clean.birdGivenArmed),
+        birdGivenArmedHot: lr(hot.birdGivenArmed, clean.birdGivenArmed),
+        // ...and the unconditional versions, which are dominated by the fact
+        // that a guilty man may have already run. Reported so nobody has to
+        // wonder whether they were quietly left out.
+        bird: lr(cold.birdPct, clean.birdPct),
+        birdHot: lr(hot.birdPct, clean.birdPct),
+        shrug: lr(cold.shrugPct, clean.shrugPct),
+      },
+    };
+  }
+  function benchBirdLine(n = 200, opts = {}) {
+    const r = benchBird(n, opts);
+    const row = (k) => `${k.padEnd(6)} bird|armed ${String(r[k].birdGivenArmed).padStart(5)}%`
+      + ` (n=${String(r[k].armed).padStart(3)})`
+      + `  bird ${String(r[k].birdPct).padStart(5)}%`
+      + `  shrug ${String(r[k].shrugPct).padStart(5)}%`
+      + `  heed ${String(r[k].heedPct).padStart(5)}%`
+      + `  bolt ${String(r[k].boltPct).padStart(5)}%`;
+    return [`after ${r.shouts} announcements at the same body:`,
+      row('cold'), row('hot'), row('clean'),
+      `LR(bird | still in the aisle at the rung) ${r.likelihoodRatio.birdGivenArmed}`
+      + `  hot ${r.likelihoodRatio.birdGivenArmedHot}`,
+      `LR(bird, unconditional) ${r.likelihoodRatio.bird}`
+      + `   LR(shrug) ${r.likelihoodRatio.shrug}`
+      + `   — both dominated by guilty men who already ran`].join('\n');
+  }
+
   function benchAnnounceLine(n = 400, opts = {}) {
     const r = benchAnnounce(n, opts);
     const row = (k) => `${k.padEnd(8)} heed ${String(r[k].heedPct).padStart(5)}%`
@@ -5664,6 +6668,8 @@ export function createAgents(THREE, scene, world) {
     update: tick,
     bench, benchAll, benchLine, benchReal, benchCamp, benchShift, benchIncome,
     benchAnnounce, benchAnnounceLine,
+    // ROUND 9 — is the finger a guilt tell? See the block at benchBird.
+    benchBird, benchBirdLine,
 
     // ROUND 6 CONTRACT ADDITION — THE DIFFICULTY RAMP (additive; a game.js that
     // never calls this gets round 5's difficulty exactly, because level 1 IS

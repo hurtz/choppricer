@@ -6,12 +6,20 @@
 //   buildFigureGeo(THREE)         — the shared bakery. Call ONCE.
 //   rollPerson(rng)               — roll a shopper's description
 //   makePerson(THREE, F, o)       — a shopper rig
+//   makeChild(THREE, F, o)        — a child rig (round 9; also reached via
+//                                   makePerson, which builds one when the
+//                                   person rolled a `kid`)
 //   makeCop(THREE, F)             — HIM
 //
-// Both rigs return the SAME contract, because animateShopper()/animateCop()
-// both drive it:
+// All three rigs return the SAME contract, because animateShopper()/
+// animateCop()/animateChild() all drive it:
 //   { root, hips, chest, torso, belly, neck, head, legL, legR, armL, armR,
 //     shirt, pants, hipY }
+// ROUND 9 adds three fields to the shopper rig and nothing may write them after
+// construction:
+//   pose   the per-person gait / idle / cart-hold table. See rollPose.
+//   kid    a child rig, or null. agents.js decides where to parent it.
+//   bag    a tote / crossbody / carrier bag mesh, or null.
 // `chest` is new this round and it is the reason the walk works: hips carry the
 // legs and the waddle, chest carries the torso/arms/head and counter-rotates
 // against them. One group, and a walk stops being two sticks under an egg.
@@ -648,9 +656,77 @@ function shopperHair(THREE, S, k) {
   } else if (k === 4) {                            // bun
     cap(0.090, h + 0.026, -0.008);
     P.ball(0.052, 0.048, 0.050, [0, h + 0.048, -0.098], 0xf6f6f6, { seg: 8, rseg: 6 });
-  } else {                                         // beanie / ballcap wearer
+  } else if (k === 5) {                            // beanie / ballcap wearer
     cap(0.098, h + 0.030, -0.006);
     P.half(0.150, 0.014, [0, h + 0.036, 0.030], 0xbdbdbd, { r: [0.24, 0, 0], seg: 12 });
+  } else if (k === 6) {
+    // ROUND 9 — PONYTAIL. Added for one reason and it is a CCTV reason: at
+    // 214x120 a head is four pixels of dark on top of a light torso, and every
+    // one of styles 0-5 leaves that dark blob CIRCULAR. A tail hanging off the
+    // back of the skull is the only thing in this list that changes the outline
+    // of the head itself from a distance, which makes it worth more than the
+    // three portrait-range styles put together. Same rule the cop round found:
+    // spend on the outline, not on the texture.
+    cap(0.092, h + 0.026, -0.010);
+    P.ball(0.044, 0.040, 0.044, [0, h + 0.010, -0.104], 0xf8f8f8, { seg: 8, rseg: 5 });
+    P.taper(0.052, 0.030, 0.20, [0, h - 0.086, -0.124], 0xf2f2f2, { seg: 8, r: [0.30, 0, 0] });
+  } else {
+    // ROUND 9 — TOPKNOT, and the same argument one storey up: it puts 60 mm on
+    // the crown, so at monitor scale this person is simply TALLER than the
+    // body next to them without the roster having to roll a taller person.
+    cap(0.088, h + 0.024, -0.008);
+    P.ball(0.046, 0.048, 0.046, [0, h + 0.104, -0.020], 0xf6f6f6, { seg: 8, rseg: 6 });
+    P.tube(0.030, 0.026, [0, h + 0.074, -0.016], 0xeeeeee, { seg: 8 });
+  }
+  return mergeParts(THREE, P.L);
+}
+
+// ROUND 9 — A BAG, AND WHY IT IS DRAWN ON FORTY PERCENT OF THE CROWD.
+//
+// Two of the fifteen clips in decoy.js reach into luggage that did not exist:
+// `concealBag` puts a bottle "into a tote at the off hip" and `wallet` digs one
+// out of "a shoulder bag". Both were being played by people with nothing on
+// them, so the best pair of matched clips in the file — a steal and a decoy
+// that are the same move for a different reason — were both playing to an
+// empty hip. Now some of these people are carrying something.
+//
+// THE ONE THING THIS MUST NOT BECOME IS A GATE. If only bag-wearers could roll
+// `concealBag`, or bag-wearers rolled it more often, the bag is a tell and it
+// is a tell that a player can read off a still frame at fifty metres. So:
+// pickGesture is untouched, the pool is untouched, and a person with no bag
+// plays the bag clips exactly as often as a person with one. The bag is a RED
+// HERRING and it is supposed to be — it is one more reason for a hand to go
+// down to the hip and come back up empty.
+//
+// It rides the `pants` material rather than earning its own, which is why it
+// costs one mesh and no new material: bag geometry carries its own vertex
+// colours, and vertex colour multiplies, so a tote comes out as a darker or
+// lighter tone of the same trouser dye. At the distance this is read from, that
+// is indistinguishable from a bag that matched by accident, which is also what
+// most of them do.
+function shopperBag(THREE, S, k) {
+  const P = partList(THREE, S);
+  if (k === 0) {
+    // Tote on the shoulder, body hanging at the hip. The strap is the half of
+    // it that reads: a diagonal across a light torso is a strong dark line.
+    P.box(0.024, 0.300, 0.022, [0.088, 0.300, 0.020], 0xbdbdbd, { r: [0, 0, 0.30] });
+    P.box(0.024, 0.300, 0.022, [0.150, 0.300, -0.050], 0xa8a8a8, { r: [0, 0, 0.30] });
+    P.box(0.150, 0.230, 0.110, [0.196, 0.116, -0.016], 0xffffff);
+    P.box(0.156, 0.030, 0.116, [0.196, 0.226, -0.016], 0xdadada);      // open mouth
+  } else if (k === 1) {
+    // Crossbody, small, high on the opposite hip. Half the outline change of a
+    // tote and it survives being walked past.
+    P.box(0.026, 0.300, 0.022, [-0.060, 0.320, 0.056], 0xb2b2b2, { r: [0, 0, -0.44] });
+    P.box(0.026, 0.300, 0.022, [-0.108, 0.320, -0.070], 0x9e9e9e, { r: [0, 0, -0.44] });
+    P.ball(0.086, 0.070, 0.052, [-0.158, 0.176, 0.028], 0xffffff, { seg: 8, rseg: 5 });
+    P.box(0.150, 0.026, 0.070, [-0.158, 0.226, 0.030], 0xcfcfcf);
+  } else {
+    // A carrier bag in the off hand. No strap, so it hangs BELOW the hem and
+    // pushes the light/dark band boundary down on one side only — which is the
+    // cheapest asymmetry in this whole file.
+    P.box(0.150, 0.200, 0.086, [0.212, -0.070, 0.030], 0xffffff);
+    P.box(0.030, 0.070, 0.020, [0.176, 0.048, 0.030], 0xe0e0e0);
+    P.box(0.030, 0.070, 0.020, [0.248, 0.048, 0.030], 0xe0e0e0);
   }
   return mergeParts(THREE, P.L);
 }
@@ -702,6 +778,164 @@ function shopperForearm(THREE, S, long, side) {
   P.ball(0.038, 0.056, 0.052, [side * 0.008, -0.570, 0.010], 0xffffff, { seg: 8, rseg: 6 }); // palm
   P.box(0.052, 0.078, 0.044, [side * 0.008, -0.622, 0.014], 0xf6f6f6);                        // fingers
   P.ball(0.020, 0.030, 0.024, [side * -0.032, -0.566, 0.024], 0xfafafa, { seg: 6, rseg: 4 }); // thumb
+  return mergeParts(THREE, P.L);
+}
+
+// ROUND 9 — THE SAME HAND WITH ONE FINGER OUT, AND IT COSTS NO DRAW CALL.
+//
+// The client asked for a customer who flips the bird at the security camera.
+// These hands have no fingers — the whole hand is one 52x78x44 mm box, which is
+// correct at the size a shopper is ever seen — so the gesture cannot be posed.
+// It can be BAKED, and then swapped in: agents.js assigns this geometry onto the
+// mesh that is already there while the raised-arm beat is running and assigns
+// the normal one back afterwards. A geometry swap on an existing mesh is not a
+// new mesh, not a new material and not a new draw call; the cost of the whole
+// feature is two extra BufferGeometries in the bakery (short sleeve and long,
+// right hand only, because nobody does this left-handed by accident).
+//
+// The knuckle box is shortened to a fist and one finger stands 55 mm proud of
+// it. That is 55 mm on a 1.7 m man: about a thirtieth of his height, so at 214
+// px across an aisle it is a fraction of a pixel and it is SUPPOSED to be. The
+// read at monitor scale is the arm, held straight and still and aimed at the
+// dome — see the note on `whoMeBird` in decoy.js. This bake is for the two
+// seconds a player spends on the spot monitor at 3x, and for the fact that when
+// he does look, the joke is actually there.
+function shopperBird(THREE, S, long, side) {
+  const P = partList(THREE, S);
+  if (!long) {
+    P.ball(0.060, 0.058, 0.058, [0, -0.235, 0], 0xffffff, { seg: 8, rseg: 5 });
+    P.taper(0.060, 0.046, 0.24, [side * 0.006, -0.375, 0.004], 0xffffff, { seg: 8 });
+  }
+  P.ball(0.044, 0.040, 0.044, [side * 0.008, -0.512, 0.004], 0xffffff, { seg: 6, rseg: 5 });
+  P.ball(0.038, 0.056, 0.052, [side * 0.008, -0.570, 0.010], 0xffffff, { seg: 8, rseg: 6 }); // palm
+  // The fist: same width, two thirds of the length, pulled back into the palm.
+  P.box(0.052, 0.052, 0.046, [side * 0.008, -0.606, 0.012], 0xf2f2f2);
+  P.ball(0.028, 0.020, 0.026, [side * 0.008, -0.632, 0.026], 0xf6f6f6, { seg: 6, rseg: 4 }); // curled knuckles
+  // ...and the one that is not curled. It points along the arm's own -Y, so it
+  // aims wherever the arm aims and needs no separate solve.
+  P.tube(0.0125, 0.055, [side * 0.006, -0.660, 0.006], 0xffffff, { seg: 6 });
+  P.ball(0.0130, 0.014, 0.0130, [side * 0.006, -0.686, 0.006], 0xfbfbfb, { seg: 6, rseg: 4 });
+  P.ball(0.020, 0.030, 0.024, [side * -0.030, -0.578, 0.020], 0xfafafa, { seg: 6, rseg: 4 }); // thumb, tucked
+  return mergeParts(THREE, P.L);
+}
+
+// ===========================================================================
+// ROUND 9 — CHILDREN. "THE CROWD HAS NONE OF THEM AND A GROCERY STORE ALWAYS
+// DOES." (the cop builder's own note, and it was the right one)
+// ===========================================================================
+// A child is worth more per triangle than any adult variation in this file, and
+// the reason is arithmetic rather than taste. Every silhouette knob the roster
+// already turns — build, girth, height, hair, sleeves — moves a body inside a
+// band that is 1.53 m to 1.83 m wide, i.e. +/-9% about the mean. A child is
+// 1.05 m. It is a 35% outlier in the one dimension the monitor wall can still
+// resolve at 214x120, which is HEIGHT, and it is the only thing you can put in
+// this crowd that changes the shape of the GROUP rather than the shape of a
+// person in it. Two adults and a kid is instantly a family; three adults is
+// three adults.
+//
+// SEPARATE SKELETON, NOT A SCALED ADULT, and this is the whole craft of it. Set
+// `height` to 0.64 on the shopper rig and you get a 1.06 m adult: correct
+// stature, wrong everywhere it counts, because a child is not a small man. The
+// numbers that actually make the read are the RATIOS, and all three are wrong
+// on a scaled adult:
+//   head    19% of stature, against an adult's 13%   (1 : 5.3, not 1 : 7.5)
+//   legs    45% of stature, against an adult's 52%
+//   shoulders barely wider than the head, against 2.1x on an adult
+// The big head on a short body over stubby legs is the entire silhouette; get
+// those three and the rest is decoration. At 20 px it survives as a dark dot
+// that is too big for the smudge under it, which is a thing no adult in the
+// building looks like.
+//
+// COST, because there are up to four of them: 7 meshes and ~1,050 triangles
+// each, against a shopper's 12-15 and ~3,000. That is deliberate — the sleeve
+// caps are baked INTO the torso so both arms can be one bare-skin mesh apiece,
+// and each shoe is a dark vertex colour on the end of its own leg rather than a
+// mesh in a third material. Four kids cost less than two adults.
+//
+// AND THE PART THAT MATTERS MOST: a child is attached to a BODY at construction
+// and never re-rolled, exactly like that body's hair colour. Guilt is dealt out
+// fresh every reset over the same fourteen indices, so a man with a kid is a
+// thief exactly as often as a man without one. See the ablation in agents.js.
+export const KID = {
+  hipY: 0.50,        // 45% of stature — a child's legs are SHORT, this is the tell
+  legLen: 0.50,
+  shoulderY: 0.34,   // hips-local
+  neckY: 0.40,       // hips-local
+  headY: 0.115,      // neck-local centre of the skull
+  crown: 1.11,
+  armLen: 0.42,
+};
+
+function kidTorso(THREE, S) {
+  const P = partList(THREE, S);
+  // A barrel with a pot belly and almost no shoulder line. The pot belly is not
+  // a joke: under about seven, the abdomen is the widest part of the body, and
+  // it is what stops this reading as a slim adult at 40 px.
+  P.ball(0.104, 0.062, 0.086, [0, KID.shoulderY - 0.004, -0.004], 0xffffff, { seg: 10, rseg: 5 });
+  P.ball(0.104, 0.092, 0.086, [0, 0.238, 0.002], 0xffffff, { seg: 10, rseg: 6 });
+  P.ball(0.112, 0.094, 0.096, [0, 0.132, 0.012], 0xf6f6f6, { seg: 10, rseg: 6 });   // pot belly
+  P.ball(0.104, 0.052, 0.088, [0, 0.036, 0.008], 0xe6e6e6, { seg: 10, rseg: 5 });   // hem
+  // Sleeve caps live HERE and not on the arms, so each arm can be one bare-skin
+  // mesh instead of a sleeve plus a forearm in two materials. Half the child's
+  // draw calls come out of this one decision.
+  P.ball(0.050, 0.050, 0.050, [0.104, KID.shoulderY - 0.012, 0], 0xfbfbfb, { seg: 8, rseg: 5 });
+  P.ball(0.050, 0.050, 0.050, [-0.104, KID.shoulderY - 0.012, 0], 0xfbfbfb, { seg: 8, rseg: 5 });
+  P.tube(0.040, 0.028, [0, KID.neckY - 0.010, 0.002], 0xdcdcdc, { seg: 8 });        // collar
+  return mergeParts(THREE, P.L);
+}
+
+function kidHead(THREE, S) {
+  const P = partList(THREE, S);
+  const h = KID.headY;
+  P.tube(0.028, 0.052, [0, h - 0.112, -0.004], 0xe8e8e8, { seg: 8 });               // neck
+  P.ball(0.081, 0.085, 0.083, [0, h + 0.008, -0.004], 0xffffff, { seg: 10, rseg: 7 });
+  P.ball(0.068, 0.050, 0.072, [0, h - 0.046, 0.012], 0xfbfbfb, { seg: 10, rseg: 6 }); // cheeks
+  P.ball(0.023, 0.029, 0.016, [0.080, h - 0.004, -0.006], 0xf6f6f6, { seg: 6, rseg: 4 });
+  P.ball(0.023, 0.029, 0.016, [-0.080, h - 0.004, -0.006], 0xf6f6f6, { seg: 6, rseg: 4 });
+  P.ball(0.015, 0.016, 0.017, [0, h - 0.014, 0.070], 0xffffff, { seg: 6, rseg: 5 });  // nose
+  // The eyes are proportionally enormous and set LOW on the skull, which is the
+  // other half of "child" after the head-to-body ratio.
+  P.ball(0.019, 0.014, 0.010, [0.033, h - 0.002, 0.068], 0x54463c, { seg: 6, rseg: 4 });
+  P.ball(0.019, 0.014, 0.010, [-0.033, h - 0.002, 0.068], 0x54463c, { seg: 6, rseg: 4 });
+  return mergeParts(THREE, P.L);
+}
+
+function kidHair(THREE, S, k) {
+  const P = partList(THREE, S);
+  const h = KID.headY;
+  if (k === 0) {                                   // a mop, over the ears
+    P.ball(0.086, 0.076, 0.088, [0, h + 0.016, -0.004], 0xffffff, { seg: 10, rseg: 6 });
+    P.box(0.150, 0.026, 0.038, [0, h + 0.036, 0.062], 0xf2f2f2);                     // fringe
+  } else if (k === 1) {                            // bunches, and they stick OUT
+    P.ball(0.084, 0.070, 0.086, [0, h + 0.018, -0.006], 0xffffff, { seg: 10, rseg: 6 });
+    P.ball(0.038, 0.044, 0.038, [0.094, h - 0.006, -0.030], 0xf6f6f6, { seg: 8, rseg: 5 });
+    P.ball(0.038, 0.044, 0.038, [-0.094, h - 0.006, -0.030], 0xf6f6f6, { seg: 8, rseg: 5 });
+  } else {                                         // cropped
+    P.ball(0.083, 0.060, 0.085, [0, h + 0.022, -0.006], 0xffffff, { seg: 10, rseg: 5 });
+  }
+  return mergeParts(THREE, P.L);
+}
+
+// Bare arm, one mesh, skin material — see the note on kidTorso's sleeve caps.
+function kidArm(THREE, S, side) {
+  const P = partList(THREE, S);
+  P.taper(0.036, 0.030, 0.20, [side * 0.003, -0.105, 0], 0xffffff, { seg: 7 });
+  P.ball(0.031, 0.030, 0.031, [0, -0.205, 0], 0xf8f8f8, { seg: 6, rseg: 5 });         // elbow
+  P.taper(0.030, 0.024, 0.16, [side * 0.004, -0.290, 0.002], 0xffffff, { seg: 7 });
+  P.ball(0.024, 0.032, 0.028, [side * 0.005, -0.386, 0.006], 0xf4f4f4, { seg: 6, rseg: 5 }); // hand
+  return mergeParts(THREE, P.L);
+}
+
+// Leg AND shoe in one mesh: the shoe is a 0.5 vertex colour on the trouser
+// material, so it comes out as a dark tone of the same dye. At the size a child
+// is ever seen in this store that is a shoe, and it is a draw call we keep.
+function kidLeg(THREE, S, side) {
+  const P = partList(THREE, S);
+  P.taper(0.056, 0.048, 0.24, [side * 0.004, -0.120, 0], 0xffffff, { seg: 7 });
+  P.ball(0.042, 0.036, 0.044, [0, -0.245, 0.002], 0xf6f6f6, { seg: 7, rseg: 5 });     // knee
+  P.taper(0.044, 0.036, 0.20, [0, -0.350, 0.002], 0xfafafa, { seg: 7 });
+  P.ball(0.038, 0.028, 0.058, [0, -0.470, 0.020], 0x7e7e7e, { seg: 7, rseg: 5 });     // shoe
+  P.box(0.066, 0.016, 0.118, [0, -0.492, 0.018], 0x606060);
   return mergeParts(THREE, P.L);
 }
 
@@ -1344,13 +1578,22 @@ export function buildFigureGeo(THREE) {
     torso: BUILDS.map((b) => shopperTorso(THREE, S, b)),
     belly: shopperBelly(THREE, S),
     head: [shopperHead(THREE, S, false), shopperHead(THREE, S, true)],
-    hair: [0, 1, 2, 3, 4, 5].map((k) => shopperHair(THREE, S, k)),
+    hair: [0, 1, 2, 3, 4, 5, 6, 7].map((k) => shopperHair(THREE, S, k)),
+    bag: [0, 1, 2].map((k) => shopperBag(THREE, S, k)),
     leg: BUILDS.map((b) => [shopperLeg(THREE, S, b, 1), shopperLeg(THREE, S, b, -1)]),
     shoe: [shopperShoe(THREE, S, 0), shopperShoe(THREE, S, 1)],
     sleeve: [[shopperSleeve(THREE, S, false, 1), shopperSleeve(THREE, S, false, -1)],
              [shopperSleeve(THREE, S, true, 1), shopperSleeve(THREE, S, true, -1)]],
     fore: [[shopperForearm(THREE, S, false, 1), shopperForearm(THREE, S, false, -1)],
            [shopperForearm(THREE, S, true, 1), shopperForearm(THREE, S, true, -1)]],
+    // Both are SHORT-forearm bakes, which looks wrong and is not: the mesh that
+    // actually carries a hand in skin is the short forearm on a short-sleeved
+    // person and — see makePerson — the short forearm again on a long-sleeved
+    // one, added under the sleeve so the hand pokes out of it. There is no
+    // long-sleeve bird bake because there is no long-sleeve hand mesh to swap.
+    // The two entries are the two SIDES, because the long-sleeve hand is added
+    // from the +1 bake and the short-sleeve one from -1.
+    bird: [shopperBird(THREE, S, false, 1), shopperBird(THREE, S, false, -1)],
     // the cop, baked once, one instance
     cop: {
       head: copHead(THREE, S), headKit: copHeadKit(THREE, S),
@@ -1362,9 +1605,117 @@ export function buildFigureGeo(THREE) {
       fore: [copForearm(THREE, S, 1), copForearm(THREE, S, -1)],
       belly: copBelly(THREE, S),
     },
+    kid: {
+      torso: kidTorso(THREE, S),
+      head: kidHead(THREE, S),
+      hair: [0, 1, 2].map((k) => kidHair(THREE, S, k)),
+      arm: [kidArm(THREE, S, 1), kidArm(THREE, S, -1)],
+      leg: [kidLeg(THREE, S, 1), kidLeg(THREE, S, -1)],
+    },
     BUILDS,
   };
   return F;
+}
+
+// ===========================================================================
+// ROUND 9 — THE POSE PERSONALITY, AND WHY IT IS ROLLED HERE OF ALL PLACES
+// ===========================================================================
+// The cop builder handed this round its brief and it was not about geometry:
+//
+//   "They now have varied builds, ages, heights, hairstyles, sleeve lengths,
+//    shoes and hands — but they still share ONE POSE VOCABULARY. Fourteen
+//    people idle identically, hold a cart identically, and reach for a shelf
+//    identically, and that reads as clones far more than the geometry does."
+//
+// Which is correct, and the render agreed: nine bodies in an aisle, every one
+// of them in `walk+cart`, every one with both arms out at exactly -0.95 rad
+// like a row of forklifts. The fix is a per-person table of numbers, and the
+// only interesting question was WHERE TO ROLL IT.
+//
+// IT IS ROLLED HERE, IN rollPerson, AND THAT IS A CORRECTNESS DECISION RATHER
+// THAN A TIDINESS ONE. agents.js is driven by one seeded stream and every
+// number in that file's header was measured against it; CLAUDE.md's standing
+// warning is that even swapping a rolled call for a named one walked the stream
+// and moved a measured compliance rate by five points without touching a single
+// probability. So a gait roll in resetShopper() — the obvious place — would
+// have shifted every chase, every balk and every announcement in the bench, and
+// the round would have had to argue that a 3-point move was noise.
+//
+// rollPerson is the one roller in this game that CANNOT do that. It is reached
+// only from makeShopper, makeShopper is reached only from the
+// `while (shoppers.length < K.shopperCount)` line in reset(), and that loop is
+// a no-op after the fourteenth body exists — which happens once, at module
+// construction, before bench() ever calls setSeed(). Draws added here are free.
+// Measured, not assumed: every field of bench(n=100) is byte-identical across
+// this change. See the ablation table in agents.js.
+//
+// The second reason is that it is TRUE. How a man walks is not a property of
+// this shift. It belongs to him, the way his hair colour does, and it should
+// survive a reset for the same reason his hair colour does.
+//
+// AND THE THIRD, WHICH IS THE ONE THE WHOLE GAME RESTS ON: guilt is dealt out
+// fresh at every reset() over the same fourteen indices, uniformly, by code
+// that has never seen a pose. A gait, an idle repertoire, a way of holding a
+// cart and a child are therefore INDEPENDENT of guilt by construction — not by
+// a promise in a comment, but because the two are rolled by different code at
+// different times from different seeds. There is no tuning pass anybody can do
+// to this table that makes a thief walk differently, because the table does not
+// know which of these people is a thief and it is not there when it is decided.
+// ---------------------------------------------------------------------------
+// THE IDLE POOL. Seven, and every one of them is something a person does while
+// standing in a supermarket doing nothing.
+//   0 hip     weight on one hip, one hand resting on it
+//   1 fold    arms folded across the chest
+//   2 phone   both hands up at chest height, chin down, reading it
+//   3 pocket  hands in pockets, shoulders up round the ears
+//   4 lean    forearms down on the cart bar, hips back off it   (cart only)
+//   5 shelf   one hand flat on the shelf lip, head into the shelf
+//   6 rock    arms at the sides, weight rocking foot to foot
+// A person gets two or three of them and cycles, so the crowd is not a set of
+// fourteen statues in fourteen fixed poses either — which was the failure mode
+// the first version of this shipped and it looked worse than the clones did.
+const IDLE_POOL = [0, 1, 2, 3, 4, 5, 6];
+
+function rollPose(rng, age, build) {
+  const { rr, ri, rnd } = rng;
+  const heavy = build >= 2;
+  const old = age === 'old';
+  // Two or three idles per person, no repeats. A shuffle would cost more draws
+  // than it is worth for a seven-long list; reject-and-retry is fine at n=3.
+  const idles = [];
+  for (let k = 0; k < 40 && idles.length < (rnd() < 0.55 ? 3 : 2); k++) {
+    const c = IDLE_POOL[ri(0, IDLE_POOL.length - 1)];
+    if (!idles.includes(c)) idles.push(c);
+  }
+  if (!idles.length) idles.push(6);
+  return {
+    // ---- gait. Stride is the one that reads first, because it sets CADENCE:
+    // at a fixed walking speed a short stride is a fast, busy little walk and a
+    // long one is a lope, and two people crossing an aisle at the same speed
+    // with different cadences is the single strongest cue that they are not the
+    // same animation. Heavy bodies get a short stride and a big roll.
+    stride: rr(0.80, 1.18) * (heavy ? 0.90 : 1) * (old ? 0.88 : 1),
+    amp: rr(0.80, 1.24) * (old ? 0.82 : 1),          // how far the legs swing
+    bounce: rr(0.55, 1.55) * (heavy ? 1.25 : 1),      // vertical, per step
+    roll: rr(0.45, 1.70) * (heavy ? 1.45 : 1),        // hip yaw + shoulder counter
+    swing: rr(0.50, 1.40) * (old ? 0.6 : 1),          // free-arm swing
+    lag: rr(0.28, 0.66),                              // arm phase behind the leg
+    splay: rr(0.05, 0.13) + (heavy ? 0.07 : 0),       // arms carried away from the body
+    toe: rr(-0.10, 0.20),                             // toe-out, in radians
+    // ---- the cart. 0 two hands, 1 right only, 2 left only, 3 leaning on the
+    // bar, 4 pushed out ahead at arm's length.
+    cart: [0, 0, 0, 1, 1, 2, 3, 4][ri(0, 7)],
+    cartD: rr(0.50, 0.90),                            // how far out front he pushes it
+    // ---- idles
+    idles,
+    idleHold: rr(3.4, 7.6),                           // seconds before he shifts
+    idlePh: rr(0, 20),                                // where in the cycle he starts
+    fidget: rr(0.55, 1.55),                           // how much he moves while idle
+    // ---- browsing. 0 reach up at the shelf, 1 hand flat on the shelf lip,
+    // 2 both hands up in front reading something.
+    browse: [0, 0, 1, 1, 1, 2][ri(0, 5)],
+    hipSide: rnd() < 0.5 ? 1 : -1,                    // which hip he pops
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1381,7 +1732,7 @@ export function rollPerson(rng) {
   const age = rnd() < 0.20 ? 'old' : rnd() < 0.22 ? 'young' : 'adult';
   const tall = age === 'young' ? rr(0.93, 1.04) : rr(0.94, 1.11);
   const long = rnd() < 0.45;
-  let hair = ri(0, 5);
+  let hair = ri(0, 7);
   if (age === 'old' && rnd() < 0.55) hair = 3;
   // CLOTH carries two beiges (0xbfa89b, 0xd9b8a0) that are within a few points
   // of two of the skin tones, and when a person rolls both plus `plain` they
@@ -1391,6 +1742,59 @@ export function rollPerson(rng) {
     + Math.abs((a >> 8 & 255) - (b >> 8 & 255)) + Math.abs((a & 255) - (b & 255));
   let shirt = pick(CLOTH);
   for (let k = 0; k < 6 && near(shirt, skin) < 90; k++) shirt = pick(CLOTH);
+  const pants = pick(PANTS);
+  // ROUND 9 — a bag on about two in five, in one of three carries. See
+  // shopperBag: this exists because two clips in decoy.js reach into luggage,
+  // and it is UNGATED on purpose — nothing anywhere asks whether a person has a
+  // bag before letting them play a bag clip, because that gate is the tell.
+  const bagRoll = rnd();
+  // ...and a child on about one body in four. `mode` is what the kid is doing,
+  // not who the parent is: a cart seat, a kid trailing two paces back, or the
+  // one every parent in the world recognises — the one that stops dead in front
+  // of something and has to be come back for.
+  // TWO ROLLS, NOT ONE, and the first build's single roll is why. Slicing
+  // `kidRoll < 0.26` into three bands entangles WHETHER a body has a child with
+  // WHAT the child does, and on the one seed this game actually ships
+  // (setSeed(20240822) at construction) that came out as five children, all
+  // five of them trailing, and not one in a cart seat. The roster is fourteen
+  // bodies rolled once — it is not a distribution the player ever samples twice
+  // — so a correlation that averages out over 4,000 draws can still hand the
+  // shipped store a crowd with a third of this feature missing from it.
+  const kidRoll = rnd();
+  const kidMode = rnd();
+  const kid = kidRoll < 0.26 ? {
+    mode: kidMode < 0.34 ? 'seat' : 'walk',
+    height: rr(0.86, 1.12),                 // 0.95 m to 1.24 m
+    skin,                                    // the parent's, which is the point
+    hair: age === 'old' ? pick(HAIR) : pick(HAIR),
+    shirt: pick(CLOTH),
+    pants: pick(PANTS),
+    hairStyle: ri(0, 2),
+    // Gait: a child's legs are half the length of an adult's, so at the same
+    // ground speed the cadence is roughly double. That difference is visible at
+    // CCTV scale even when the body is eight pixels tall — it is MOVEMENT rate,
+    // and movement survives resolution long after shape stops.
+    stride: rr(0.44, 0.62),
+    amp: rr(1.05, 1.45),
+    swing: rr(0.9, 1.7),
+    // How the follow behaves. `side` is which flank of the parent it walks on,
+    // `weave` is how badly it fails to walk in a straight line, `lagT` is how
+    // far back it trails, `stopEvery`/`stopFor` are the anchor.
+    side: rnd() < 0.5 ? 1 : -1,
+    weave: rr(0.25, 0.62),
+    weaveHz: rr(0.22, 0.46),
+    lagT: rr(0.75, 1.55),
+    // THE ANCHOR IS A DIAL, NOT A THIRD MODE, and that was the second thing the
+    // shipped seed taught. As a mode it was rolled at 7% and the fourteen-body
+    // roster simply did not contain one, so the best behaviour in the feature —
+    // the child that stops dead in front of something and has to be come back
+    // for — was in the file and not in the game. Every walking child now does
+    // it; the only question is how often, and at the top of this range it is
+    // once a minute, which is a child who is broadly co-operative.
+    stopEvery: rr(7.0, 46.0),
+    stopFor: rr(1.6, 3.6),
+    phase: rr(0, 12),
+  } : null;
   return {
     build: bi,
     height: age === 'old' ? tall * 0.965 : tall,
@@ -1398,7 +1802,7 @@ export function rollPerson(rng) {
     skin,
     hair: age === 'old' ? pick(GREY) : pick(HAIR),
     shirt,
-    pants: pick(PANTS),
+    pants,
     shoe: pick(SHOE),
     headLong: rnd() < 0.5,
     hairStyle: hair,
@@ -1407,6 +1811,56 @@ export function rollPerson(rng) {
     stoop: BUILDS[bi].st + (age === 'old' ? 0.16 : 0),
     plain: rnd() < 0.3,
     age,
+    bag: bagRoll < 0.40 ? { kind: bagRoll < 0.17 ? 0 : bagRoll < 0.30 ? 1 : 2,
+                            color: pick(CLOTH) } : null,
+    kid,
+    pose: rollPose(rng, age, bi),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// A CHILD RIG. Same joint names as the other two, because animateChild in
+// agents.js is a third animator and there is no reason for it to learn a third
+// vocabulary. There is no `chest` group and no belly: a child's torso does not
+// counter-rotate enough at this size to be worth a group, and the one place it
+// would show — the shoulder swing — is carried by the arms instead.
+// ---------------------------------------------------------------------------
+export function makeChild(THREE, F, o) {
+  const g = new THREE.Group();
+  const shirt = new THREE.MeshStandardMaterial({ color: o.shirt, roughness: 0.93, vertexColors: true });
+  const pants = new THREE.MeshStandardMaterial({ color: o.pants, roughness: 0.95, vertexColors: true });
+  const skin = new THREE.MeshStandardMaterial({ color: o.skin, roughness: 0.78, vertexColors: true });
+  const hairM = new THREE.MeshStandardMaterial({ color: o.hair, roughness: 1.0, vertexColors: true });
+
+  const hips = new THREE.Group(); hips.position.y = KID.hipY; g.add(hips);
+  const chest = hips;                       // deliberately the same group — see above
+  const torso = new THREE.Mesh(F.kid.torso, shirt);
+  torso.castShadow = true; hips.add(torso);
+
+  const neck = new THREE.Group(); neck.position.y = KID.neckY; hips.add(neck);
+  neck.add(new THREE.Mesh(F.kid.head, skin));
+  neck.add(new THREE.Mesh(F.kid.hair[o.hairStyle], hairM));
+
+  const limb = (geo, mat, x, y) => {
+    const p = new THREE.Group(); p.position.set(x, y, 0);
+    p.add(new THREE.Mesh(geo, mat)); return p;
+  };
+  const legL = limb(F.kid.leg[0], pants, 0.055, 0);
+  const legR = limb(F.kid.leg[1], pants, -0.055, 0);
+  const armL = limb(F.kid.arm[0], skin, 0.108, KID.shoulderY);
+  const armR = limb(F.kid.arm[1], skin, -0.108, KID.shoulderY);
+  hips.add(legL); hips.add(legR); hips.add(armL); hips.add(armR);
+
+  g.scale.setScalar(o.height);
+  return {
+    root: g, hips, chest, torso, belly: null, neck, head: neck,
+    legL, legR, armL, armR, shirt, pants, hipY: KID.hipY, stoop: 0.02,
+    cop: false, kid: true, spec: o,
+    // Follow state, all of it driven by dt and the constants above. No rng
+    // reaches this object after construction, which is what makes a child
+    // replayable in a bench trial and unable to walk the seeded stream.
+    t: o.phase, phase: o.phase * 3.1, stopT: 0, x: 0, z: 0, vx: 0, vz: 0,
+    heading: 0, started: false,
   };
 }
 
@@ -1466,12 +1920,58 @@ export function makePerson(THREE, F, o) {
     armL.add(new THREE.Mesh(F.fore[0][0], skin));
     armR.add(new THREE.Mesh(F.fore[0][1], skin));
   }
+  // ROUND 9 — the mesh whose geometry carries the RIGHT HAND, handed back by
+  // name so agents.js can swap in the raised-finger bake without counting
+  // children. On a long-sleeved person that is the bare-skin hand added just
+  // above and NOT the sleeved forearm, which is the whole reason this is a
+  // reference rather than an index: `armR.children[1]` is the right mesh on a
+  // short sleeve and the wrong one on a long one, and the bug that produces is
+  // a man giving the camera the finger with a shirtsleeve.
+  const handR = armR.children[armR.children.length - 1];
+  const handGeo = handR.geometry;                 // what to put back afterwards
+  const birdGeo = F.bird[o.sleeve ? 0 : 1];
   hips.add(legL); hips.add(legR); chest.add(armL); chest.add(armR);
 
+  // ROUND 9 — one mesh. It gets its OWN material rather than borrowing the
+  // trousers, and the extra material is free where it matters: a material is
+  // not a draw call, the mesh already was one, and the shader program is the
+  // same MeshStandard variant every other part of this person compiles to. The
+  // first version did borrow `pants` to save the allocation and it looked
+  // exactly like what it was — a tote cut from the same bolt as the trousers,
+  // on every single person who had one.
+  //
+  // WHICH GROUP IT HANGS ON IS THE ANIMATION. A shoulder bag is strapped to the
+  // ribs, so it goes on `chest` and rides the counter-rotation; a carrier bag
+  // is held in a hand at the hip, so it goes on `hips` and swings with the
+  // walk. Same geometry list, and the difference is one ternary.
+  let bag = null;
+  if (o.bag) {
+    const bagM = new THREE.MeshStandardMaterial({
+      color: o.bag.color, roughness: 0.88, vertexColors: true,
+    });
+    bag = new THREE.Mesh(F.bag[o.bag.kind], bagM);
+    (o.bag.kind === 2 ? hips : chest).add(bag);
+  }
+
   g.scale.setScalar(o.height);
+  // The child is BUILT here and PARENTED by agents.js, because where it goes
+  // depends on what it is doing: a kid in the cart seat belongs to the cart
+  // object, and a kid on foot belongs to the scene with its own ground
+  // position. figures.js does not know the cart exists.
+  const kid = o.kid ? makeChild(THREE, F, o.kid) : null;
   return {
     root: g, hips, chest, torso, belly, neck, head, legL, legR, armL, armR,
     shirt, pants, hipY: FIG.hipY, stoop: o.stoop, cop: false,
+    bag, bagKind: o.bag ? o.bag.kind : -1, kid,
+    handR, handGeo, birdGeo, birdOn: false,
+    // The per-person pose table. animateShopper reads it every frame; nothing
+    // else in the game is allowed to write it.
+    pose: o.pose, age: o.age,
+    // Idle bookkeeping, on the RIG rather than on the shopper, for a reason
+    // that matters: `s` is wiped by resetShopper() every trial and the rig is
+    // not, so an idle clock parked here cannot be restarted by a state change
+    // and therefore cannot be correlated with one.
+    idleT: o.pose.idlePh, idleMix: 0, idleCur: 0,
   };
 }
 

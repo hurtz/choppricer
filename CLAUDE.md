@@ -70,3 +70,17 @@ stopped reverting to a clean baseline for them.
 Rule for the lead: while any builder is running, commit **only the paths that round
 touched**, named explicitly. `git add -A` is for a quiet tree. If a sweep is
 unavoidable, say so in the commit message so the owner can find their change later.
+
+
+## Benching on a live page: pass `difficulty` explicitly
+
+`bench()` in `src/agents.js` inherits `DIFF.level` from whatever last set it, and
+`game.js` sets it every frame from the shift clock. So a bench started *after* the
+rAF loop has ticked once measures `difficultyForClock(0)`, and one started *before*
+it measures the default. The same build read 85% / 87% / 75% across four attempts
+until the cause was found — every shopper's `nerve` differing by exactly the ramp
+multiplier was the tell.
+
+This can corrupt any live-page measurement in that file, and has been able to since
+the difficulty ramp landed. **Pass `difficulty` to every bench call.** If you are
+comparing two builds, pin it in both.

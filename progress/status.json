@@ -399,7 +399,7 @@
   },
   "shoppers": {
    "round": 1,
-   "state": "building",
+   "state": "passed",
    "shots": [
     {
      "round": 1,
@@ -408,11 +408,20 @@
     }
    ],
    "gaps": [],
-   "updated": 1787666025.364137,
-   "note": "Pose vocabulary: per-person gait (stride/amp/bounce/roll/swing/lag/splay/toe), 7 idles now reached from BROWSE (the state a stopped body is actually in), 5 cart holds, 3 browse poses. 4 children as follow-only furniture (cart seat + trailing/anchoring), shoulder bags, ponytail/topknot. PA escalation ladder to the bird, aimed at cctv.js's real camera rig; bird decoupled from the compliance roll so LR(bird|armed)=1.00. Donut powerup magenta placeholder replaced by the real clamshell (0 unlit box meshes left in the scene). Chase bench BYTE-IDENTICAL to round 8 across cut0/camp/alwaysSprint/cut2 + lungCheck, difficulty pinned."
+   "updated": 1787666267.989203,
+   "note": "THE BEST CATCH: the idles first shipped on the 'else' branch - the one for a body that is NOT browsing. It probed nine stationary shoppers and eight were in 'browse'. In this game a body that has stopped is a body at a shelf, so the entire idle pool was decoration. CHILDREN AS FURNITURE THAT FOLLOWS: not in shoppers, no collider, no nav, no guilt, no RNG draw - which is what let them be added to a tuned sim provably free, and a cart-seat child parents to the cart so it rides an abandoned one for nothing. THE BIRD MEASUREMENT THAT CHANGED THE DESIGN: the first build put it in the rung-4 shrug pool and measured LR 0.26, four times more likely from an innocent - not because the ladder leaked, but because a react clip is only reachable THROUGH the shrug, so it inherited the shrug's ratio to two decimals. Its words: 'it was not adding information, it was making existing information impossible to miss, which for a monitor-wall player is the same thing.' Taken off the compliance roll entirely, LR(bird | armed) = 1.00.",
+   "verdict": "PASS. Per-instance gait (stride 0.68-1.18, so cadence spreads ~1.7:1 at a common speed - the field that reads first, because cadence survives distance after shape is gone), seven idles, five cart holds, three browse poses. Four children of fourteen bodies. Bench BYTE-IDENTICAL on every field of all four rows: cut off0 75% med 6.22, camp 31%, always-sprint 50%, lungCheck passing."
   }
  },
  "log": [
+  {
+   "t": 1787666267.989204,
+   "piece": "shoppers",
+   "role": "builder",
+   "round": 1,
+   "state": "passed",
+   "text": "THE BEST CATCH: the idles first shipped on the 'else' branch - the one for a body that is NOT browsing. It probed nine stationary shoppers and eight were in 'browse'. In this game a body that has stopped is a body at a shelf, so the entire idle pool was decoration. CHILDREN AS FURNITURE THAT FOLLOWS: not in shoppers, no collider, no nav, no guilt, no RNG draw - which is what let them be added to a tuned sim provably free, and a cart-seat child parents to the cart so it rides an abandoned one for nothing. THE BIRD MEASUREMENT THAT CHANGED THE DESIGN: the first build put it in the rung-4 shrug pool and measured LR 0.26, four times more likely from an innocent - not because the ladder leaked, but because a react clip is only reachable THROUGH the shrug, so it inherited the shrug's ratio to two decimals. Its words: 'it was not adding information, it was making existing information impossible to miss, which for a monitor-wall player is the same thing.' Taken off the compliance roll entirely, LR(bird | armed) = 1.00."
+  },
   {
    "t": 1787666161.7640362,
    "piece": "store",
@@ -1278,5 +1287,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787666161.7640378
+ "updated": 1787666267.989207
 }
