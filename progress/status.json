@@ -1,8 +1,8 @@
 {
  "pieces": {
   "store": {
-   "round": 6,
-   "state": "building",
+   "round": 7,
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -58,6 +58,11 @@
      "round": 6,
      "path": "../shots/b7_a.png",
      "t": 1787433816.41727
+    },
+    {
+     "round": 7,
+     "path": "../shots/b10_a.png",
+     "t": 1787661604.529349
     }
    ],
    "gaps": [
@@ -78,10 +83,10 @@
      "text": "The two surfaces filling the largest solid angle of the frame \u2014 ceiling and floor \u2014 are still flat-shaded planes with a texture on them. (1) The floor returns ZERO specular under a lit ceiling; every real photo shows the ceiling light rows mirrored as long vertical smears. 'Until light physically bounces off the floor, nothing further up the list will matter.' (2) Ceiling troffers are emissive quads coplanar with the tile, not recessed housings with tube shapes and a shadow line. (3) BINARY TELLS: an unlit pink placeholder cube on a grey stick, untextured grey cart proxies, a blank grey plane where a sign texture failed. Any one ends the test alone."
     }
    ],
-   "updated": 1787433816.4172668,
-   "note": "r6: FIXED the cart alpha bug at the source (the 8-wire-per-62mm card mipped to a uniform ~0.6 alpha so alphaTest never fired and transparent:true blended a milky sheet over frame + load) - baskets are now real 6.5mm wire in the existing fixture batch, zero alpha, zero sort. Floor rewritten as a real mirror: the along-aisle blur started at 0.80m/grew 0.235/m, pinning chopLight's merge at 1.0 from 3m out, so the streak had no internal structure to converge WITH; retuned to 0.34/0.084 -> fixtures resolve near, merge far, and the whole thing foreshortens. Per-tile wax variation + ray displacement + matte grout seams break and displace every streak at the tile grid. chopRunZ is continuous now, so nothing terminates at a hard straight edge at the cross-aisle. Reflection carries the ceiling tile field, the endcaps (wood + red promo header) and the lit cold wall, not just strip lights. Ceiling: ceilTex was drawing 175% coverage of dark grain (asphalt) over 610mm SQUARE tiles; now sparse pinholes+fissures on a 600x1200 plank grid with per-plank tone, stains and sag, tint 0xbbb6a9 -> 0xe4dccb. Measured ceiling band V 0.767 vs floor 0.57-0.60 (was inverted). Contact shadows: multiply-blended 1-D ramps hugging every base. Dairy glass 'reflecting nothing' was two transcription faults on that run only: LED tube outside the pane, and its bloom card emitted with d/h swapped -> a 2.1m horizontal additive bar overlapping 2.5-deep on renderOrder 5, i.e. painted OVER the glass. Perimeter facings: not a coverage gap - PROFILES[0] on run 91 gave 0.13m clear height, which starves products.js fits() to 2 of 8 kinds, and vacancy 0.06 kills bare bays.",
+   "updated": 1787661789.0114079,
+   "note": "A LOD BIAS ALONE COULD NEVER HAVE FIXED IT: three soups carried sharpen(-1.0)/-0.7/-0.6, which INSTRUCTS the hardware to undo mip fall-off, and anisotropy 16 kept pulling full-resolution texels along a rail seen down an aisle whatever the bias was. THE FREEZER GLASS, three causes, none of them wiring: (1) the reflection trace started INSIDE its own case - chopRun reports a perimeter wall run wherever |x| is within uRunHalf of uEdgeX, and the cold wall's glass plane stands 0.47m inside that band, so every ray was declared blocked at the first march sample and returned a deliberately-blurred wall LUT sampled at one point. The reflection was a CONSTANT, and reflection and transmission cannot fight when one of them is a constant. (2) The trace was unbounded in X and Z, so the ceiling intersection sat 20-100m out with both blur terms clamped - the same large number everywhere, which is the flat white haze. (3) F0 0.04 is uncoated single glass; a merchandiser door is a sealed low-e unit, and the case interior was lit BRIGHTER than open shelving so the glass had nothing to stand in front of.",
    "gap": "The two surfaces filling the largest solid angle of the frame \u2014 ceiling and floor \u2014 are still flat-shaded planes with a texture on them. (1) The floor returns ZERO specular under a lit ceiling; every real photo shows the ceiling light rows mirrored as long vertical smears. 'Until light physically bounces off the floor, nothing further up the list will matter.' (2) Ceiling troffers are emissive quads coplanar with the tile, not recessed housings with tube shapes and a shadow line. (3) BINARY TELLS: an unlit pink placeholder cube on a grey stick, untextured grey cart proxies, a blank grey plane where a sign texture failed. Any one ends the test alone.",
-   "verdict": "Edge density mean 41.0 -> 44.2, spread 5.6 -> 7.0. Warm-band pixels 37.7-40.7% -> 7.7-11.3% (references 5.6-11.4%). Mean saturation 0.33-0.35 -> 0.23-0.25 (references 0.27-0.32)."
+   "verdict": "PASS on the #1 tell. Sign text now falls off with distance: tags gone by 5.6m, blades by 14m, hanging signs survive to 19m - which matches reference/store_04, where a three-line aisle sign at ~15m is still legible. Every sign also carries a real specular glare band and a self-shadow under its own top return. 132 draw calls, 0.34ms per render - calls went DOWN from 162 despite five new package batches."
   },
   "cctv": {
    "round": 7,
@@ -385,6 +390,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787661789.0114088,
+   "piece": "store",
+   "role": "builder",
+   "round": 7,
+   "state": "passed",
+   "text": "A LOD BIAS ALONE COULD NEVER HAVE FIXED IT: three soups carried sharpen(-1.0)/-0.7/-0.6, which INSTRUCTS the hardware to undo mip fall-off, and anisotropy 16 kept pulling full-resolution texels along a rail seen down an aisle whatever the bias was. THE FREEZER GLASS, three causes, none of them wiring: (1) the reflection trace started INSIDE its own case - chopRun reports a perimeter wall run wherever |x| is within uRunHalf of uEdgeX, and the cold wall's glass plane stands 0.47m inside that band, so every ray was declared blocked at the first march sample and returned a deliberately-blurred wall LUT sampled at one point. The reflection was a CONSTANT, and reflection and transmission cannot fight when one of them is a constant. (2) The trace was unbounded in X and Z, so the ceiling intersection sat 20-100m out with both blur terms clamped - the same large number everywhere, which is the flat white haze. (3) F0 0.04 is uncoated single glass; a merchandiser door is a sealed low-e unit, and the case interior was lit BRIGHTER than open shelving so the glass had nothing to stand in front of."
+  },
+  {
+   "t": 1787661604.529349,
+   "piece": "store",
+   "role": "builder",
+   "round": 7,
+   "state": "building",
+   "text": "Sign/tag/rail type now has a photographic acuity curve (explicit coarse-LOD tap mixed on view distance; the -1.0 and -0.6 sharpen biases that were cancelling all distance blur are gone), a specular glare band mirrored off the same analytic ceiling light field the floor uses, and a self-shadow under its own top return. Freezer glass: the trace was starting INSIDE its own case (chopRun reports the aisle-1 cold wall as a perimeter gondola and the glass plane sits 0.47 m inside that band, so every ray was blocked at the first march sample and returned one flat colour from a deliberately-blurred LUT) and was unbounded in X/Z (grazing rays reached a ceiling 100+ m outside the building with both blur terms clamped). Both fixed; F0 0.04 -> 0.26 for a sealed low-e unit, ghost folded in instead of added, mullion haze 202 mm -> 57 mm, plus condensation, corner frost and wipe arcs. Dark anodised frames, tubular pulls, gaskets, hinges. Case interior exposure dropped over a stop to match reference/store_04. Floor now reflects hand-placed furniture via a top-down prop LUT (endcaps, promo caps, produce, pallets, barrels, checkouts, carts, desk), merges distant strips on screen footprint, cups each tile in its own random direction instead of a uniform lateral jitter, and its scuffs quantise to the tile face and kill gloss. Five new package silhouettes (rimmed can, lug-lid jar, tub, stand-up gusseted pouch, shrink-wrapped multipack) plus flat sleeves; unsharp mask restores near-field print the magnified atlas was losing; a tag under every facing plus coupon flags; ragged voids with stragglers; deck notches on the real 25.4 mm pitch with product/rail/tag riding the step; sprinklers, smoke detectors, return grilles, speakers, pipe sag; per-fixture lamp colour temperature. 132 draw calls, 2.65 M tris, 0.34 ms/render at 1280x720 (10 renders/frame = 3.4 ms)."
+  },
   {
    "t": 1787627045.4072802,
    "piece": "cctv",
@@ -1194,5 +1215,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787627045.4072819
+ "updated": 1787661789.01141
 }
