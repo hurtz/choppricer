@@ -176,23 +176,26 @@ export const TUNING = {
  bargeSlow: 0.22, bargeWindFrac: 0.48, bargeDump: 0.85,
 };
 
+// CHANNEL LINEUP — what the channels ARE. Ids, labels, and which aisle each covers.
+// This is the contract game.js and store.js read.
+//
+// WHERE THEY PHYSICALLY HANG IS NOT DECIDED HERE. `pos`/`look` below are a fallback
+// only; src/cctv.js overrides them in cameraRig() and owns the pose, the lens and the
+// mount. That split exists because the lead placed these twice and got it wrong twice:
+// first at 4.35m, where the domes saw over the 2.05m gondolas and 54.3% of roster rows
+// named an aisle the subject was not in; then at 2.62m in one flat row at the aisle
+// mouths, which made "channel N is aisle N" literally true and destroyed the look —
+// "you really screwed up the effect... they're blocked by the sign... the new layout
+// sucks." Placement is a LOOK decision. It has to be judged by whoever can render the
+// frame and look at it, not computed from aisle arithmetic by someone who cannot.
 export const CAMERAS = [
-  // ONE CHANNEL PER AISLE. Channel N is aisle N — no lookup, no "AISLE 3-4" spanning
-  // two places at once. Each camera sits above the front cross-aisle looking straight
-  // down its own aisle, so it sees the full 26m run plus both cross-aisle mouths.
-  // CAM 09 is the single exit. The player's mental model is now: the number on the
-  // screen IS the number hanging over the aisle.
   ...Array.from({ length: AISLE_COUNT }, (_, i) => ({
     id: `CAM 0${i + 1}`,
     label: `AISLE ${i + 1}`,
-    // Height matters more than it looks. At 4.35m these domes sat well above the
-    // 2.05m gondolas and saw straight across the shelf tops: 54.3% of roster rows
-    // were a subject who was NOT in the aisle his channel is named after, so
-    // "channel N is aisle N" was true of the AIM and not of the PICTURE. Dropped to
-    // just above the shelf line so the gondolas themselves do the masking and the
-    // mental model is literally true.
-    pos: [aisleX(i), 2.62, FRONT_WALK_Z + 1.6],
+    aisle: i,                                   // authoritative: channel i watches aisle i
+    pos: [aisleX(i), 2.62, FRONT_WALK_Z + 1.6], // FALLBACK ONLY — cctv.js overrides
     look: [aisleX(i), 1.15, BACK_WALK_Z - 1.0],
   })),
-  { id: 'CAM 09', label: 'DOOR 1', pos: [EXIT.x + 1.2, 4.2, EXIT.z + 6.5], look: [EXIT.x, 1.0, EXIT.z] },
+  { id: 'CAM 09', label: 'DOOR 1', aisle: null,
+    pos: [EXIT.x + 1.2, 4.2, EXIT.z + 6.5], look: [EXIT.x, 1.0, EXIT.z] },
 ];

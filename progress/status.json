@@ -84,7 +84,7 @@
    "verdict": "Edge density mean 41.0 -> 44.2, spread 5.6 -> 7.0. Warm-band pixels 37.7-40.7% -> 7.7-11.3% (references 5.6-11.4%). Mean saturation 0.33-0.35 -> 0.23-0.25 (references 0.27-0.32)."
   },
   "cctv": {
-   "round": 6,
+   "round": 7,
    "state": "passed",
    "shots": [
     {
@@ -121,6 +121,11 @@
      "round": 6,
      "path": "../shots/cctv_r6_desk.png",
      "t": 1787617771.171815
+    },
+    {
+     "round": 7,
+     "path": "../shots/cctv_r7_wall.png",
+     "t": 1787626964.2702348
     }
    ],
    "gaps": [
@@ -129,10 +134,10 @@
      "text": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself."
     }
    ],
-   "updated": 1787617914.299802,
-   "note": "THE BIGGEST WIN WAS NOT AN OVERLAY: the spot monitor was REPOINTING 14.7 times a minute - the largest picture on screen panning and re-zooming onto a different body every four seconds, all shift. Now 5.6/min, with a 1.6s grace before a lost lock is replaced because he usually walks back into frame. The wall is now a map: one row ordered by world X so the Nth panel from the left IS aisle N, door on its own larger panel because it is not an aisle. It had independently found the aisle signs blocking the picture at 4.35m and my drop to 2.62m fixed it before it filed the request - at 4.35m the near sign hid the near 16m of every 26m aisle, and at 2.62m the camera passes under its bottom edge and the sign reads as a category header across the top of each tile, so every thumbnail labels itself. Removed nine per-panel OSD canvases: ~3.4MB/s of texture traffic, now zero.",
+   "updated": 1787627045.40727,
+   "note": "THE ANSWER TO 'BLOCKED BY THE SIGN': mount INSIDE the aisle, past the sign line, so the near sign sits BEHIND the lens and out of frame entirely. That is also why going higher made it worse rather than better. The mid-aisle sign bank then hangs 10-11m down the shot above head height, so each aisle's own numbered banner is in its own picture at the scale a real camera sees it - the sign went from being the problem to being the label. THE MEASUREMENT THAT DECIDED IT: the binding constraint is TWO aisles over, not one, and 0.9m lower, because the mid-store cross-aisle cuts a hole through every gondola run at the same z so the far crossing always lands inside that hole. It built an entire first rig off the one-aisle-over number and measured 14.9% wrong-aisle rows. Height is the only lever: a 24-degree lens narrowing bought 3.7 points and cost 3 of coverage; 10 degrees of cross-aim moved it by 0.01.",
    "gap": "Chromatic aberration on the floor view is overcooked into rainbow fringing; timestamp draws over itself.",
-   "verdict": "PASS on the clutter note. Cut by duty cycle: per-tile motion meter lit 98.1% of a shift, VMD alarm frame 59.4%, blob boxes 95.9% (~26 on the wall at all times), record pip blinking 100%, spot trails 97.5%. Its reasoning: 'an indicator lit 98% of a shift carries 0.14 bits; eight side by side carry no more.' The small panels now allocate no OSD canvas at all - what is left is the picture and the channel number on the plastic below it."
+   "verdict": "PASS \u2014 the look is back and the mental model survived. Channel purity: first channel names the right aisle 100.0%, wrong-aisle rows 0.0%, 1.000 channels per subject (2480 lane points). Coverage 97.7% -> 94.5%, and the 3.2 points is the blind cone directly under each dome, which is exactly where a real dome's blind spot is."
   },
   "agents": {
    "round": 8,
@@ -380,6 +385,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787627045.4072802,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 7,
+   "state": "passed",
+   "text": "THE ANSWER TO 'BLOCKED BY THE SIGN': mount INSIDE the aisle, past the sign line, so the near sign sits BEHIND the lens and out of frame entirely. That is also why going higher made it worse rather than better. The mid-aisle sign bank then hangs 10-11m down the shot above head height, so each aisle's own numbered banner is in its own picture at the scale a real camera sees it - the sign went from being the problem to being the label. THE MEASUREMENT THAT DECIDED IT: the binding constraint is TWO aisles over, not one, and 0.9m lower, because the mid-store cross-aisle cuts a hole through every gondola run at the same z so the far crossing always lands inside that hole. It built an entire first rig off the one-aisle-over number and measured 14.9% wrong-aisle rows. Height is the only lever: a 24-degree lens narrowing bought 3.7 points and cost 3 of coverage; 10 degrees of cross-aim moved it by 0.01."
+  },
+  {
+   "t": 1787626964.2702641,
+   "piece": "cctv",
+   "role": "builder",
+   "round": 7,
+   "state": "building",
+   "text": "R7 rig: cctv.js now owns pose/lens/mount via cameraRig(). Mounts moved INSIDE each aisle, past the end sign (|z| 13.2-13.55 vs the sign at 13.75) so no sign is ever in the near field; heights 2.51-2.95 set by a measured height law, not by hand. THE FINDING: the binding purity constraint is TWO aisles over, not one, and it is 0.9m lower (2.75m on the centreline vs 3.64m) because the mid-store cross-aisle cuts a hole through every gondola run at the same z, so only the near crossing is ever load-bearing. Built the first rig off the m=1 number and measured 14.9% wrong-aisle rows for it. Height is the ONLY lever: ~1pt of wrong-aisle per 0.25m per camera; a 24-degree lens narrowing bought 3.7pts and cost 3 of coverage; 10 degrees of cross-aim moved it by 0.01. Final: channelsFor 100.0% first-channel-right, 0.0% wrong-aisle rows, 1.000 channels/subject (r6 bar: 1.00/0%). Coverage 94.5% vs 97.7% - the whole loss is the blind cone under each dome at its own aisle mouth, which is the price of mounting past the sign and is where a real dome's blind spot is. Variety comes from 4 front / 4 back mouths, lateral offsets, 78-104 deg lenses, one 3.4-degree roll and one deliberately misaimed. Door camera re-posed to the front corner across the vestibule - 4 candidates built, 2 repeated the sign bug with a checkout lane panel a metre off the lens. New src/cctv/mounts.js hangs a housing at every rig pose, 6 draw calls; measured 3-6 other cameras visible per channel. hfov/barrel moved out of CHAN into the rig so there is one read path for the optics."
+  },
   {
    "t": 1787620741.672485,
    "piece": "game",
@@ -1173,5 +1194,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787620741.6724858
+ "updated": 1787627045.4072819
 }

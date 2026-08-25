@@ -5,8 +5,24 @@
 //     renderFloor(dt, camera),        // draw the on-foot view, CCTV-graded
 //     setActiveCam(i), resize(w,h)
 //   }
+// Module exports beyond createCCTV, added round 7 when placement moved here:
+//   cameraRig(CAMS)          the poses. config.CAMERAS supplies the LINEUP — id,
+//                            label and the authoritative `aisle` index — and this
+//                            supplies pos / look / roll / hfov / barrel / mount,
+//                            overriding the fallback pos/look in config. Pure,
+//                            no THREE, safe for store.js to import if it wants
+//                            its housings to land where the lenses are.
+//   seeOverCeiling(u, m, s)  the height law: how high a lens at lateral offset
+//                            `u` may sit before it starts seeing `m` aisles over.
+//
 // Also exposed (additive, for builder-game — safe to ignore):
 //   cams            PerspectiveCamera[] , index-aligned to CAMERAS
+//   lineup          THE MERGED TRUTH — config's lineup with the rig folded in.
+//                   [{id,label,aisle,pos,look,roll,hfov,barrel,mount,...}]. Every
+//                   line in this file reads pose off THIS, never off CAMERAS.
+//   rig             just the pose half of it, plus `ceiling`/`hWanted`/`capped`
+//   applyRig(patch) re-pose live from a mutated rig, no reload. Placement is a
+//                   LOOK decision and has to be judged by looking; this is how.
 //   tiles           [{x,y,w,h}]  screen rect of each feed, TOP-LEFT origin, in a
 //                   FIXED 1280x720 design space. These never change, at any
 //                   canvas size and at any selection — the whole desk is scaled
@@ -132,12 +148,128 @@
 // a lookup table from the player's head, which is worth more than any overlay on
 // this list. See cctv/layout.js.
 //
+// ===========================================================================
+// ROUND 7 — THE RIG. WHERE THE CAMERAS ACTUALLY ARE.
+// ===========================================================================
+// "You really screwed up the effect when you made the cameras sit statically at
+// the end of each aisle, and they're blocked by the sign. I just think the new
+// layout sucks."
+//
+// He is describing two different bugs that happen to share a cause, and the
+// cause is that placement was being computed from aisle arithmetic by something
+// that could not see the frame. config.js now says so out loud: CAMERAS is the
+// LINEUP (id, label, and the authoritative `aisle` index) and its pos/look are a
+// fallback. cameraRig() below owns the pose, the lens and the mount.
+//
+// THE TWO BUGS
+//  1. 4.35 m in the cross-aisle: the domes cleared the 2.05 m gondolas and 54.3%
+//     of roster rows named an aisle the subject was not in.
+//  2. 2.62 m in one flat row at the aisle mouths: purity perfect, look dead.
+//     Eight identical eye-level corridor shots with a hanging sign across the
+//     top of frame. Not a DVR — eight photocopies of a hallway.
+//
+// THE THREE MEASUREMENTS THIS ROUND IS BUILT ON
+//
+// (a) THE HEIGHT LAW, AND THE PART OF IT I GOT WRONG FIRST. A subject one aisle
+//     over is hidden by the gondola between you exactly while the sightline
+//     crosses it below its top. The detector's occluders are the store's
+//     colliders plus track.js's 0.25 m LIFT for product and shelf-talkers, so
+//     the effective shelf top is 2.30 m, and channelsFor tests the CHEST at
+//     0.55h = 0.96 m. See seeOverCeiling() below for the arithmetic and for the
+//     finding that actually decided this round: the binding case is TWO aisles
+//     over, not one, and it is 0.9 m lower — 2.75 m on the centreline, not 3.64.
+//     I built the whole first rig off the wrong one and measured 14.9%
+//     wrong-aisle rows for it. The mid-store cross-aisle is why.
+//     Every pose below now takes its cap from that law rather than a number I
+//     liked, which is also what keeps it true if the store is rebuilt.
+//
+// (b) MOUNT PAST THE SIGN, NOT ABOVE IT. The hanging signs are at y 2.50-4.14,
+//     1.86 m wide, and there are FOUR banks per aisle: both store ends at
+//     |z| = 13.75, and both sides of the mid-store cross-aisle at z = -3.12 and
+//     +1.72. A sign one metre from the lens eats the top third of the frame at
+//     2.62 m and the whole middle of it at 4.35 m — going HIGHER made it worse,
+//     which is the part that was not obvious. What actually works is trivial in
+//     hindsight: a sign only blocks a body when it is much CLOSER to the lens
+//     than the body is. Put the mount INBOARD of the end sign — every mount here
+//     is at |z| 13.2 to 13.55 against the sign's 13.75 — and the near sign is
+//     BEHIND the camera and out of frame entirely. The mid-aisle bank is then
+//     10-11 m down the shot, where it hangs above head height instead of across
+//     it:
+//
+//         sign bottom  atan((2.50-h)/10.4)     head at 10.4 m  atan((1.75-h)/10.4)
+//         h = 2.7      -1.1 deg                                -5.2 deg
+//
+//     and the height that fixed the neighbour leak makes this BETTER, not worse:
+//     the lower the lens, the further down the aisle a hanging sign has to be
+//     before it can cover a head at all. At 2.7 m it never can, at any distance
+//     in this store.
+//
+//     and that is a hanging aisle sign in a security frame, which is what the
+//     reference photographs have and what the wall lost. IT ALSO ANSWERS "CAN
+//     YOU TELL WHICH AISLE YOU ARE LOOKING AT": each aisle's own department
+//     banner is still in its own picture, in the middle distance, at the scale a
+//     real camera sees it. The sign went from being the problem to being the
+//     label.
+//
+// (c) THE BLIND CONE UNDER THE DOME IS THE PRICE OF MOUNTING PAST THE SIGN, AND
+//     IT IS 3.2 POINTS OF COVERAGE. A camera inside its own aisle cannot see the
+//     2-3 m of floor directly under itself, so the mouth it hangs over is a
+//     blind spot. Measured over 2480 lane points, coverage went 97.7% -> 94.5%,
+//     and the whole of that loss is in the 2.5 m bin at the mounting end of each
+//     aisle. It is not recoverable by aim: sweeping the aim point from 5.5 m to
+//     13 m moves it by 2-3 points, because the cone is set by height and
+//     vertical field, not by tilt. It is not recoverable by position either —
+//     going back outside the aisle to cover the mouth is exactly what puts the
+//     sign in front of the lens. So it is a genuine blind spot, of the kind
+//     game.js already handles ("13.2% of subject-seconds are on NO channel" and
+//     a roster row that says the track is lost), and it is where a real dome's
+//     blind spot is too. Aim is spent on the LOOK instead: 7 m out is a steep
+//     near-plan shot, 15 m out is a nearly level one down the length of the
+//     store, and both are on this wall.
+//
+// WHAT THE VARIETY IS MADE OF. Not noise — four real installer decisions, and
+// each one changes what KIND of space the channel frames:
+//   * WHICH END. Four aisles are watched from the front mouth (the shot ends on
+//     the back wall and its department signage) and four from the back (the shot
+//     ends on the checkout lanes, the front windows and an EXIT sign). That one
+//     bit buys two completely different pictures for free and it is the single
+//     biggest reason the run stops reading as a photocopy.
+//   * WHICH SIDE, and how far off centre. An aisle running diagonally out of one
+//     corner of frame with a gondola face down one edge is a security camera. A
+//     symmetric corridor with the vanishing point in the middle is a first-person
+//     game.
+//   * THE LENS. 78 to 104 degrees, and the barrel that goes with it. CH05 is a
+//     tight bullet somebody put in to read faces; CH01 and CH08 are 104-degree
+//     fisheyes in the store corners.
+//   * WHAT WENT WRONG. CH04 is 3.4 degrees off level and nobody has ever
+//     straightened it (it is also the soft one — CHAN[3].sharp is negative
+//     because that dome got knocked years ago). CH06 is aimed 13 degrees across
+//     its own aisle at a gondola face, because whoever installed it was standing
+//     on a ladder in a hurry. Both still see their aisle. Neither looks designed.
+//
+// See cctv/mounts.js for the plastic: every pose gets a housing in the world, so
+// the aisle cameras appear in EACH OTHER'S pictures. A DVR where you can see the
+// other cameras is the cheapest realism on this whole wall.
+//
+// NOTE TO LEAD: store.js draws its dome + backplate + drop tube at
+// CAMERAS[i].pos, which is now the fallback, so the store's own plastic still
+// sits in the old flat row. Harmless — a discount grocery has more domes than
+// monitors, and mine are in the world too — but if you want them to agree, that
+// loop should read the rig (`cctv.rig[i].pos`) or store.js should import
+// cameraRig(). game.js's camDist() reads CAMERAS[i].pos as well; it only feeds
+// the CHAN_MARGIN tie-break between two channels that both see the man, and
+// camForZone() is an X-zone lookup that does not depend on pose at all, so
+// nothing there is wrong today.
+//
 // NOTE TO LEAD: vendor/EffectComposer.js cannot load — it imports
 // '../shaders/CopyShader.js' and './MaskPass.js', neither of which exists on the
 // server (both 404). ShaderPass.js and Pass.js are fine. This file therefore
 // runs its own three-target chain built on Pass.js's FullScreenQuad; nothing
 // else is needed from the composer.
-import { CAMERAS } from './config.js';
+import {
+  CAMERAS, aisleX, AISLE_COUNT, AISLE_LEN, AISLE_GAP, SHELF_W, SHELF_H, CEIL_H,
+  STORE, MID_WALK_Z, EXIT,
+} from './config.js';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { GradeShader, ScreenShader, DeadShader } from './cctv/shaders.js';
 import { layoutWall, WALL } from './cctv/layout.js';
@@ -148,6 +280,7 @@ import {
 import {
   setFloorLens, floorLens, warpFloor, unwarpFloor, floorMagAt,
 } from './cctv/warp.js';
+import { buildMounts } from './cctv/mounts.js';
 
 // The wall is AUTHORED in 1280x720 design space and only ever drawn in it. Every
 // slot rect, every tile rect, and all three overlay canvases are design pixels;
@@ -228,9 +361,17 @@ const LOST_T = 1.6;                 // seconds of aim held after a lock drops ou
 // `sharp` is the in-camera edge enhancement — positive is the crunchy halo every
 // cheap IP camera puts around a shelf lip. CH04 is negative because somebody
 // knocked that dome months ago and nobody ever refocused it.
-// `hfov` is the LENS, in degrees horizontal, and the vertical is derived from
-// whatever monitor the channel lands on. That is the right way round: a camera
-// does not change what it sees because you plugged it into a widescreen.
+//
+// ROUND 7 — hfov AND barrel LEFT THIS TABLE. They are the LENS, and the lens
+// belongs to the camera, not to the recorder slot it is plugged into: an aisle
+// dome and a door camera do not have the same field of view because they have
+// the same DVR. AISLE_RIG / DOOR_RIG own both now, and lensFor() merges them
+// over this table once per instance so there is exactly one place in the file
+// that answers "what does channel i see". The two constants below are the
+// fallback for a rig entry that omits them and nothing else uses them.
+// Leaving nine dead hfov values sitting in this table was the alternative, and
+// it is the shadow-block failure CLAUDE.md is about: a constant you can edit all
+// day with no effect on the picture.
 //
 // ROUND 4: `fps` is now the MAINSTREAM rate. The mosaic runs `fps * SUB_FPS` —
 // a real substream is slower as well as smaller, and a mosaic that judders while
@@ -242,18 +383,22 @@ const LOST_T = 1.6;                 // seconds of aim held after a lock drops ou
 // still the same two cameras with the same problem and you notice it perhaps
 // twice a shift, which is what makes it character instead of noise.
 const SUB_FPS = 0.62;
+// The lens a channel gets if its rig entry does not name one. Every entry in
+// AISLE_RIG and DOOR_RIG names one today, so this is unreachable — which is what
+// a fallback should be, and why there is one of it rather than nine.
+const LENS_FALLBACK = { hfov: 96, barrel: 0.30 };
 const CHAN = [
-  { fps: 10, hfov: 98,  gain: 1.00, tint: [1.035, 1.000, 0.955], noise: 0.038, barrel: 0.30, sat: 0.92, scan: 0.062, blocky: 0.16, sharp:  1.00, bloom: 1.00, glitch: 0 },
-  { fps: 8,  hfov: 97,  gain: 0.95, tint: [0.955, 1.030, 0.960], noise: 0.050, barrel: 0.34, sat: 0.84, scan: 0.072, blocky: 0.20, sharp:  1.27, bloom: 1.13, glitch: 0 },
-  { fps: 12, hfov: 99,  gain: 1.10, tint: [1.010, 1.005, 0.990], noise: 0.030, barrel: 0.27, sat: 0.96, scan: 0.052, blocky: 0.12, sharp:  0.73, bloom: 0.87, glitch: 0 },
-  { fps: 9,  hfov: 96,  gain: 0.80, tint: [0.950, 0.985, 1.070], noise: 0.070, barrel: 0.33, sat: 0.72, scan: 0.078, blocky: 0.26, sharp: -1.00, bloom: 1.45, glitch: 0 },
-  { fps: 14, hfov: 102, gain: 1.02, tint: [1.000, 1.000, 1.000], noise: 0.030, barrel: 0.34, sat: 0.93, scan: 0.050, blocky: 0.11, sharp:  1.05, bloom: 1.00, glitch: 26.0 },
-  { fps: 8,  hfov: 98,  gain: 0.90, tint: [1.045, 0.995, 0.945], noise: 0.058, barrel: 0.30, sat: 0.88, scan: 0.070, blocky: 0.30, sharp:  1.55, bloom: 0.91, glitch: 0 },
-  { fps: 12, hfov: 94,  gain: 1.05, tint: [0.965, 1.020, 0.975], noise: 0.036, barrel: 0.36, sat: 0.92, scan: 0.058, blocky: 0.14, sharp:  0.91, bloom: 1.05, glitch: 47.0 },
-  { fps: 10, hfov: 96,  gain: 0.97, tint: [1.000, 1.010, 1.010], noise: 0.052, barrel: 0.33, sat: 0.86, scan: 0.082, blocky: 0.22, sharp:  1.18, bloom: 0.95, glitch: 0 },
+  { fps: 10, gain: 1.00, tint: [1.035, 1.000, 0.955], noise: 0.038, sat: 0.92, scan: 0.062, blocky: 0.16, sharp:  1.00, bloom: 1.00, glitch: 0 },
+  { fps: 8,  gain: 0.95, tint: [0.955, 1.030, 0.960], noise: 0.050, sat: 0.84, scan: 0.072, blocky: 0.20, sharp:  1.27, bloom: 1.13, glitch: 0 },
+  { fps: 12, gain: 1.10, tint: [1.010, 1.005, 0.990], noise: 0.030, sat: 0.96, scan: 0.052, blocky: 0.12, sharp:  0.73, bloom: 0.87, glitch: 0 },
+  { fps: 9,  gain: 0.80, tint: [0.950, 0.985, 1.070], noise: 0.070, sat: 0.72, scan: 0.078, blocky: 0.26, sharp: -1.00, bloom: 1.45, glitch: 0 },
+  { fps: 14, gain: 1.02, tint: [1.000, 1.000, 1.000], noise: 0.030, sat: 0.93, scan: 0.050, blocky: 0.11, sharp:  1.05, bloom: 1.00, glitch: 26.0 },
+  { fps: 8,  gain: 0.90, tint: [1.045, 0.995, 0.945], noise: 0.058, sat: 0.88, scan: 0.070, blocky: 0.30, sharp:  1.55, bloom: 0.91, glitch: 0 },
+  { fps: 12, gain: 1.05, tint: [0.965, 1.020, 0.975], noise: 0.036, sat: 0.92, scan: 0.058, blocky: 0.14, sharp:  0.91, bloom: 1.05, glitch: 47.0 },
+  { fps: 10, gain: 0.97, tint: [1.000, 1.010, 1.010], noise: 0.052, sat: 0.86, scan: 0.082, blocky: 0.22, sharp:  1.18, bloom: 0.95, glitch: 0 },
   // CAM 09 DOOR 1: bought this year, so it is the sharpest and least noisy thing
-  // on the wall and its lens is tighter than the 2011 domes.
-  { fps: 13, hfov: 90,  gain: 1.04, tint: [0.992, 1.000, 1.008], noise: 0.026, barrel: 0.22, sat: 0.95, scan: 0.046, blocky: 0.09, sharp:  1.34, bloom: 0.94, glitch: 0 },
+  // on the wall. Its LENS is now DOOR_RIG's business, not this table's.
+  { fps: 13, gain: 1.04, tint: [0.992, 1.000, 1.008], noise: 0.026, sat: 0.95, scan: 0.046, blocky: 0.09, sharp:  1.34, bloom: 0.94, glitch: 0 },
 ];
 
 // Past the authored table, vary deterministically off the index instead of
@@ -267,7 +412,6 @@ function chanFor(i) {
   derived[i] = {
     ...base,
     fps: 8 + ((i * 5) % 5),
-    hfov: 92 + ((i * 7) % 11),
     gain: 0.88 + k * 0.24,
     tint: [1 + (k - 0.5) * 0.08, 1 + (0.5 - k) * 0.04, 1 + (k - 0.5) * -0.06],
     noise: 0.030 + k * 0.036,
@@ -362,12 +506,227 @@ const hfovFor = (vfov, aspect) =>
   2 * Math.atan(Math.tan(vfov * DEG / 2) * aspect) / DEG;
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 
+// ===========================================================================
+// THE RIG — pose, lens and mount, per channel. See the round-7 note up top.
+// ===========================================================================
+// PITCH and LANE are derived, not retyped: config owns the floor plan and a
+// second copy of 5.30 in this file is the duplication hazard in CLAUDE.md
+// wearing a different hat.
+const PITCH = AISLE_GAP + SHELF_W;          // 5.30 m, aisle centreline to centreline
+const CHEST = 1.75 * 0.55;                  // what channelsFor() actually tests
+const SHELF_TOP = SHELF_H + 0.25;           // + track.js's LIFT for product on top
+
+// ---- THE HEIGHT LAW --------------------------------------------------------
+// The highest a lens can sit at lateral offset `u` and still be blind to the
+// aisle `m` over. `side` is +1 for the neighbours at +PITCH, -1 for the ones at
+// -PITCH. Derivation: the sightline to a chest at 0.96 m crosses the FIRST
+// gondola in the way a fraction f of the distance across, and is blocked while
+// that crossing is under the 2.30 m effective shelf top.
+export function seeOverCeiling(u, m = 1, side = 1) {
+  const s = side >= 0 ? u : -u;
+  const f = (PITCH / 2 - s) / (m * PITCH - s);
+  return f >= 1 ? Infinity : (SHELF_TOP - CHEST * f) / (1 - f);
+}
+// AND HERE IS THE THING THAT COST ME THE ROUND, WHICH I SHIPPED WRONG ONCE
+// BEFORE FINDING IT. m = 1 is not the binding case. m = 2 is, and it is 0.9 m
+// lower.
+//
+//     u        0.0    0.5    1.0    1.3    1.4
+//     m=1     3.64   3.36   3.13   2.98   2.93     the adjacent aisle
+//     m=2     2.75   2.66   2.56   2.51   2.49     two aisles over  <-- binding
+//
+// The reason is the mid-store cross-aisle. A sightline two aisles over crosses
+// TWO gondolas, at a quarter and at three quarters of the way. The far crossing
+// is low and would block it — but the store cuts a 3.6 m cross-aisle through
+// EVERY run at the same z, and for a camera at an aisle mouth the far crossing
+// always lands somewhere inside that hole, at every target position in the
+// aisle. So only the NEAR crossing is ever load-bearing, it happens at a
+// quarter of the way where the ray has barely descended, and the ceiling drops
+// from 3.64 to 2.75. Verified, not derived: at 3.60 m CH01 sees exactly six
+// sample points, all in aisle 3, all at z 2.0-4.0, and the trace says near
+// gondola crossed at f 0.33 y 2.72 (clear) / far gondola at f 0.78 y 1.55 but
+// z -1.5, which is inside the cross-aisle. Nothing else leaks, anywhere.
+//
+// I built the whole first rig at 2.9-3.7 m off the m=1 number and it measured
+// 14.9% wrong-aisle rows and 1.14 channels per subject. The height/purity curve,
+// same poses, whole rig moved together:
+//
+//     heights          wrong-aisle    channels/subject
+//     2.9 - 3.7          14.9%            1.14          m=1 ceiling
+//     2.6 - 3.4           7.6%            1.08
+//     2.4 - 3.2           3.1%            1.04
+//     2.2 - 3.0           0.0%            1.01          m=2 ceiling
+//
+// It is linear at about 1 point of wrong-aisle per 0.25 m per camera, and it is
+// FLAT in everything else — lens (a 24-degree narrowing bought 3.7 points and
+// cost 3 of coverage), aim (10 degrees of cross-aim moved it by 0.01), inset,
+// tilt. Height is the only lever there is. So the poses below take the ceiling
+// and spend the character budget on the four things that are free.
+// The two END aisles get a third of a metre more than anything else, because
+// their outboard side is the perimeter run and has no aisle to leak into.
+const H_MARGIN = 0.03;
+function heightCap(i, u, n) {
+  let cap = Infinity;
+  for (const m of [1, 2]) {
+    if (i + m < n) cap = Math.min(cap, seeOverCeiling(u, m, 1));
+    if (i - m >= 0) cap = Math.min(cap, seeOverCeiling(u, m, -1));
+  }
+  return cap - H_MARGIN;
+}
+
+// One authored entry per channel. `end` is which mouth it is screwed above
+// (-1 front, +1 back), `inset` how far inboard of the |z| = AISLE_LEN/2 mouth
+// plane. `u` is metres off the aisle centreline, + toward the next aisle up.
+// `at` is how far down the aisle it is aimed and `aim` how far across; `ly` the
+// height of the aim point, which is what sets the down-tilt.
+//
+// TWO NUMBERS HERE ARE NOT FREE CHOICES AND THE REST ARE.
+//   `h`     is the intent. heightCap() is the law, and it is LIVE: it currently
+//           clips seven of these eight by 2-4 cm, which is what "author it as
+//           high as the aisle allows" looks like from the other side. The built
+//           entry publishes `hWanted` and `capped` so that is inspectable rather
+//           than a table of numbers that quietly do nothing — which is the exact
+//           failure mode CLAUDE.md's shadow-block rule is about, with a camera
+//           on the end of it. Author a height ABOVE the cap and you will get the
+//           cap and a `capped: true` to tell you so; author one below and you
+//           get yours.
+//   `inset` is negative for most of them, meaning 0.2-0.55 m OUTBOARD of the
+//           mouth plane, which is still inboard of the end sign at 13.75 and
+//           puts that sign BEHIND the lens. That is the whole answer to
+//           "they're blocked by the sign": the mount goes past it, not over it.
+//           Anything below about -0.7 puts the housing into the sign itself.
+// Everything else — end, side, lens, barrel, tilt, roll — is character, and it
+// is where the eight photocopies of a hallway stopped being photocopies.
+const AISLE_RIG = [
+  // CH01 — front mouth, leaning into the store's left-hand corner. Aisle 1 has
+  // the reach-in cooler bank on its outboard side and no aisle to leak into
+  // there, so its cap is 2.96 rather than 2.56 and it is one of the two highest
+  // lenses in the store. Widest on the wall, most barrel, looking slightly
+  // across the lane so the cooler glass runs down one edge.
+  { end: -1, inset: -0.55, u: -1.30, h: 2.95, at: 11.0, aim: 0.45, ly: 1.05,
+    hfov: 104, barrel: 0.38, mount: 'dome', note: 'corner fisheye, cooler side' },
+  // CH02 — the other end of the store, and the longest look on the wall: aimed
+  // 15 m out, so it is barely tilted and the shot ends on the checkout lanes and
+  // the front windows. This is where you watch somebody leave the aisle and keep
+  // going, and it is the clearest single reason the run stopped looking uniform.
+  { end: 1, inset: -0.55, u: 1.10, h: 2.55, at: 15.0, aim: -0.55, ly: 1.10,
+    hfov: 90, barrel: 0.28, mount: 'bullet', note: 'back mouth, front-end view' },
+  // CH03 — the one that was installed properly. Nearest the centreline, square
+  // down the aisle, mid tilt. Every wall needs one honest picture to judge the
+  // others against, and being near-centre also buys it the third-highest cap.
+  { end: -1, inset: -0.20, u: -0.30, h: 2.70, at: 9.0, aim: 0.15, ly: 1.00,
+    hfov: 96, barrel: 0.31, mount: 'dome', note: 'the good one' },
+  // CH04 — knocked years ago, never straightened, never refocused. 3.4 degrees
+  // of roll, and CHAN[3].sharp was already negative for the soft focus before
+  // this round; the two faults are now the same camera, which is how faults
+  // actually work. Back mouth.
+  { end: 1, inset: -0.55, u: -0.95, h: 2.60, at: 12.0, aim: 0.75, ly: 1.15,
+    hfov: 99, barrel: 0.35, roll: -3.4, mount: 'dome', note: 'the crooked one' },
+  // CH05 — a later addition on a long drop pipe: 78 degrees, barely any barrel,
+  // dead centre, aimed long. The one lens on this wall you could read a face
+  // off. It pays for that with the worst coverage of the eight (89%) because a
+  // narrow lens at an aisle mouth has a wide blind cone under it — which is a
+  // real property of the choice, not a bug in the pose.
+  { end: -1, inset: -0.55, u: 0.05, h: 2.75, at: 13.0, aim: 0.00, ly: 1.10,
+    hfov: 78, barrel: 0.19, mount: 'bullet', note: 'the tight one' },
+  // CH06 — aimed 10 degrees across its own aisle at the gondola opposite,
+  // because it went up off a ladder at closing time. The aisle runs up one edge
+  // of frame and the far side is shelf face and end-cap. Still covers 91% of its
+  // own aisle; the first two metres under it are gone and always were.
+  { end: -1, inset: -0.55, u: 1.25, h: 2.55, at: 7.0, aim: 1.60, ly: 1.30,
+    hfov: 100, barrel: 0.34, mount: 'dome', note: 'the badly aimed one' },
+  // CH07 — back mouth, steepest on the wall: aimed 7 m out at 0.95 m, which is
+  // 14 degrees down and reads much more like a plan view than the others. Swung
+  // hard against the left-hand run as well, so the produce bins at the back
+  // corner sit in the bottom of frame and the aisle leaves diagonally. Steep
+  // plus off-axis is the combination that reads least like a first-person view;
+  // it is what CH01 and CH06 are doing too.
+  { end: 1, inset: -0.20, u: -1.15, h: 2.65, at: 7.0, aim: 0.55, ly: 0.95,
+    hfov: 97, barrel: 0.33, mount: 'dome', note: 'steep, near-overhead' },
+  // CH08 — the mirror of CH01 at the other end of the run: outboard side is the
+  // perimeter wall run, so it gets the same 2.96 cap and is the joint-highest
+  // lens in the store. Wall bracket rather than a ceiling pendant, because it is
+  // bolted to the corner of the last gondola.
+  { end: -1, inset: -0.55, u: 1.40, h: 2.95, at: 8.5, aim: -1.45, ly: 1.15,
+    hfov: 102, barrel: 0.37, mount: 'corner', note: 'corner fisheye, wall side' },
+];
+
+// Anything past the authored aisles gets the CH03 treatment, alternating ends,
+// so a config that grows a ninth aisle gets a plausible camera and not a crash.
+function aisleRig(k) {
+  if (AISLE_RIG[k]) return AISLE_RIG[k];
+  const base = AISLE_RIG[k % AISLE_RIG.length];
+  return { ...base, end: k % 2 ? 1 : -1, u: base.u * (k % 3 ? 1 : -1) };
+}
+
+// THE DOOR IS NOT AN AISLE AND MUST NOT LOOK LIKE ONE. Bolted in the front
+// left corner of the store, 3.6 m up, looking back DOWN and ACROSS the doorway
+// at 29 degrees: the vestibule, the EXIT sign, the glass, the car park behind
+// it, the cart corral and the front-end run all in one frame, with a runner
+// crossing it in profile getting bigger. Nothing else on the wall has a horizon
+// like this, which is the point — it is the channel that decides whether the
+// shift was a write-up or a loss and it should be recognisable out of the corner
+// of your eye.
+// Four positions were built and looked at: shots/cctv_r7_door_lane_a/b/c.png are
+// mounted over the checkout lanes and TWO OF THEM REPEAT THE SIGN BUG EXACTLY —
+// a lane's back panel sits a metre from the lens and eats half the frame with a
+// white slab. Same mistake, different bay. The front corner
+// (cctv_r7_door_corner.png) is the only place in the front end with a clear 6 m
+// of air in front of it, and it is the shipped one.
+const DOOR_RIG = {
+  pos: [EXIT.x - 2.05, 3.60, EXIT.z + 5.0],
+  look: [EXIT.x + 1.80, 1.10, EXIT.z + 0.4],
+  hfov: 94, barrel: 0.22, mount: 'corner', note: 'front corner, across the mat',
+};
+
+// Build the poses. `CAMS` is the LINEUP: its `aisle` field is authoritative and
+// its pos/look are the fallback this replaces. A lineup entry with aisle == null
+// (or out of range) is treated as the door.
+export function cameraRig(CAMS = CAMERAS) {
+  const MOUTH = AISLE_LEN / 2;
+  const n = CAMS.reduce((k, c) => (c.aisle != null ? Math.max(k, c.aisle + 1) : k), 0)
+    || AISLE_COUNT;
+  return CAMS.map((c) => {
+    const i = c.aisle;
+    if (i == null || i < 0 || i >= n) {
+      return { ...DOOR_RIG, pos: [...DOOR_RIG.pos], look: [...DOOR_RIG.look], roll: 0 };
+    }
+    const r = aisleRig(i);
+    const cx = aisleX(i);
+    const z = r.end * (MOUTH - r.inset);
+    const cap = heightCap(i, r.u, n);
+    const h = Math.min(r.h, cap);
+    return {
+      pos: [cx + r.u, h, z],
+      look: [cx + r.aim, r.ly, z - r.end * r.at],
+      roll: (r.roll || 0) * DEG,
+      hfov: r.hfov,
+      barrel: r.barrel,
+      mount: r.mount,
+      note: r.note,
+      // The law and the intent, both published, so a critic can re-derive the
+      // headroom check without the table and can see at a glance whether the cap
+      // is currently biting. It is not: hWanted === h on all eight today.
+      u: r.u, ceiling: cap, hWanted: r.h, capped: r.h > cap + 1e-6,
+    };
+  });
+}
+
 // `opts.cameras` is purely additive and exists so the wall can be exercised at a
 // camera count config.js does not currently declare — main.js calls this with
 // three arguments and gets config.CAMERAS, exactly as before.
 export function createCCTV(THREE, renderer, scene, opts = {}) {
   let W = 1280, H = 720;
-  const CAMS = opts.cameras || CAMERAS;
+  const LINEUP = opts.cameras || CAMERAS;
+  // THE RIG IS FOLDED INTO THE LINEUP ONCE, HERE, AND NOTHING BELOW READS THE
+  // FALLBACK AGAIN. That is the whole point of the split: config says what the
+  // channels ARE, cameraRig() says where they are, and `CAMS` is the single
+  // merged answer every line in this file uses — pose, layout order, occlusion
+  // origin, PTZ body and OSD label all off the same object. A second read path
+  // back to CAMERAS[i].pos would be exactly the shadow-block bug CLAUDE.md warns
+  // about, with a camera on the end of it.
+  const rig = opts.rig || cameraRig(LINEUP);
+  const CAMS = LINEUP.map((c, i) => ({ ...c, ...rig[i] }));
 
   // ---- the physical wall ---------------------------------------------------
   const plan = layoutWall(CAMS);
@@ -397,17 +756,45 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   // point that other files call at times this one does not control, and a 4x4
   // compose-and-invert per channel is nothing next to being silently wrong. Do
   // not "optimise" that away without a profile that says it matters.
+  // ONE READ PATH FOR THE OPTICS. CHAN is the RECORDER's personality — grain,
+  // tint, gain, scanlines, which channel tears — and it is per SLOT. The rig is
+  // the LENS, and it is per CAMERA. Merging them here, once, means there is
+  // exactly one place in this file that answers "what is channel i's field of
+  // view", and CHAN's hfov/barrel become the fallback the merge falls through to
+  // rather than a second live constant that a rig edit silently fails to move.
+  const lens = CAMS.map((c, i) => ({
+    ...chanFor(i),
+    hfov: c.hfov ?? LENS_FALLBACK.hfov,
+    barrel: c.barrel ?? LENS_FALLBACK.barrel,
+  }));
+  const lensFor = (i) => lens[i] || chanFor(i);
+
+  // lookAt() rebuilds the whole orientation from `up`, so ROLL has to be applied
+  // after it, every time, in the camera's own local frame. CH04 is the only one
+  // with a non-zero value and it is 3.4 degrees — enough that you notice the
+  // shelf lips are not level, not enough to read as a broken renderer.
+  const _lookV = new THREE.Vector3();
+  function pose(cam, c) {
+    cam.position.set(...c.pos);
+    cam.lookAt(_lookV.set(...c.look));
+    if (c.roll) cam.rotateZ(c.roll);
+  }
+
   const cams = CAMS.map((c, i) => {
     const t = tiles[i];
     const aspect = t.w / t.h;
     const cam = new THREE.PerspectiveCamera(
-      vfovFor(chanFor(i).hfov, aspect), aspect, 0.1, 140);
-    cam.position.set(...c.pos);
-    cam.lookAt(new THREE.Vector3(...c.look));
+      vfovFor(lensFor(i).hfov, aspect), aspect, 0.1, 140);
+    pose(cam, c);
     cam.updateProjectionMatrix();
     cam.updateMatrixWorld(true);
     return cam;
   });
+  // THE PLASTIC. Every pose gets a housing in the world, so the domes turn up in
+  // each other's pictures — see cctv/mounts.js for why that is worth five draw
+  // calls, and for the one trick that keeps a camera from filming its own
+  // housing.
+  const mounts = buildMounts(THREE, scene, CAMS);
   // The dome, as the operator drives it. Same body as the selected channel — it
   // is the SAME CAMERA, pointed — so it inherits that channel's position, its
   // lens personality and its grain, and only the pan/tilt/zoom differ.
@@ -538,7 +925,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   const screens = [];                 // index-aligned to CAMERAS
   for (const p of plan.live) {
     const i = p.cam;
-    screens[i] = makeScreen(p, feedRT[i].texture, null, p.h, chanFor(i).scan);
+    screens[i] = makeScreen(p, feedRT[i].texture, null, p.h, lensFor(i).scan);
   }
   const spot = makeScreen(spotP, spotRT.texture, [SPOT_W, SPOT_H], SPOT_H, 0.052);
   spot.m.uniforms.uDim.value = 1.0;
@@ -643,7 +1030,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   // the one picture you are reading evidence off must not lose its slot to a
   // thumbnail.
   const feeds = CAMS.map((_, i) => {
-    const ch = chanFor(i);
+    const ch = lensFor(i);
     return {
       interval: 1 / (ch.fps * SUB_FPS),
       due: (i * 0.137) % 0.2,
@@ -746,14 +1133,14 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     const t = tiles[i];
     f.frames++;
     renderThrough(cams[i], rawFor(t.w, t.h, FEED_SS), feedRT[i],
-      params.wall, chanFor(i), [t.w, t.h],
+      params.wall, lensFor(i), [t.w, t.h],
       f.frames * 0.6180339 + i * 7.13, f.glitchY);
     stats.thumbRenders++;
   }
 
   function renderSpot() {
     spotFeed.frames++;
-    const ch = chanFor(active);
+    const ch = lensFor(active);
     renderThrough(spotCam, rawFor(SPOT_W, SPOT_H, SPOT_SS), spotRT,
       params.spot, ch, [SPOT_W, SPOT_H],
       spotFeed.frames * 0.6180339, -1,
@@ -806,7 +1193,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   // slot count; the biggest boxes win, which is also the nearest and therefore
   // the ones you could actually read something off.
   function visibleOn(i, minH, cap) {
-    const cam = cams[i], t = tiles[i], k = chanFor(i).barrel, a = t.w / t.h;
+    const cam = cams[i], t = tiles[i], k = lensFor(i).barrel, a = t.w / t.h;
     const pos = CAMS[i].pos;
     const out = [];
     for (const tr of displayable()) {
@@ -823,7 +1210,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
 
   function driveSpot(dt) {
     const camDef = CAMS[active];
-    const ch = chanFor(active);
+    const ch = lensFor(active);
     const here = visibleOn(active, 0, 0);
     trackN = here.filter((e) => e.tr.kind === 'person').length;
 
@@ -877,6 +1264,11 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     spotCam.fov = vfovFor(ch.hfov / zoom, spotAspect);
     spotCam.aspect = spotAspect;
     spotCam.lookAt(aim);
+    // A PTZ is the same physical camera pointed, so it carries that camera's
+    // faults with it. CH04 is crooked on the thumbnail AND crooked on the big
+    // monitor; a dome that straightens itself when you select it would give the
+    // whole install away.
+    if (camDef.roll) spotCam.rotateZ(camDef.roll);
     spotCam.updateProjectionMatrix();
     spotCam.updateMatrixWorld(true);   // same reason as `cams`; the dome moves
   }
@@ -886,8 +1278,9 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     lock = null; lockAt = -99; lostAt = -99; zoom = 1; zoomWant = 1;
     aim.set(...camDef.look); aimWant.copy(aim);
     spotCam.position.set(...camDef.pos);
-    spotCam.fov = vfovFor(chanFor(active).hfov, spotAspect);
+    spotCam.fov = vfovFor(lensFor(active).hfov, spotAspect);
     spotCam.lookAt(aim);
+    if (camDef.roll) spotCam.rotateZ(camDef.roll);
     spotCam.updateProjectionMatrix();
     spotCam.updateMatrixWorld(true);
   }
@@ -905,7 +1298,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   const SPOT_SLOTS = 4, SPOT_MIN_H = 18;
   let spotBoxN = 0, spotLabelN = 0;
   function paintSpot(common) {
-    const k = chanFor(active).barrel / (0.55 + 0.45 * zoom);
+    const k = lensFor(active).barrel / (0.55 + 0.45 * zoom);
     const pos = CAMS[active].pos;
     const found = [];
     for (const tr of displayable()) {
@@ -953,6 +1346,34 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     panels: plan.panels,
     params, stats,
     floorBurnIn: true,
+    // WHERE THE CAMERAS ACTUALLY ARE, published. `lineup` is the merged truth —
+    // config's id/label/aisle with the rig's pos/look/lens/mount folded in — and
+    // it is the same array every line in this file reads. `rig` is just the pose
+    // half of it. store.js's housing loop and game.js's camDist() both still
+    // read CAMERAS[i].pos; either can move to this without a contract change.
+    get lineup() { return CAMS; },
+    rig,
+    // Re-pose from a mutated `rig` without a reload. This exists because camera
+    // placement is a LOOK decision that has to be judged by looking, and a
+    // round-trip through a file edit and a page reload per 5 cm of height is how
+    // you end up shipping the pose you could reason about instead of the one you
+    // could see. Tune live, then write the numbers into AISLE_RIG.
+    applyRig(patch) {
+      if (patch) for (const k of Object.keys(patch)) Object.assign(rig[k], patch[k]);
+      for (let i = 0; i < CAMS.length; i++) {
+        Object.assign(CAMS[i], rig[i]);
+        const ch = chanFor(i);
+        lens[i] = { ...ch, hfov: CAMS[i].hfov ?? ch.hfov, barrel: CAMS[i].barrel ?? ch.barrel };
+        const t = tiles[i];
+        cams[i].fov = vfovFor(lens[i].hfov, t.w / t.h);
+        pose(cams[i], CAMS[i]);
+        cams[i].updateProjectionMatrix();
+        cams[i].updateMatrixWorld(true);
+      }
+      mounts.sync(CAMS);
+      snapSpot();
+      return rig;
+    },
     // Not a channel number any more: config now owns CAM 09, and two things
     // called CAM 09 on the same shift is exactly the kind of thing a roster
     // argument is made of.
@@ -1097,7 +1518,7 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
             f.glitchY = 0.12 + 0.76 * ((f.frames * 0.37) % 1);
             if (tWall >= f.glitchAt + 0.22) {
               f.glitchY = -1;
-              f.glitchAt = tWall + chanFor(i).glitch * (0.7 + 0.6 * ((f.frames * 0.11) % 1));
+              f.glitchAt = tWall + lensFor(i).glitch * (0.7 + 0.6 * ((f.frames * 0.11) % 1));
             }
           }
           renderFeed(i);
