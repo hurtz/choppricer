@@ -62,18 +62,20 @@ const inAisle = (z) => z > -HALF - 0.35 && z < HALF + 0.35;
 // The zone table survives as a fallback for a console that builds this file
 // without a cctv, and for nothing else.
 //
-// WHAT WENT WITH IT: round 3's note here explained that a man in the Door 2
-// vestibule sat in no frustum at all, and that filing him under EXIT DOORS
-// anyway measured WORSE than calling it FRONT END (-1pp for the reader, +5 for
-// the guesser) because the roster then named a channel showing an empty doorway
-// thirty-five metres away. Both halves of that are settled: config.js took the
-// fix and added CAM 09 DOOR 2, and it carries the measurement in its own comment
-// beside the camera. There is no least-wrong channel to pick any more, because
-// the wall is now asked instead of guessed.
+// ROUND 9 — AND IT IS NOW A TABLE OF ONE LINE. config.js put ONE CHANNEL ON
+// EACH AISLE: channel N is aisle N, each dome sitting above the front cross-
+// aisle looking down its own run, so it sees the whole 26 m plus both cross-
+// aisle mouths. The old body of this function was four zones and a shift — it
+// had to be, because a channel covered an aisle PAIR and the front and back
+// walks were filed under whichever camera happened to point at them. None of
+// that is true any more, and the honest fallback is the same sentence the
+// player now holds in his head: which aisle is he standing in.
+//
+// The one exception is the vestibule, where the door camera is genuinely a
+// different picture from the aisle behind it.
 function camForZone(x, z) {
-  if (z <= -HALF - 0.35) return d2(x, z, EXIT.x, EXIT.z) < 10 ? 6 : 4;
-  if (z >= HALF + 0.35) return x > STORE.maxX - 11 ? 7 : 5;
-  return Math.min(3, aisleIdx(x) >> 1);
+  if (d2(x, z, EXIT.x, EXIT.z) < 9 && CAMERAS.length > AISLE_COUNT) return AISLE_COUNT;
+  return aisleIdx(x);
 }
 function camDist(i, x, z) {
   const p = CAMERAS[i].pos;
@@ -275,6 +277,21 @@ const FIX = {
   once: true,
 };
 const ROWS = 3;                 // roster rows the analytics panel can physically fit
+// Seconds a NEW flag blinks on the monitor wall before it settles into a still
+// red square. See stampFlag() and hud.js's tile loop. 1.6 s is two flashes at
+// the 1.25 Hz the pip already ran at — enough to catch an eye that is looking
+// somewhere else, and short enough that with 13 subjects churning through the
+// building SOMETHING is moving on the wall 17% of the shift instead of 89%.
+const FLAG_BLINK = 1.6;
+// ...and how long a row has to have been CLEAR before going red again counts as
+// news. This number is the whole difference between a blink that means
+// something and a twitch: a trap subject re-rolls his behaviour line every
+// 3.2-6.4 s and takes a trap line about half the time, so without a rearm
+// window the same man flashes the same monitor every other roll and the wall
+// blinks somewhere 45.9% of the time — measured, first cut of this round.
+// At 8 s that man stamps once and then holds a still square, and the blink is
+// spent on a channel that had nothing on it a moment ago.
+const FLAG_REARM = 8.0;
 
 export function createGame(hudEl, deps = {}) {
   const hud = createHUD(hudEl);
@@ -314,15 +331,34 @@ export function createGame(hudEl, deps = {}) {
     clock: 0, shift: '2ND',
   };
 
+  // ---- ROUND 9: A KEYBOARD LEGEND IS FOR THE FIRST THIRTY SECONDS ---------
+  // Measured: the desk key-hint row and the WIND panel's [SHIFT] SPRINT [WASD]
+  // MOVE line are both drawn on 100% of frames in their mode, forever, in a
+  // game whose entire input is six keys. After the first dispatch the player
+  // knows what SPACE does; the row is then just words competing with a roster
+  // he is trying to read.
+  //
+  // So each clause of each legend is deleted the first time its key is
+  // actually pressed, and the row disappears when the last clause goes. It is
+  // not a timer and not a setting — it erodes exactly as fast as the player
+  // learns, which is the only rate that is right for everybody. What does NOT
+  // erode is anything that reports STATE: the PA button's four words, the
+  // WIND panel's KEY HELD — NO RECOVERY, the stand-down prompt's [Q]. Those
+  // are not teaching a key, they are answering "what is happening".
+  const taught = { dispatch: 0, roster: 0, pa: 0, track: 0, sprint: 0, post: 0 };
+
   const recs = new Map();     // shopper.id -> the DVR's opinion of that shopper
   let caseSeq = 112;
-  let softAlarm = null;
   let rearmT = 8;
   let harassCool = 0;
   let pending = null;         // { id, until, code } — a complaint not yet filed
   let recycle = [];           // shoppers to quietly put back on the floor
   let held = null;            // { id, until } — the one live PA price check
   let holdCool = 0;
+  // Who the handset was last pointed at, stamped on the KEYDOWN. Read by
+  // onBolt to tell "he ran" from "he ran because of you" without depending on
+  // the order agents delivers its two callbacks in.
+  let lastAnn = null;         // { id, t }
   // THE OPEN CHANNEL. Everything the microphone touches lives in this object and
   // nowhere else, so what this file does and does not do with a live mic is one
   // paragraph rather than a hunt.
@@ -528,6 +564,7 @@ export function createGame(hudEl, deps = {}) {
     dbg: { stallEscape: 0, stallPutBack: 0, harass: { chase: 0, dialogue: 0, subj: 0, zone: 0 },
       blocked: 0, reharass: 0, subjects: new Set() },
     get rankName() { return RANKS[clamp(st.rank | 0, 0, RANKS.length - 1)].toUpperCase(); },
+    taught,
     get tiles() { const c = cctvOf(); const t = c && c.tiles; return (t && t.length) ? t : FALLBACK; },
     // The big monitor's glass rect, so the HUD can make it clickable. cctv.js
     // draws every pixel of it; this is a hit region and nothing else.
@@ -580,6 +617,10 @@ export function createGame(hudEl, deps = {}) {
         // channel state — see camForZone()'s note. cam is null until a monitor
         // has actually seen him; lost is seconds since the last one did.
         cam: null, lost: 0, pend: -1, pendT: 0, lostSaid: false,
+        // When this row most recently went red. See the `fresh` field on the
+        // roster row: it is what lets the monitor pip blink for a NEW flag and
+        // sit still for an old one.
+        flagAt: -99, clearAt: -99,
       };
       recs.set(s.id, r);
     }
@@ -614,42 +655,70 @@ export function createGame(hudEl, deps = {}) {
     return TRAP_RATE[i < 0 ? TRAP_RATE.length - 1 : i];
   }
   function newLine(s, r) {
+    r.__wasFlagged = r.flagged;
+    pickLine(s, r);
+    stampFlag(r);
+  }
+  function pickLine(s, r) {
     r.lineT = rr(3.2, 6.4);
     if (s.guilty && s.stole) { r.line = L.pick(L.BEHAVIOUR_GUILTY); r.flagged = true; return; }
     if (s.guilty) { r.line = L.pick(L.BEHAVIOUR_GUILTY_PRE); r.flagged = false; return; }
     if (r.trap && Math.random() < trapRate()) {
       r.line = L.pick(L.BEHAVIOUR_TRAP); r.flagged = true;
-      if (r.aisle != null) raiseSoft(r);
       return;
     }
     r.line = L.pick(L.BEHAVIOUR_BENIGN); r.flagged = false;
   }
-  // The full-width amber alarm bar. It has to stay a JOLT, and raising the trap
-  // rate for phase 0 (see newLine) would otherwise have parked it permanently
-  // open: ~2.1 flagged traps at any moment, each refreshing a 5.5 s banner every
-  // 5 s, is a banner that is simply always there. Ambiguity belongs in the roster
-  // text where you have to read it; a light that never goes out teaches nothing.
-  // Concealment tells ignore the cooldown — that one is not noise.
+  // ---- ROUND 9: WHEN DID THIS ROW GO RED ----------------------------------
+  // Every exit from newLine() runs through here. The census says 1.8 of the 9
+  // monitors carry a red flag pip at any instant of an IDLE shift and at least
+  // one is lit 89% of the time — which is the alarm bar's disease in a smaller
+  // font. It is also NOT a bug: the trap rate is 0.50 in phase 0 on purpose,
+  // because ambiguity is the game and the roster text is where you resolve it.
   //
-  // 24 s, and the number is arithmetic rather than taste: the banner holds for
-  // 5.5 s, so a cooldown of N caps ITS duty cycle at 5.5/N. At the 9 s I first
-  // tried, measurement said something soft was on the bar 42% of the shift and
-  // the bar itself was lit 58% — a warning light that is on more than it is off
-  // is not a warning light. 24 s caps the trap share at 23%; the other soft
-  // banner is the merchandise-loss notice, which is about one a minute for
-  // another ~8%, and the rest of what you see up there is the vestibule
-  // countdown, which is real and is not on a cooldown for anything.
-  const SOFT_COOL = 24.0;
-  let softAt = -99;
-  function raiseSoft(r, force) {
-    if (!force && G.now - softAt < SOFT_COOL) return;
-    softAt = G.now;
-    const cam = r.cam == null ? 0 : r.cam;
-    softAlarm = {
-      text: `${L.pick(L.ALERT_FALSE)} — ${CAMERAS[cam].id}${r.aisle == null ? '' : ` / AISLE ${r.aisle + 1}`}`,
-      until: G.now + 5.5,
-    };
+  // So the pip stays and the BLINKING goes. Motion is the expensive half of a
+  // warning light and it is worth spending on exactly one thing, which is a
+  // flag that was not there a moment ago. `fresh` is that: three seconds of
+  // blink on a NEW flag, then a still red square that says "there is something
+  // in here to read" without waving. See hud.js's tile loop.
+  function stampFlag(r) {
+    if (r.flagged && !r.__wasFlagged) {
+      if (G.now - (r.clearAt == null ? -99 : r.clearAt) > FLAG_REARM) r.flagAt = G.now;
+    } else if (!r.flagged && r.__wasFlagged) r.clearAt = G.now;
+    r.__wasFlagged = undefined;
   }
+  // =========================================================================
+  // ROUND 9 — THE SOFT ALARM IS GONE. ALL OF IT.
+  // =========================================================================
+  // Client, on the one element he named: "the flashing red bar that happens at
+  // the top, like the suspicious subject in the vestibule or something, is
+  // obnoxious and too much."
+  //
+  // He is describing a measurement I had already taken and not acted on. Round
+  // 7 recorded the bar lit ~52% of an idle shift; this round's census (a real
+  // frame drawn at 10 Hz through the whole shift — see hud.sample) puts it at
+  // 40.5% of an idle shift, of which 27.3pp is SOFT: a rotating MOTION ANOMALY
+  // banner raised by trap flags on a 24 s cooldown, plus a merchandise-loss
+  // notice. A warning that is on two-fifths of a shift in which NOTHING
+  // HAPPENS is not a warning. It is wallpaper that shouts.
+  //
+  // The 24 s cooldown was the tell that this thing should not exist. I sized it
+  // by arithmetic — 5.5 s of banner over N seconds caps the duty cycle at 5.5/N
+  // — which is what you do to an element you have already decided to keep. An
+  // element that has to be rationed to stay tolerable is an element that is not
+  // carrying its own weight.
+  //
+  // AND IT WAS NEVER THE ONLY CHANNEL. Everything the soft bar said was already
+  // said, better, by something attached to the man it was about:
+  //   the concealment tell   red flag pip on his monitor, red roster row, AND a
+  //                          ticker line. The bar was the fourth telling.
+  //   a trap flagging        the pip and the row, which is the whole point of a
+  //                          trap: you have to READ it, not be shouted at.
+  //   merchandise loss       a ticker line, which is where a thing that has
+  //                          already finished happening belongs.
+  // What survives is the vestibule countdown, which is the only alarm in this
+  // game with a deadline on it — and it survives as a chip in the status band
+  // rather than a full-width flashing red bar. See updateAlarm().
 
   // Which monitor is this man ACTUALLY on. Ask the wall; keep the answer stable.
   // Falls all the way back to the zone table only when there is no cctv to ask.
@@ -682,6 +751,7 @@ export function createGame(hudEl, deps = {}) {
   function updateSubjects(dt) {
     const out = [];
     const marks = [];
+    const a2 = agentsOf();
     for (const s of shoppersOf()) {
       if (s.escaped || s.caught || !s.mesh.visible) continue;
       const r = recOf(s);
@@ -704,7 +774,7 @@ export function createGame(hudEl, deps = {}) {
       if (!blind) r.lineT -= dt;
       const wantGuilty = s.guilty && s.stole;
       if (wantGuilty && !r.announced && !blind) {   // the concealment tell arrives
-        r.announced = true; newLine(s, r); raiseSoft(r, true);
+        r.announced = true; newLine(s, r);
         logLine(`${CAMERAS[r.cam].id} — ANALYTICS EVENT LOGGED`);
       } else if (!blind && r.lineT <= 0) newLine(s, r);
       // He is always a subject as far as the picture-to-row cross-reference is
@@ -717,9 +787,25 @@ export function createGame(hudEl, deps = {}) {
       }
       const post = FIX.post ? postOf(s.position.x, s.position.z)
         : (r.aisle == null ? null : { kind: 'aisle', i: r.aisle });
+      // ROUND 9 — THE HEAD START, ON THE ROW, INSTEAD OF ON A BAR.
+      // A man who is RUNNING is not a behaviour line; the analytics text
+      // freezes into irrelevance the moment he breaks, and the thing the
+      // player needs instead is how much of his run is left. That is exactly
+      // what the alarm bar used to carry, so it moves here — onto the man it
+      // is about, on the channel he is on.
+      //
+      // 'bolt' and 'react' ONLY. `drift` is a thief who has concealed and is
+      // walking out, and that is the hidden state the whole desk phase is
+      // about reading — publishing it here would be a guilt oracle. A running
+      // man is not hidden from anybody: agents.js has him at a sprint in the
+      // middle of the picture.
+      const running = s.state === 'bolt' || s.state === 'react';
+      const toDoor = running && a2 && a2.exitDistOf ? a2.exitDistOf(s) : null;
       const row = {
         id: s.id, cam: r.cam, aisle: r.aisle, code: r.code,
         line: r.line, dwell: r.dwell | 0, flagged: r.flagged, lost: r.lost,
+        running, toDoor: isFinite(toDoor) ? toDoor : null,
+        fresh: r.flagged && G.now - r.flagAt < FLAG_BLINK,
         post, where: postLabel(post), held: held != null && held.id === s.id,
         // How many monitors have him. Two channels on one man is a real thing
         // and it is worth saying, because it is the player's cheapest second
@@ -829,6 +915,7 @@ export function createGame(hudEl, deps = {}) {
     s.state = 'browse'; s.timer = HOLD.dur + 2; s.path = []; s.target = null;
     held = { id: s.id, until: G.now + HOLD.dur };
     holdCool = HOLD.cool;
+    lastAnn = { id: s.id, t: G.now };
     const r = recOf(s);
     logLine(`PA — PRICE CHECK, ${(r.aisle == null ? 'FRONT END' : `AISLE ${r.aisle + 1}`)}`);
     return true;
@@ -890,6 +977,7 @@ export function createGame(hudEl, deps = {}) {
     if (!s) return false;
     const res = a.announceAt(s, 'putback');
     if (!res || !res.ok) return false;
+    lastAnn = { id: s.id, t: G.now };
     const r = recOf(s);
     const f = G.floor;
     // WHAT THE TICKER SAYS NOW, AND WHAT IT DOES NOT SAY. It records that an
@@ -1042,17 +1130,15 @@ export function createGame(hudEl, deps = {}) {
       const eta = de / sp;
       if (!best || eta < best.eta) best = { eta, s };
     }
-    if (best) {
-      // Which vestibule. Two doors 35 m apart and one alarm text that always
-      // said DOOR 1 sent the player to the wrong end of the front wall.
-      G.alarm = {
-        text: `${doorLabelOf(best.s)} — SUBJECT IN THE VESTIBULE`,
-        count: Math.max(0, best.eta),
-      };
-      return;
-    }
-    if (softAlarm && softAlarm.until > G.now) { G.alarm = { text: softAlarm.text }; return; }
-    G.alarm = null;
+    // ONE ALARM, AND IT IS THE ONLY ONE WITH A DEADLINE ON IT. Everything else
+    // that used to reach this bar is narrated where it belongs — see the note
+    // above raiseSoft's grave. This is a man about to be through the doors and
+    // a number counting down to it, which is the one sentence on this screen
+    // that expires.
+    G.alarm = best ? {
+      text: L.fill(L.VESTIBULE, doorLabelOf(best.s)),
+      count: Math.max(0, best.eta),
+    } : null;
   }
 
   // ------------------------------------------------------------ thief supply
@@ -1322,7 +1408,7 @@ export function createGame(hudEl, deps = {}) {
     // handset, through agents' 0.35-0.95 s reaction latency, to a beat after he
     // has visibly done whatever he is going to do — then it goes, because a
     // panel that stays up is a panel the player starts reading as state.
-    if (f.annAt && G.now - f.annAt.t > (f.annAt.out ? 2.8 : 4.5)) f.annAt = null;
+    if (f.annAt && G.now - f.annAt.t > (f.annAt.boltT ? 1.4 : f.annAt.out ? 2.8 : 4.5)) f.annAt = null;
 
     // prompt
     // ---- ROUND 7: BEING PUNISHED BY AN ABSENCE --------------------------
@@ -1467,7 +1553,7 @@ export function createGame(hudEl, deps = {}) {
   }
   function restart() {
     const a = agentsOf(); if (a) a.reset();
-    recs.clear(); recycle = []; G.log = []; softAlarm = null; harassCool = 0;
+    recs.clear(); recycle = []; G.log = []; harassCool = 0;
     st.points = 0; st.complaints = 0; st.caught = 0; st.escaped = 0;
     st.clock = 0; st.rank = 2; G.hr = null; G.wu = null; G.floor = null;
     st.mode = 'desk'; staggered = false;
@@ -1512,6 +1598,7 @@ export function createGame(hudEl, deps = {}) {
   }
   function enterDesk() {
     if (st.mode === 'demoted') return;
+    if (st.mode === 'floor') taught.post = 1;
     // Walking back to the desk is the most complete form of getting out of
     // somebody's face there is.
     pending = null;
@@ -1541,7 +1628,10 @@ export function createGame(hudEl, deps = {}) {
         stampIt('SUBJECT LOST', line);
         if (FIX.close) closeCase(L.STAND_DOWN);
       }
-      softAlarm = { text: 'MERCHANDISE LOSS — SHIFT TOTAL UPDATED', until: G.now + 5 };
+      // ROUND 9: this used to raise a soft banner as well. A loss has already
+      // finished happening; the ticker line above is the right and only place
+      // for it, and the banner was 8pp of the duty cycle that made the alarm
+      // unreadable.
     }
     if (evt === 'harass') {
       st.complaints++;
@@ -1560,13 +1650,20 @@ export function createGame(hudEl, deps = {}) {
     get frozen() { return st.mode === 'writeup' || st.mode === 'demoted'; },
     onBolt(s) {
       const r = recOf(s);
+      // ROUND 9. If you shouted at this man in the last couple of seconds, the
+      // ticker says WHY he is running rather than only that he is. One line,
+      // not two: agents fires onBolt and onAnnounce('bolt') for the same event
+      // and in an order this file does not get to depend on, so the causality
+      // is read off `lastAnn` — which is stamped when the handset is KEYED,
+      // before any reaction exists — and never off the outcome.
+      const caused = lastAnn && lastAnn.id === s.id && G.now - lastAnn.t < 2.5;
       if (G.floor) {
         const f = G.floor;
         f.chaseId = null; f.exitDist0 = 0; f.subjId = s.id;
         f.closed = null;                 // a man running reopens any case
         f.dEma = null; f.doorI = null; f.viaBack = false; f.backT = 0; f.backSaid = false;
       }
-      logLine(`${r.code} IS RUNNING`, true);
+      logLine(caused ? L.fillS(L.pick(L.PA_BOLT), r.code) : `${r.code} IS RUNNING`, true);
     },
     onCatch(s) {
       if (st.mode === 'demoted') return;
@@ -1664,6 +1761,30 @@ export function createGame(hudEl, deps = {}) {
       if (!f || !f.annAt || f.annAt.id !== s.id) return;
       f.annAt.out = outcome;
       f.annAt.t = G.now;
+      // ---- ROUND 9: THE THIRD OUTCOME, AND IT IS NOT A PRIZE --------------
+      // agents.js added 'bolt' — you shouted and he panicked. It is the one
+      // outcome of the three that IS a confession, and the temptation is to
+      // treat it as one: a stamp, a flourish, HE'S RUNNING in forty-point red.
+      // That would be celebrating the read at the exact moment the read has
+      // stopped mattering. A man who bolts from an announcement bolts from
+      // wherever you were standing when you keyed the handset, which is by
+      // definition not between him and the door — you have just started a
+      // chase from the worst position the game offers.
+      //
+      // So the chip says the two words and then the ONE number that changes
+      // what happens next, which is the gap he has on you. Then it goes: 1.4 s
+      // rather than 2.8, because the pursuit panel is the instrument now and
+      // two panels narrating one running man is this round's whole complaint.
+      //
+      // NO TICKER LINE HERE. onBolt() writes that, and it writes the causal
+      // version — see the lastAnn check there.
+      if (outcome === 'bolt') {
+        f.annAt.line = L.PA_CHIP_BOLT;
+        f.annAt.boltT = G.now;
+        const gap = d2(s.position.x, s.position.z, G.cop.x, G.cop.z);
+        f.annAt.sub = L.fillN(L.PA_CHIP_GAP, Math.round(gap));
+        return;
+      }
       f.annAt.line = outcome === 'heed' ? L.PA_CHIP_HEED : L.PA_CHIP_SHRUG;
       const r = recOf(s);
       const pool = outcome === 'heed' ? L.PA_HEED : L.PA_SHRUG;
@@ -1729,6 +1850,7 @@ export function createGame(hudEl, deps = {}) {
       const prev = tel.wind;
       Object.assign(tel, t);
       tel.sprint = t.speed > TUNING.copWalk + 0.35;
+      if (tel.sprint) taught.sprint = 1;
       if (prev && prev !== 'ready' && tel.wind === 'ready') tel.readyAt = G.now;
     },
   };
@@ -1776,6 +1898,7 @@ export function createGame(hudEl, deps = {}) {
   // wall can name him — that is the whole point of setSubjects: the box says
   // SUBJ-19 and now so does the highlighted row.
   function cycleTrack() {
+    taught.track = 1;
     const c = cctvOf();
     if (!c || !c.cycleTrack) return false;
     if (!c.cycleTrack()) return false;
@@ -1818,6 +1941,7 @@ export function createGame(hudEl, deps = {}) {
   // could be hiding the row you needed. Now the window scrolls and follows the
   // selection, and the panel says how many are underneath it.
   function cycleSel(dir) {
+    taught.roster = 1;
     const all = G.desk.subjects.filter((s) => s.cam === G.desk.cam);
     const on = FIX.roster ? all : all.slice(0, ROWS);
     if (!on.length) { G.desk.sel = null; G.desk.scroll = 0; return; }
@@ -1829,6 +1953,7 @@ export function createGame(hudEl, deps = {}) {
   function dispatch() {
     const sel = G.desk.subjects.find((s) => s.id === G.desk.sel);
     if (!sel) return false;
+    taught.dispatch = 1;
     if (FIX.post && sel.post) { enterFloor(sel.post.i, sel.post); return true; }
     if (sel.aisle != null) { enterFloor(sel.aisle); return true; }
     return false;
@@ -1840,11 +1965,11 @@ export function createGame(hudEl, deps = {}) {
     if (!r) return;
     ev.preventDefault();
     if (r.id === 'cam') selectCam(r.data);
-    else if (r.id === 'subj') { G.desk.sel = r.data; showSel(); }
+    else if (r.id === 'subj') { taught.roster = 1; G.desk.sel = r.data; showSel(); }
     else if (r.id === 'track') cycleTrack();
     else if (r.id === 'dispatch') dispatch();
     else if (r.id === 'hold') callHold();
-    else if (r.id === 'scroll') { G.desk.scroll = clamp(G.desk.scroll + r.data, 0, Math.max(0, G.desk.rows - ROWS)); }
+    else if (r.id === 'scroll') { taught.roster = 1; G.desk.scroll = clamp(G.desk.scroll + r.data, 0, Math.max(0, G.desk.rows - ROWS)); }
   });
 
   addEventListener('keyup', (ev) => {
@@ -1869,7 +1994,7 @@ export function createGame(hudEl, deps = {}) {
         // measured and neutral and must not move. The microphone rides on top:
         // if it opens, the same announcement goes out in the player's voice; if
         // it never opens, this key is the key that shipped.
-        if (!ev.repeat) { talk.down = true; callHold(); talkOpen(); }
+        if (!ev.repeat) { taught.pa = 1; talk.down = true; callHold(); talkOpen(); }
         ev.preventDefault();
       }
       else if (c === 'Space' || c === 'Enter') { dispatch(); ev.preventDefault(); }
@@ -1882,7 +2007,7 @@ export function createGame(hudEl, deps = {}) {
       // deterrence line at whoever the brackets are on, because on the floor
       // you can see his hands and at the desk you cannot.
       else if (c === 'KeyF') {
-        if (!ev.repeat) { talk.down = true; announce(); talkOpen(); }
+        if (!ev.repeat) { taught.pa = 1; talk.down = true; announce(); talkOpen(); }
         ev.preventDefault();
       }
     } else if (st.mode === 'writeup') {
@@ -1977,11 +2102,15 @@ export function createGame(hudEl, deps = {}) {
     // WOULD go to without firing, so the bench can measure the aim separately
     // from the roll.
     announce, announceSubject,
+    get taught() { return taught; },
     get annReady() { return annReady(); },
     get micReady() { return micReady(); },
     get pace() { return pace(); },
-    select(id) { G.desk.sel = id; },
-    scroll(d) { G.desk.scroll = clamp(G.desk.scroll + d, 0, Math.max(0, G.desk.rows - ROWS)); },
+    // The bench drives these instead of the mouse, and they teach the same
+    // thing the mouse does — a player who is picking rows has demonstrated he
+    // can pick rows, whichever input he used. See `taught`.
+    select(id) { taught.roster = 1; G.desk.sel = id; },
+    scroll(d) { taught.roster = 1; G.desk.scroll = clamp(G.desk.scroll + d, 0, Math.max(0, G.desk.rows - ROWS)); },
     target: targetShopper,
     shopper: shopperById,
     rec: recOf,

@@ -222,7 +222,7 @@
    "verdict": "CORRECTION to the round-6 record. Its report quoted desk 250.0 pts / 4.50 thefts / 2.50 caught. Round 7 restored the round-6 commit's agents.js, figures.js and decoy.js and re-ran benchShift: the round-6 build actually prints 383.33 / 4.33 / 3.83 / 0.50 with 9.17 complaints, character for character with today's build. config.js has not changed since that commit either. The original table was mis-transcribed; these are the numbers that reproduce."
   },
   "game": {
-   "round": 8,
+   "round": 9,
    "state": "passed",
    "shots": [
     {
@@ -269,6 +269,11 @@
      "round": 8,
      "path": "../shots/game_r8.png",
      "t": 1787523514.5434391
+    },
+    {
+     "round": 9,
+     "path": "../shots/game_r9_desk.png",
+     "t": 1787617253.45062
     }
    ],
    "gaps": [
@@ -285,10 +290,10 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787523687.246092,
-   "note": "THE GUILT ORACLE IT NEARLY SHIPPED: agents fires onAbort(s,'announce') only for a GUILTY heed - an innocent who heeds plays the identical clip and arrives only at onAnnounce. Left alone, its round-7 handler would have given the guilty man a ticker line, a HE PUT IT BACK stamp and a stand-down, and given the innocent silence. So onAbort early-returns on 'announce' and ALL presentation lives in onAnnounce, which both populations reach. FOURTH PA MECHANISM, invisible from the audio side: hud.js only drew the PA button inside if(can), so pressing [F] with nothing selected opened the channel, lit the recording dot, and put no pixels anywhere. Also deleted a second cooldown charge in talkClose() that billed a full recharge even when no announcement had gone out.",
+   "updated": 1787617434.159918,
+   "note": "Built a permanent instrument to answer it - hud.sample() marks at each element's real draw site and eval.js renders one frame every 6 steps across a whole shift, so every number is a measured duty cycle rather than a judgement. Deleted outright: the OFFICER/BADGE panel, per-tile subject counts, the 16-CH DVR line, a second clock, POST UNMANNED, the floor RECORD panel, PULSE (the cop's body already carries fatigue), the PAN box. The key legend now ERODES per key and is at 0% after four presses. Notably it did not just subtract: the roster grew 558 -> 896px, spending the reclaimed space on 300px more behaviour text, which is the one thing the player is actually reading.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
-   "verdict": "PASS on all three jobs. PA cooldown split into two clocks: micReady() has none (the mic is a skin on the handset, not a resource) and annReady() charges once on keydown, cut 21->12. Dead-key window 11.9s -> 2.9s, mic dead 11.9s -> 0s. Proved 21s was never load-bearing: observer takes ZERO holds at either value (exact identity, 32.3 -> 32.1% catch) and random makes the same 30-31 holds, because its rate is set by its own dispatch cadence."
+   "verdict": "PASS on the clutter note. Something BLINKING on the wall during an idle shift: 97.5% -> 13.7%. Alarm bar lit 41.0% -> 14.5%, and the soft tier is gone entirely (27.6% -> 0). Under a live policy it drops 40.1% -> 7.2%. The bar is no longer a bar: a compact non-flashing chip in the status band that brightens under 3s and never strobes."
   },
   "cop": {
    "round": 2,
@@ -349,9 +354,41 @@
    "updated": 1787522020.479249,
    "note": "THE BUG IT NEARLY SHIPPED, and caught with its own sweep: the decoupling was a fiction at exactly the angles it was bought for. Round 1 reads yaw back off the POSED camera, justified by a lateral residual between eye and aim worth 1.5 degrees across a 5.55m boom. The glance dolly takes that boom to 1.15m, where the same 0.15m residual is 7 degrees - and a spring half a metre behind a moving cop is fifty. So a deep glance WAS steering the player, through a trigonometric side door rather than the axis latch. Its own words: 'everything I wrote you about the loop being closed depended on that being zero.' Fixed by computing moveYaw analytically off the UNDOLLIED boom; both terms are no-ops at zero look so the mouse-idle frame is round 1 to the bit. It judged the HUD brackets with the RENDERER rather than arithmetic - marker pixels isolated with a difference frame against projectFromCop - and the worst error bucket is the one with no look in it.",
    "verdict": "PASS. Mouse look with a 110-degree budget, movement decoupled. I verified independently: yaw tracks the look exactly across +/-110 degrees while moveYaw stays pinned at 0.00 with ZERO drift. Builder's own proofs: yaw truthful to 0.00000 degrees over 2160 checks, moveYaw invariant to 0.00000 while the boom ran 5.57 -> 1.15m, HUD brackets median 2.2px and FLAT by look bucket."
+  },
+  "config": {
+   "round": 1,
+   "state": "passed",
+   "shots": [],
+   "gaps": [],
+   "updated": 1787617434.282462,
+   "verdict": "Channel-per-aisle made literally true. The remap alone was not enough: at 4.35m the domes saw across 2.05m gondolas, so 54.3% of roster rows named an aisle the subject was not in. Dropped to 2.62m (0.57m clearance) and re-measured with cctv's own channelsFor over 48 points spanning all 8 aisles: mean channels per subject 2.01 -> 1.00, wrong-aisle rows 54.3% -> 0%, zero blind points."
   }
  },
  "log": [
+  {
+   "t": 1787617434.282464,
+   "piece": "config",
+   "role": "lead",
+   "round": 1,
+   "state": "passed",
+   "text": "Channel-per-aisle made literally true. The remap alone was not enough: at 4.35m the domes saw across 2.05m gondolas, so 54.3% of roster rows named an aisle the subject was not in. Dropped to 2.62m (0.57m clearance) and re-measured with cctv's own channelsFor over 48 points spanning all 8 aisles: mean channels per subject 2.01 -> 1.00, wrong-aisle rows 54.3% -> 0%, zero blind points."
+  },
+  {
+   "t": 1787617434.1599202,
+   "piece": "game",
+   "role": "builder",
+   "round": 9,
+   "state": "passed",
+   "text": "Built a permanent instrument to answer it - hud.sample() marks at each element's real draw site and eval.js renders one frame every 6 steps across a whole shift, so every number is a measured duty cycle rather than a judgement. Deleted outright: the OFFICER/BADGE panel, per-tile subject counts, the 16-CH DVR line, a second clock, POST UNMANNED, the floor RECORD panel, PULSE (the cop's body already carries fatigue), the PAN box. The key legend now ERODES per key and is at 0% after four presses. Notably it did not just subtract: the roster grew 558 -> 896px, spending the reclaimed space on 300px more behaviour text, which is the one thing the player is actually reading."
+  },
+  {
+   "t": 1787617253.45062,
+   "piece": "game",
+   "role": "builder",
+   "round": 9,
+   "state": "building",
+   "text": "SUBTRACTION ROUND. Alarm bar deleted as a bar: soft sources (trap banners + merchandise-loss notice) gone entirely, vestibule countdown survives as a small non-flashing chip in the status band. Censused on one build of the world, seed 7717, 4x240s: alarm lit 41.0% of an idle shift -> 14.5% (soft 27.6pp -> 0). Deleted at 100% duty each: OFFICER panel (desk), RECORD panel (floor), PULSE, per-tile subject counts, DVR flavour line, second (elapsed) clock, POST UNMANNED, the PA idle panel (now one line) and the PAN panel box (sweep kept). DISPATCHED TO is transient (100% -> 15% for observer). Key legends erode as each key is first used. Monitor pips stop blinking except for 1.6s on a NEW flag: something moving on the wall 97.5% -> 13.7% of an idle shift. Channel-per-aisle copy: roster header is AISLE N, WHERE column silent when it agrees with the channel, dispatch hint reads [1]-[8] AISLE / [9] DOOR. onAnnounce third outcome 'bolt' lands as HE RAN + N M HEAD START and a causal ticker line, no stamp, no stand-down. No regressions: 6x240s seed 4242 observer 42.4->50.0 catch, reader 71.8->54.3 (n=35-39, RNG stream diverges), random 29.2->37.5; complaints/demotions/one-per-guest/PACE all unchanged. TWO CCTV BUGS FOUND: channelsFor() returns [] for every subject until something renders through the channel cameras (kills the whole desk phase in any paused/backgrounded tab, incl. the bench); and domes at 4.35m see over 2.05m gondolas, so 54.3% of roster rows are a subject who is not in the aisle his channel is named after."
+  },
   {
    "t": 1787523796.7131379,
    "piece": "cop",
@@ -1073,5 +1110,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787523796.713139
+ "updated": 1787617434.2824671
 }

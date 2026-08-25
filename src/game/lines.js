@@ -50,12 +50,20 @@ export const BEHAVIOUR_GUILTY = [
   'ITEM COUNT DOWN 1 / CART COUNT SAME',
 ];
 
-export const ALERT_FALSE = [
-  'MOTION ANOMALY',
-  'DWELL THRESHOLD EXCEEDED',
-  'LOITER TIMER TRIPPED',
-  'ANALYTICS: UNUSUAL',
-];
+// RETIRED IN ROUND 9 — ALERT_FALSE, four ways for the box to say it had seen
+// something. They were good lines and they had no business being a full-width
+// flashing red bar: measured, something soft was on that bar 27.3% of an IDLE
+// shift, and every one of these sentences was already being told by the red pip
+// on the monitor and the red row in the roster. Deleted rather than demoted,
+// because a fourth telling of a thing said three times is not copy, it is
+// volume. The bar that remains says one sentence, and it is VESTIBULE below.
+
+// -------------------------------------------------------------- the one alarm
+// A man is in the doorway with a number counting down beside him. This is the
+// only line in the game that expires, which is the only reason it gets to
+// interrupt. Kept word for word from the bar the client called obnoxious — the
+// sentence was never the problem, the flashing full-width red plate was.
+export const VESTIBULE = '%D — SUBJECT IN THE VESTIBULE';
 
 // ------------------------------------------------------------------ merchandise
 export const ITEMS = [
@@ -357,6 +365,20 @@ export const PA_SHRUG = [
   '%S CHECKED OVER HIS SHOULDER. CONTINUED.',
   'NO BEHAVIOURAL CHANGE LOGGED — %S.',
 ];
+// He ran. onBolt() already puts SUBJ-xx IS RUNNING in the ticker the same
+// frame, so this pool exists for the chip and for the desk, where there is no
+// chip — and never fires alongside the other one. Machine voice; the box is
+// reporting a body accelerating, not awarding the player a point.
+// LENGTH, and the round-8 note above is the reason: the floor ticker is 480 px
+// at 11 px mono and clips with an ellipsis, which after the HH:MM:SS stamp
+// leaves about 55 characters with %S expanded. The first cut of these ran to 58
+// and printed "...THE LAST THING HE HE…" on the capture. Measured with SUBJ-12
+// filled in: 43 / 40 / 38.
+export const PA_BOLT = [
+  '%S RAN. THE PA WAS THE LAST THING HE HEARD.',
+  '%S IS RUNNING. HE WAS NOT BEFORE THE PA.',
+  'SUBJECT ACCELERATED AFTER THE PA — %S.',
+];
 // The floor chip. Three states, and the middle one is load-bearing: between
 // keying the handset and him reacting there is up to a second where the honest
 // readout is that nothing has happened yet. Filling it with a guess is the one
@@ -365,6 +387,17 @@ export const PA_CHIP_AIM = 'ANNOUNCEMENT — %S';
 export const PA_CHIP_WAIT = 'WAITING FOR A REACTION';
 export const PA_CHIP_HEED = 'HE PUT SOMETHING BACK';
 export const PA_CHIP_SHRUG = 'HE LOOKED AROUND';
+// ROUND 9 — THE THIRD THING HE CAN DO IS RUN.
+// agents.js added 'bolt': you shouted at him and he panicked. Unlike the other
+// two this one IS a confession, and the writing job is therefore the opposite
+// of PA_HEED's — not to keep the outcome ambiguous (the man is sprinting past
+// a cheese counter, nobody is in any doubt) but to refuse to CELEBRATE it.
+// Being right is worth nothing here: you are stood in an aisle with a head
+// start you did not choose, and the only number that matters now is the gap.
+// So the chip states the gap and gets out of the way, and there is no
+// congratulation anywhere in this pool.
+export const PA_CHIP_BOLT = 'HE RAN';
+export const PA_CHIP_GAP = '%N M HEAD START';
 // The footnote that keeps the whole thing honest, printed on the chip every
 // time. You did not speak to him. You spoke to the shop.
 export const PA_CHIP_HEARD = '%N OTHERS IN EARSHOT';

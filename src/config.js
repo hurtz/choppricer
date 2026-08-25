@@ -157,18 +157,22 @@ export const TUNING = {
 };
 
 export const CAMERAS = [
-  { id: 'CAM 01', label: 'AISLE 1-2',   pos: [aisleX(0) - 2, 4.4, -AISLE_LEN / 2 - 1], look: [aisleX(1), 1.0, 4] },
-  { id: 'CAM 02', label: 'AISLE 3-4',   pos: [aisleX(2) - 2, 4.4, -AISLE_LEN / 2 - 1], look: [aisleX(3), 1.0, 4] },
-  { id: 'CAM 03', label: 'AISLE 5-6',   pos: [aisleX(4) - 2, 4.4, -AISLE_LEN / 2 - 1], look: [aisleX(5), 1.0, 4] },
-  { id: 'CAM 04', label: 'AISLE 7-8',   pos: [aisleX(6) - 2, 4.4, -AISLE_LEN / 2 - 1], look: [aisleX(7), 1.0, 4] },
-  { id: 'CAM 05', label: 'FRONT END',   pos: [0, 4.6, STORE.minZ + 1],  look: [0, 1.0, STORE.minZ + 9] },
-  { id: 'CAM 06', label: 'BACK WALL',   pos: [0, 4.6, STORE.maxZ - 1],  look: [0, 1.0, STORE.maxZ - 9] },
-  { id: 'CAM 07', label: 'EXIT DOORS',  pos: [EXIT.x - 1, 4.2, EXIT.z + 6], look: [EXIT.x, 1.0, EXIT.z] },
-  { id: 'CAM 08', label: 'PRODUCE',     pos: [STORE.maxX - 1, 4.6, STORE.maxZ - 6], look: [STORE.maxX - 9, 1.0, STORE.maxZ - 10] },
-  // Door 2 had no camera, so a subject in its vestibule sat in no frustum at all.
-  // Filing him under EXIT DOORS anyway measured WORSE than the least-wrong channel
-  // (-1pp for the reader, +5 for the guesser) because the roster then named a
-  // channel showing an empty doorway 35m away. Label must contain DOOR or EXIT so
-  // the wall pairs it with CAM 07 in the right-hand column.
-  { id: 'CAM 09', label: 'DOOR 2',     pos: [EXIT2.x + 1, 4.2, EXIT2.z + 6], look: [EXIT2.x, 1.0, EXIT2.z] },
+  // ONE CHANNEL PER AISLE. Channel N is aisle N — no lookup, no "AISLE 3-4" spanning
+  // two places at once. Each camera sits above the front cross-aisle looking straight
+  // down its own aisle, so it sees the full 26m run plus both cross-aisle mouths.
+  // CAM 09 is the single exit. The player's mental model is now: the number on the
+  // screen IS the number hanging over the aisle.
+  ...Array.from({ length: AISLE_COUNT }, (_, i) => ({
+    id: `CAM 0${i + 1}`,
+    label: `AISLE ${i + 1}`,
+    // Height matters more than it looks. At 4.35m these domes sat well above the
+    // 2.05m gondolas and saw straight across the shelf tops: 54.3% of roster rows
+    // were a subject who was NOT in the aisle his channel is named after, so
+    // "channel N is aisle N" was true of the AIM and not of the PICTURE. Dropped to
+    // just above the shelf line so the gondolas themselves do the masking and the
+    // mental model is literally true.
+    pos: [aisleX(i), 2.62, FRONT_WALK_Z + 1.6],
+    look: [aisleX(i), 1.15, BACK_WALK_Z - 1.0],
+  })),
+  { id: 'CAM 09', label: 'DOOR 1', pos: [EXIT.x + 1.2, 4.2, EXIT.z + 6.5], look: [EXIT.x, 1.0, EXIT.z] },
 ];

@@ -501,6 +501,19 @@ export async function run(ctx, opts = {}) {
   const seconds = opts.seconds ?? 240;
   const dt = 1 / 60;
   const names = opts.policies || ['observer', 'random'];
+  // ---- PRIME THE WALL, AND THIS COST A WHOLE MEASUREMENT ------------------
+  // cctv.channelsFor() projects through the channel cameras, and a three.js
+  // camera only gets its world matrix when something RENDERS through it. This
+  // bench never renders the wall — and in a backgrounded tab, which is where
+  // every agent runs, rAF never renders it either. So the first census of this
+  // round reported every subject on zero channels, an empty roster, and an
+  // observer that dispatched 0 times in 10 shift-minutes. Nothing was wrong
+  // with the game; the wall had simply never been asked to look.
+  //
+  // One real step through main.js's own test surface fixes it. The cameras are
+  // static, so once per bench is enough. Reported to cctv as well — it should
+  // not need a render to answer a question about its own frustums.
+  if (ctx.step) { try { ctx.step(0); } catch { /* no bootstrap: fall through */ } }
   const fixWas = { ...game.bot.FIX };
   if (opts.fix) Object.assign(game.bot.FIX, opts.fix);
 
@@ -520,6 +533,8 @@ export async function run(ctx, opts = {}) {
       leaves: 0, aborts: 0, balks: 0, dumps: 0,
     };
     let windows = [], cases = [];
+    const census = { _frames: 0, _desk: 0, _floor: 0 };
+    const stateC = { deskT: 0, alarmT: 0, hardT: 0, softT: 0, pipT: 0, flagT: 0, blinkT: 0, blinkTiles: 0 };
     for (let k = 0; k < shifts; k++) {
       const seed = (opts.seed ?? 7717) + k * 104729;
       const r = await shift(ctx, name, { ...opts, seed, seconds, dt });
@@ -527,8 +542,54 @@ export async function run(ctx, opts = {}) {
         if (typeof agg[key] === 'number' && key in r) agg[key] += r[key];
       }
       for (let n = 0; n < agg.liveT.length; n++) agg.liveT[n] += r.liveT[n] || 0;
+      for (const k of Object.keys(r.census || {})) census[k] = (census[k] || 0) + r.census[k];
+      for (const k of Object.keys(r.stateC || {})) stateC[k] = (stateC[k] || 0) + r.stateC[k];
       windows = windows.concat(r.windows);
       cases = cases.concat(r.cases);
+    }
+    // ---- ROUND 9: HOW MUCH OF THE TIME IS EACH THING ON SCREEN --------------
+    // `census` is a real frame drawn every CENSUS_EVERY steps with hud.js's
+    // mark() calls recording — see hud.sample(). The percentages are OF THE
+    // MODE THE ELEMENT LIVES IN, not of the whole shift: a floor panel that is
+    // up for every second of every chase should read 100, because the question
+    // "is this always on" is asked about the screen it is on. `_deskPct` and
+    // `_floorPct` say how much of the shift each screen was up in the first
+    // place, so the two can be composed when that is what you want.
+    if (census._frames) {
+      const pct = (n, of) => +(100 * (n || 0) / Math.max(1, of)).toFixed(1);
+      const c = { _frames: census._frames, _deskPct: pct(census._desk, census._frames),
+        _floorPct: pct(census._floor, census._frames) };
+      const DESK = new Set(['officer', 'roster', 'rosterEmpty', 'dispatch', 'dispatchArmed',
+        'dispatchIdle', 'deskKeyHint', 'paBtn', 'tileCount', 'pipTiles', 'pipFresh', 'bandRow2', 'rowRunning',
+        'alarm', 'alarmHard', 'alarmSoft']);
+      const FLOOR = new Set(['dispatched', 'pursuit', 'backBanner', 'wind', 'pulse', 'gassedFrame',
+        'record', 'prompt', 'backOff', 'dialogue', 'stamp', 'paPanel', 'paIdle', 'pan', 'floorKeyHint',
+        'brackets', 'doorTags', 'floorAlarm']);
+      for (const k of Object.keys(census)) {
+        if (k[0] === '_' || k === 'pipTiles') continue;
+        const of = DESK.has(k) ? census._desk : FLOOR.has(k) ? census._floor : census._frames;
+        c[k] = pct(census[k], of);
+      }
+      // Average number of monitors carrying a red flag pip at any instant. A
+      // pointer that names six tiles at once names none — round 6 measured
+      // exactly that, and this is the number that keeps it honest.
+      c.pipsPerFrame = +((census.pipTiles || 0) / Math.max(1, census._desk)).toFixed(2);
+      agg.census = c;
+    }
+    // State census — see stateC. Percentages of the WHOLE shift for the alarm
+    // (it was drawn at the desk and the desk is where it was read) and of desk
+    // time for the pips.
+    {
+      const tot = shifts * seconds;
+      agg.alarmPct = +(100 * stateC.alarmT / tot).toFixed(1);
+      agg.alarmHardPct = +(100 * stateC.hardT / tot).toFixed(1);
+      agg.alarmSoftPct = +(100 * stateC.softT / tot).toFixed(1);
+      agg.pipsPerDeskFrame = +(stateC.pipT / Math.max(0.001, stateC.deskT)).toFixed(2);
+      agg.anyPipPct = +(100 * stateC.flagT / Math.max(0.001, stateC.deskT)).toFixed(1);
+      // ...and how much of that is MOVING. A still pip is a marker; a blinking
+      // one is a demand. Round 9 spends the blink only on a brand-new flag.
+      agg.blinkPct = +(100 * stateC.blinkT / Math.max(0.001, stateC.deskT)).toFixed(1);
+      agg.blinkPerFrame = +(stateC.blinkTiles / Math.max(0.001, stateC.deskT)).toFixed(2);
     }
     agg.windowMedian = med(windows);
     agg.windowP10 = q(windows, 0.10);
@@ -587,7 +648,26 @@ async function shift(ctx, policyName, opts) {
     windows: [],            // seconds from the concealment tell to the door
     cases: [],              // ...to the door OR the cuffs. How long one takes.
     liveT: [0, 0, 0, 0, 0, 0],
+    census: null,
   };
+  // ROUND 9. Draw one real frame every CENSUS_EVERY steps and record which
+  // elements painted. 10 Hz is enough for a duty cycle and cheap enough that
+  // the bench does not become a rendering benchmark; the alarm bar's own
+  // 0.9 s flash period is nine samples wide at this rate.
+  const CENSUS_EVERY = 6;
+  const census = opts.census === false ? null : { _frames: 0, _desk: 0, _floor: 0 };
+  // ---- AND A SECOND CENSUS THAT DOES NOT NEED THE HUD ---------------------
+  // The draw census above can only measure the HUD that is in the tree. Two of
+  // this round's claims are about elements that were DELETED, so they have to
+  // be measurable from GAME STATE or the before-and-after cannot be run on one
+  // build of the world. Both of these read the same fields the drawing code
+  // reads and neither one depends on a mark() existing:
+  //   alarmT   seconds with an alarm raised, split hard (a countdown, i.e. a
+  //            man in the doorway) and soft (everything else that used to
+  //            reach the bar). Sampled EVERY step, so it is exact.
+  //   pipT     monitors carrying a red flag pip, summed over desk steps. A
+  //            pointer that names two of nine tiles at once is not a pointer.
+  const stateC = { deskT: 0, alarmT: 0, hardT: 0, softT: 0, pipT: 0, flagT: 0, blinkT: 0, blinkTiles: 0 };
   // A thief counts as dead-zoned when he resolves having spent time on a cross
   // aisle with an untouched analytics flag — i.e. the terminal saw him and the
   // player had no legal move. Tracked per shopper id.
@@ -661,6 +741,28 @@ async function shift(ctx, policyName, opts) {
     }
     agents.update(dt, input, api);
     game.update(dt);
+    {
+      const al = game._g.alarm;
+      if (al) { stateC.alarmT += dt; if (al.count != null) stateC.hardT += dt; else stateC.softT += dt; }
+      if (game.st.mode === 'desk') {
+        stateC.deskT += dt;
+        const lit = new Set(); const nw = new Set();
+        for (const row of game._g.desk.subjects) {
+          if (row.flagged && row.primary !== false) { lit.add(row.cam); if (row.fresh) nw.add(row.cam); }
+        }
+        stateC.pipT += lit.size * dt;
+        stateC.flagT += (lit.size ? dt : 0);
+        stateC.blinkT += (nw.size ? dt : 0);
+        stateC.blinkTiles += nw.size * dt;
+      }
+    }
+    if (census && game.hud.sample && (i % CENSUS_EVERY) === 0) {
+      census._frames++;
+      if (game.st.mode === 'desk') census._desk++;
+      else if (game.st.mode === 'floor') census._floor++;
+      const c = game.hud.sample(game._g);
+      for (const k of Object.keys(c)) census[k] = (census[k] || 0) + c[k];
+    }
     // Count filed complaints off st.complaints. It only ever rises, except at a
     // demotion which resets it to zero — that is a fall, so it is ignored here
     // and the demotion itself is counted in the 'demoted' branch above.
@@ -704,6 +806,8 @@ async function shift(ctx, policyName, opts) {
   // than the first, one confrontation is being billed several times over.
   r.hRepeat = game._g.dbg.reharass;
   r.hPeople = game._g.dbg.subjects.size;
+  r.census = census;
+  r.stateC = stateC;
   Math.random = realRandom;
   return r;
 }
