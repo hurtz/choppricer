@@ -242,7 +242,7 @@
    "verdict": "PASS. Third outcome 'bolt' gated on GEOMETRY not a mode check - beatsCopToDoor(). 29.2% from the desk, 22.5% from 8m behind, 0.0% from the aisle mouth, 0.0% from the door, 0.0% for innocents anywhere. Likelihood ratio 1.98 against round 7's 1.95, and a live ablation proves it: set annBolt to 0 and the build IS round 7, every row to the decimal."
   },
   "game": {
-   "round": 10,
+   "round": 11,
    "state": "passed",
    "shots": [
     {
@@ -299,6 +299,11 @@
      "round": 10,
      "path": "../shots/game_r10_desk.png",
      "t": 1787620544.485091
+    },
+    {
+     "round": 11,
+     "path": "../shots/game_r11_bird.png",
+     "t": 1787662272.5649111
     }
    ],
    "gaps": [
@@ -315,10 +320,10 @@
      "text": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier."
     }
    ],
-   "updated": 1787620741.6724842,
-   "note": "THE ANTI-ORACLE, SHOWN NOT FOOTNOTED: the reaction replaces the behaviour line for 3.2s on EVERY body the PA reached, so the man you aimed at and the three who merely heard it print the IDENTICAL row. Costs zero pixels. It also caught itself rebuilding the alarm bar - its first cut printed the PA cost whenever the aim was a flagged row, censused at 63.1% of desk frames, so it split the STATE (no new ink at any duty cycle) from the SENTENCE (said once per session, 0.2%). Rejected aiming at cctv.spot.track directly: where the lock and the highlight disagree it put DISPATCH on one man and the PA on another, side by side. TWO INSTRUMENT FINDINGS: agents.js seeds once at module init and agents.reset() does NOT reseed, so a stray agents.update() moves the whole stream and every bench number with it; and eval.js was never forwarding onAnnounce at all, so rounds 8 and 9 could not have caught a mislabelled outcome on the bench if they had tried.",
+   "updated": 1787662344.102018,
+   "note": "THE BEST GAG IS STRUCTURAL: the obscene-gesture row takes its number off the SAME analytics counter as the concealment tell, so a man's middle finger and a steak going into a coat are the same kind of row to this building, filed a few apart. The gesture line is ONE line every time, because a form does not vary - only the number moves. PA_PUTBACK is addressed to a PLACE, not a person: 'COURTESY ANNOUNCEMENT - AISLE 4. CONTENT NOT LOGGED.' - simultaneously the anti-oracle in the store's own vocabulary and an honest refusal to describe a mic input it cannot know. Dale M. fires at 9 announcements with zero arrests, not red, because nothing was penalised and that is exactly his problem with it. TWO SIDE-FIXES, BOTH SUBTRACTIONS: the ticker was drawing three lines and showing one (desk baselines 616/631/646 with the roster panel drawn over from y=624), found by writing a two-line beat and reading the capture; and four ticker lines measured 491-542px against a 480px floor, now measured through the real canvas rather than by character count.",
    "gap": "Front-end dispatch is presented in the same confident amber as a winnable aisle call, but it is almost always a losing move \u2014 cop spawns ~20m behind a subject who is 10m from the door. Should read as the long shot it is, or players learn to distrust the button instead of learning to act earlier.",
-   "verdict": "PASS. Announce moved to the desk on the highlighted roster row (spot lock as fallback), line chosen by what the wall can SEE - 88% deterrence / 12% price check, matching the 13.2% blind-spot rate. Reproduces the round-9 build BYTE-FOR-BYTE under round-9 bench conditions: 12 fields per policy, all identical, because the change is inert unless [F] is pressed at the desk."
+   "verdict": "PASS. Escalation ladder keyed on s.annN (the player's own shout count, not guilt), read ABOVE the target gate so the row is stamped for the aimed man and every bystander alike. Anti-oracle verified by capture: one announcement, three rows, and the aimed man prints word-for-word what the bystander prints. No new mark() in hud.js - duty cycles identical to round 10. Regression byte-identical on all four policies, with a static check confirming zero RNG consumers added or removed."
   },
   "cop": {
    "round": 2,
@@ -390,6 +395,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787662344.102019,
+   "piece": "game",
+   "role": "builder",
+   "round": 11,
+   "state": "passed",
+   "text": "THE BEST GAG IS STRUCTURAL: the obscene-gesture row takes its number off the SAME analytics counter as the concealment tell, so a man's middle finger and a steak going into a coat are the same kind of row to this building, filed a few apart. The gesture line is ONE line every time, because a form does not vary - only the number moves. PA_PUTBACK is addressed to a PLACE, not a person: 'COURTESY ANNOUNCEMENT - AISLE 4. CONTENT NOT LOGGED.' - simultaneously the anti-oracle in the store's own vocabulary and an honest refusal to describe a mic input it cannot know. Dale M. fires at 9 announcements with zero arrests, not red, because nothing was penalised and that is exactly his problem with it. TWO SIDE-FIXES, BOTH SUBTRACTIONS: the ticker was drawing three lines and showing one (desk baselines 616/631/646 with the roster panel drawn over from y=624), found by writing a two-line beat and reading the capture; and four ticker lines measured 491-542px against a 480px floor, now measured through the real canvas rather than by character count."
+  },
+  {
+   "t": 1787662272.564912,
+   "piece": "game",
+   "role": "builder",
+   "round": 11,
+   "state": "building",
+   "text": "intercom ladder: annN rungs 1/2/3 (confused, finds the camera, obscene gesture logged as a numbered analytics event) on roster row + ticker + floor chip; courtesy-announcement register naming the aisle not the man; Dale M. line for a shift with 9+ announcements and no arrests; ticker fixed to draw only the lines that fit (was 3, showed 1); four round-7/8 ticker lines that clipped now trimmed. Bench identical to round 10 draw-for-draw on all four policies; no new HUD element at any duty cycle."
+  },
   {
    "t": 1787661789.0114088,
    "piece": "store",
@@ -1215,5 +1236,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787661789.01141
+ "updated": 1787662344.1020212
 }

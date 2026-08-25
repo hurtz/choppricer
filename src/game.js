@@ -229,6 +229,12 @@ function postSpawn(p) {
 const HOLD = { dur: 9.0, cool: 12.0, talkMax: 8.0 };
 // Seconds stood on the way out before the store remarks on it. See updateFloor.
 const QUIET_AT = 6.0;
+// ROUND 11. Announcements in one shift, with nobody written up, before the
+// store manager comes over to say something supportive and fails. Nine, and
+// the derivation is in the block at update()'s desk branch — it is out of
+// reach of both bench bots that touch this button and reachable in about four
+// minutes by a man who has decided to work the handset instead of the wall.
+const DALE_AT = 9;
 // ---- ROUND 7: THE BEAT BEFORE A COMPLAINT ---------------------------------
 // Measured, and it is the number that made this round necessary: a competent
 // player who occasionally acts on an unexplained red flag — `reader` in
@@ -353,6 +359,19 @@ export function createGame(hudEl, deps = {}) {
 
   const recs = new Map();     // shopper.id -> the DVR's opinion of that shopper
   let caseSeq = 112;
+  // ---- ROUND 11: THE STORE NUMBERS ITS OWN EVENTS -------------------------
+  // One counter, and the point of it is that there is only one. The analytics
+  // box files a concealment and it files a man putting his middle finger up at
+  // a dome, and it files them four apart on the same sequence, because it has
+  // no field for the difference. That is the whole of L.PA_ROW_SHRUG's third
+  // rung: the gesture is not funny because somebody made a joke about it, it
+  // is funny because a building took a note.
+  //
+  // It does not reset with the shift. A number that starts at 1 every time you
+  // are reinstated would be a game counter; this is a machine that has been in
+  // the ceiling since before you were hired.
+  let evtSeq = 4470;
+  const nextEvt = () => ++evtSeq;
   let rearmT = 8;
   let harassCool = 0;
   let pending = null;         // { id, until, code } — a complaint not yet filed
@@ -363,6 +382,13 @@ export function createGame(hudEl, deps = {}) {
   // onBolt to tell "he ran" from "he ran because of you" without depending on
   // the order agents delivers its two callbacks in.
   let lastAnn = null;         // { id, t }
+  // ---- ROUND 11: THE SHIFT'S PA USAGE, WHICH IS A THING DALE M. COUNTS ----
+  // Every keying of the handset that actually went out, both verbs, because
+  // Dale is not at this terminal and cannot tell a deterrence line from a
+  // price check — he is in the deli and he can hear a voice. `daleSaid`
+  // makes it once a shift. See the block in update().
+  let annKeyed = 0;
+  let daleSaid = false;
   // ---- ROUND 10: THE ANNOUNCEMENT RECORD LEFT G.floor ----------------------
   // This was `G.floor.annAt` for two rounds, which was fine while the only
   // place you could make an announcement was the floor. It is the bug in one
@@ -802,7 +828,10 @@ export function createGame(hudEl, deps = {}) {
       const wantGuilty = s.guilty && s.stole;
       if (wantGuilty && !r.announced && !blind) {   // the concealment tell arrives
         r.announced = true; newLine(s, r);
-        logLine(`${CAMERAS[r.cam].id} — ANALYTICS EVENT LOGGED`);
+        // ROUND 11: numbered off the same sequence a gesture at a camera gets.
+        // See nextEvt() — the joke at the top of the ladder only works if the
+        // player has already watched this counter tick on a real event.
+        logLine(`${CAMERAS[r.cam].id} — ANALYTICS EVENT ${nextEvt()} LOGGED`);
       } else if (!blind && r.lineT <= 0) newLine(s, r);
       // He is always a subject as far as the picture-to-row cross-reference is
       // concerned — cctv renames its blob T19 to SUBJ-19 off this list, and a
@@ -952,6 +981,7 @@ export function createGame(hudEl, deps = {}) {
     held = { id: s.id, until: G.now + HOLD.dur };
     holdCool = HOLD.cool;
     lastAnn = { id: s.id, t: G.now };
+    annKeyed++;
     const r = recOf(s);
     logLine(`PA — PRICE CHECK, ${(r.aisle == null ? 'FRONT END' : `AISLE ${r.aisle + 1}`)}`);
     return true;
@@ -1014,6 +1044,7 @@ export function createGame(hudEl, deps = {}) {
     const res = a.announceAt(s, 'putback');
     if (!res || !res.ok) return false;
     lastAnn = { id: s.id, t: G.now };
+    annKeyed++;
     const r = recOf(s);
     const f = G.floor;
     // WHAT THE TICKER SAYS NOW, AND WHAT IT DOES NOT SAY. It records that an
@@ -1021,7 +1052,7 @@ export function createGame(hudEl, deps = {}) {
     // did, because he has not done it yet — agents rolls the reaction 0.35-0.95 s
     // later precisely so that no HUD line can get ahead of the picture. See
     // onAnnounce.
-    logLine(L.fillS(L.pick(L.PA_PUTBACK), r.code));
+    logLine(L.fillA(L.fillS(L.pick(L.PA_PUTBACK), r.code), paPlace(s)));
     if (f) {
       // The chip on the floor HUD holds the aim for a beat so the player can see
       // WHO it went to, and `heard` is the honest footnote: a loudspeaker is not
@@ -1034,7 +1065,7 @@ export function createGame(hudEl, deps = {}) {
     // ...and his roster row says so too, so `r.paLine` means the same thing
     // wherever the key was pressed. Nothing renders it from out here; it is
     // there for the player who shouts and then hits [Q].
-    stampPA(r, L.PA_ROW_WAIT);
+    stampPA(r, L.PA_ROW_WAIT[paRung(s)]);
     return true;
   }
 
@@ -1196,13 +1227,14 @@ export function createGame(hudEl, deps = {}) {
     const res = a.announceAt(aim.s, 'putback');
     if (!res || !res.ok) return false;
     lastAnn = { id: aim.s.id, t: G.now };
+    annKeyed++;
     const r = recOf(aim.s);
-    logLine(L.fillS(L.pick(L.PA_PUTBACK), r.code));
+    logLine(L.fillA(L.fillS(L.pick(L.PA_PUTBACK), r.code), paPlace(aim.s)));
     openAnn(aim.s, r, res, 'desk');
     // His row says so on the next frame — see stampPA. The wait state is not a
     // gap to be filled: agents rolls the reaction 0.35-0.95 s later precisely
     // so nothing in this file can get ahead of the picture.
-    stampPA(r, L.PA_ROW_WAIT);
+    stampPA(r, L.PA_ROW_WAIT[paRung(aim.s)]);
     return true;
   }
   // The one announcement record, and it is not owned by a mode. Was
@@ -1224,6 +1256,36 @@ export function createGame(hudEl, deps = {}) {
   // one of those sentences.
   const PA_ROW_HOLD = 3.2;
   function stampPA(r, line) { r.paLine = line; r.paT = G.now; }
+  // =========================================================================
+  // ROUND 11 — HOW MANY TIMES HAS THIS STORE SHOUTED AT THIS MAN
+  // =========================================================================
+  // `s.annN` is agents.js's per-body count and it is the only input the whole
+  // escalation ladder has. Clamped to the three rungs there is copy for — a
+  // fourth shout prints the third rung again, which is correct, because there
+  // is nothing above the finger and a store that escalated past it would be
+  // narrating a different game.
+  //
+  // GUILT-BLIND BY CONSTRUCTION, and it is worth being precise about why,
+  // because this is the field a future round will be tempted to branch on.
+  // announceAt() increments annN on the man you aimed at AND on every body
+  // inside annSpill — so the number counts LOUDSPEAKER EVENTS THAT REACHED A
+  // BODY, not accusations, not suspicion, and not anything either population
+  // does differently. An innocent parked at a shelf climbs it faster than a
+  // thief does, because the thief keeps walking out of earshot. Nothing in
+  // this file may ever combine it with s.guilty.
+  const paRung = (s) => clamp(((s && s.annN) || 1) - 1, 0, 2);
+  // The three roster pools are indexed the same way and the gesture rung is
+  // the only one that takes a number. Composed here rather than in hud.js for
+  // the usual reason: that file owns pixels, this one owns words.
+  const rowLine = (pool, rung) => (rung === 2 && /%N/.test(pool[2]))
+    ? L.fillN(pool[rung], nextEvt()) : pool[rung];
+  // WHERE the announcement went, in the store's own vocabulary. A courtesy
+  // announcement is addressed to an aisle, because a loudspeaker cannot be
+  // addressed to a person — see L.PA_PUTBACK. postLabel() already turns a
+  // position into AISLE 4 / FRONT END / BACK WALL for dispatch, and using the
+  // same function means the ticker and the DISPATCH button cannot disagree
+  // about where a man is standing.
+  const paPlace = (s) => postLabel(postOf(s.position.x, s.position.z));
   // ---- hold to talk --------------------------------------------------------
   // Fire and forget: talkStart() is a Promise and a keydown handler is not the
   // place to wait on a permission prompt. If the player is still deciding when
@@ -1773,6 +1835,9 @@ export function createGame(hudEl, deps = {}) {
     st.points = 0; st.complaints = 0; st.caught = 0; st.escaped = 0;
     st.clock = 0; st.rank = 2; G.hr = null; G.wu = null; G.floor = null;
     st.mode = 'desk'; staggered = false;
+    // ROUND 11: a new shift, so the manager has not been over yet and the PA
+    // count starts again. `evtSeq` deliberately does NOT — see nextEvt().
+    annKeyed = 0; daleSaid = false;
     enterDesk();
     logLine('SHIFT RESTARTED. VEST REISSUED.');
   }
@@ -1989,12 +2054,31 @@ export function createGame(hudEl, deps = {}) {
       // a body either. 'bolt' deliberately writes nothing: he is sprinting
       // through the middle of the picture and updateSubjects gives his row
       // RUNNING — n M FROM THE DOOR, which is the number that matters now.
-      if (outcome === 'heed') stampPA(r, L.PA_ROW_HEED);
-      else if (outcome === 'shrug') stampPA(r, L.PA_ROW_SHRUG);
+      //
+      // ---- ROUND 11: WHICH RUNG, AND THE ROW IS STILL SHARED --------------
+      // `paRung` is agents' per-body annN and nothing else — see the note
+      // there for why that number cannot leak guilt. The important property
+      // of putting it HERE, above the `ann.id !== s.id` gate, is that the
+      // round-10 guarantee survives the new copy verbatim: the man you aimed
+      // at and the three people who merely stood next to him print the SAME
+      // roster line at whatever rung each of them has reached. A bystander on
+      // his third announcement gives the camera the finger on his own row,
+      // and nothing on this desk says which of the four was the target.
+      //
+      // `gesture` is accepted as a synonym for the third rung so the chase
+      // builder can ship the bird either way — as a clip inside the existing
+      // 'shrug' outcome (which is what annN alone gives us) or as its own
+      // outcome name. Both land on identical copy, and `ann.out` is
+      // normalised back to 'shrug' immediately below so hud.js's colour table
+      // never has to learn a fourth word.
+      const shrug = outcome === 'shrug' || outcome === 'gesture';
+      const rung = outcome === 'gesture' ? 2 : paRung(s);
+      if (outcome === 'heed') stampPA(r, rowLine(L.PA_ROW_HEED, rung));
+      else if (shrug) stampPA(r, rowLine(L.PA_ROW_SHRUG, rung));
       else r.paLine = null;
 
       if (!ann || ann.id !== s.id) return;
-      ann.out = outcome;
+      ann.out = shrug ? 'shrug' : outcome;
       ann.t = G.now;
       // ---- ROUND 9: THE THIRD OUTCOME, AND IT IS NOT A PRIZE --------------
       // agents.js added 'bolt' — you shouted and he panicked. It is the one
@@ -2027,9 +2111,16 @@ export function createGame(hudEl, deps = {}) {
       // and 'hold' — the price check's own outcome, which rolls nothing — is
       // the fourth: it gets no chip line at all, because nothing happened that
       // the player did not already watch happen.
-      if (outcome !== 'heed' && outcome !== 'shrug') return;
-      ann.line = outcome === 'heed' ? L.PA_CHIP_HEED : L.PA_CHIP_SHRUG;
-      const pool = outcome === 'heed' ? L.PA_HEED : L.PA_SHRUG;
+      if (outcome !== 'heed' && !shrug) return;
+      // ROUND 11 — AND THE TICKER CLIMBS TOO. Three pools, indexed by the same
+      // rung the row used, because a log that says "LOOKED AROUND FOR WHOEVER
+      // SAID THAT" under a man who is currently holding his middle finger up
+      // at the ceiling is a log that has stopped watching. This is the ONE
+      // line the aimed man gets that the bystanders do not — see the note at
+      // the top of this callback — so it may not carry anything the row
+      // cannot, and it does not: same rung, same register, no guilt in either.
+      ann.line = outcome === 'heed' ? L.PA_CHIP_HEED : L.PA_CHIP_SHRUG[rung];
+      const pool = outcome === 'heed' ? L.PA_HEED : L.PA_SHRUG_RUNGS[rung];
       logLine(L.fillS(L.pick(pool), r.code));
       // No stamp and no stand-down, either way. A stamp is for a resolution,
       // and neither of these is one: the guilty man who put it back is walking
@@ -2323,6 +2414,56 @@ export function createGame(hudEl, deps = {}) {
         talk.told = true;
         logLine('PA HANDSET LIVE ON THIS TERMINAL — HOLD [F] AND SPEAK.');
       }
+      // ---- ROUND 11: THE MANAGER NOTICES A SHIFT WITH NOTHING IN IT --------
+      // A player who works the handset and never leaves the desk is playing a
+      // legitimate strategy that pays ZERO — agents.js deters a man for free
+      // and scores nothing for it, on purpose — and until this round the game
+      // answered that with silence. A silence is not a joke. Dale is the only
+      // character here with opinions about your work, so he gets the line, and
+      // it is disappointed rather than angry: see L.MANAGER_PA.
+      //
+      // DALE_AT is nine, which is about four minutes of a man doing nothing
+      // but announcing — the deterrence line answers to agents' 6 s recharge
+      // and the price check to HOLD.cool at 12.
+      //
+      // THE COUNT IS NOT THE GATE THAT DOES THE WORK, and I had this backwards
+      // until I measured it. ./game/eval.js, 4 shifts x 240 s: `announcer`
+      // keys 12.0 announcements a shift and `tattle` 9.3, so BOTH bots that
+      // touch this button clear nine comfortably. What stops them is the other
+      // half — they catch 2.8 and 3.0 thieves a shift respectively, and this
+      // fires only on a shift that has produced NOTHING. That is the right
+      // condition anyway: the joke is not "you talk a lot", it is "you talk a
+      // lot and there is nobody in the office", and a man who announced twenty
+      // times and made an arrest does not get told off for it.
+      //
+      // AT THE DESK ONLY, and the fiction is the reason rather than the
+      // rendering: he came to your terminal to say it. If the condition trips
+      // while you are out on the floor he is stood there waiting when you get
+      // back, which is worse for you and better for the joke.
+      //
+      // Two ticker lines out of eight, once a shift. He gets the second one
+      // because he is Dale.
+      //
+      // ONE line, because the desk ticker shows one — measured off the capture
+      // this round and now enforced in hud.js's ticker(); see the note at
+      // L.MANAGER_PA. And it is not `bad`. Red in this game means a loss or a
+      // complaint, and nothing here has been penalised, which is precisely
+      // Dale's problem with it.
+      //
+      // NOT `L.pick`, AND THIS IS A MEASUREMENT RULE RATHER THAN A STYLE ONE.
+      // L.pick() draws from Math.random, which ./game/eval.js replaces with a
+      // seeded stream for the duration of a bench — so one extra draw here
+      // moves every subsequent draw in that shift and every number after it.
+      // This is the ONLY line added this round that could have consumed one,
+      // and `announcer` keys about twelve announcements a shift, so it would
+      // have fired often enough to matter. Indexed off state instead: varies
+      // between shifts, costs nothing, and makes round 11 draw-for-draw
+      // identical to round 10 by construction rather than by hoping.
+      if (!daleSaid && annKeyed >= DALE_AT && st.caught === 0) {
+        daleSaid = true;
+        const i = (annKeyed * 5 + (st.clock | 0)) % L.MANAGER_PA.length;
+        logLine(L.fillN(L.MANAGER_PA[i], annKeyed));
+      }
       const a = agentsOf();
       if (a) { a.cop.position.set(POST.x, 0, POST.z); a.cop.userData.vel.set(0, 0, 0); }
       if (G.desk.sel == null && !selectTracked()) {
@@ -2368,6 +2509,11 @@ export function createGame(hudEl, deps = {}) {
     get deskReadout() { return deskReadout(); },
     get taught() { return taught; },
     get annReady() { return annReady(); },
+    // ROUND 11. Announcements this shift, both verbs, and the rung a given
+    // body is on. The bench needs the first to check DALE_AT is out of reach
+    // of a bot; a capture script needs the second to drive the ladder.
+    get annKeyed() { return annKeyed; },
+    rung: paRung,
     get micReady() { return micReady(); },
     get pace() { return pace(); },
     // The bench drives these instead of the mouse, and they teach the same

@@ -269,15 +269,44 @@ export function createHUD(hudEl) {
     tx(label, x + 10, y, { s: 12, w: 'bold', c: RED, ls: 0.9 });
     if (cd) tx(cd, x + w - 8, y, { s: 12, w: 'bold', c: hot ? '#ffd9d3' : RED, a: 'right', ls: 0.9 });
   }
-  function ticker(G, x, y, w, back) {
+  // ==========================================================================
+  // ROUND 11 — THIS ELEMENT HAS BEEN DRAWING THREE LINES AND SHOWING ONE
+  // ==========================================================================
+  // Found by writing a two-line beat for the ticker (game.js's Dale M. block)
+  // and reading the capture back: the second line was 60% behind the MOTION
+  // ANALYTICS panel and the third was entirely behind it. The arithmetic is
+  // unambiguous once you look — the desk calls this at y=616 with 15 px
+  // leading, so the baselines are 616 / 631 / 646, and the roster panel is
+  // drawn AFTER it starting at y=624. On the floor it is worse and quieter:
+  // baselines 700 / 715 / 730 on a canvas that is 720 tall, so the third line
+  // has never been on screen at all.
+  //
+  // Two lines a frame, in both modes, painted under furniture or off the
+  // bottom of the world, for as long as this function has existed. That is not
+  // a layout to fix by moving something — the roster is the thing you read and
+  // the canvas is the size it is — it is ink to stop spending, which is what
+  // rounds 9 and 10 were about.
+  //
+  // So the caller says where the floor of its space is and this counts how
+  // many baselines actually fit above it, with 4 px of descender margin.
+  // Derived rather than passed as a literal, so a layout that moves gets the
+  // right answer instead of an out-of-date comment: desk 1, floor 2 today.
+  //
+  // AND IT IS A CONSTRAINT ON THE WRITING, which is the more valuable half.
+  // Anything that needs two log lines to land does not land. See the note at
+  // L.MANAGER_PA, which was two lines until this measurement and is one now.
+  const TICK_LEAD = 15;
+  function ticker(G, x, y, w, back, bottom) {
     // Last few system log lines, newest first, fading out. Bottom of the wall.
     if (!G.log.length || G.now - G.log[0].t > 8) return;
     mark('ticker');
     if (back) { ctx.fillStyle = 'rgba(2,4,3,0.86)'; ctx.fillRect(x - 8, y - 12, w + 16, 16); }
-    for (let i = 0; i < Math.min(3, G.log.length); i++) {
+    const fits = bottom == null ? 3
+      : clampN(Math.floor((bottom - y - 4) / TICK_LEAD) + 1, 1, 3);
+    for (let i = 0; i < Math.min(fits, G.log.length); i++) {
       const e = G.log[i];
       ctx.globalAlpha = Math.max(0, Math.min(1, (8 - (G.now - e.t)) / 2.5)) * (1 - i * 0.28);
-      tx(`${dvrTime(e.clock)}  ${e.text}`, x, y + i * 15,
+      tx(`${dvrTime(e.clock)}  ${e.text}`, x, y + i * TICK_LEAD,
         { s: 11, c: e.bad ? RED : DIM, max: w });
     }
     ctx.globalAlpha = 1;
@@ -370,9 +399,11 @@ export function createHUD(hudEl) {
     // to obey and then broke by being on half the time anyway.
     statusRow(G, 60);
     alarmChip(G, 60);
-    ticker(G, 14, 616, 700, true);
-
     const by = 624, bh = 88;
+    // `by` is where the roster panel starts and the panel is drawn after this,
+    // so that is the floor of the ticker's space. See the note on ticker().
+    ticker(G, 14, 616, 700, true, by);
+
     // --- analytics roster
     // ROUND 9: this starts at x=10 now, in the 330 px the OFFICER panel was
     // holding. The width buys 300 px of behaviour text, which is the ONE thing
@@ -1214,7 +1245,7 @@ export function createHUD(hudEl) {
     // panel's bottom border was landing inside it.
     paFloor(G, f, 492, 606, 498, 80);
     lookGauge(G, 1090, 62, 180, 50);
-    ticker(G, 500, 700, 480, true);
+    ticker(G, 500, 700, 480, true, H);   // nothing below the canvas, see ticker()
     burnIn();
   }
 

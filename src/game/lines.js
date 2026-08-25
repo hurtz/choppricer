@@ -174,6 +174,52 @@ export const MANAGER = [
    "It's forty minutes. I have the time."],
 ];
 
+// ---- ROUND 11: AND HE ALSO NOTICES THE OTHER KIND OF SHIFT ---------------
+// The block above is Dale M. after an arrest, laid on until it is
+// uncomfortable, and it has been the centrepiece since round 1. It is also,
+// until this round, the ONLY thing he ever says — so a player who spends four
+// minutes shouting at eleven strangers and catches nobody gets the manager's
+// complete silence, and the announcement scores zero.
+//
+// A silence is not a joke. Zero points is the correct economics (agents.js
+// deters a man for free and pays nothing for it, deliberately) and it is a
+// perfectly good punchline that nobody is currently delivering. Dale is the
+// man to deliver it, because he is the only character in this game who has
+// opinions about your work, and because the disappointment is much funnier
+// coming from the same person who wanted to walk your last incident report to
+// the district office himself.
+//
+// DISAPPOINTED, NOT ANGRY, and that is a writing rule rather than a mood. An
+// angry manager is a scene; a disappointed one is a man who has come to your
+// desk to say a supportive thing and cannot find one, so he says the only
+// three facts available: how many times you did it, that nobody was written
+// up, and that he is not angry. Nobody who has ever said "I'm not angry" out
+// loud was having a good day, and the store's own log records the visit in
+// the same flat voice it uses for a door sensor.
+//
+// ONE LINE, AND THAT WAS A MEASUREMENT RATHER THAN A PREFERENCE. This was
+// written as two — a machine line saying he had come over (DALE M. CAME BY THE
+// DESK. HE DID NOT SIT DOWN.) and then the quote under it, which is how a
+// caption reads and which is in character for a man who cannot stop talking.
+// The capture says no. hud.js's ticker draws three lines at 15 px leading from
+// y=616 and the MOTION ANALYTICS panel is drawn over it starting at y=624, so
+// the second line was 60% behind a panel and the third was entirely behind it;
+// on the floor the baselines are 700/715/730 on a 720 px canvas. See the
+// ROUND 11 note at ticker() — the element is fixed to draw only what fits, and
+// what fits at the desk is ONE LINE.
+//
+// So the attribution rides on the front of the quote and the beat is one
+// entry in the log. It is tighter than the two-line version was, which is the
+// usual outcome of being told how much room there actually is.
+export const MANAGER_PA = [
+  'DALE M. — "%N ANNOUNCEMENTS. NOBODY IN THE OFFICE."',
+  'DALE M. — "ASSOCIATES ARE ASKING WHO KEEPS TALKING."',
+  'DALE M. — "THE PA WORKS. I WANTED TO SAY THAT FIRST."',
+  'DALE M. — "%N TIMES. AND NOBODY HAS BEEN WRITTEN UP."',
+  'DALE M. — "I AM NOT ANGRY. I WANT YOU TO HEAR THAT."',
+  'DALE M. — "I CAN HEAR YOU FROM THE DELI. ALL SHIFT."',
+];
+
 export const PROMO_SUB = [
   'EFFECTIVE IMMEDIATELY. NO PAY ADJUSTMENT.',
   'NEW VEST WILL BE ORDERED. ALLOW 6-8 WEEKS.',
@@ -277,12 +323,12 @@ export const ABORT_BALK = [
   '%S PUT IT BACK. HE HAD A LOOK AT THE DOOR FIRST.',
   '%S RETURNED THE ITEM TO THE SHELF. UNPROMPTED.',
   '%S CHANGED HIS MIND ABOUT SOMETHING.',
-  'ATTEMPTED CONCEALMENT ABANDONED — %S. NO OFFENCE COMMITTED.',
+  'CONCEALMENT ABANDONED — %S. NO OFFENCE COMMITTED.',
 ];
 // He waited you out, you did not move, so it went on a shelf and he left.
 export const ABORT_DUMP = [
-  '%S LEFT IT ON THE WRONG SHELF AND WALKED OUT A CUSTOMER.',
-  '%S DITCHED THE ITEM. RECOVERY LOGGED AS RESTOCK. NO POINTS.',
+  '%S PUT IT ON A SHELF AND WALKED OUT A CUSTOMER.',
+  '%S DITCHED THE ITEM. RESTOCK LOGGED. NO POINTS.',
   '%S GAVE UP WAITING FOR YOU TO MOVE.',
 ];
 export const ABORT_STAMP = 'HE PUT IT BACK';
@@ -305,7 +351,7 @@ export const BACK_OFF = 'GET OUT OF HIS FACE — BACK AWAY';
 export const BACK_OFF_OK = [
   '%S — NO COMPLAINT FILED. GUEST RESUMED SHOPPING.',
   '%S DECLINED TO MAKE A THING OF IT.',
-  'GUEST RELATIONS EVENT DE-ESCALATED — %S. NOT LOGGED.',
+  'GUEST RELATIONS DE-ESCALATED — %S. NOT LOGGED.',
 ];
 
 // ================= ROUND 8: "HEY, PUT THAT BACK" =========================
@@ -339,9 +385,56 @@ export const BACK_OFF_OK = [
 // BACK_OFF_OK's third, at 61-64 — and they ellipse on the floor while reading
 // fine on the desk's 700 px band, which is why nobody caught them. Not touched
 // this round; flagged for whoever owns the next one.)
+//
+// ROUND 11 COLLECTED THAT FLAG, AND THERE WERE FOUR OF THEM RATHER THAN THREE.
+// Measured properly this time — every array in this file, every line, through
+// the real canvas at 11 px with the HH:MM:SS stamp and %S expanded, against
+// the floor ticker's 480 px rather than against a character count. ABORT_BALK's
+// last line was over too and round 8 missed it. All four are trimmed rather
+// than rewritten; the sentence each one was making is the sentence it still
+// makes, minus the words that were being replaced by an ellipsis anyway:
+//
+//     ATTEMPTED CONCEALMENT ABANDONED …    542 -> 469  CONCEALMENT ABANDONED
+//     %S LEFT IT ON THE WRONG SHELF …      520 -> 454  PUT IT ON A SHELF
+//     … RECOVERY LOGGED AS RESTOCK …       542 -> 454  RESTOCK LOGGED
+//     GUEST RELATIONS EVENT DE-ESCALATED   491 -> 447  GUEST RELATIONS
+//
+// The other three over 480 are NOT ticker lines and are correct where they
+// are: HR_BODY renders in the demotion form at its own width and POSTED_QUIET
+// renders in the prompt band, which is 900 px.
+//
+// ---- ROUND 11: THE STORE'S OWN WORD FOR IT ------------------------------
+// A supermarket does not have a "PA event". It has a COURTESY ANNOUNCEMENT,
+// and a courtesy announcement is addressed to a PLACE — aisle four — because a
+// loudspeaker cannot be addressed to a person. Two of the four lines below say
+// it that way now, and both halves of that are load-bearing rather than
+// decorative:
+//
+//   THE REGISTER  the comedy of this key is a formal retail system being used
+//                 to nag a stranger. `PA KEYED` is a machine noticing a switch
+//                 close; `COURTESY ANNOUNCEMENT — AISLE 4` is the same event
+//                 written up by somebody who has been to the training.
+//   THE AIM       naming the aisle instead of the man is the anti-oracle said
+//                 in the store's own vocabulary. It is TRUE of everybody who
+//                 heard it, which the %S lines are not, and it is the honest
+//                 description of what the player just did: he did not speak to
+//                 that man, he spoke to aisle four.
+//
+// CONTENT NOT LOGGED stays and is the whole privacy position in three words.
+// The player's actual voice goes out over the store on [F] and this game will
+// never know what he said — no recognition, no storage, deliberately, see
+// game.js's `talk`. A HUD that described the CONTENT would be lying about a
+// thing it cannot know; a HUD that describes the EVENT and refuses to describe
+// the content is funnier and is also the truth.
+//
+// RETIRED HERE, and only because four lines is a pool and six is a shuffle:
+//   'PA KEYED — DIRECTED AT %S. STORE-WIDE.'          — 'DIRECTED AT' is the
+//     claim the spill exists to deny. A PA is not directed at anybody.
+//   'PA — ANNOUNCEMENT MADE. AUDIBLE IN %S\'S AISLE.' — good line, and the
+//     courtesy pair says the same thing in the store's own words.
 export const PA_PUTBACK = [
-  'PA KEYED — DIRECTED AT %S. STORE-WIDE.',
-  'PA — ANNOUNCEMENT MADE. AUDIBLE IN %S\'S AISLE.',
+  'COURTESY ANNOUNCEMENT — %A. CONTENT NOT LOGGED.',
+  'PA — COURTESY ANNOUNCEMENT, %A. STORE-WIDE.',
   'PA KEYED. CONTENT NOT LOGGED. SUBJECT %S.',
   'ANNOUNCEMENT — %S AND EVERYONE IN EARSHOT.',
 ];
@@ -365,6 +458,90 @@ export const PA_SHRUG = [
   '%S CHECKED OVER HIS SHOULDER. CONTINUED.',
   'NO BEHAVIOURAL CHANGE LOGGED — %S.',
 ];
+// ==========================================================================
+// ROUND 11 — THE SECOND TIME, AND THE THIRD TIME
+// ==========================================================================
+// Client: "Refine the comedy mechanics of speaking on the intercom and the
+// reaction — maybe even the customer flips the bird at the security camera."
+//
+// The bodies are agents.js's. The RUNG is `s.annN`, which is how many times
+// this store has shouted at this body, and it is the only number any line
+// below is allowed to know:
+//
+//   1  he has no idea who said that                 (round 8's pool, unchanged)
+//   2  he finds the camera, and holds it too long
+//   3  the finger
+//
+// WHY THE COUNT IS SAFE, said once and then relied on everywhere. announceAt()
+// increments annN on the man you aimed at AND on every body inside annSpill,
+// so it is a fact about a loudspeaker and not about a person: an innocent
+// stood next to your subject climbs the ladder at exactly the same rate as
+// your subject, and the fourth shout at a flagged row is the fourth shout at
+// the three people beside him too. There is no guilt in it and no line below
+// reaches for any. The round-10 test is unchanged and every rung had to pass
+// it: read the line, then ask whether it would be strange printed under the
+// other kind of person. If anything the innocent gets there FIRST, because a
+// man reading a soup label is still in the aisle when you key the handset
+// again and a man who has concealed something is walking towards a door.
+//
+// AND THE REGISTER DOES NOT ESCALATE WITH THE BEHAVIOUR — that is the joke.
+// He gets progressively less polite; the terminal stays exactly as polite as
+// it was on the first announcement, because a form does not have a temper.
+// Nothing below is a wisecrack. Every one of them is a system filling in a
+// field correctly about something undignified.
+
+// RUNG 2. He has worked out where the voice comes from. `STILL LOOKING AT IT`
+// is deliberately the same construction as BEHAVIOUR_BENIGN's 'READING A
+// LABEL. STILL READING IT.' — the box has exactly one way of saying that a
+// person has not stopped doing a thing, and it uses it here too.
+export const PA_SEEN = [
+  '%S HAS FOUND THE CAMERA.',
+  'EYE CONTACT WITH DOME — %S. HELD FOUR SECONDS.',
+  '%S IS LOOKING AT THE CAMERA. STILL LOOKING.',
+];
+// RUNG 3. THE BIRD.
+//
+// Written as an incident report, because the funniest available version of a
+// man giving a camera the finger is the paperwork it generates. Three rules
+// held while writing these and each one killed a draft:
+//
+//   NO PUNCHLINE. The gesture is the funny thing; a line that comments on it
+//   is a second comedian talking over the first. Every rejected draft in the
+//   graveyard below is me being funnier than the store.
+//   THE SYSTEM DOES NOT MIND. It has no field for offence. It has a field for
+//   whether a complaint was filed and a field for whether the guest is still
+//   in the building, and it fills both in accurately.
+//   IT IS NOT A VERDICT. A man who has been shouted at three times has told
+//   you something about being shouted at three times and nothing whatsoever
+//   about his coat.
+//
+// The 'NO COMPLAINT WAS FILED' line is round 8's guarantee said out loud, and
+// it is the funniest sentence in this file for exactly that reason: the
+// announce path cannot reach onHarass BY CONSTRUCTION, so the store is
+// truthfully recording that nobody was upset enough to fill in a form, under a
+// photograph of a man in aisle four with his middle finger up at the ceiling.
+// The gap between those two facts is the whole joke and neither half of it is
+// a joke on its own.
+export const PA_BIRD = [
+  'OBSCENE GESTURE — %S. NO COMPLAINT WAS FILED.',
+  '%S — GESTURE AT DOME. GUEST REMAINS ON PREMISES.',
+  '%S GESTURED AT CAMERA, THEN RESUMED SHOPPING.',
+];
+// One pool per rung, indexed by the count and clamped at the top. A fourth
+// announcement gets the third rung again, which is correct: there is nothing
+// ruder than the finger and a store that escalated past it would be writing a
+// different game's copy.
+export const PA_SHRUG_RUNGS = [PA_SHRUG, PA_SEEN, PA_BIRD];
+// REJECTED, all three for the same reason — the store noticing:
+//   '%S IS NOT SORRY.'                        — a verdict on a state of mind
+//     the DVR cannot see, and it is only sayable about somebody who did
+//     something wrong. Guilt, in an adjective.
+//   'THAT WAS DELIBERATE — %S.'               — same. Everything a camera sees
+//     is deliberate; the word is doing editorial work.
+//   '%S HAS AN OPINION ABOUT LOSS PREVENTION.' — funny, and it is the file
+//     laughing at its own gag. The store does not think this is funny. That
+//     is the entire register and it survives exactly as long as nothing in
+//     here winks.
 // He ran. onBolt() already puts SUBJ-xx IS RUNNING in the ticker the same
 // frame, so this pool exists for the chip and for the desk, where there is no
 // chip — and never fires alongside the other one. Machine voice; the box is
@@ -386,7 +563,12 @@ export const PA_BOLT = [
 export const PA_CHIP_AIM = 'ANNOUNCEMENT — %S';
 export const PA_CHIP_WAIT = 'WAITING FOR A REACTION';
 export const PA_CHIP_HEED = 'HE PUT SOMETHING BACK';
-export const PA_CHIP_SHRUG = 'HE LOOKED AROUND';
+// ROUND 11: the same three rungs, in the chip's four-word voice. The floor
+// chip is the one readout in the game that is allowed to use a pronoun,
+// because on the floor the man is eight metres away and being pointed at by a
+// bracket — there is no ambiguity about who `HE` is. Indexed by annN, same as
+// the roster row and the ticker, and the third one is the whole round.
+export const PA_CHIP_SHRUG = ['HE LOOKED AROUND', 'HE FOUND THE CAMERA', 'HE GESTURED AT THE CAMERA'];
 // ROUND 9 — THE THIRD THING HE CAN DO IS RUN.
 // agents.js added 'bolt': you shouted at him and he panicked. Unlike the other
 // two this one IS a confession, and the writing job is therefore the opposite
@@ -441,9 +623,45 @@ export const PA_AT = 'PA — SAY SOMETHING TO %S';
 // 'STANDING VERY STILL' and 'SMELLED A MELON' and have to read as the same
 // instrument. Same anti-oracle test as PA_HEED: would this line be strange
 // printed under the other kind of person? None of the three would.
-export const PA_ROW_WAIT = 'HEARD THE PA — NO REACTION YET';
-export const PA_ROW_HEED = 'PUT SOMETHING BACK AFTER THE PA';
-export const PA_ROW_SHRUG = 'LOOKED AROUND FOR WHOEVER SAID THAT';
+//
+// ---- ROUND 11: AND THE ROW IS WHERE THE LADDER IS ACTUALLY READ ----------
+// Three rungs each, indexed by annN, and this is the channel the round-10
+// guarantee lives on: the man you aimed at and the three people who merely
+// happened to be in his aisle get the IDENTICAL line at whatever rung each of
+// them has reached. It survives the new copy because the rung is a count of
+// announcements and not a judgement — a bystander on his third shout prints
+// the same OBSCENE GESTURE row as the subject on his third shout, and the
+// player cannot tell from the list which of the four was aimed at.
+//
+// THE COUNT IN THE WAIT AND HEED ROWS IS DOING WORK, not decoration. It is the
+// only place the player is TOLD there is a ladder, and it is told in the
+// prissiest available form — an ordinal, on a row, in the same column as
+// SMELLED A MELON. A player who reads `3RD ANNOUNCEMENT — NO REACTION YET`
+// knows two things he was never told: that the store is counting, and that the
+// counting is his own doing.
+//
+// THE GESTURE ROW IS THE FORM AND FORMS DO NOT VARY. One line, every time,
+// with only the event number moving — which is why the ticker pools above get
+// three lines each and this one gets exactly one. `%N` is the store's own
+// analytics event counter, the SAME counter that numbers a concealment (see
+// game.js's nextEvt), and that is the whole gag: a man's middle finger and a
+// steak going into a coat are the same kind of row to this building, filed
+// four apart.
+export const PA_ROW_WAIT = [
+  'HEARD THE PA — NO REACTION YET',
+  '2ND ANNOUNCEMENT — NO REACTION YET',
+  '3RD ANNOUNCEMENT — NO REACTION YET',
+];
+export const PA_ROW_HEED = [
+  'PUT SOMETHING BACK AFTER THE PA',
+  'PUT SOMETHING BACK. 2ND ANNOUNCEMENT.',
+  'PUT SOMETHING BACK. 3RD ANNOUNCEMENT.',
+];
+export const PA_ROW_SHRUG = [
+  'LOOKED AROUND FOR WHOEVER SAID THAT',
+  'FOUND THE CAMERA. STILL LOOKING AT IT.',
+  'OBSCENE GESTURE AT CAMERA — EVENT %N',
+];
 
 // ---- WHAT IT COSTS, SAID BEFORE IT IS SPENT -------------------------------
 // The chase builder priced it: announcing at a subject you have already made
@@ -494,3 +712,6 @@ export const fill = (s, door) => String(s).replace(/%D/g, door || 'DOOR 1');
 export const fillS = (s, code) => String(s).replace(/%S/g, code || 'SUBJECT');
 // %N is a count. Round 8's chip needs one and there was no third hole.
 export const fillN = (s, n) => String(s).replace(/%N/g, String(n | 0));
+// %A is a PLACE — AISLE 4, FRONT END. Round 11's courtesy announcements are
+// addressed to one, because that is what a loudspeaker is addressed to.
+export const fillA = (s, where) => String(s).replace(/%A/g, where || 'THE SALES FLOOR');
