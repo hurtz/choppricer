@@ -25,6 +25,11 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0b0b0c);
 
 const world = buildStore(THREE, scene);
+// Everything in the scene at THIS instant is store. agents.js adds the cop, each
+// shopper rig, each cart, each child and the powerup props DIRECTLY to the scene at
+// five separate sites with no common group — so name- and material-based hide lists
+// kept missing one and leaking a character into a blind test. This is exact.
+const STORE_NODES = new Set(scene.children);
 const cctv = createCCTV(THREE, renderer, scene);
 const agents = createAgents(THREE, scene, world);
 const game = createGame(hud, { cctv, agents, world, THREE });
@@ -154,7 +159,17 @@ function run(seconds, opts = {}) {
 // Clean capture: raw scene through a posable camera, NO cctv grade and NO HUD.
 // Used to judge the store on its own merits against real photography.
 const probeCam = new THREE.PerspectiveCamera(52, RENDER_W / RENDER_H, 0.1, 200);
-async function snapClean(name, pose) {
+// storeOnly: hide everything the store did not build. Used for blind A/B captures,
+// where a stray character or placeholder prop hands the critic a free call.
+async function snapClean(name, pose, opts = {}) {
+  const reHide = [];
+  if (opts.storeOnly) {
+    for (const o of scene.children) {
+      if (!STORE_NODES.has(o) && o.visible && !o.isLight && !o.isCamera) {
+        o.visible = false; reHide.push(o);
+      }
+    }
+  }
   if (pose) {
     probeCam.fov = pose.fov ?? 52;
     probeCam.position.set(...pose.pos);
