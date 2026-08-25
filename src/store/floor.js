@@ -689,7 +689,11 @@ uniform sampler2D uBurn;
         // a growing footprint, applied to the geometry instead of the lamps
         float lod = log2( max( 1.0, ( 0.06 + t * 0.16 ) * uFldCfg.y ) );
         vec4 hit = chopFldHit( Q, lod, uFldRefl.y + t * 0.05 );
-        if ( hit.a > pocc ) { pocc = hit.a; pcol = hit.rgb; hitY = Q.y; }
+        // ROUND 9 — the colour at the ray's OWN HEIGHT, not the column
+        // average. Same fix as the glass and the same reason: a floor mirroring
+        // an endcap should show its dark kick low and its promo header high,
+        // and one averaged colour per column cannot.
+        if ( hit.a > pocc ) { pocc = hit.a; pcol = chopFldCol( Q.xz, Q.y, lod ); hitY = Q.y; }
       }
     }
     if ( occ > 0.004 ) {
@@ -831,7 +835,17 @@ export function reflectiveGlass(THREE, U, opts = {}) {
     // reference floral cooler does, and 0.26 is where the product near the
     // mullions stops being readable while the middle of each pane stays
     // shoppable — which is the behaviour, not the number, that was asked for.
-    uGF0: { value: opts.f0 ?? 0.26 },
+    //
+    // ROUND 9 — 0.26 to 0.34, and the reason is not that 0.26 was unphysical.
+    // It is that until this round the reflection was a CONSTANT, so every count
+    // of reflectance spent on it bought a flat veil and nothing else, and the
+    // number was correctly tuned down to keep the veil out of the way. Now that
+    // the trace returns an image with the ceiling rows in the top of the pane
+    // and the mirrored aisle across the middle, the same reflectance buys
+    // structure instead of haze, and 0.34 is inside the 0.10-0.20 single-
+    // interface figure once the four interfaces and the low-e coat of a sealed
+    // merchandiser door are counted.
+    uGF0: { value: opts.f0 ?? 0.34 },
     // near-mirror, so the lobe barely opens with distance — but it DOES open,
     // and that is what merges the far end of a run of fixtures.
     uGBlur: { value: new THREE.Vector2(0.045, 0.026) },
@@ -876,7 +890,7 @@ uniform vec3 uTint, uFloorCol, uHaze, uRoomCol, uWallCol;
 uniform float uTintA, uGap, uGhost, uGGloss, uPaneAsp, uGF0;
 uniform vec2 uGBlur, uGBlurMax;
 uniform vec4 uRoom;
-uniform float uPropOn;
+uniform float uPropOn, uFldGain;
 ` + FIELD_GLSL + CHOP_SCENE_GLSL + `
 
 // The positive exit parameter of a slab. Guarded, because a ray that is
@@ -888,7 +902,9 @@ float chopSlab( float o, float d, float lo, float hi ) {
 }
 
 // One mirrored ray, from an origin ON the pane, out into the sales floor.
-vec3 chopTrace( vec3 O, vec3 R, float haze ) {
+// PN is the pane's own outward normal — round 9 needs it; see the self-hit
+// note inside the march.
+vec3 chopTrace( vec3 O, vec3 R, vec3 PN, float haze ) {
   // Where the ray leaves the ROOM. Not the ceiling plane extended forever.
   float tCeil  = R.y >  0.001 ? ( uCeilH - O.y ) / R.y : 1.0e9;
   float tFloor = R.y < -0.001 ? ( 0.02 - O.y ) / R.y   : 1.0e9;
@@ -914,38 +930,103 @@ vec3 chopTrace( vec3 O, vec3 R, float haze ) {
   // field carries all of it, and the product on it, at 47 mm.
   float fT = 1.0e9;
   vec3 fC = vec3( 0.0 );
-  for ( int i = 0; i < 14; i ++ ) {
-    float u = ( float( i ) + 0.5 ) / 14.0;
+  // THE FIELD MARCH GETS ITS OWN RANGE. tEnd is where the ray leaves the ROOM,
+  // and for a pane seen at a shallow angle that is thirty metres away — so a
+  // squared distribution over it steps nearly two metres per sample at the far
+  // end, and a 1.3 m gondola crossed at that spacing is a coin flip. Measured:
+  // turning the field march off changed the pane by 2.1 counts out of 94, i.e.
+  // it was contributing essentially nothing. Past about fifteen metres the
+  // reflection lobe is wide enough that the answer IS the room average, which
+  // the wall branch already returns, so the field only has to be dense where
+  // its answer differs from that.
+  float tF = min( tEnd, 15.0 );
+  for ( int i = 0; i < 20; i ++ ) {
+    float u = ( float( i ) + 0.5 ) / 20.0;
     float t = tEnd * u * u;
-    vec3 Q = O + R * t;
-    if ( uPropOn > 0.5 && fT > 1.0e8 && t > 0.35 ) {
-      vec4 fh = chopFldAt( Q.xz, log2( max( 1.0, ( 0.05 + t * 0.10 ) * uFldCfg.y ) ) );
-      // a pane cannot reflect the case it is set into: skip the field for as
-      // long as the ray is still inside this run's own footprint
-      float own = ( selfSide != 0.0 && sign( Q.x ) == selfSide
-        && abs( abs( Q.x ) - uEdgeX ) < uRunHalf + 0.35 ) ? 1.0 : 0.0;
-      if ( own < 0.5 && fh.a > 0.035 && Q.y < fh.a * uFldCfg.x ) {
-        fT = t; fC = fh.rgb;
+    vec3 Q = O + R * ( tF * u * u );
+    // ROUND 9. Three changes, and together they are the difference between a
+    // pane that mirrors the aisle and the "low-alpha white wash" blind test 8
+    // measured across twelve doors in a row.
+    //
+    //  * 20 samples, not 14. On a squared distribution over a 30 m ray the
+    //    round-8 march stepped 1.5 m at a time past three metres out, and a
+    //    gondola is 1.34 m deep — so the nearest thing a door looks at across
+    //    a cross-aisle could fall clean between two samples and the pane
+    //    returned the room average for it.
+    //  * the t > 0.35 gate is gone. It existed to stop a pane sampling its own
+    //    case, but selfSide already does that properly, and what the gate
+    //    actually excluded was everything within 350 mm of the glass — which
+    //    on a reach-in run is the door frame, the mullion and the case next
+    //    door, i.e. the things a real door most obviously reflects.
+    //  * the colour comes from chopFldCol at the ray's own HEIGHT rather than
+    //    from one column average. That is the whole reason objects contributed
+    //    nothing: a column averaged over 0.04-1.45 m is one flat number, so
+    //    every reflected fixture was a vertical stripe of mud whatever else
+    //    the trace did right.
+    // A PANE CANNOT REFLECT THE CASE IT IS SET INTO, and round 8's guard
+    // against that only covered the two runs that lie along X. This is the
+    // single largest reason the glass had no image in it.
+    //
+    // The back-wall dairy run faces -Z, its collider is stamped from 100 mm in
+    // FRONT of the glass plane (colliders are padded; the field takes the
+    // collider), and the march's first sample sits a few millimetres off the
+    // pane. So sample zero landed inside the case's own stamp, reported a hit,
+    // latched fT, and the loop's own "stop at the first hit" then skipped every
+    // remaining sample. Every pane in the run returned one colour: its own
+    // case's column average. That is a low-alpha wash by construction, and no
+    // amount of work further down the shader could recover from it.
+    //
+    // The fix is geometric rather than per-run: a reflected ray has to clear
+    // its own pane's plane by 300 mm before the field is allowed to answer. It
+    // is correct for the back wall, for both perimeter runs, and for any pane
+    // anyone adds later — and it is also physically right, because a planar
+    // run of doors genuinely cannot see itself.
+    float tf = tF * u * u;
+    float ahead = dot( Q - O, PN );
+    if ( uPropOn > 0.5 && fT > 1.0e8 && ahead > 0.30 ) {
+      float lod = log2( max( 1.0, ( 0.05 + tf * 0.10 ) * uFldCfg.y ) );
+      vec4 fh = chopFldAt( Q.xz, lod );
+      if ( fh.a > 0.035 && Q.y < fh.a * uFldCfg.x ) {
+        fT = tf; fC = chopFldCol( Q.xz, Q.y, lod );
       }
     }
-    if ( Q.y > uShelfH + 0.34 ) continue;
-    vec3 rr = chopRun( Q.x );
-    if ( rr.z > 0.5 && selfSide != 0.0 && sign( Q.x ) == selfSide ) continue;
-    float gate = max( rr.z, chopRunZ( Q.z ) );
+    // The analytic gondola-run test keeps the FULL range: it is closed form,
+    // it costs no texture tap, and a run of shelving 25 m down the store is
+    // still a run of shelving.
+    vec3 Qr = O + R * t;
+    if ( Qr.y > uShelfH + 0.34 ) continue;
+    vec3 rr = chopRun( Qr.x );
+    if ( rr.z > 0.5 && selfSide != 0.0 && sign( Qr.x ) == selfSide ) continue;
+    float gate = max( rr.z, chopRunZ( Qr.z ) );
     if ( abs( rr.x ) < uRunHalf && rr.y > 0.5 && gate > 0.5 ) { hitT = min( hitT, t ); }
   }
   if ( fT < hitT && fT < 1.0e8 ) {
-    // Whatever is actually standing there, mirrored. A door is a mirror, not a
-    // smear, so this keeps the field's colour nearly straight and only breaks
-    // it up on the facing rhythm of the shelf it came off.
+    // Whatever is actually standing there, mirrored.
+    //
+    // ROUND 9 — THE BREAK-UP WAS EATING THE IMAGE. This used to multiply the
+    // reflected colour by ( 0.74 + 0.40 * n + 0.16 * n2 ) on a 290 mm x 170 mm
+    // hash lattice: a 0.74-to-1.30 random gain, i.e. plus or minus a quarter
+    // stop of pure noise laid over every reflected object. That is the right
+    // instinct for the FLOOR, where a burnished surface genuinely smears what
+    // it reflects into ragged bands, and it is exactly wrong for glass. A
+    // sealed pane is a mirror. Blind test 8: "not one carries a mirrored image
+    // of the aisle" — and one of the reasons is that the trace was computing an
+    // image and then multiplying a different random number into every 290 mm
+    // of it. What survives noise like that is the mean, which is a wash.
+    //
+    // What a real door does put over the image is the CASE'S OWN CONTENTS
+    // showing through from behind, and that is not noise, it is the shelf
+    // rhythm: horizontal bands at the deck pitch. So the break-up is now one
+    // gentle horizontal band at 380 mm — a shelf pitch — at a fifth of the
+    // old amplitude, and the image reads through it.
     vec3 Q = O + R * fT;
-    float n = chopHash( vec2( floor( Q.z * 3.4 ), floor( Q.y * 6.0 ) ) );
-    float n2 = chopHash( vec2( floor( Q.x * 3.4 ), floor( Q.y * 2.2 ) + 11.0 ) );
+    float band = 0.93 + 0.13 * chopHash( vec2( 3.0, floor( Q.y * 2.63 ) ) );
     // vertical falloff: what a pane sees of a 1 m endcap standing 4 m away is
-    // its lit top, not its kickplate
-    float lift = 0.60 + 0.75 * smoothstep( 0.10, 1.30, Q.y );
-    return fC * lift * ( 0.74 + 0.40 * n + 0.16 * n2 )
-      * mix( 1.0, 0.72, smoothstep( 6.0, 24.0, fT ) );
+    // its lit top, not its kickplate. Gentler than round 8's 0.60-1.35, which
+    // was doing half the wash on its own at door-bottom height.
+    float lift = 0.74 + 0.46 * smoothstep( 0.10, 1.30, Q.y );
+    return fC * uFldGain * 0.40 * lift * band
+      * mix( 1.0, 0.78, smoothstep( 6.0, 24.0, fT ) );
   }
   if ( hitT < 1.0e8 ) {
     vec3 Q = O + R * hitT;
@@ -1017,7 +1098,17 @@ void main() {
   // film is a band across the lower third with a soft, wavering top edge.
   float wob = sin( vChopUv.x * 11.0 + dh * 6.28 ) * 0.035
             + sin( vChopUv.x * 26.0 + dh * 3.1 ) * 0.014;
-  float cond = smoothstep( 0.34 + wob, 0.05 + wob, vChopUv.y ) * ( 0.35 + 0.5 * dh );
+  // ROUND 9 — halved, and it is now PER DOOR rather than on every door. A
+  // reach-in merchandiser has anti-sweat heat in the frame and a low-e coat
+  // precisely so the customer can read the package through it; a whole run of
+  // twelve doors uniformly fogged across their bottom third is a run of twelve
+  // broken doors. Round 8 ran this at 0.35-0.85 on every pane, and combined
+  // with the 0.55 mix toward uHaze and the film*0.34 additive term below, the
+  // lower third of every door in the store was being milked toward white by
+  // about 0.45 before the mirror had a say. That, not the trace, is what blind
+  // test 8 was looking at when it said "just a low-alpha white wash".
+  float cond = smoothstep( 0.30 + wob, 0.05 + wob, vChopUv.y )
+             * max( 0.0, dh - 0.42 ) * 0.72;
   // FROST creeping out of the bottom corners, where the evaporator draws.
   float cx = min( vChopUv.x, 1.0 - vChopUv.x ) * uPaneAsp;
   float frost = smoothstep( 0.16, 0.0, cx + vChopUv.y * 0.55 );
@@ -1034,19 +1125,26 @@ void main() {
   float fres = uGF0 + ( 1.0 - uGF0 ) * pow( 1.0 - ct, 5.0 );
   float gloss = uGGloss * ( 1.0 - 0.50 * film );
 
-  vec3 refl = chopTrace( Pw, R, film );
+  vec3 refl = chopTrace( Pw, R, N, film );
   // the inner pane, 2 * gap * tan(theta) away in the plane of the glass. It
   // SHARES the reflected energy with the outer surface rather than doubling
   // it, so this is a mix, not a sum.
   vec3 Rp = R - N * dot( R, N );
-  float tanT = length( Rp ) / max( abs( dot( R, N ) ), 0.14 );
+  // ROUND 9 — tanT was clamped at 1/0.14 = 7.1, so at grazing the second
+  // surface was traced from 227 mm away in the plane of the glass. That is not
+  // a double-glazing ghost, it is a second reflection of a different part of
+  // the room, and it is the most likely source of blind test 8's "a faint cyan
+  // cast displaced to the LEFT of the bottles that would cast it". A 16 mm
+  // sealed unit offsets its two surfaces by a few pixels; 3.2 is about 100 mm
+  // at the most grazing angle a pane in this store is ever seen at.
+  float tanT = min( length( Rp ) / max( abs( dot( R, N ) ), 0.16 ), 3.2 );
   vec3 off = normalize( Rp + vec3( 0.0, 1e-5, 0.0 ) ) * ( 2.0 * uGap * tanT );
-  vec3 ghost = chopTrace( Pw + off, R, film );
+  vec3 ghost = chopTrace( Pw + off, R, N, film );
   refl = mix( refl, ghost, uGhost );
-  refl = mix( refl, uHaze * ( 0.55 + 0.85 * dot( refl, vec3( 0.33 ) ) ), film * 0.55 );
+  refl = mix( refl, uHaze * ( 0.55 + 0.85 * dot( refl, vec3( 0.33 ) ) ), film * 0.34 );
 
-  float A = clamp( fres * gloss + uTintA + film * 0.34, 0.0, 0.985 );
-  vec3 C = ( refl * ( fres * gloss ) + uTint * uTintA + uHaze * ( film * 0.34 ) ) / max( A, 1e-3 );
+  float A = clamp( fres * gloss + uTintA + film * 0.22, 0.0, 0.985 );
+  vec3 C = ( refl * ( fres * gloss ) + uTint * uTintA + uHaze * ( film * 0.22 ) ) / max( A, 1e-3 );
   gl_FragColor = vec4( C, A );
   #include <colorspace_fragment>
 }`,

@@ -850,8 +850,15 @@ export function tagAtlas(THREE) {
     g.textBaseline = 'alphabetic';
 
     if (i >= TAG_SKU) { orphanTag(g, i - TAG_SKU, CW, CH, rng); g.restore(); continue; }
-    const sale = i % 5 === 4, yellow = i % 7 === 3;
-    g.fillStyle = sale ? '#ffe418' : (yellow ? '#fff6b0' : '#ffffff');
+    // ROUND 9 — CLEARANCE. Blind test 8 named the missing third state by
+    // name: "white, yellow sale, orange clearance". A clearance card is not a
+    // recolour of a sale card — it is a different DOCUMENT: full-bleed orange,
+    // no unit price (the item is going away), the old price struck through,
+    // and a hand-written reduction date because a department manager wrote it
+    // on with a marker at 6 a.m.
+    const clear = i === 2 || i === 9;
+    const sale = !clear && i % 5 === 4, yellow = !clear && i % 7 === 3;
+    g.fillStyle = clear ? '#f07018' : (sale ? '#ffe418' : (yellow ? '#fff6b0' : '#ffffff'));
     g.fillRect(0, 0, CW, CH);
     g.strokeStyle = 'rgba(70,64,54,0.55)'; g.lineWidth = 2;
     g.strokeRect(1, 1, CW - 2, CH - 2);
@@ -860,15 +867,34 @@ export function tagAtlas(THREE) {
       g.fillStyle = '#fffdf2'; g.textAlign = 'left';
       fitText(g, 'SALE PRICE', 5, CH * 0.16, CW * 0.5, CH * 0.15, FACE.fat, '900', 'left');
     }
+    if (clear) {
+      g.fillStyle = '#1d1a16'; g.fillRect(0, 0, CW, CH * 0.24);
+      g.fillStyle = '#ffd9a8'; g.textAlign = 'left';
+      fitText(g, 'CLEARANCE', 5, CH * 0.19, CW * 0.62, CH * 0.18, FACE.fat, '900', 'left');
+      // struck-through was-price, top right
+      g.fillStyle = '#7a3a12';
+      g.font = `800 ${CH * 0.15}px ${FACE.grot}`;
+      const was = `$${ri(rng, 2, 9)}.${String(ri(rng, 10, 99))}`;
+      g.fillText(was, CW * 0.70, CH * 0.41);
+      const ww = g.measureText(was).width;
+      g.fillRect(CW * 0.70 - 2, CH * 0.36, ww + 4, 2.4);
+      // the marker date somebody wrote on it
+      g.fillStyle = 'rgba(28,24,20,0.72)';
+      g.font = `700 ${CH * 0.12}px ${FACE.mono}`;
+      g.save();
+      g.translate(CW * 0.71, CH * 0.92); g.rotate(rr(rng, -0.10, 0.05));
+      g.fillText(`${ri(rng, 1, 12)}/${ri(rng, 10, 28)}`, 0, 0);
+      g.restore();
+    }
 
     // the big numeral — this is what a shopper's eye locks onto and it is
     // the dominant mark on every tag in every reference photo
     // grocery prices cluster at 99/49/29 cents and rarely start at zero
     const dollars = rng() < 0.16 ? 0 : ri(rng, 1, 9);
     const cents = rng() < 0.55 ? pk(rng, [99, 49, 29, 79, 19, 89, 59, 39]) : ri(rng, 0, 99);
-    g.fillStyle = sale ? '#1b1a17' : '#141312';
+    g.fillStyle = (sale || clear) ? '#1b1a17' : '#141312';
     g.textAlign = 'left';
-    const py = sale ? CH * 0.66 : CH * 0.58;
+    const py = (sale || clear) ? CH * 0.70 : CH * 0.58;
     g.font = `900 ${CH * 0.46}px ${FACE.fat}`;
     const big = `${dollars}`;
     g.fillText(big, 6, py);
@@ -878,20 +904,24 @@ export function tagAtlas(THREE) {
     g.font = `900 ${CH * 0.13}px ${FACE.grot}`;
     g.fillText('$', 6 + bw + 3, py);
 
-    // caps description + unit price
-    g.fillStyle = '#26241f';
-    fitText(g, pk(rng, BRANDS), CW * 0.45, CH * 0.26, CW * 0.52, CH * 0.16,
-      FACE.grot, '800', 'left');
-    g.fillStyle = '#3b382f';
-    fitText(g, pk(rng, TAG_DESC), CW * 0.45, CH * 0.42, CW * 0.50, CH * 0.125,
-      FACE.grot, '600', 'left');
-    g.fillStyle = '#55503f';
-    fitText(g, `UNIT ${ri(rng, 1, 9)}.${ri(rng, 10, 99)} PER LB`, CW * 0.45, CH * 0.56,
-      CW * 0.48, CH * 0.10, FACE.grot, '400', 'left');
+    // caps description + unit price. A clearance card carries neither: the
+    // item is being run out, so the only things on it are the reduction and
+    // what it used to cost.
+    if (!clear) {
+      g.fillStyle = '#26241f';
+      fitText(g, pk(rng, BRANDS), CW * 0.45, CH * 0.26, CW * 0.52, CH * 0.16,
+        FACE.grot, '800', 'left');
+      g.fillStyle = '#3b382f';
+      fitText(g, pk(rng, TAG_DESC), CW * 0.45, CH * 0.42, CW * 0.50, CH * 0.125,
+        FACE.grot, '600', 'left');
+      g.fillStyle = '#55503f';
+      fitText(g, `UNIT ${ri(rng, 1, 9)}.${ri(rng, 10, 99)} PER LB`, CW * 0.45, CH * 0.56,
+        CW * 0.48, CH * 0.10, FACE.grot, '400', 'left');
+    }
 
     // UPC block bottom-right
     g.fillStyle = '#1a1917';
-    let bx = CW * 0.50;
+    let bx = clear ? CW * 1.5 : CW * 0.50;
     while (bx < CW - 8) {
       const w = rr(rng, 0.8, 2.2);
       if (rng() < 0.7) g.fillRect(bx, CH * 0.66, w, CH * 0.20);
@@ -901,7 +931,7 @@ export function tagAtlas(THREE) {
     g.fillStyle = '#2a2824';
     g.fillText(`${ri(rng, 10000, 99999)} ${ri(rng, 10000, 99999)}`, CW * 0.50, CH * 0.955);
     // coloured spine down the left edge, the way ESL-style tags print
-    g.fillStyle = sale ? '#b8190f' : (yellow ? '#c8a41c' : '#8d8676');
+    g.fillStyle = clear ? '#8c3a08' : (sale ? '#b8190f' : (yellow ? '#c8a41c' : '#8d8676'));
     g.fillRect(0, 0, CW * 0.022, CH);
     g.restore();
   }

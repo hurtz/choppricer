@@ -25,7 +25,16 @@ export const pick = (rng, arr) => arr[Math.floor(rng() * arr.length) % arr.lengt
 // it and why authoring occlusion at remembered junctions could never work.
 //
 // The sink is a plain function so kit.js keeps no dependency on light.js:
-//   sink(x, z, w, l, y0, y1, r, g, b)   footprint + vertical span + LINEAR rgb
+//   sink(x, z, w, l, y0, y1, r, g, b, round)
+//     footprint + vertical span + LINEAR rgb + "this footprint is an ellipse"
+//
+// ROUND 9 — `round`. Blind test 8's first call was a hard-edged black
+// rectangle under a cylindrical barrel. The authored quad that caused it is
+// gone, but a cylinder stamped into the occupancy field as its BOUNDING SQUARE
+// casts a square computed shadow, which is the same tell arrived at by
+// arithmetic instead of by hand. It is a property of the PRIMITIVE — a batch
+// built on a CylinderGeometry or a SphereGeometry is round, always, whoever
+// pushes into it — so it is set once on the batch and never at a call site.
 let FIELD_SINK = null;
 export function setFieldSink(fn) { FIELD_SINK = fn; }
 
@@ -36,8 +45,11 @@ export class Batch {
   // batch also carries a per-instance `aCell` attribute holding that instance's
   // atlas-cell UV origin, so one geometry + one draw call serves every design
   // in the atlas instead of one geometry clone per design.
-  constructor(THREE, geo, mat, grid = null) {
+  // `round` = this batch's primitive has a circular cross-section, so its
+  // footprint in the occupancy field is an ellipse rather than its AABB.
+  constructor(THREE, geo, mat, grid = null, round = false) {
     this.THREE = THREE; this.geo = geo; this.mat = mat; this.grid = grid;
+    this.round = round;
     this.t = []; this.c = []; this.cells = []; this.n = 0;
   }
   // p / e(uler) / s(cale) are 3-arrays; col is a THREE.Color (working space).
@@ -55,8 +67,11 @@ export class Batch {
       const cr = Math.abs(Math.cos(ez)), sr = Math.abs(Math.sin(ez));
       const hy = cr * sy + sr * sx;                 // effective vertical extent
       const wx = cr * sx + sr * sy;                 // roll widens the footprint
+      // A rolled cylinder is no longer round in plan, so the ellipse only
+      // holds while it is standing up.
       FIELD_SINK(px, pz, cy * wx + sy2 * sz, sy2 * wx + cy * sz,
-        py - hy / 2, py + hy / 2, col.r, col.g, col.b);
+        py - hy / 2, py + hy / 2, col.r, col.g, col.b,
+        this.round && cr > 0.985);
     }
   }
   box(px, py, pz, sx, sy, sz, col) { this.push(px, py, pz, 0, 0, 0, sx, sy, sz, col); }

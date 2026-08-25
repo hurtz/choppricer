@@ -66,7 +66,9 @@ function textures(THREE) {
     slot: TX.slotTex(THREE),
     smear: TX.smearTex(THREE),
     peg: TX.pegTex(THREE),
-    wear: TX.floorWearTex(THREE),
+    // `wear` is NOT built here: it is derived from the store's own traffic
+    // plan and so cannot exist before the run layout does. See THE TRAFFIC
+    // PLAN below, where it is assigned onto T.
     dangle: TX.danglerAtlas(THREE),
     sign: TX.signAtlas(THREE, DEPTS),
     blade: TX.bladeAtlas(THREE, DEPTS),
@@ -314,8 +316,13 @@ export function buildStore(THREE, scene) {
   // that are walls and cases rather than instanced boxes. Everything that ends
   // up occluding, reflecting or bouncing light does so because it was BUILT,
   // not because it was remembered.
-  const FIELD = LT.makeField(THREE, STORE.minX, STORE.minZ, SW, SD, 1024);
-  setFieldSink((x, z, w, l, y0, y1, r, g, b) => FIELD.box(x, z, w, l, y0, y1, r, g, b));
+  // ROUND 9 — 1024 -> 2048, i.e. 47 mm/texel -> 23 mm. The contact core in
+  // light.js resolves a two-to-five pixel dark line at a fixture base, which at
+  // the distance those bases are photographed from is 25-60 mm of floor. A
+  // 47 mm texel could not carry one however the shader asked.
+  const FIELD = LT.makeField(THREE, STORE.minX, STORE.minZ, SW, SD, 2048);
+  setFieldSink((x, z, w, l, y0, y1, r, g, b, round) =>
+    FIELD.box(x, z, w, l, y0, y1, r, g, b, round));
 
   const solid = (x0, y0, z0, x1, y1, z1, fieldHex) => {
     colliders.push(new THREE.Box3(
@@ -325,6 +332,17 @@ export function buildStore(THREE, scene) {
     // occupancy field takes it for free, which is how the perimeter walls, the
     // cooler cases and the checkout runs get into the reflection and the AO
     // without a second list to keep in sync with this one.
+    //
+    // ROUND 9 — `fieldHex === false` means "collider only". There is exactly
+    // one kind of body where the two disagree: an OPEN WIRE frame. A cart's
+    // collider is a 0.84 x 1.20 x 1.00 box because that is what a body has to
+    // not walk through, but stamping that into the height field would drop a
+    // hard-edged rectangular shadow the size of the whole cart onto the floor —
+    // which is the round-8 barrel fault re-created by a different route, and it
+    // would be under the one prop the critic is watching. Every wire in that
+    // basket goes through Batch.push on its own, so the field already has the
+    // cart at 6.5 mm; the collider must not paint over it with a slab.
+    if (fieldHex === false) return;
     FIELD.boxHex((x0 + x1) / 2, (z0 + z1) / 2, Math.abs(x1 - x0), Math.abs(z1 - z0),
       Math.min(y0, y1), Math.max(y0, y1), fieldHex === undefined ? null : fieldHex);
   };
@@ -345,6 +363,13 @@ export function buildStore(THREE, scene) {
     bag: pillowGeo(THREE),
     tube: new THREE.CylinderGeometry(0.5, 0.5, 1, 7, 1, true),
     drum: new THREE.CylinderGeometry(0.5, 0.5, 1, 18, 1, true),
+    // CLOSED, unlike drum and tube. Both of those are open-ended because they
+    // are only ever seen standing up with something on top of them, and an
+    // open cylinder is two fewer triangle fans. A caster wheel is a cylinder
+    // lying on its SIDE and you look straight into the end of it, so the first
+    // build of the round-9 casters rendered four dark holes with a fork round
+    // them.
+    wheel: new THREE.CylinderGeometry(0.5, 0.5, 1, 14, 1, false),
     orb: new THREE.SphereGeometry(0.5, 7, 5),
     dome: new THREE.SphereGeometry(0.5, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2),
   };
@@ -409,10 +434,15 @@ export function buildStore(THREE, scene) {
     const wrapP = new Batch(THREE, PG.wrap, M.pkgBox, PK.ATLAS.carton);
     const bagP = new Batch(THREE, PG.bag, M.pkgBag, PK.ATLAS.pouch);
     const gusP = new Batch(THREE, PG.gusset, M.pkgBag, PK.ATLAS.pouch);
+    // cans, jars, tubs and bottles are all lathes: round in plan, so round in
+    // the field. It matters less on a 60 mm can than on a 600 mm barrel, but
+    // it is the same rule and it costs nothing to be consistent about it.
     const cs = {};
-    for (const k of CSHAPES) cs[k] = new Batch(THREE, PG[k], M.pkgCan, PK.ATLAS.can);
+    for (const k of CSHAPES) cs[k] = new Batch(THREE, PG[k], M.pkgCan, PK.ATLAS.can, true);
     const bs = {};
-    for (const k of BSHAPES) bs[k] = new Batch(THREE, PG[k], M.pkgBottle, PK.ATLAS.bottle);
+    for (const k of BSHAPES) {
+      bs[k] = new Batch(THREE, PG[k], M.pkgBottle, PK.ATLAS.bottle, true);
+    }
     const router = (map, dflt) => ({
       push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell, shape) {
         (map[shape] || map[dflt]).push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell);
@@ -443,13 +473,16 @@ export function buildStore(THREE, scene) {
   // global fixture batches (uprights, boards, counters, carts…)
   const Bfix = new Batch(THREE, G.box, M.fix);
   const Bwood = new Batch(THREE, G.box, M.wood);
-  const Btube = new Batch(THREE, G.tube, M.fix);
-  const Bdrum = new Batch(THREE, G.drum, M.steel);
-  const Borb = new Batch(THREE, G.orb, M.fix);
+  // the `true` on the three round families is the whole of the round-9 barrel
+  // fix that is not a deletion — see the note on FIELD_SINK in kit.js
+  const Btube = new Batch(THREE, G.tube, M.fix, null, true);
+  const Bdrum = new Batch(THREE, G.drum, M.steel, null, true);
+  const Borb = new Batch(THREE, G.orb, M.fix, null, true);
+  const Bwheel = new Batch(THREE, G.wheel, M.steel, null, true);
   // everything at ceiling height lives in its own batch so the whole lot can be
   // culled for the chase camera, which flies ABOVE the drop ceiling.
   const BfixC = new Batch(THREE, G.box, M.fix);
-  const BtubeC = new Batch(THREE, G.tube, M.fix);
+  const BtubeC = new Batch(THREE, G.tube, M.fix, null, true);
   const BfixF = new Batch(THREE, G.box, M.fix);
   const fix = (x, y, z, sx, sy, sz, hex, B = Bfix) => { col.setHex(hex); B.box(x, y, z, sx, sy, sz, col); };
   const tube = (x, y, z, ex, ey, ez, r, len, hex, B = Btube) => { col.setHex(hex); B.push(x, y, z, ex, ey, ez, r, len, r, col); };
@@ -538,6 +571,44 @@ export function buildStore(THREE, scene) {
   // two metres away reflects hard".
   RUN_DEPTS.push({ x: -EDGE_X + 0.10, halfW: 0.62, colors: FROZEN.colors, lit: true });
   RUN_DEPTS.push({ x: EDGE_X, halfW: WRW / 2, colors: DEPTS[(AISLE_COUNT - 1) % DEPTS.length].colors });
+
+  // =========================================================================
+  // THE TRAFFIC PLAN — see TX.floorWearTex.
+  // =========================================================================
+  // Every number below already exists somewhere above; this is a VIEW of the
+  // floor plan, not a second copy of it. That is the whole point: blind test 8
+  // called the floor grime "low-frequency noise uncorrelated with where a cart
+  // could physically go", and it was, because the wear texture was authored
+  // against a generic supermarket rather than against this store. Handing it
+  // the actual lane centrelines, the actual cross-aisles including the
+  // mid-store walkway, the actual door positions and the actual fixture
+  // footprints means the wear cannot drift out of register with the building —
+  // move a run and the scuffing moves with it.
+  const WEAR_BODY = HALF - 0.62;
+  T.wear = TX.floorWearTex(THREE, {
+    minX: STORE.minX, minZ: STORE.minZ, spanX: SW, spanZ: SD,
+    // the eight shopping aisles. The two perimeter runs are nearly six metres
+    // wide, so their traffic spreads much further and never gets as hot in the
+    // middle as a 4 m aisle does.
+    lanes: [
+      ...Array.from({ length: AISLE_COUNT }, (_, i) => ({
+        x: aisleX(i),
+        w: (i === 0 || i === AISLE_COUNT - 1) ? 2.30 : 1.45,
+        a: (i === 0 || i === AISLE_COUNT - 1) ? 0.80 : 1.0,
+      })),
+    ],
+    cross: [
+      { z: FRONT_WALK_Z, w: 1.85, a: 1.0 },     // the checkout run: everybody
+      { z: CROSS_Z, w: 1.25, a: 0.86 },         // the mid-store walkway
+      { z: BACK_WALK_Z, w: 1.45, a: 0.90 },     // the dairy wall
+    ],
+    doors: [{ x: EXIT.x, z: EXIT.z + 2.2 }, { x: EXIT2.x, z: EXIT2.z + 2.2 }],
+    // where a cart physically cannot go
+    blocks: RUN_DEPTS.flatMap((r) => [
+      [r.x - r.halfW, -WEAR_BODY, r.x + r.halfW, XA0],
+      [r.x - r.halfW, XA1, r.x + r.halfW, WEAR_BODY],
+    ]),
+  });
 
   const FIX_L = 2.34, STRIP_GAP = 0.06;    // one 4 ft troffer + the joint after it
   T.floor.repeat.set(SW / 2.44, SD / 2.44);
@@ -1357,6 +1428,48 @@ export function buildStore(THREE, scene) {
     ? cellUV(PK.TAG_SKU + ((rng() * (16 - PK.TAG_SKU)) | 0), 4, 4)
     : cellUV((rng() * PK.TAG_SKU) | 0, 4, 4));
 
+  // THE LABEL STRIP IS RAGGED. ROUND 9.
+  //
+  // Blind test 8: "the shelf-label strip is still one texture tiled edge to
+  // edge. Real strips are ragged — white, yellow sale, orange clearance,
+  // several missing, a few crooked, some hand-stickered."
+  //
+  // Half of that was already true and invisible: the atlas has thirteen SKU
+  // designs and three orphan states, and round 9 adds orange clearance to it.
+  // The half that was actually false is the GEOMETRY. Every tag in the store
+  // was emitted at exactly the rail's y, exactly flush, exactly 50 mm tall,
+  // and always present — so a metre of rail was sixteen rectangles whose top
+  // edges formed one dead-straight line, and at any distance that line reads
+  // as a printed ribbon whatever is drawn on the cards.
+  //
+  // What makes a real strip ragged is that a human put each card in by hand,
+  // one at a time, over a year: some sit 3 mm proud, one in six is visibly
+  // crooked, some are the short 35 mm size, and one in eighteen is simply
+  // missing because somebody pulled it and never replaced it. That is four
+  // numbers and it applies to every tag in the building, because it is done
+  // here rather than at seven call sites.
+  const ragged = (h) => {
+    if (rng() < 0.055) return null;                       // pulled and never replaced
+    return {
+      dy: rr(rng, -0.0045, 0.0035),
+      // one in six went in crooked; the rest are within half a degree
+      tilt: rng() < 0.17 ? rr(rng, -0.105, 0.105) : rr(rng, -0.012, 0.012),
+      h: h * (rng() < 0.13 ? rr(rng, 0.68, 0.78) : rr(rng, 0.94, 1.05)),
+    };
+  };
+  const ragX = (x, y, z, d, h, dir, kindT) => {
+    const g = ragged(h); if (!g) return;
+    const uv = tagUV(kindT), hd = dir > 0 ? -d / 2 : d / 2;
+    Qtag.rect([x, y + g.dy, z], [0, g.tilt * d * 0.5, hd], [0, g.h / 2, 0],
+      uv[0], uv[1], uv[2], uv[3]);
+  };
+  const ragZ = (x, y, z, w, h, dir, kindT) => {
+    const g = ragged(h); if (!g) return;
+    const uv = tagUV(kindT), hw = dir > 0 ? w / 2 : -w / 2;
+    Qtag.rect([x, y + g.dy, z], [hw, g.tilt * w * 0.5, 0], [0, g.h / 2, 0],
+      uv[0], uv[1], uv[2], uv[3]);
+  };
+
   function buildRun(idx, x, halfW, faces, opts = {}) {
     const B = newPkg();
     const prof = opts.profile || PROFILES[idx % PROFILES.length];
@@ -1409,8 +1522,41 @@ export function buildStore(THREE, scene) {
     const LIT = DECK.map((_, i) => 0.95 + 0.12 * Math.pow(i / Math.max(1, DECK.length - 1), 0.82));
     const dd = deckDepths(halfW - 0.05, DECK.length);
 
-    // kick plate + base
-    fix(x, 0.075, zmid, halfW * 2 - 0.10, 0.15, len, P.kick);
+    // KICK PLATE + BASE. ROUND 9 — DENTED, AND DENTED IN SECTIONS.
+    //
+    // "Real stores are scraped at cart-bumper height: dented kickplates."
+    // A gondola kick is not one 25 m extrusion, it is a 1.2 m stamped steel
+    // section per bay, clipped on individually — so the joints between them
+    // are visible, no two sections are quite the same colour after eight years
+    // of scrubber splash, and the ones at the aisle ends have been reversed
+    // into by carts often enough to be visibly bowed. Emitting it as one box
+    // made the darkest, longest, most continuous line in every aisle frame
+    // perfectly straight and perfectly uniform, which is a manufacturing
+    // tolerance no supermarket has ever met.
+    {
+      const KSEC = 1.22;                       // one stamped section
+      const nk = Math.max(1, Math.round(len / KSEC));
+      for (let s = 0; s < nk; s++) {
+        const sl = len / nk;
+        const sz = zmid - len / 2 + (s + 0.5) * sl;
+        // how close this section is to an END of the run, where the turning
+        // traffic is and therefore where the damage is
+        const endness = 1 - Math.min(1, Math.min(s, nk - 1 - s) / 2.2);
+        const dent = rng() < 0.14 + 0.34 * endness;
+        // a dented section is pushed IN and sits a little low on its clips
+        const push = dent ? rr(rng, 0.010, 0.026) : 0;
+        col.setHex(P.kick);
+        col.offsetHSL(0, 0, rr(rng, -0.022, 0.030) - (dent ? 0.012 : 0));
+        Bfix.push(x, 0.075 - (dent ? rr(rng, 0.002, 0.007) : 0), sz,
+          0, 0, dent ? rr(rng, -0.030, 0.030) : 0,
+          halfW * 2 - 0.10 - push * 2, 0.15, sl * 0.995, col);
+        // the joint between two sections: a dark reveal, and the one thing
+        // that tells a viewer the kick is assembled rather than extruded
+        if (s) {
+          fix(x, 0.072, sz - sl / 2, halfW * 2 - 0.088, 0.13, 0.010, 0x15130f);
+        }
+      }
+    }
     // back panel / pegboard spine. Round 3 skins it with a real perforated
     // panel: it shows in the bottom of every cavity and across the whole of
     // any bare bay, and round 2 put a smooth beige slab there.
@@ -1516,8 +1662,8 @@ export function buildStore(THREE, scene) {
           deckY: DECK[d], headroom: head, depth: dep, lit: LIT[d], col, pull,
           vacancy: prof.vacancy, litAt: faceLit, stepAt,
           tag: (aStart, aw, kindT) => {
-            qX(Qtag, lip + f.dir * 0.020, DECK[d] - 0.021 + stepAt(aStart),
-              aStart + aw / 2, aw, 0.050, f.dir, tagUV(kindT));
+            ragX(lip + f.dir * 0.020, DECK[d] - 0.021 + stepAt(aStart),
+              aStart + aw / 2, aw, 0.050, f.dir, kindT);
           },
         });
         // BACK ROWS behind the facings, on every deck. See fillBackRow.
@@ -1623,8 +1769,8 @@ export function buildStore(THREE, scene) {
             deckY: ECDECK[d], headroom: head, depth: EC_D * 0.92, lit: 1.05, col,
             pull: d / (ECDECK.length - 1), vacancy: 0.4,
             tag: (aStart, aw, kindT) => {
-              qZ(Qtag, aStart + aw / 2, ECDECK[d] - 0.021, lip + dir * 0.020, aw, 0.050,
-                dir, tagUV(kindT));
+              ragZ(aStart + aw / 2, ECDECK[d] - 0.021, lip + dir * 0.020, aw, 0.050,
+                dir, kindT);
             },
           });
         }
@@ -1725,8 +1871,8 @@ export function buildStore(THREE, scene) {
           deckY: uy, headroom: 0.38, depth: halfW * 0.9, lit: 0.96, col,
           pull: 0.8, vacancy: 1.1,
           tag: (aStart, aw, kindT) => {
-            qX(Qtag, lip + dir * 0.020, uy - 0.021, aStart + aw / 2, aw, 0.050,
-              dir, tagUV(kindT));
+            ragX(lip + dir * 0.020, uy - 0.021, aStart + aw / 2, aw, 0.050,
+              dir, kindT);
           },
         });
       }
@@ -1853,7 +1999,7 @@ export function buildStore(THREE, scene) {
         // than a dry one, not less.
         pull: d / Math.max(1, CD.length - 1), vacancy: 1.35,
         tag: (aStart, aw, kindT) => {
-          qX(Qtag, lip + dir * 0.020, CD[d] - 0.021, aStart + aw / 2, aw, 0.048, dir, tagUV(kindT));
+          ragX(lip + dir * 0.020, CD[d] - 0.021, aStart + aw / 2, aw, 0.048, dir, kindT);
         },
       });
     }
@@ -2025,7 +2171,7 @@ export function buildStore(THREE, scene) {
         axis: 'z', a0: laneCZ - 0.6, a1: laneCZ + 1.4, lip: x - 0.42 - 0.14, face: -1,
         deckY: y, headroom: 0.30, depth: 0.26, lit: 1.02, col, pull: 0.9, vacancy: 0.5,
         tag: (aStart, aw, kindT) => {
-          qX(Qtag, x - 0.42 - 0.132, y - 0.019, aStart + aw / 2, aw, 0.044, -1, tagUV(kindT));
+          ragX(x - 0.42 - 0.132, y - 0.019, aStart + aw / 2, aw, 0.044, -1, kindT);
         },
       });
     }
@@ -2210,7 +2356,7 @@ export function buildStore(THREE, scene) {
         deckY: CD[d], headroom: 0.34, depth: 0.68, lit: 0.84, col,
         pull: d / Math.max(1, CD.length - 1), vacancy: 1.35,
         tag: (aStart, aw, kindT) => {
-          qZ(Qtag, aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048, -1, tagUV(kindT));
+          ragZ(aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048, -1, kindT);
         },
       });
     }
@@ -2310,8 +2456,8 @@ export function buildStore(THREE, scene) {
         deckY: RD[d], headroom: 0.40, depth: 0.60, lit: 1.0, col,
         pull: d / Math.max(1, RD.length - 1),
         tag: (aStart, aw, kindT) => {
-          qZ(Qtag, aStart + aw / 2, RD[d] - 0.021, wz - 0.31 - 0.020, aw, 0.048,
-            -1, tagUV(kindT));
+          ragZ(aStart + aw / 2, RD[d] - 0.021, wz - 0.31 - 0.020, aw, 0.048,
+            -1, kindT);
         },
       });
     }
@@ -2364,8 +2510,18 @@ export function buildStore(THREE, scene) {
       if (inCross(z, 1.5)) z = z < CROSS_Z ? XA0 - 1.9 : XA1 + 1.9;
       const px = wallFace + sgn * 0.72;
       if (k % 3 === 1) {
-        // a wire floor rack of case stock rather than another pallet
-        fix(px, 0.055, z, 1.05, 0.11, 1.05, 0x2a2620);
+        // a wire floor rack of case stock rather than another pallet.
+        // ROUND 9 — third and last `0x2a2620` slab. A wire rack does not stand
+        // on a black plate, it stands on four feet welded to the bottom of its
+        // own uprights, and you can see the floor between them. Same argument
+        // as the barrel: the darkness under it is light.js's job, and a solid
+        // that exists only to BE the darkness is an authored shadow whatever
+        // the comment beside it calls it.
+        for (const sx2 of [-1, 1]) for (const sz2 of [-1, 1]) {
+          fix(px + sx2 * 0.48, 0.045, z + sz2 * 0.48, 0.06, 0.09, 0.06, P.metal);
+          fix(px + sx2 * 0.48, 0.008, z + sz2 * 0.48, 0.10, 0.016, 0.10, 0x2b2823);
+        }
+        fix(px, 0.09, z, 1.00, 0.028, 0.06, 0x8d8878);
         for (let d2 = 0; d2 < 3; d2++) {
           const y = 0.34 + d2 * 0.44;
           fix(px, y - 0.016, z, 1.00, 0.03, 1.00, P.metal);
@@ -2456,13 +2612,27 @@ export function buildStore(THREE, scene) {
     for (let b = -0.44; b <= 0.441; b += HP) {
       put(0, 0.423, b, 0.55, WR * 0.9, WR, bright);
     }
-    // the lower rack is a wire deck too, not a steel plate — it was one of the
-    // last solid grey slabs left on the cart
-    for (let a = -0.235; a <= 0.236; a += VP * 1.3) {
-      put(a, 0.175, 0, WR, WR, 0.86, dull);
+    // THE LOWER RACK. ROUND 9 — this is the second thing blind test 8 named as
+    // a surviving placed shadow: "the cart sits on a diagonal cross-hatch blob
+    // whose weave runs at 45 degrees to the basket's orthogonal wires." It is
+    // not a decal and it is not at 45 degrees to anything — it is this rack,
+    // seen from eye height through the basket above it. But the critic is
+    // reading the image, not the source, and the image was right: 13 bars one
+    // way at 49 mm and 12 the other at 77 mm, all 6.5 mm thick, at four metres,
+    // is two periodic patterns beating against each other and against the pixel
+    // grid. What that produces is moiré — a diagonal weave at neither bar
+    // angle — sitting exactly where a contact shadow belongs, on a cart whose
+    // real contact shadow was missing. Of course it read as the shadow.
+    //
+    // A real lower rack is not a fine mesh anyway. It is six or seven heavy
+    // longitudinals on 90 mm centres with two or three cross straps, because it
+    // carries a 24-pack. Fewer bars, thicker, no beat frequency, and now with
+    // an actual computed shadow under the cart for the eye to land on instead.
+    for (let a = -0.24; a <= 0.241; a += 0.096) {
+      put(a, 0.175, 0, WR * 1.7, WR * 1.7, 0.86, dull);
     }
-    for (let b = -0.41; b <= 0.411; b += HP * 1.4) {
-      put(0, 0.182, b, 0.50, WR, WR, bright);
+    for (const b of [-0.36, 0.0, 0.36]) {
+      put(0, 0.190, b, 0.50, WR * 1.6, WR * 1.9, bright);
     }
     // tube frame: top rail all round, corner posts, undercarriage, handle
     put(0, 0.815, -0.455, 0.58, 0.028, 0.028, 0xd6dae0);
@@ -2484,9 +2654,47 @@ export function buildStore(THREE, scene) {
     put(0, 0.868, 0.545, 0.50, 0.016, 0.048, 0x53211b);          // shaded underside
     for (const sx of [-1, 1]) put(sx * 0.272, 0.885, 0.545, 0.048, 0.056, 0.056, 0x3a3d42);
     put(0, 0.135, 0, 0.44, 0.020, 0.10, 0x2f3339);               // ad frame
+    // THE CASTERS. ROUND 9. Blind test 8 named this the cleanest before/after
+    // target in the series: "the render cart's casters are untapered black
+    // cubes, against a real photo in the same set showing a swivel fork, a
+    // visible hub and a tire flat-spot with a dark contact core."
+    //
+    // A supermarket caster is four parts and every one of them is visible at
+    // two metres. The kingpin housing bolts to the frame. The FORK hangs off it
+    // and is offset from the kingpin axis — that offset is why a cart caster
+    // swivels, and it is the single most recognisable thing about the shape,
+    // because the wheel never sits under the post it hangs from. Between the
+    // fork legs is a grey polyolefin TIRE on a lighter HUB, and because a cart
+    // stands in one place for weeks the bottom of that tire is flat-spotted, so
+    // it meets the floor along a chord rather than at a point.
+    //
+    // Each caster also gets its own swivel angle, because a parked cart never
+    // has four casters pointing the same way. That is what makes a row of
+    // corralled carts read as parked rather than as instanced.
     for (const [dx, dz] of [[-0.225, -0.365], [0.225, -0.365], [-0.225, 0.365], [0.225, 0.365]]) {
-      put(dx, 0.075, dz, 0.055, 0.10, 0.11, 0x33363b);
-      put(dx, 0.045, dz, 0.085, 0.075, 0.085, 0x1e2024);         // castor
+      const sw = rr(rng, -1.1, 1.1);                             // swivel angle
+      const ox = Math.sin(sw) * 0.028, oz = -Math.cos(sw) * 0.028;
+      put(dx, 0.128, dz, 0.062, 0.040, 0.062, 0x4a4e55);         // kingpin housing
+      put(dx, 0.100, dz, 0.048, 0.022, 0.048, 0x6e737a);         // race
+      // fork legs, straddling the wheel and offset from the kingpin axis
+      for (const sl of [-1, 1]) {
+        const [px, pz] = at(dx + ox + Math.cos(sw) * sl * 0.030,
+          dz + oz + Math.sin(sw) * sl * 0.030);
+        col.setHex(0x3d4147);
+        Bfix.push(px, 0.062, pz, 0, yaw + sw, 0, 0.013, 0.078, 0.052, col);
+      }
+      const [wx, wz] = at(dx + ox, dz + oz);
+      col.setHex(0x2a2c30);
+      // the tire: a wheel on its side, so the cylinder axis lies along the
+      // fork's pivot. sy is the tread width, sx/sz the diameter.
+      Bwheel.push(wx, 0.042, wz, 0, yaw + sw, Math.PI / 2, 0.084, 0.036, 0.084, col);
+      col.setHex(0x8d9299);
+      Bwheel.push(wx, 0.042, wz, 0, yaw + sw, Math.PI / 2, 0.042, 0.041, 0.042, col);
+      // the flat spot. A 3 mm chord off an 84 mm tire is what weeks of standing
+      // still does to a polyolefin wheel, and it is the difference between a
+      // wheel resting on a floor and a wheel intersecting one.
+      col.setHex(0x232529);
+      Bfix.push(wx, 0.0055, wz, 0, yaw + sw, 0, 0.028, 0.011, 0.036, col);
     }
     if (loaded) {                       // shopping, which is what stops it
       for (let k = 0; k < ri(rng, 5, 9); k++) {                  // reading as a prop
@@ -2497,12 +2705,17 @@ export function buildStore(THREE, scene) {
           rr(rng, 0.11, 0.20), rr(rng, 0.10, 0.22), rr(rng, 0.09, 0.17), col, (rng() * 24) | 0);
       }
     }
-    // four castors, each with its own tight pool — that is what actually reads
-    // as a cart standing on a floor rather than hovering 20 mm over it
-    for (const [dx, dz] of [[-0.225, -0.365], [0.225, -0.365], [-0.225, 0.365], [0.225, 0.365]]) {
-      const [px, pz] = at(dx, dz);
-    }
-    solid(x - 0.42, 0, z - 0.6, x + 0.42, 1.0, z + 0.6);
+    // (Round 8 deleted the four hand-placed castor pools that used to be here
+    // and left the loop that emitted them, with an empty body. Gone.)
+    //
+    // The cart's collider is 0.84 x 1.20 and the field takes it, which is what
+    // puts a computed shadow under the whole footprint. That is deliberately
+    // NOT the same shape as the four contact patches the wheels make: a cart is
+    // an open wire frame, so the ground under it is in ambient shade from the
+    // basket above and in hard contact only at four small spots, and both of
+    // those now come out of the same field — the basket's own stamp for the
+    // broad one, the wheels' for the tight ones.
+    solid(x - 0.42, 0, z - 0.6, x + 0.42, 1.0, z + 0.6, false);
   }
   const Bcart = newPkg();
   // the corral by the doors: nested, so the pitch is a basket depth, not a cart
@@ -2565,7 +2778,17 @@ export function buildStore(THREE, scene) {
     // the boost hovers in mid-air above it — which is exactly how the blind
     // critic read it ("floating above the crate stack").
     const w = 0.62, d = 0.58;
-    fix(x, 0.055, z, w + 0.10, 0.11, d + 0.10, 0x2a2620);          // black plinth
+    // ROUND 9 — the second of the three `0x2a2620` slabs, same recipe as the
+    // barrel's: a near-black rectangle 100 mm wider than the thing standing on
+    // it, in both axes, with crisp corners. A dump table's base is a recessed
+    // steel skirt that the top OVERHANGS, on four levelling feet, so the shadow
+    // line under it is broken by the feet and the skirt is in shade rather than
+    // being the shade.
+    fix(x, 0.075, z, w - 0.14, 0.15, d - 0.14, 0x4a423a);           // recessed skirt
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      fix(x + sx * (w / 2 - 0.06), 0.022, z + sz * (d / 2 - 0.06),
+        0.048, 0.044, 0.048, 0x26221d);                             // levelling feet
+    }
     fix(x, 0.40, z, w, 0.58, d, 0xffffff, Bwood);                   // wood body
     fix(x, 0.705, z, w + 0.07, 0.04, d + 0.07, P.woodDark);         // rim
     for (const s of [-1, 1]) {
@@ -2598,7 +2821,34 @@ export function buildStore(THREE, scene) {
 
   function energyBarrel(x, z) {
     const r = 0.30;
-    fix(x, 0.055, z, r * 2 + 0.06, 0.11, r * 2 + 0.06, 0x2a2620);
+    // ROUND 9 — THE SURVIVING PLACED SHADOW. This line used to be
+    //
+    //   fix(x, 0.055, z, r * 2 + 0.06, 0.11, r * 2 + 0.06, 0x2a2620)
+    //
+    // a 660 mm SQUARE slab in near-black under a 600 mm ROUND tub, overhanging
+    // it by an even 30 mm on all four sides. It was written as a plinth and it
+    // was read, correctly, as a hand-placed shadow: blind test 8's first call
+    // was "the red barrel sits on a hard-edged black rectangle that overhangs
+    // its cylindrical silhouette by an even margin on both sides and has crisp
+    // corners", and "one survivor undoes the credibility of the whole computed
+    // AO pass". It does, and it should — a rectangle under a cylinder can only
+    // have been authored, and once a viewer knows one shadow was drawn by hand
+    // they have no reason to believe any of the others were not.
+    //
+    // What is actually under a barrel merchandiser is a moulded base that is
+    // NARROWER than the tub, so the tub's belly overhangs IT, plus three
+    // levelling feet. The tub reads as sitting ON something instead of being
+    // outlined by something, the silhouette from any angle is round, and the
+    // darkness where it meets the floor is now entirely light.js's — computed
+    // from the ellipse the drum batch stamps, which is why the cylinder had to
+    // become a cylinder in the field as well as in the geometry.
+    drum(x, 0.075, z, r * 2 - 0.09, 0.15, 0x3b3630);                // moulded base
+    drum(x, 0.155, z, r * 2 - 0.05, 0.02, 0x2c2822);                // base lip
+    for (let f = 0; f < 3; f++) {
+      const a = f * 2.094 + 0.4;
+      fix(x + Math.cos(a) * (r - 0.09), 0.014, z + Math.sin(a) * (r - 0.09),
+        0.05, 0.028, 0.05, 0x1d1a16);
+    }
     drum(x, 0.52, z, r * 2, 0.82, 0xc0392b);                        // painted tub
     drum(x, 0.30, z, r * 2 + 0.012, 0.07, 0x8e2a1e);                // lower hoop
     drum(x, 0.70, z, r * 2 + 0.012, 0.05, 0x8e2a1e);                // upper hoop
@@ -2662,7 +2912,8 @@ export function buildStore(THREE, scene) {
   // =========================================================================
   // FLUSH BATCHES + QUAD SOUPS
   // =========================================================================
-  for (const [b, n] of [[Bfix, 'fixtures'], [Bwood, 'wood'], [Btube, 'tubes'], [Borb, 'produce'], [Bdrum, 'drums']]) {
+  for (const [b, n] of [[Bfix, 'fixtures'], [Bwood, 'wood'], [Btube, 'tubes'],
+    [Borb, 'produce'], [Bdrum, 'drums'], [Bwheel, 'casters']]) {
     const m = b.build(n); if (m) root.add(m);
   }
   for (const [b, n] of [[BfixC, 'ceilFixtures'], [BtubeC, 'ceilPipes']]) {
@@ -2692,6 +2943,17 @@ export function buildStore(THREE, scene) {
     // eight taps that ask how much sky a point can see also ask how much lit
     // floor it can see, and that answer is added back with the floor's colour.
     bounce: 0.52, bounceCol: 0xa8946f,
+    // ROUND 9 — THE CONTACT CORE. Everything about why this term exists and
+    // how the numbers were derived is in the chopCore note in light.js; the
+    // VALUES live here, next to ao and bounce, so there is exactly one place
+    // in the build that says how dark this store gets. Swept against the
+    // dairy-base luminance profile at 0.78 / 0.85 / 0.92 with the reference
+    // measurement open beside it.
+    core: 0.84, coreBias: 0.020, coreGain: 2.20, coreReach: 1.0,
+    // ...and the skirt's near radius, which is the single number that sets how
+    // WIDE the falloff is. 0.08 (round 8) put the whole ramp inside 10 px;
+    // 0.34 puts it at 40-50, which is where the reference photographs are.
+    skirtR: 0.34, skirtRatio: 1.95,
   });
   {
     Object.assign(floorMat.userData.chop, FLDU);

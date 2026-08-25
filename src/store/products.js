@@ -500,9 +500,25 @@ export function fillShelf(B, rng, dept, opts) {
     // most of what makes a real shelf read as trafficked.
     const shopped = rng() < 0.115 * BS.hole;
     const maxSet = Math.max(0, depth - Math.min(depth * 0.94, 0.21) - 0.02);
-    const skuSetback = shopped
-      ? Math.min(maxSet, deckSetback + rr(rng, 0.10, 0.22) * BS.depth)
-      : deckSetback + rr(rng, 0.0, 0.016) * BS.depth;
+    // ROUND 9 — DEPTH IS A CONTINUUM, NOT A COIN FLIP. Blind test 8:
+    // "vary product depth, not just count. Everything still sits flush at the
+    // lip." Both halves were true and the cause was this line: setback was
+    // binary. One SKU in nine was declared "shopped" and pulled 100-220 mm
+    // back, and the other eight in nine got 0-16 mm, i.e. flush. So the wall
+    // read as a plane with occasional holes punched in it rather than as a
+    // surface with relief.
+    //
+    // Nobody fronts a shelf to the millimetre. A facing is where the last
+    // shopper left it, and over a day that produces a heavy-tailed
+    // distribution: most SKUs a few centimetres back, a long tail out to a
+    // hand's depth, and separately the ones that have genuinely been shopped
+    // through. u^2.1 * 115 mm is that: median 27 mm, upper decile 90 mm,
+    // maximum 115 — over a 100 mm carton, enough that the lip line reads as
+    // ragged from down the aisle instead of as an edge.
+    const sd = rng();
+    const skuSetback = Math.min(maxSet, deckSetback + (shopped
+      ? rr(rng, 0.10, 0.24) * BS.depth
+      : Math.pow(sd, 2.1) * 0.115 * BS.depth));
 
     // Cap the whole brand block. Four varieties x six facings of one design is
     // 24 identical faces in a row, which is the exact repetition round 2 was
@@ -584,8 +600,13 @@ export function fillShelf(B, rng, dept, opts) {
       let lastA = null, lastTop = 0, lastSet = 0;
       for (let k = 0; k < n && a < a1 - w * 0.55 && a - brandA0 < brandMax; k++) {
         const jitter = rr(rng, -0.006, 0.006);
-        // per-item depth wander: 0-40 mm off the SKU's own setback
-        let itemSet = Math.max(0, skuSetback + rr(rng, -0.006, 0.028) * BS.depth);
+        // per-item depth wander off the SKU's own setback. ROUND 9 — widened
+        // from -6/+28 mm to -8/+52, and one facing in eleven gets shoved a
+        // further 40-90 back on its own. Two facings of the same SKU are never
+        // at the same depth; a shopper takes the front one and the row behind
+        // it stays where it is.
+        let itemSet = Math.max(0, skuSetback + rr(rng, -0.008, 0.052) * BS.depth
+          + (rng() < 0.09 ? rr(rng, 0.040, 0.090) * BS.depth : 0));
         // BASELINE yaw is now +-4 degrees on every single unit, not on one in
         // five. Nothing on a real shelf is square to the rail.
         let skew = rr(rng, -0.070, 0.070) * BS.skew;

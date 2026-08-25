@@ -1,7 +1,7 @@
 {
  "pieces": {
   "store": {
-   "round": 8,
+   "round": 9,
    "state": "critiquing",
    "shots": [
     {
@@ -73,6 +73,16 @@
      "round": 8,
      "path": "../shots/b12_junction.png",
      "t": 1787669002.116857
+    },
+    {
+     "round": 9,
+     "path": "../shots/b14_a.png",
+     "t": 1787672554.510178
+    },
+    {
+     "round": 9,
+     "path": "../shots/b15_a.png",
+     "t": 1787672843.444598
     }
    ],
    "gaps": [
@@ -97,10 +107,10 @@
      "text": "THE DIAGNOSIS IS OF THE LOOP, NOT THE STORE: 'You fixed the three tells the last critic named. You did not fix the CLASS of problem those tells belonged to. This is the sixth round of that pattern - a critic names a symptom, the symptom gets repaired precisely, and the next critic picks a different symptom from the identical underlying class and calls it just as fast.' The class is LIGHT TRANSPORT and CONTENT ENTROPY. On the glass: 'You added the OPACITY of a reflection without adding the IMAGE. That is the same mistake as the r4 painted-decal floor, one surface over.' #1 fix, and it says if you do exactly one thing do this: contact shadows and AO at every junction - 'nothing in these frames is in contact with anything.'"
     }
    ],
-   "updated": 1787669002.116852,
-   "note": "IT CHANGED THE PRODUCTION, NOT THE LIST. One 1024-square world field (src/store/light.js) replaced four authored systems, filled BY CONSTRUCTION through Batch.push and solid() - the two funnels every solid in the building already passed through. 62,304 solids stamped, and a prop added in a future round is in it the moment it is pushed. Two consumers read that one texture so they cannot disagree: a horizon-search AO injected into EVERY normal-blended opaque material by walking the tree, which 'does not know what a gondola is'; and floor and glass mirrors that march the field instead of a hand-maintained prop list, so what reflects is what is standing there INCLUDING the product on the shelves, which the list never contained at all. Deleted as superseded: 46 contact-ramp call sites, the ground-shadow pools, and five texture generators. Its diagnosis of the old approach: 'stacking three occlusion models multiplicatively is what had the aisle at luminance 83.'",
+   "updated": 1787672843.444594,
+   "note": "FIVE placed shadows, not the two the critic named - all the same recipe, a 660mm near-black SQUARE under a 600mm ROUND tub, written as a 'plinth'. Then it closed the CLASS rather than the instances: cylinders were stamping their AABB into the occupancy field, so the new computed AO was about to draw a square shadow under the barrel by arithmetic. Batch now carries a 'round' flag and rasterises an antialiased ellipse - 'a property of the primitive, not the call site'. THE TRANSFERABLE MECHANISM: 'the smallest skirt radius is the entire falloff width', because horizon is a max() over the ray so far taps see the same wall from 0.1m as from 1m and only the nearest radius varies with distance. And the core's radius weights are the DERIVATIVE of the target profile - d/dx of a smoothstep is a parabola peaking at 300mm - 'which is why every monotone-decreasing weighting I tried first died inside 120mm: they put their mass where the profile is flat.' GLASS BUG: chopTrace's self-hit guard only covered runs lying along X, so the back-wall dairy run's march sample zero landed inside the pane's own case, latched, and skipped every remaining sample - all twelve doors returned their own case's column average, which is a low-alpha wash by construction.",
    "gap": "THE DIAGNOSIS IS OF THE LOOP, NOT THE STORE: 'You fixed the three tells the last critic named. You did not fix the CLASS of problem those tells belonged to. This is the sixth round of that pattern - a critic names a symptom, the symptom gets repaired precisely, and the next critic picks a different symptom from the identical underlying class and calls it just as fast.' The class is LIGHT TRANSPORT and CONTENT ENTROPY. On the glass: 'You added the OPACITY of a reflection without adding the IMAGE. That is the same mistake as the r4 painted-decal floor, one surface over.' #1 fix, and it says if you do exactly one thing do this: contact shadows and AO at every junction - 'nothing in these frames is in contact with anything.'",
-   "verdict": "Budget went DOWN while adding AO and real reflections: 110 draw calls / 0.263ms per render, from 132 / 0.34ms. The 22 calls the deleted soups freed cost more than the new fill. Still entirely draw-call bound - 0.234ms at 1280x720 vs 0.238ms at 160x90 - so a 24-tap AO on every material plus a 12-step floor march is not measurable."
+   "verdict": "Luminance profiles now track the reference IN THE REFERENCE'S OWN UNITS. Endcap bottomed at 93 and never left mid-grey; now bottoms at 43 (33% of asymptote) and reaches 90% at ~60px. Dairy reached full brightness in 8px then went dead flat; now bottoms at 19-30 (8-13% luminance, inside the 2-19% band asked for) and reaches 90% at ~50px. 130 draw calls, 4.19ms GPU."
   },
   "cctv": {
    "round": 7,
@@ -424,6 +434,30 @@
   }
  },
  "log": [
+  {
+   "t": 1787672843.4445992,
+   "piece": "store",
+   "role": "builder",
+   "round": 9,
+   "state": "critiquing",
+   "text": "FIVE placed shadows, not the two the critic named - all the same recipe, a 660mm near-black SQUARE under a 600mm ROUND tub, written as a 'plinth'. Then it closed the CLASS rather than the instances: cylinders were stamping their AABB into the occupancy field, so the new computed AO was about to draw a square shadow under the barrel by arithmetic. Batch now carries a 'round' flag and rasterises an antialiased ellipse - 'a property of the primitive, not the call site'. THE TRANSFERABLE MECHANISM: 'the smallest skirt radius is the entire falloff width', because horizon is a max() over the ray so far taps see the same wall from 0.1m as from 1m and only the nearest radius varies with distance. And the core's radius weights are the DERIVATIVE of the target profile - d/dx of a smoothstep is a parabola peaking at 300mm - 'which is why every monotone-decreasing weighting I tried first died inside 120mm: they put their mass where the profile is flat.' GLASS BUG: chopTrace's self-hit guard only covered runs lying along X, so the back-wall dairy run's march sample zero landed inside the pane's own case, latched, and skipped every remaining sample - all twelve doors returned their own case's column average, which is a low-alpha wash by construction."
+  },
+  {
+   "t": 1787672648.9832718,
+   "piece": "store",
+   "role": "builder",
+   "round": 9,
+   "state": "critiquing",
+   "text": "R9 final. Placed shadows: energyBarrel 660mm black square under a 600mm round tub (the one named), donutTable and wire-rack slabs of the same recipe, cart lower-rack moire read as a diagonal shadow blob, plus the dead castor-pool loop. Structural: cylinders now stamp ELLIPSES into the field and the cart collider no longer stamps at all, so the computed shadow cannot re-create the rectangle. AO is two-term (core x skirt) on a 2048/23mm field; dairy base 20->30@2px->37@8->50@16->73@25->91@40 vs R8's 20->42->95->104->flat. Glass: fixed a self-hit that made every back-wall pane return its own case colour, plus a two-band field colour so reflections have vertical structure. Floor wear derived from the real lane/cross-aisle/door plan. 130 calls, 4.19ms GPU at 1280x720."
+  },
+  {
+   "t": 1787672554.510179,
+   "piece": "store",
+   "role": "builder",
+   "round": 9,
+   "state": "building",
+   "text": "Two placed shadows deleted (energyBarrel black slab, cart lower-rack moire) plus a third and fourth of the same recipe; two-term contact AO (dark core x wide skirt) on a 2048 field with elliptical footprints for round primitives; glass self-hit bug fixed and two-band field colour so panes carry an image; traffic-derived floor wear; ragged label strip with clearance tags; continuous product depth; real swivel casters."
+  },
   {
    "t": 1787669002.116858,
    "piece": "store",
@@ -1313,5 +1347,5 @@
    "text": "skeleton: grey boxes, flat light"
   }
  ],
- "updated": 1787669002.11686
+ "updated": 1787672843.444601
 }

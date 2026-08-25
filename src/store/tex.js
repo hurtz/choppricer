@@ -473,42 +473,160 @@ export function smearTex(THREE) {
 // FLOOR WEAR — one non-repeating multiply layer stretched over the whole sales
 // floor: black scuffing concentrated in the traffic lanes, cart-wheel arcs,
 // heel marks, patched tiles and the dull halo where the buffer never reaches.
-export function floorWearTex(THREE) {
+export function floorWearTex(THREE, plan) {
+  // TRAFFIC WEAR IS A PROCESS. ROUND 9.
+  //
+  // Blind test 8: "wear must correlate with traffic. Real stores are scraped
+  // at cart-bumper height: dented kickplates, paint worn off uprights, black
+  // rubber skid arcs in the turning lanes at aisle ends. Your floor grime is
+  // low-frequency noise UNCORRELATED with where a cart could physically go."
+  //
+  // Dead right, and the tell was structural. Round 8 drew nine evenly spaced
+  // vertical bands and two horizontal ones into a 1024 canvas, because that is
+  // roughly what a supermarket floor plan looks like. It is not what THIS
+  // store's plan looks like: there are eight aisles at aisleX(i) plus two much
+  // wider perimeter runs, THREE cross-aisles including the mid-store walkway
+  // cut in round 5, and two entrance doors that funnel every cart in the
+  // building through two specific points. None of that was in the texture, so
+  // the grime sat a metre off every lane it was meant to be in, ran straight
+  // under gondolas where no wheel has ever been, and missed the mid-store
+  // walkway entirely.
+  //
+  // So the store hands its own plan in and the wear is DERIVED from it:
+  //
+  //   1. a traffic field, built from the lane centrelines, the cross-aisles
+  //      and a funnel at each door;
+  //   2. masked to zero inside every fixture footprint, because a cart cannot
+  //      go there and therefore nothing wears there;
+  //   3. read as TWO opposite effects, which is the part that makes it look
+  //      like a floor rather than like dirt: the middle of a lane is walked so
+  //      hard it is BURNISHED — lighter and cleaner than the open floor — and
+  //      the grime collects at the lane MARGINS, where the traffic thins out
+  //      and the scrubber's brush does not reach. Peak dirt at half traffic,
+  //      not at full;
+  //   4. skid arcs placed at the lane-by-cross-aisle intersections at a real
+  //      cart turning radius, because that is the only place a wheel is ever
+  //      dragged sideways.
   const N = 1024;
   const [c, g] = cv(N, N);
   const rng = makeRng(0x5CFF);
-  g.fillStyle = '#ffffff'; g.fillRect(0, 0, N, N);
-  // broad dull traffic bands — the store's aisles run vertically in this map
-  for (let k = 0; k < 9; k++) {
-    const x = (k + 0.5) * N / 9;
-    const grd = g.createLinearGradient(x - N * 0.052, 0, x + N * 0.052, 0);
-    grd.addColorStop(0, 'rgba(255,255,255,0)');
-    grd.addColorStop(0.5, 'rgba(118,117,114,0.30)');
-    grd.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grd; g.fillRect(x - N * 0.052, 0, N * 0.104, N);
+  const { minX, minZ, spanX, spanZ, lanes, cross, blocks, doors } = plan;
+  // world -> canvas. The wear plane is a PlaneGeometry rotated -90 about X, so
+  // its v runs from the front of the store to the back, and CanvasTexture's
+  // flipY cancels that: canvas row 0 is z = minZ.
+  const px = (x) => (x - minX) / spanX * N;
+  const py = (z) => (z - minZ) / spanZ * N;
+
+  // --- 1. the traffic field ------------------------------------------------
+  // Separable: lanes depend only on x, cross-aisles only on z, so each is a
+  // 1-D profile and the field is their max. Doors are the only 2-D term.
+  const LSIG = 1.55, CSIG = 1.30;        // metres, lane and cross-aisle spread
+  const laneT = new Float32Array(N), crossT = new Float32Array(N);
+  for (let i = 0; i < N; i++) {
+    const wx = minX + (i + 0.5) / N * spanX;
+    let t = 0;
+    for (const L of lanes) {
+      const d = (wx - L.x) / (L.w || LSIG);
+      t = Math.max(t, (L.a || 1) * Math.exp(-d * d * 0.5));
+    }
+    laneT[i] = t;
   }
-  for (const y of [N * 0.14, N * 0.86]) {         // front + back cross-aisles
-    const grd = g.createLinearGradient(0, y - N * 0.06, 0, y + N * 0.06);
-    grd.addColorStop(0, 'rgba(255,255,255,0)');
-    grd.addColorStop(0.5, 'rgba(113,112,109,0.30)');
-    grd.addColorStop(1, 'rgba(255,255,255,0)');
-    g.fillStyle = grd; g.fillRect(0, y - N * 0.06, N, N * 0.12);
+  for (let j = 0; j < N; j++) {
+    const wz = minZ + (j + 0.5) / N * spanZ;
+    let t = 0;
+    for (const C of cross) {
+      const d = (wz - C.z) / (C.w || CSIG);
+      t = Math.max(t, (C.a || 1) * Math.exp(-d * d * 0.5));
+    }
+    crossT[j] = t;
   }
-  // black scuff arcs — cart wheels and shoe heels, biased into the lanes
-  for (let i = 0; i < 1500; i++) {
-    const lane = Math.floor(rng() * 9);
-    const x = (lane + 0.5) * N / 9 + rr(rng, -N * 0.055, N * 0.055);
-    const y = rng() * N;
-    g.strokeStyle = `rgba(${ri(rng, 30, 78)},${ri(rng, 28, 70)},${ri(rng, 24, 60)},${rr(rng, 0.05, 0.30)})`;
-    g.lineWidth = rr(rng, 0.7, 3.2);
+  // --- 2. the mask: nothing wears under a fixture --------------------------
+  const open = new Uint8Array(N * N).fill(1);
+  for (const b of blocks) {
+    let i0 = Math.max(0, Math.floor(px(b[0]))), i1 = Math.min(N, Math.ceil(px(b[2])));
+    let j0 = Math.max(0, Math.floor(py(b[1]))), j1 = Math.min(N, Math.ceil(py(b[3])));
+    for (let j = j0; j < j1; j++) open.fill(0, j * N + i0, j * N + i1);
+  }
+  const T = new Float32Array(N * N);
+  for (let j = 0; j < N; j++) {
+    const wz = minZ + (j + 0.5) / N * spanZ;
+    for (let i = 0; i < N; i++) {
+      if (!open[j * N + i]) continue;
+      const wx = minX + (i + 0.5) / N * spanX;
+      let t = Math.max(laneT[i], crossT[j]);
+      for (const D of doors) {
+        const dx = (wx - D.x) / 3.4, dz = (wz - D.z) / 4.2;
+        t = Math.max(t, 1.25 * Math.exp(-(dx * dx + dz * dz) * 0.5));
+      }
+      T[j * N + i] = t > 1 ? 1 : t;
+    }
+  }
+
+  // --- 3. burnish in the middle, grime at the margins ----------------------
+  const im = g.createImageData(N, N), D = im.data;
+  for (let k = 0; k < N * N; k++) {
+    const t = T[k];
+    // a cheap value hash so the two effects are not perfectly smooth fields
+    const i = k & (N - 1), j = k >> 10;
+    const n = (Math.sin(i * 0.271 + j * 0.113) * 0.5 + Math.sin(i * 0.041 - j * 0.087) * 0.5);
+    const burnish = Math.max(0, (t - 0.52) / 0.48);          // 0 .. 1
+    const margin = Math.max(0, 1 - Math.abs(t - 0.42) / 0.42); // peaks at t=0.42
+    const dead = Math.max(0, 0.18 - t) / 0.18;               // never-walked corners
+    let v = 1
+      + burnish * burnish * 0.085 * (0.7 + 0.3 * n)          // polished lighter
+      - margin * 0.185 * (0.72 + 0.28 * n)                   // rubber and grit
+      - dead * 0.055;                                        // dust film
+    // a warm bias on the grime: it is shoe rubber and cardboard dust, not soot
+    const r = Math.max(0, Math.min(1, v + margin * 0.020));
+    const gg = Math.max(0, Math.min(1, v));
+    const b = Math.max(0, Math.min(1, v - margin * 0.028 - dead * 0.012));
+    const o = k * 4;
+    D[o] = r * 255; D[o + 1] = gg * 255; D[o + 2] = b * 255; D[o + 3] = 255;
+  }
+  g.putImageData(im, 0, 0);
+
+  // --- 4. skid arcs, only where a cart actually turns ----------------------
+  // A shopping cart turns on about a 900 mm radius and its rear wheels do not
+  // steer, so the mark it leaves coming out of an aisle is an ARC struck from
+  // the inside corner of the turn — not a random scribble somewhere in the
+  // lane, which is what round 8 drew 1500 of.
+  for (const L of lanes) {
+    for (const C of cross) {
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+        const cx = L.x + sx * (L.w || LSIG) * 0.95;
+        const cz = C.z + sz * (C.w || CSIG) * 0.95;
+        const n = 5 + ((rng() * 7) | 0);
+        for (let k = 0; k < n; k++) {
+          const rw = rr(rng, 0.62, 1.55);                 // metres
+          const a0 = Math.atan2(-sz, -sx) - rr(rng, 0.15, 0.55);
+          g.strokeStyle = `rgba(${ri(rng, 26, 62)},${ri(rng, 24, 56)},${ri(rng, 22, 50)},${rr(rng, 0.06, 0.30)})`;
+          g.lineWidth = rr(rng, 0.9, 3.4);
+          g.beginPath();
+          g.arc(px(cx + rr(rng, -0.22, 0.22)), py(cz + rr(rng, -0.22, 0.22)),
+            rw / spanX * N, a0, a0 + rr(rng, 0.5, 1.5));
+          g.stroke();
+        }
+      }
+    }
+  }
+  // heel marks and dropped-pallet gouges scattered ALONG the lanes, sampled
+  // from the traffic field by rejection so none of them land under a shelf
+  for (let i = 0, tries = 0; i < 900 && tries < 12000; tries++) {
+    const cx = (rng() * N) | 0, cy = (rng() * N) | 0;
+    if (T[cy * N + cx] < rng() * 0.9 + 0.1) continue;
+    i++;
+    g.strokeStyle = `rgba(${ri(rng, 30, 74)},${ri(rng, 28, 66)},${ri(rng, 24, 58)},${rr(rng, 0.05, 0.26)})`;
+    g.lineWidth = rr(rng, 0.7, 2.8);
     g.beginPath();
-    const r = rr(rng, 4, 46), a = rng() * 6.28;
-    g.arc(x, y, r, a, a + rr(rng, 0.25, 1.5));
+    const r = rr(rng, 3, 30), a = rng() * 6.28;
+    g.arc(cx, cy, r, a, a + rr(rng, 0.2, 1.1));
     g.stroke();
   }
-  // buffer swirls over the whole floor, much fainter
+  // buffer swirls over the whole floor — the scrubber does not follow lanes,
+  // it drives in overlapping passes, so this one term is deliberately NOT
+  // correlated with traffic.
   for (let i = 0; i < 420; i++) {
-    g.strokeStyle = rng() < 0.5 ? 'rgba(255,255,255,0.30)' : 'rgba(120,112,98,0.10)';
+    g.strokeStyle = rng() < 0.5 ? 'rgba(255,255,255,0.26)' : 'rgba(120,112,98,0.09)';
     g.lineWidth = rr(rng, 0.8, 2.6);
     g.beginPath();
     const x = rng() * N, y = rng() * N, r = rr(rng, 40, 260), a = rng() * 6.28;
