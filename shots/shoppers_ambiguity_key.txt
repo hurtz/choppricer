@@ -1,0 +1,18 @@
+CHOP PRICER — round 9 (shoppers) ambiguity strip key
+shots/shoppers_ambiguity_strip.png — six bodies at 214x120 monitor scale, each
+mid-clip at the same beat, cropped to a 48x48 window and blown up 7x nearest.
+Rendered through the real aisle-4 dome from cctv.js's cameraRig().
+
+  panel 1   body 2   phone           DECOY
+  panel 2   body 5   conceal         STEAL
+  panel 3   body 7   label           DECOY
+  panel 4   body 1   concealPocket   STEAL
+  panel 5   body 9   restash         DECOY
+  panel 6   body 4   concealBag      STEAL
+
+Three of the six are thefts. Every panel is drawn by the same applyGesture()
+sampling the same table; nothing in the renderer reads `tell`.
+
+Round 9 additions visible in the strip and deliberately NOT correlated with
+guilt: children (panels 2, 5 and 6 — two of those three are STEALS), shoulder
+bags, per-person cart-hold and browse poses.

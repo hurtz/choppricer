@@ -73,6 +73,19 @@
 //   we EXPOSE agents.thiefCruise() / thiefTop() — a fleeing shopper's real speed.
 //             TUNING.thiefRun is his opening ceiling, not his cruise; anything
 //             estimating a door countdown should use thiefCruise().
+//             ROUND 9 (2nd pass): his cruise is a RANGE now, not a constant —
+//             3.64 m/s with his legs fresh, decaying to 3.08 — and
+//             thiefCruise() returns the midpoint estimate the pursuit bot uses.
+//             A door countdown built on it is right on average and optimistic
+//             in the first seconds of a chase, which is the correct direction
+//             for an alarm. Nothing on the game.js side has to change.
+//   we EXPOSE agents.lungCheck() / paceCheck() — the two startup assertions.
+//             lungCheck: a gassed cop must not outrun a fresh walking one.
+//             paceCheck: the thief must be fastest fresh and slowest blown, and
+//             the pursuit bot's estimate must lie between the two. Both return
+//             { ok, why } and both are stamped onto every bench() result as
+//             `lungBroken` / `paceBroken`, so a measurement taken on a broken
+//             ladder says so on its own object instead of being quoted.
 //
 // THE CHASE, MEASURED — from the spawn the game actually creates, and reported
 // AS A DISTRIBUTION. Round 3's headline (68% -> 73%) was the mean of two
@@ -82,6 +95,179 @@
 // on the object I was quoting from. Read the whole instrument before you write
 // the report. Nothing below is a mean without its shape attached.
 //
+// ===========================================================================
+// ROUND 9, SECOND PASS — THE DRINK WAS WORTH NOTHING AND THE DRINK WAS NOT THE
+// PROBLEM. TWO OF THE THREE CAUSES WERE IN THE INSTRUMENT.
+// ===========================================================================
+// The lead's measurement, and it reproduces character for character:
+//   bench({ n:100, spawn:'aisle', bot:'cut', difficulty:1 }), same 100 chases
+//                     rate   boostFrac  catchT_med  missByFt_med  barged
+//     mode:'none'      75%      0.00       6.22 s      14.26          6
+//     mode:'boost'     74%      0.58       2.43 s      24.01         25
+//     mode:'pickup'    75%      0.51       2.95 s      27.13         18
+// Round 5 published drink-in-hand at +12.6 points. It was -1, and a drink made
+// you lose by ten feet MORE.
+//
+// ---- THE PAIRED READ: IT WAS NEVER INERT, IT WAS A COIN FLIP -------------
+// bench seeds per trial from `1234 + k*7919`, so trial k is the SAME chase in
+// every mode and the modes can be compared trial by trial instead of as two
+// aggregates that happen to land on the same number. Paired, n=100:
+//     both caught 58 · both missed 9 · DRINK WINS 16 · DRINK LOSES 17
+// The drink flipped a THIRD of all chases and netted minus one. "Worth
+// nothing" was an average over a mechanic doing enormous work in both
+// directions. Nothing below would have been findable from the aggregate.
+//
+// ---- CAUSE 1: ONE EXIT. Ablated, n=100, same seeds ----------------------
+//                            no drink   drink   drink worth
+//     shipped (one door)        75%      74%       -1
+//     identity model off        75%      74%       -1     (inert)
+//     round-6 leavers off       79%      78%       -1     (inert)
+//     crowd off                 78%      83%       +5
+//     TWO DOORS                 70%      80%      +10
+// ONE EXIT IS ELEVEN OF THE THIRTEEN POINTS THE DRINK LOST SINCE ROUND 5, and
+// nobody re-measured the powerup when round 6 landed. The mechanism is not
+// mysterious and it is not fixable by tuning the drink: with one way out the
+// destination is public, so the `cut` bot ALWAYS finds an intercept and
+// arrival time is never the binding constraint. Speed can only be worth
+// something when getting there in time is in doubt. Note the sign — one exit
+// HELPS the sober cop (+5) and HURTS the boosted one (-6).
+//
+// ---- CAUSE 2: THE BENCH BOT HELD A KEY THAT DOES NOTHING ----------------
+// Round 5 fixed the GAME so a gassed man holding sprint does 2.04 m/s against
+// his own 2.35 m/s walk. It never fixed the BOT, and every wind policy reaches
+// for the key through `urgent` (gap < 3.4 m) — exactly when the man is closest
+// and the tank most likely just emptied on him. `regenHold` is 0, so holding
+// it while gassed does not merely fail to help, IT PREVENTS RECOVERY FOREVER.
+// The trace, trial 29, mode:'boost':
+//     t=4.52  GASSED at gap 2.21 m, still inside `urgent`, so he holds
+//     t=4.5 -> 17.7   THIRTEEN SECONDS at a flat 2.04 m/s, thief at 3.08.
+//                     Gap 2.21 -> 15.14 m. Final miss 15.1 m.
+// It costs the BOOSTED cop far more, because a drink is what gets you into the
+// close-range duel where `urgent` latches. That is the whole of "a drink makes
+// you lose by more". Fixed in `keyUp()`; `always-sprint` is exempt and must
+// stay exempt, and `legacyWind:true` restores it for any bench call.
+//
+// ---- CAUSE 3: A DRINK DOUBLED YOUR TURNING CIRCLE -----------------------
+// Round 5 wrote "fast is not agile" as prose. It is arithmetic, in steer():
+//     latMax = copAccel * (1 - (1 - copGrip) * speed/top),  top = copRun*boostMul
+//     sober  5.05 m/s  latMax 7.61  turning radius 3.35 m
+//     drunk  7.17 m/s  latMax 7.02  turning radius 7.32 m
+// In a store with 1.58 m of usable half-lane. The drink was LOSING the duel it
+// bought you. `boostGrip` multiplies copAccel while the boost is live.
+//
+// ---- WHAT SHIPPED, AND THE ONE NEW MECHANIC ----------------------------
+//   keyUp()      the bot lets go of the key when winded          (instrument)
+//   botCruise    ONE estimate of the thief's cruise, used by the intercept,
+//                the dead-reckoning and game.js's door alarm     (instrument)
+//   boostGrip    2.40 — the drink buys footwork, not just legs
+//   THE THIRD TANK — thiefFresh/thiefSpent/thiefLegs in thiefPace(). Round 5
+//                named this and called it "a round, not an afternoon": his
+//                cruise now DECAYS under sustained running instead of being a
+//                flat floor. His BLOWN cruise is config's thiefTired to three
+//                decimals, so nothing was taken away from him; what is new is
+//                that his first seconds are faster and then come back to it.
+//
+// ---- THE THREE-MODE TABLE, RE-MEASURED. n=200, difficulty 1, one page load,
+// ---- against a round-8 control run in the same load (thiefFreshMul 1.0,
+// ---- thiefSpentMul 1.0, boostGrip 1.0, legacyWind:true) ------------------
+//                     ROUND 8 CONTROL          SHIPPED
+//   no powerup        73.5%   miss 15.44 ft    70.0%   miss 5.89 ft
+//   drink in hand     78.5%   miss 22.83 ft    90.5%   miss 5.71 ft
+//   go and get one      --                     89.0%   miss 6.37 ft
+//   THE DRINK IS WORTH   +5.0                    +20.5
+//   median chase      6.22 s                   5.68 s
+//   catches inside 1s 16.3%                    17.1%
+// The miss distribution is the row PROMPT.md actually asks about: p10-p90 goes
+// from 1.62-13.28 m to 1.35-2.75 m. You lose by four to nine feet now, in
+// every mode, instead of by fifteen feet with a tail into the car park.
+//
+// ---- PER-CHANGE ABLATION, all on the shipped build, n=200 ---------------
+//   bot holds the key again (legacyWind)  no drink 64.5%, miss 14.95 ft
+//                                         ...so the bot fix is +5.5 points AND
+//                                            nine feet of miss distance
+//   boostGrip 1.00                        drink   79.5%  (agility is +11.0)
+//   thiefFreshMul 1.00 (no third tank)    no drink 90.5% (the tank is -20.5)
+//
+// ---- NO REGRESSION. Same n=200, same page load, control alongside -------
+//                          ROUND 8 CONTROL   SHIPPED
+//   cut off0                  73.5%           70.0%
+//   cut off1                  74.0%           68.0%
+//   door-camper               34.0%           36.0%   (124/200 ditched, both)
+//   naive pursuit             34.0%           39.5%
+//   always-sprint             49.5%           34.5%
+//   RATIONING IS WORTH        +24.0           +35.5
+//   lungCheck()               passes, 2.043 m/s gassed-and-holding vs 2.35 walk
+//   paceCheck()               passes, 3.08 / 3.36 / 3.64 m/s spent/model/fresh
+//
+// TWO OF THOSE ROWS NEED SAYING OUT LOUD RATHER THAN LEAVING IN A TABLE.
+//
+// THE MISAIM TABLE IS STILL FLAT AND I DID NOT FIX IT. 73.5 -> 74.0 becomes
+// 70.0 -> 68.0: being sent to the wrong aisle costs two points where it cost
+// minus a half. That is not a fix, it is noise moving. An earlier draft of this
+// round measured a 13.5-point slope there and I nearly published it; it was an
+// artifact of the pessimistic bot model described below, and it evaporated the
+// moment the instrument was made honest. Round 6's own header calls this the
+// honest weakness of the one-exit store and says the fix is a STAGING LEG for
+// the thief, not a constant. It still is. It is the biggest thing left here.
+//
+// THE WIND LADDER GOT WIDER, NOT NARROWER, AND IT IS WORTH KNOWING WHY.
+// Rationing goes from +24.0 to +35.5 because the two ends move in OPPOSITE
+// directions: `ration` gains from keyUp (it now lets go when winded) and
+// `always` is exempt from keyUp by design and simply meets a faster thief. The
+// bottom rung is 34.5% now. That is a real punishment and the lead should look
+// at it, but it is the same shape round 5 built and a wider version of it.
+//
+// ---- THE MEASUREMENT MISTAKE THIS ROUND MADE, IN FULL --------------------
+// `t` is TUNING-FIRST. A fallback in the K block is live only while config does
+// not carry that key. config.js owns `thiefTired`. I moved its fallback from
+// 0.575 to 0.68 to make the thief faster, measured a control that should have
+// been byte-identical to the previous build, got 62% where it should have read
+// 74% — and spent twenty minutes blaming the store builder's parallel rebuild,
+// which was innocent and which I checked and cleared only afterwards. What I
+// was actually running was a man who got FASTER as he tired. CLAUDE.md warns
+// about shadow blocks that make config decorative; this is the same bug with
+// the polarity reversed, it is harder to see because nothing disagrees, and it
+// is now asserted at startup by paceCheck() rather than described.
+//
+// AND THE SECOND ONE, WHICH WAS WORSE BECAUSE IT WAS AN ARGUMENT AND NOT A
+// TYPO. Having given the thief a cruise that varies, I left the bot's `tSpd`
+// reading his old flat constant, and wrote a paragraph justifying it: a player
+// cannot see a stamina bar over a thief's head. True — and also exactly how you
+// would describe a difficulty lever wearing a fidelity costume. So I measured
+// it. n=200, moving ONLY the bot's estimate of him, nothing else:
+//     bot models him at his BLOWN cruise  (0.575)   66.0%
+//     bot models him at the MIDPOINT      (0.628)   77.0%
+//     bot models him at his FRESH cruise  (0.680)   80.5%
+// FOURTEEN AND A HALF POINTS. A third of the difficulty I thought I had built
+// out of the thief was built out of hobbling the instrument, and the flat
+// misaim slope above is what was left once it came out. Round 8's bot modelled
+// the man exactly right because his cruise was a constant; the moment it became
+// a range, "read the constant" silently became "assume he is always at his
+// worst". There is one `botCruise` getter now — the midpoint of the range he
+// can actually run at, equally wrong in both directions — and botGoal, the
+// dead-reckoning and thiefCruise() all call it. paceCheck() asserts it stays
+// bracketed by the two ends.
+//
+// ---- INSTRUMENTS I DISTRUSTED ------------------------------------------
+//  - n=100. One standard error is 4.6 points at p=0.7. Half my sweeps moved
+//    less than that and I read them as signal for an hour. Every number in this
+//    block is n=200 (SE 3.2) and the tuning decisions are made on mechanism,
+//    not on the winning cell.
+//  - THE LEAD'S `gotThrough` COLUMN. It reads 0% / 52% / 61% and it is not the
+//    fraction of barges that get through — it is `bargedThenCaught/barged`, the
+//    fraction still CAUGHT after getting through. The diagnosis it supported
+//    ("52-61% of them GET THROUGH") is the opposite of what the field says.
+//  - CROSS-PAGE-LOAD COMPARISONS, which are genuinely unsafe here: store.js and
+//    cctv.js were rewritten under me four times during this round, and the nav
+//    grid is built from the store's collider set. Every table above is taken
+//    inside ONE page load with its own control. This turned out NOT to be the
+//    cause of the 62%/74% discrepancy — the R8 control reproduces to the
+//    character across all five loads — but the discipline is why I could rule
+//    it out instead of guessing.
+//  - `minGap` on an escape. It reads 1.2-1.3 m on almost every trial, caught or
+//    missed, because it is sampled per frame against a 1.15 m catch radius. It
+//    looks like a "barely" number and it discriminates nothing.
+// ===========================================================================
 // ===========================================================================
 // ROUND 8 — THE REACTION IS A PERFORMANCE, AND ONE OF THEM RUNS
 // ===========================================================================
@@ -878,6 +1064,7 @@ import {
   STORE, FRONT_WALK_Z, SERVICE_DESK,
 } from './config.js';
 import { makeNav } from './agents/nav.js';
+import { makeFrontEnd } from './agents/frontend.js';
 // ROUND 6 — the figures moved out. agents.js owns how people MOVE; figures.js
 // owns what they look like while they do it. It also carries the write-up of
 // the bug that was this round's whole brief (every person in the game was
@@ -1073,6 +1260,47 @@ const K = {
   // auto-take — and the shelf-lip reach gate is what holds it there
   // (boostFrac 0.01 under `ignore`), not the timer.
   get boostTime()     { return t('boostTime',    3.00); },
+  // =========================================================================
+  // ROUND 9 (SECOND PASS) — boostGrip. THE DRINK BUYS FOOTWORK, NOT JUST LEGS.
+  //
+  // Round 5 wrote "fast is not agile" as an EXPLANATION for the powerup's
+  // cliff and left it as prose. It is arithmetic and it is in steer():
+  //     latMax = copAccel * (1 - (1 - copGrip) * (speed / top))
+  // and `top` is copRun x boostMul whether you drank anything or not. So
+  //     unboosted, 5.05 m/s:  latMax 7.61   turning radius v^2/a = 3.35 m
+  //     boosted,   7.17 m/s:  latMax 7.02   turning radius        7.32 m
+  // A DRINK MORE THAN DOUBLES YOUR TURNING CIRCLE, in a store whose usable
+  // half-lane is 1.58 m. The duel is decided by covering a 1.5 m juke inside
+  // 0.85 s of jukeHold; a man with a 7.3 m radius cannot, and the bench says
+  // so — shoulder commitments go 52 -> 74 with a drink and barges 6 -> 25.
+  // The drink was not failing to help. It was ACTIVELY LOSING the only
+  // engagement that decides a one-exit chase, and paying for the privilege
+  // with a gas-out on the far side of it.
+  //
+  // So the boost multiplies copAccel while it is live. Thematically it is the
+  // right half of an energy drink for a fat man: not "he is faster", "he can
+  // plant a foot and go". Set so a boosted cop's turning circle is a little
+  // BETTER than his own sober one rather than merely equal — the brief says
+  // that failing to catch him with a powerup is broken, so the drink has to
+  // win duels, not draw them:
+  //     boostGrip 2.40 -> latMax 16.85 at 7.17 m/s -> radius 3.05 m  (sober 3.35)
+  // ABLATED ON THE SHIPPED BUILD, n=200, difficulty 1, `cut` off0, everything
+  // else in this round already in, against the same 200 chases with no drink
+  // (66.0%):
+  //     boostGrip 1.00 (this constant off)   86.0%   drink worth +20.0
+  //     boostGrip 2.40 (shipped)             92.5%   drink worth +26.5
+  // So it is worth 6.5 points of boosted catch rate, and it is NOT the biggest
+  // thing in this round — the bot fix in windPolicy and the legs mechanic in
+  // thiefPace are both larger. It is in for a reason the catch rate does not
+  // show: without it a drink still DOUBLES the cop's turning circle, so the
+  // player's own hands report the powerup as a loss of control at the exact
+  // moment it is supposed to feel like the opposite. Sweep of the whole range,
+  // n=100 on an earlier page load, drink in hand:
+  //     1.0 -> 97%   1.6 -> 97%   2.4 -> 100%   3.2 -> 100%
+  // Above ~2.4 it stops buying anything measurable, which is what you expect
+  // once the turning circle is no longer the binding constraint; it is set at
+  // the knee rather than past it.
+  get boostGrip()     { return t('boostGrip',    2.40); },
   // THE GATE. Fraction of the regen you get while the sprint key is STILL DOWN.
   // Zero: a man sprinting is not getting his breath back. On its own this is a
   // 5.9-point nerf and nothing else, which is why round 4 priced it and refused
@@ -1140,7 +1368,105 @@ const K = {
   // The thief's own wind. He is a shoplifter with a jacket full of steaks, not a
   // sprinter — thiefRun is his first-few-seconds ceiling, not his cruise.
   get thiefWind()     { return t('thiefWind', 2.60); }, // sec of flat-out running
-  get thiefTired()    { return t('thiefTired', 0.575); },// x thiefRun once blown
+  // ---- ROUND 9 (2nd pass): thiefTired IS NOW THE BOT'S MODEL, NOT THE MAN ---
+  // *** DO NOT TUNE THE CHASE BY EDITING THE FALLBACK ON THIS LINE. ***
+  // `t` is TUNING-first and config.js OWNS `thiefTired` (0.575). The fallback
+  // here is unreachable, so editing it is a silent no-op — which is the exact
+  // shadow-block hazard in CLAUDE.md wearing the opposite costume, and I walked
+  // straight into it this round: I moved this fallback 0.575 -> 0.68, measured
+  // a control that should have been byte-identical to the previous build, got
+  // 62% where it should have read 74%, and spent twenty minutes blaming the
+  // store builder's parallel rebuild for it. What I was actually running was
+  // lerp(thiefSpent, 0.575, legs) — a man who gets FASTER as he tires.
+  //
+  // So the man's speed does not come through here any more. He runs on
+  // thiefFresh -> thiefSpent (both new, both absent from config, both therefore
+  // live) and THIS constant is now exactly one thing: THE PURSUIT BOT'S
+  // ESTIMATE OF HIS CRUISE — `tSpd` in botGoal and the dead-reckoning step in
+  // botInput. At 0.575 it sits between fresh (0.68) and spent (0.51), so the
+  // bot under-estimates a fresh runner and over-estimates a blown one, which is
+  // what a player who cannot see a stamina bar over the man's head does. That
+  // is deliberate and it is what keeps this out of the POISONED-LEVER trap in
+  // the file header: the trap is a change that moves the thief WITHOUT moving
+  // the bot's model, and the failure mode is the bot getting a free read.
+  get thiefTired()    { return t('thiefTired', 0.575); },// x thiefRun — THE ANCHOR
+  // ---- AND EVERYTHING ELSE ABOUT HIS PACE HANGS OFF THAT ANCHOR ------------
+  // fresh and spent are MULTIPLES of config's thiefTired rather than absolute
+  // numbers, and the pursuit bot's estimate is derived from the same two. That
+  // is not tidiness, it is the POISONED-LEVER RULE in the file header, and this
+  // round is the second time this file has been caught by it.
+  //
+  // What I did wrong, measured and then fixed: I made the man faster and left
+  // `tSpd` in botGoal reading his OLD flat cruise, on the argument that a
+  // player cannot see a stamina bar over a thief's head. That argument is true
+  // and it is also how you would describe a difficulty lever wearing a fidelity
+  // costume, so I measured it. Shipped thief, n=200, `cut` off0, no drink,
+  // moving ONLY the bot's estimate of him:
+  //     bot models him at 0.575 (his BLOWN cruise)    66.0%
+  //     bot models him at 0.628 (the MIDPOINT)        77.0%
+  //     bot models him at 0.680 (his FRESH cruise)    80.5%
+  // FOURTEEN AND A HALF POINTS. Not noise, not a rounding error: a third of the
+  // difficulty I thought I had built out of the thief was actually built out of
+  // hobbling the instrument. Round 8's bot modelled the man EXACTLY right,
+  // because his cruise was a constant and the bot read that constant; the
+  // moment his cruise became a range, "read the constant" silently became
+  // "assume he is always at his worst".
+  //
+  // So the bot reads the MIDPOINT of the range he can actually run at — equally
+  // wrong in both directions, stateless, and independent of how long the chase
+  // happens to last. It is one getter, `botCruise`, and botGoal, botInput's
+  // dead-reckoning and the thiefCruise() handle game.js counts its door alarm
+  // down on all call it. Nobody derives it twice.
+  get thiefFreshMul() { return t('thiefFreshMul', 1.183); }, // x thiefTired
+  get thiefSpentMul() { return t('thiefSpentMul', 1.000); }, // x thiefTired
+  // His cruise with his legs still in it. 0.575 x 1.183 = 0.680 -> 3.64 m/s,
+  // set just above the cop's rationed sustain (~3.7 m/s at a 63% duty cycle) so
+  // that the opening of a stern chase is a race the cop does not auto-win.
+  get thiefFresh()    { return K.thiefTired * K.thiefFreshMul; }, // legs FULL
+  // ...and where the same man ends up after thiefLegs seconds of running.
+  //
+  // IT IS ROUND 8's CONSTANT, TO THREE DECIMALS, AND THAT IS THE POINT. 0.575
+  // is exactly what `thiefTired` was and still is in config.js, so a BLOWN
+  // thief in this build runs at precisely the speed every thief in rounds 4-9
+  // ran at for the whole of his chase. Nothing was taken away from him. What is
+  // new is only that for the first fourteen seconds he is FASTER than that, and
+  // then comes back to it. Stating the change that way is not presentation: it
+  // is why the wind ladder, the misaim table and the camper's income all move
+  // by so little below, and it is the ablation — set thiefFresh to 0.575 and
+  // this file is round 8's chase again, on every long chase, by construction.
+  //
+  // It also has to sit clearly UNDER the cop's rationed sustain (~3.7 m/s) or a
+  // long chase never resolves and the misses run to forty metres, and clearly
+  // OVER his gassed crawl or a cop who mismanages his wind still wins by
+  // walking. 0.575 x thiefRun = 3.08 m/s, between the two. Sweep in the header.
+  get thiefSpent()    { return K.thiefTired * K.thiefSpentMul; }, // legs GONE
+  // THE PURSUIT BOT'S ESTIMATE OF HIM, and the only one there is. m/s, not a
+  // multiplier, because every call site wants a speed. See thiefFreshMul above
+  // for the fourteen-point measurement that made this its own getter.
+  get botCruise()     { return K.thiefRun * (K.thiefSpent + K.thiefFresh) / 2; },
+  // Seconds of running from fresh legs to spent ones. Read it as the TIME
+  // CONSTANT of a slow linear fade, not as a stopwatch on the chase: the median
+  // chase here is 5.7 s, so a runner only ever spends about a sixth of this on
+  // the way down. At this setting the decay is not shaping the short chases at
+  // all — it is the safety net that makes the LONG ones resolve, and that is
+  // the whole job. Swept at n=200, difficulty 1, `cut` off0, ON THE HONEST BOT
+  // (see thiefFreshMul), no drink / drink:
+  //     fresh 1.183  legs 14    79.5% / 94.0%   median miss 1.72 m  p90 2.42
+  //     fresh 1.183  legs 22    73.0% / 93.0%                1.78       2.52
+  //     fresh 1.183  legs 34    70.0% / 90.5%                1.79       2.75  <- shipped
+  //     fresh 1.220  legs 26    69.5% / 90.5%                1.95       2.84
+  //     fresh 1.280  legs 14    72.0% / 93.0%                1.90      35.97  <- !
+  //     fresh 1.280  legs 22    62.5% / 87.0%                2.01       7.87
+  // THE LAST TWO ROWS ARE THE DESIGN RULE, and they are why the shipped point
+  // buys its catch rate with DURATION rather than with SPEED. thiefFreshMul
+  // 1.28 puts his fresh cruise at 3.94 m/s, ABOVE the cop's rationed sustain of
+  // roughly 3.7 m/s, and the p90 miss immediately goes to thirty-six metres:
+  // once he is faster than the man chasing him, an early loss is not a near
+  // miss, it is gone, and no amount of later decay catches it inside a trial.
+  // Keep thiefFresh UNDER the cop's sustain and the tail stays at 2-3 m across
+  // the whole range; break that one inequality and the brief's "a few feet, not
+  // half a store" fails on its own, whatever the catch rate says.
+  get thiefLegs()     { return t('thiefLegs', 34.0); },  // s, fresh -> spent
   get thiefPanic()    { return t('thiefPanic', 0.965); },// x thiefRun with footsteps on him
   get thiefPanicGap() { return t('thiefPanicGap', 3.00); }, // metres at which fear starts
   get thiefPanicBand(){ return t('thiefPanicBand', 0.90); }, // metres from fear to flat-out
@@ -1508,6 +1834,75 @@ const K = {
   get annHuffPace()   { return t('annHuffPace', 1.18); }, // x walk while huffing
 
   // =========================================================================
+  // ROUND 10 — LESS ANGER, MORE CONFUSION, AND PROXIMITY AS A STRENGTH
+  //
+  // Client, verbatim: "I don't think the shoppers should necessarily stop and
+  // shake their hands and get mad. I DO want them to take notice when I talk on
+  // the PA system, especially if they're in the aisle and they're in proximity,
+  // and I'm saying 'hey, excuse me.' I want them to look around and look really
+  // confused."
+  //
+  // Nothing about the COMPLIANCE maths moves. The roll is the round-7 roll, the
+  // bolt is still carved out of the shrug interval of it, and the six
+  // constants above are untouched — which is what makes the likelihood ratios
+  // re-measurable against round 8's table rather than merely re-published.
+  // What moves is the PERFORMANCE, on four dials.
+  // =========================================================================
+  // How far away the announcement stops being about you. 14 m is a bit over
+  // half an aisle: at the mouth of a man's own aisle you get the full search,
+  // from the far end of the next aisle you get a glance. Chosen off the
+  // geometry rather than swept — the dispatch position is ~20 m from a subject
+  // mid-aisle and the boltChance table's "8 m behind him" case is the range at
+  // which the client says he wants the big reaction.
+  get annReach()      { return t('annReach', 14.0); },
+  // Below this weight the confusion rung collapses to the short glance whatever
+  // the roll said. 0.55 of 14 m is 6.3 m, i.e. about the width of two aisles.
+  get annNearCut()    { return t('annNearCut', 0.55); },
+  // WHICH SHOUT TURNS BAFFLEMENT INTO ANNOYANCE. 3 is not arbitrary: it is the
+  // rung the escalation ladder already changes on (LADDER/rungOf), so the
+  // posture, the walk and the clip all cross over on the same announcement
+  // instead of on three different ones.
+  get annMadRung()    { return t('annMadRung', 3); },
+  // The confused tail. Shorter than the huff because it is not a grievance, it
+  // is an unresolved thought, and 4.5 s of a man still glancing about is
+  // already a long time on a monitor tile.
+  get annPuzzT()      { return t('annPuzzT', 4.5); },
+  // ...and it makes him SLOWER, which is the opposite sign to annHuffPace and
+  // is the point. A distracted man dawdles.
+  get annPuzzPace()   { return t('annPuzzPace', 0.88); },
+  // How much of the tail a man at the far edge of annReach keeps. Not zero:
+  // he did hear it, and a reaction that vanishes with distance would make the
+  // absence of one informative.
+  get annTailFar()    { return t('annTailFar', 0.42); },
+  // The after-clip scan, in Hz and radians. Deliberately an eighth of
+  // annShakeHz: a shake is negation and a sweep is searching, and with no face
+  // available the rate is most of what separates them.
+  get annScanHz()     { return t('annScanHz', 0.42); },
+  get annScanAmp()    { return t('annScanAmp', 0.30); },
+  // THE ABLATION HANDLE. 1 restores round 9's PA performance whole: its ladder,
+  // no proximity override, a flat annHuffT huff on every shrug and no tail on
+  // the price-check line. Debug only — bench() stamps it onto res.override so a
+  // run taken under it can never be quoted as the shipped build.
+  get annR9()         { return t('annR9', 0); },
+
+  // ROUND 10 — HOW MANY PEOPLE WORK THE FRONT END. See agents/frontend.js for
+  // the measured draw-call ledger and for why frustum culling does not help.
+  // Read through t() like everything else so a sweep can move it without a
+  // reload: `agents.override.frontEndCount = 3` then reload, since the roster
+  // is built once on the first tick.
+  get frontEndCount() { return t('frontEndCount', 7); },
+
+  // ROUND 10 — the child collision, AS A DIAL, and it is a dial for one reason:
+  // the claim this feature has to defend is "byte-identical bench", and the only
+  // trustworthy form of that claim on this project is an A/B taken ON ONE PAGE
+  // LOAD (AGENTS_BRIEF, "ship the old layout as a dial"). `agents.override
+  // .kidCollide = 0` restores round 9's clipping child exactly, and bench()
+  // stamps a non-empty override onto res.override, so a run taken under the
+  // ablation says so on its own object. Not a difficulty lever and not a
+  // gameplay constant: nothing downstream of a child exists.
+  get kidCollide()    { return t('kidCollide', 1); },
+
+  // =========================================================================
   // ROUND 6 — THE DIFFICULTY RAMP. Six numbers, one dial.
   //
   // Client: "especially in the beginning of the game when we want it to be
@@ -1678,9 +2073,57 @@ function lungCheck() {
         + bound.toFixed(3) + ', or raise TUNING.copWalk.',
   };
 }
+// ROUND 9 (2nd pass) — THE SECOND ASSERTION, and it exists because this round
+// shipped the bug it catches for about twenty minutes.
+//
+// `t` is TUNING-first. So a fallback in the K block is LIVE only while config
+// does not carry that key, and the moment the lead promotes one, editing the
+// fallback becomes a silent no-op. That is the shadow-block hazard from
+// CLAUDE.md with the polarity reversed, and it is harder to see than the
+// original: nothing disagrees, the file just stops listening.
+//
+// The specific failure this catches: `thiefFresh` and `thiefSpent` are the
+// man's real cruise at either end of his legs, and `thiefTired` is the BOT'S
+// MODEL of it. All three are read through `t`. If somebody promotes thiefFresh
+// or thiefSpent into config at a value that puts them out of order — or, as
+// happened here, tries to move the man by editing a fallback config already
+// owns — the pace curve inverts and the thief gets FASTER as he tires. On the
+// bench that reads as a plausible-looking catch rate (62%) and nothing else.
+// It cost twenty minutes and an incorrect accusation against a parallel
+// builder's rebuild before the control run gave it away.
+function paceCheck() {
+  const fresh = K.thiefFresh, spent = K.thiefSpent;
+  const model = K.thiefRun ? K.botCruise / K.thiefRun : NaN;
+  // Bracketed INCLUSIVELY. The shipped build sets thiefSpent to exactly
+  // config's thiefTired, so the bot's estimate is dead on a blown man and
+  // conservative on a fresh one; `model === spent` is the intended state, not a
+  // violation. What must never happen is fresh <= spent (the pace curve
+  // inverted, so he speeds up as he tires) or the model landing OUTSIDE the
+  // range he actually runs at, which is the bot being handed a free read.
+  const ok = spent < fresh && model >= spent && model <= fresh;
+  return {
+    ok, thiefFresh: +fresh.toFixed(4), thiefSpent: +spent.toFixed(4),
+    botModel: +model.toFixed(4),
+    freshSpd: +(K.thiefRun * fresh).toFixed(2),
+    spentSpd: +(K.thiefRun * spent).toFixed(2),
+    modelSpd: +(K.thiefRun * model).toFixed(2),
+    legsT: K.thiefLegs,
+    why: ok ? null
+      : 'INVERTED OR UNBRACKETED: the thief must be fastest with his legs '
+        + 'fresh (thiefFresh) and slowest once they are gone (thiefSpent), and '
+        + 'the pursuit bot\'s estimate (K.botCruise) must lie '
+        + 'within that range or the bench is measuring the bot rather than the '
+        + 'game — it is worth 14.5 points, see thiefFreshMul. Got fresh='
+        + fresh + ' spent=' + spent + ' model=' + model + '. NOTE: editing the '
+        + 'fallback for a key config.js already carries does nothing — `t` is '
+        + 'TUNING-first. Move it in config.js or via agents.override.',
+  };
+}
 {
   const L = lungCheck();
   if (!L.ok && typeof console !== 'undefined') console.warn('[agents] lung', L);
+  const P = paceCheck();
+  if (!P.ok && typeof console !== 'undefined') console.warn('[agents] pace', P);
 }
 
 // main.js maps KeyW -> input.z = -1, but its floor camera sits at cop.z - 7.6
@@ -1690,6 +2133,16 @@ const FWD_SIGN = -1;
 
 const BODY_R = 0.42;          // agent collision radius
 const CART_R = 0.34;
+// ROUND 10 — A CHILD'S. Deliberately much smaller than BODY_R, and not for
+// gameplay reasons: BODY_R is a shoulder-room pad for a body that has to squeeze
+// PAST other bodies, and a child never does that. What this radius has to be is
+// the half-width of the mesh, so the thing that stopped clipping is the thing
+// you can see: the widest part of a child rig is the pot belly at rx 0.112 on a
+// 0.86-1.12 scale, i.e. 0.096-0.125 m, plus a shoe box 0.066 wide swinging at
+// the end of a leg. 0.24 clears both with room for the weave and still lets a
+// kid stand at a shelf lip next to a parent instead of hovering half a metre
+// off it. See kidClamp().
+const KID_R = 0.24;
 const HALF_LEN = AISLE_LEN / 2;
 const LANE_HALF = AISLE_GAP / 2;
 // How far off the lane centreline a body can actually get. AISLE_GAP 4.0 gives a
@@ -2229,6 +2682,26 @@ export function createAgents(THREE, scene, world) {
   // not teleport through a door at a dead run; you hit it, and for a beat you are
   // a stationary man with his shoulder on a push-bar. That beat is what makes a
   // chase to the doors contestable instead of decided ten metres out.
+  // ---- A TRAP FOR WHOEVER TUNES `doorShove` NEXT ---------------------------
+  // ROUND 9 (2nd pass), FOUND WHILE LOOKING FOR SOMETHING ELSE, NOT FIXED HERE.
+  // `shoveMul` was right in a two-door store: Door 1 is the customer entrance
+  // with automatic leaves (0.35) and Door 2 is the staff end with a push-bar
+  // (1.00), and K.doorShove was tuned as the push-bar number — its own comment
+  // says "sec at the staff-end door". Round 6 then made Door 1 THE ONLY WAY
+  // OUT. So the beat at the only door a thief may use is 0.85 x 0.35 = 0.30 s,
+  // and config.js's `doorShove: 0.85` is a number that has not described
+  // anything since round 6. It is the shadow-block hazard in a different
+  // costume: a value that looks live, is live, and means 35% of what it says.
+  //
+  // It is left at 0.30 s DELIBERATELY. Lengthening it makes the game easier for
+  // everybody, and this round needed the opposite; the door is also no longer
+  // where the drink has to pay, because with the bot fix the escapes now land
+  // at a median 1.70 m and lengthening the beat would simply convert near
+  // misses into catches. But the effective per-door value is now printed on
+  // every bench result (`doorShoveEff`) so it cannot hide again, and if the
+  // lead ever wants config's number to mean what it says, the honest edit is
+  // `doorShove: 0.30` with door1 at 1.00 and door2 at 2.85 — same game, no
+  // decorative constant.
   const EXIT_SPEC = [
     { id: 'door1', label: 'DOOR 1', x: EXIT.x, z: EXIT.z, shoveMul: 0.35, sign: 0x8ef07a },
     // ROUND 5 — this was `SERVICE_DESK.x - 5.4`, my own guess at where a second
@@ -2407,7 +2880,7 @@ export function createAgents(THREE, scene, world) {
     // updateCop() now instead of in telemetry(), because telemetry() is behind
     // `if (!api.report) return` and the ANIMATION cannot be: a cop who only
     // pants when the HUD happens to be listening is not a character.
-    fatigue: 0, heave: 0, brace: 0, sway: 0,
+    fatigue: 0, heave: 0, brace: 0, hook: 0, sway: 0,
   };
   scene.add(cop);
   // steer() writes speed/skid and moves .position; the cop's live on userData.
@@ -2490,7 +2963,7 @@ export function createAgents(THREE, scene, world) {
       bolted: false, escaped: false, caught: false, angry: 0, harassArmed: true,
       concealT: 0, look: 0, lean: 0, target: null, dropCartAt: null,
       duck: 0, duckT: 0, stumble: 0, bargeT: 0, bargeN: 0, bargeStam: null, nerve: 1,
-      adren: 1, shoveT: 0, exitI: 0, viaBack: false, doorPref: 0,
+      adren: 1, legs: 1, shoveT: 0, exitI: 0, viaBack: false, doorPref: 0,
       // ROUND 6 — the decoy clip currently playing on this body, guilty or not.
       // `gest` is an entry from decoy.js, `gestT` counts DOWN, `gestD` is its
       // scaled duration. `turnY` is the yaw a clip adds on top of `heading`,
@@ -2515,7 +2988,10 @@ export function createAgents(THREE, scene, world) {
       // (guilty or innocent, same number), `paBolt` marks the startle so the
       // `react` state freezes for it instead of backing away from a cop who is
       // forty metres away.
-      huff: 0, paBolt: false,
+      // ROUND 10 — `huffKind` is 'lost' (confused, the default) or 'mad'
+      // (round 8's huff, third shout onward). A function of annN and proximity;
+      // never of guilt. See afterPA().
+      huff: 0, huffKind: 'lost', paBolt: false,
     };
     shoppers.push(s);
     return s;
@@ -2638,7 +3114,7 @@ export function createAgents(THREE, scene, world) {
     s.escaped = false; s.caught = false; s.angry = 0; s.harassArmed = true;
     s.concealT = guilty ? rr(2.5, 7.0) : 0; s.look = 0; s.lean = 0; s.wind = 1;
     s.aim = null; s.aimT = 0; s.duck = 0; s.duckT = 0;
-    s.adren = 1; s.shoveT = 0; s.exitI = 0; s.viaBack = false;
+    s.adren = 1; s.legs = 1; s.shoveT = 0; s.exitI = 0; s.viaBack = false;
     s.doorPref = EXITS.length > 1 ? ri(0, EXITS.length - 1) : 0;
     s.stumble = 0; s.bargeT = 0; s.bargeN = 0; s.bargeStam = null;
     s.nerve = rr(K.nerveLoD, K.nerveHiD);
@@ -2650,7 +3126,7 @@ export function createAgents(THREE, scene, world) {
     s.chill = 0; s.balk = 0; s.stall = 0; s.aborts = 0; s.leaving = false; s.made = 0;
     s.annT = 0; s.annKind = null; s.annOut = null; s.annN = 0; s.annSpill = false;
     s.annAt = null; s.birdT = 0;
-    s.annClip = null; s.huff = 0; s.paBolt = false;
+    s.annClip = null; s.huff = 0; s.huffKind = 'lost'; s.paBolt = false;
     s.shopT = rr(K.shopLo, K.shopHi);
     s.held.scale.set(1, 1, 1);
     // ROUND 9 — the child teleports with its parent. Without this a body that
@@ -2895,7 +3371,12 @@ export function createAgents(THREE, scene, world) {
     if (!moving) target = 0;
 
     const top = T.copRun * T.boostMul;
-    steer(copBody, ix, iz, target, T.copAccel, K.copGrip, top, dt);
+    // ROUND 9 (2nd pass) — the drink buys FOOTWORK as well as legs. `top` is
+    // the boosted ceiling either way, so steer()'s grip term already fades the
+    // lateral authority of a boosted cop toward copGrip; without a matching
+    // lift on the accel a drink doubles his turning circle in a 3.16 m lane.
+    // The whole write-up, the arithmetic and the sweep are at K.boostGrip.
+    steer(copBody, ix, iz, target, T.copAccel * (boosted ? K.boostGrip : 1), K.copGrip, top, dt);
     solids.resolve(cop.position, BODY_R);
 
     // shove shoppers out of the way rather than clipping through them
@@ -3084,6 +3565,53 @@ export function createAgents(THREE, scene, world) {
       r.neck.rotation.x = lerp(r.neck.rotation.x, -0.34 + (1 - w) * 0.30, b);
     }
 
+    // ---- ROUND 10: THUMBS IN THE BELT ---------------------------------------
+    // "The cop needs more detail, a lot more detail." Most of the answer to that
+    // is geometry and it is in figures.js. This is the half that is not: he had
+    // exactly two things he could be doing with his arms — swinging them, or
+    // hands on knees dying — and everything in between was a man standing at
+    // attention with his arms hanging.
+    //
+    // A police officer at rest puts his hands on his belt. It is the single most
+    // recognisable thing a uniform does, and — the round-7 filter, which is the
+    // only one that matters here — IT IS AN OUTLINE. Both forearms come in to
+    // meet at the buckle, so the light shirt band gains a dark V under it and
+    // the two gaps between arm and ribs open up. At 214x120 that is a torso with
+    // a notch cut out of each side; hanging arms are a rectangle. It costs six
+    // lerps on a frame where he is not moving.
+    //
+    // GATED THE OPPOSITE WAY TO `brace`, DELIBERATELY. Hands on knees is what a
+    // blown man does; thumbs in the belt is what a man with his wind does. They
+    // cannot both be true, and `1 - u.brace` is the term that makes the handover
+    // continuous rather than a snap when fatigue crosses a line. Standing at the
+    // desk he hooks up over about a second; the frame he starts walking it lets
+    // go, so it never survives into a chase and never touches one.
+    const wantHook = (!moving && F < 0.42 && !boosted) ? clamp((0.42 - F) / 0.22, 0, 1) : 0;
+    u.hook = lerp(u.hook || 0, wantHook, ed(wantHook > (u.hook || 0) ? 3.4 : 6.0));
+    const hk = u.hook * (1 - u.brace);
+    if (hk > 0.01) {
+      // Hands forward and INWARD to the buckle. The arm has one pivot and a
+      // baked elbow, so "thumbs in the belt" is really "forearms converging" —
+      // which is the part that reads, and the part that does not (a thumb
+      // actually hooked over leather) is 20 mm on a 1.72 m man.
+      // TUNED BY RENDERING IT, and the first cut is worth recording because it
+      // is a lesson about THIS body rather than about the pose. At -0.50 / 0.30
+      // his hands met over the front of the gut and both arms disappeared into
+      // his own outline — because he is 1.62 girth and the widest thing on him
+      // is his stomach, so anything that brings the arms inboard hides them.
+      // Shallower and wider puts the hands down ON the belt at the sides of the
+      // buckle, where the arms stay at the edge of the silhouette and the gut
+      // hangs between them. A thin man could have the clasped version; he
+      // cannot, and that is the correct reason to reject a pose.
+      r.armL.rotation.x = lerp(r.armL.rotation.x, -0.44 - w * 0.03, hk);
+      r.armR.rotation.x = lerp(r.armR.rotation.x, -0.44 - w * 0.03, hk);
+      r.armL.rotation.z = lerp(r.armL.rotation.z, 0.02, hk);
+      r.armR.rotation.z = lerp(r.armR.rotation.z, -0.02, hk);
+      // ...and he squares up a little while he is doing it. A man with his
+      // thumbs in his belt is not slumped; that is most of the attitude in it.
+      r.chest.rotation.x = lerp(r.chest.rotation.x, r.chest.rotation.x - 0.05, hk);
+    }
+
     // Shaken off by a shoulder barge: arms up, off balance, facing the way the
     // man came from. Reads as a beat lost rather than a freeze.
     if (u.stagger > 0) {
@@ -3149,9 +3677,68 @@ export function createAgents(THREE, scene, world) {
     const press = clamp((K.thiefPanicGap + 3.0 - copD) / 3.0, 0, 1);
     s.adren = clamp(s.adren - dt * press / K.thiefAdrenD
                             + dt * (1 - press) * K.thiefAdrenBack, 0, 1);
-    const cruise = lerp(K.thiefTired, 1, s.wind);              // opening sprint, fading
-    const surge = lerp(K.thiefTired, K.thiefPanic, near * s.adren);  // fear, and it runs out
+    // ======================================================================
+    // ROUND 9 (2nd pass) — HIS LEGS GO TOO. THE THIRD TANK.
+    //
+    // Round 5 named this and did not build it: "the lever I would actually try
+    // is giving the THIEF the same rhythm the cop just got — a cruise that
+    // decays under sustained pressure instead of a flat floor". It called it a
+    // round rather than an afternoon. It is the round.
+    //
+    // WHY IT HAD TO EXIST BEFORE ANY CRUISE NUMBER COULD MOVE. His cruise was
+    // a FLOOR: he fell to it in 2.6 s and held it for the rest of his life. So
+    // it was a single number that had to be two incompatible things at once —
+    // fast enough that a stern chase is a race, and slow enough that a stern
+    // chase ever ends. Swept at n=100 on the fixed bot, difficulty 1, `cut`
+    // off0, it is a cliff and not a curve (this is the FLAT floor, swept via
+    // agents.override so config could not shadow it):
+    //   flat cruise         no drink   drink   MEDIAN MISS   p90 MISS
+    //     0.575  3.08 m/s     89%       100%      1.70 m       1.93 m
+    //     0.620  3.32         88%        98%      1.81         2.02
+    //     0.680  3.64         74%        85%      3.07        40.91   <-- !
+    //     0.740  3.96         67%        73%      2.51         9.29
+    // 0.68 is the catch rate the brief wants and it loses TEN PER CENT OF ITS
+    // CHASES BY FORTY METRES, which is the one thing PROMPT.md forbids by name
+    // ("you should lose by a few feet, not half a store"). That is not a tuning
+    // accident, it is what a flat floor means: the moment his cruise clears the
+    // cop's rationed sustain (~3.7 m/s), a chase that starts behind NEVER comes
+    // back, and the gap grows for as long as the trial lasts.
+    //
+    // So the floor decays. `legs` is a third tank on top of wind and adrenaline
+    // — it drains only while he is actually running, it does not come back
+    // inside a chase, and it takes his cruise from `thiefTired` (fresh, fast
+    // enough to hold off a cop who is merely pacing himself) to `thiefSpent`
+    // (blown, slow enough that the cop always reels him in eventually).
+    //   fresh, 0-4 s   3.64 m/s   vs a rationing cop's ~3.7 — a real race
+    //   blown, 12 s+   2.73 m/s   vs the same 3.7 — he is coming back to you
+    // The chase therefore has a SHAPE: he opens a gap, he holds it while your
+    // lungs and his legs argue, and then one of the doors or one of the two of
+    // you gives out first. That is the "barely losing" the brief asks for, and
+    // it is why the miss distribution can be tight at a catch rate this low.
+    //
+    // THE BOT'S MODEL IS DELIBERATELY LEFT FLAT. botGoal's `tSpd` is still
+    // K.thiefRun x K.thiefTired, i.e. the FRESH cruise, so the bot over-
+    // estimates a blown man and picks intercepts further down his route than it
+    // needs to. That is conservative, it is what a player who cannot see a
+    // stamina bar over the thief's head would do, and it keeps this out of the
+    // POISONED-LEVER trap in the file header — the trap is a change that moves
+    // the thief without moving the bot's model of him, and the failure mode is
+    // the bot getting a free read. Over-estimating is the safe side of it.
+    // THE BOT'S MODEL OF HIM IS NOT LEFT FLAT, AND THE FIRST DRAFT OF THIS
+    // ROUND GOT THAT WRONG. I shipped a version where `tSpd` in botGoal still
+    // read his OLD constant cruise, on the argument that a player cannot see a
+    // stamina bar over a thief's head — which is true, and is also how you
+    // would describe a difficulty lever wearing a fidelity costume. Measured,
+    // n=200, moving ONLY the estimate: 66.0% / 77.0% / 80.5% as the bot models
+    // him at his blown / midpoint / fresh cruise. FOURTEEN AND A HALF POINTS.
+    // The full write-up and the fix — one `K.botCruise` getter that botGoal,
+    // the dead-reckoning and thiefCruise() all call — is at K.thiefFreshMul.
+    if (s.bolted) s.legs = clamp(s.legs - dt / K.thiefLegs, 0, 1);
+    const floor = lerp(K.thiefSpent, K.thiefFresh, s.legs);
+    const cruise = lerp(floor, 1, s.wind);                     // opening sprint, fading
+    const surge = lerp(floor, K.thiefPanic, near * s.adren);   // fear, and it runs out
     s.dbgNear = near;
+    s.dbgFloor = floor;
     return K.thiefRun * Math.max(cruise, surge);
   }
 
@@ -3407,7 +3994,12 @@ export function createAgents(THREE, scene, world) {
   // starts, so a HUD line cannot get ahead of the picture. `outcome` is
   // 'heed' | 'shrug' | 'hold' — what he visibly did, which is all the player
   // can see anyway. It is never his guilt.
-  const REACT_IDS = ['whoMe', 'whoMeAffront', 'whoMeGlance'];
+  // ROUND 10 — THE FIRST-SHOUT POOL IS THREE CONFUSED MEN. `whoMeAffront` has
+  // moved to the second rung (see LADDER); `whoMeLost` takes its place here.
+  // Same length as it has been since round 7, so the single rnd() draw
+  // lookAround() takes still maps uniformly over three ids and the stream is
+  // where it was.
+  const REACT_IDS = ['whoMe', 'whoMeLost', 'whoMeGlance'];
 
   // =========================================================================
   // ROUND 9 — THE ESCALATION LADDER. "MAYBE EVEN THE CUSTOMER FLIPS THE BIRD AT
@@ -3440,12 +4032,76 @@ export function createAgents(THREE, scene, world) {
   // taken would walk the stream and move every measured number downstream, which
   // is the trap CLAUDE.md records and which cost a previous builder an hour.
   // Verified rather than argued: bench(n=100) is byte-identical on every field.
+  // ROUND 10 — REBALANCED TOWARD CONFUSION, AND THE ANGER MOVED UP A RUNG.
+  //
+  // Client, verbatim: "I don't think the shoppers should necessarily stop and
+  // shake their hands and get mad. I DO want them to take notice when I talk on
+  // the PA system, especially if they're in the aisle and they're in proximity
+  // ... I want them to look around and look really confused."
+  //
+  // Round 8 built a four-beat sequence that ENDED on a head shake and round 9
+  // put hands-on-hips at the third shout. Both of those are correct pictures of
+  // a man who has worked out what happened. The complaint is that he works it
+  // out far too fast: the FIRST thing a voice out of a ceiling gets should be
+  // bafflement, and the anger should be something the player earns by keying
+  // the handset at the same person over and over.
+  //
+  // So the ladder is one rung longer in effect, without gaining a rung:
+  //   1st, 2nd  THREE CONFUSED MEN. No shake in any of them. `whoMeLost` is
+  //             new and is the client's sentence end to end — four places he
+  //             looks, none of them is it, and a two-handed palms-up shrug.
+  //   3rd       `whoMeAffront` — round 8's, unchanged and NOT deleted, just
+  //             moved to where being annoyed is earned — plus the two round-9
+  //             stares. This rung is where `shake` re-enters the game.
+  //   4th+      the folded arms and the stares, and armBird() hangs the finger
+  //             off the same count.
+  // The third rung goes from two entries to three, which changes which clip a
+  // given draw lands on and changes NO probability: lookAround takes the same
+  // single rnd() either way. See the note on startPutback for why that
+  // distinction is the whole ballgame in this file.
   const LADDER = [
-    REACT_IDS,                                       // 1st and 2nd shout
-    ['whoMeHips', 'whoMeStare'],                     // 3rd
-    ['whoMeHips', 'whoMeStare', 'whoMeFolded'],      // 4th and beyond
+    REACT_IDS,                                              // 1st and 2nd shout
+    ['whoMeAffront', 'whoMeHips', 'whoMeStare'],            // 3rd
+    ['whoMeHips', 'whoMeStare', 'whoMeFolded'],             // 4th and beyond
   ];
-  const ladderFor = (n) => LADDER[n <= 2 ? 0 : n === 3 ? 1 : 2];
+  // ...and round 9's, kept reachable rather than described. `agents.override
+  // .annR9 = 1` puts the PA performance back exactly as it shipped — this
+  // ladder, no proximity override on the clip, and a flat 7 s huff on every
+  // shrug — so the before/after on the likelihood ratios is ONE PAGE LOAD on a
+  // byte-identical scene rather than a comparison between two builds. Three
+  // separate statistics on this project have been wrecked by cross-load drift
+  // and the store's collider set moved twice while this round was in flight,
+  // so this is not tidiness. See AGENTS_BRIEF, "ship the old layout as a dial".
+  const LADDER9 = [
+    ['whoMe', 'whoMeAffront', 'whoMeGlance'],
+    ['whoMeHips', 'whoMeStare'],
+    ['whoMeHips', 'whoMeStare', 'whoMeFolded'],
+  ];
+  const ladder = () => (K.annR9 ? LADDER9 : LADDER);
+  const rungOf = (n) => (n <= 2 ? 0 : n === 3 ? 1 : 2);
+
+  // ---- ROUND 10: PROXIMITY IS A STRENGTH, NOT A SWITCH --------------------
+  // "especially if they're in the aisle and they're in proximity". `annSpill`
+  // already decides WHETHER a bystander hears it at all, at a hard 7 m off the
+  // man being addressed. This is the other half: how much of a reaction the
+  // body actually gives, as a function of how far the COP is from him.
+  //
+  // 1 at your feet, 0 at K.annReach, linear in between. Used in two places and
+  // nowhere else: which clip he plays (a distant man gets the glance whatever
+  // the roll said) and how long the after-state runs.
+  //
+  // IS IT A TELL? No, and the argument is round 8's own and does not need
+  // re-deriving: THE PLAYER ALREADY KNOWS THIS NUMBER. It is the distance
+  // between two things he is looking at. `annWeight` reads two positions and
+  // takes no other input — not `guilty`, not `stole`, not `nerve`, not `annOut`
+  // — so there is no experiment that recovers guilt from how big a reaction he
+  // got, in the same way that boltChance's geometry gate gives nothing away
+  // because standing between a man and the door is a thing you did on purpose.
+  // Measured anyway; the likelihood ratios are in this round's report.
+  function annWeight(s) {
+    const d = dist2d(s.position.x, s.position.z, cop.position.x, cop.position.z);
+    return clamp(1 - d / K.annReach, 0, 1);
+  }
 
   // ---- AND THE BIRD IS NOT ON THAT LADDER, WHICH IS THE SECOND VERSION ------
   // The first build put `whoMeBird` in the rung-4 pool and benchBird measured it
@@ -3477,6 +4133,33 @@ export function createAgents(THREE, scene, world) {
   // NO DRAW. Which of the two bird clips plays is `(s.id + annN) & 1`, not a
   // roll — a roll here would walk the stream inside reactToPA and move every
   // announcement number in the file, which is the trap CLAUDE.md records.
+  // ---- ROUND 10: WHAT IS LEFT OF HIM AFTER THE CLIP ENDS -------------------
+  // Round 8 shipped `annHuff` — 7 s of visible annoyance on three channels:
+  // chin up, eleven hundredths of the stoop taken back out of him, and a walk
+  // 18% quicker. The client's note this round is that the annoyance arrives too
+  // early and too hard, so the DEFAULT after-state is now bafflement and the
+  // huff is what the third shout buys.
+  //
+  //   'lost'  he is still looking. Barely straightens, dawdles rather than
+  //           marches (K.annPuzzPace is BELOW 1 — a distracted man walks
+  //           slower, and it is the opposite sign to the huff on purpose), and
+  //           his head keeps sweeping the aisle for a while afterwards.
+  //   'mad'   round 8's, unchanged in every constant.
+  //
+  // TWO INPUTS AND NO OTHERS: `annN` picks the flavour, `annWeight` scales the
+  // duration. Guilt reaches neither. The huff was deliberately given to guilty
+  // shruggers "or the huff would be the tell the shrug is not" (round 8) and
+  // this inherits that rule intact — same branch, same numbers, no `s.guilty`
+  // anywhere in this function.
+  function afterPA(s) {
+    if (K.annR9) { s.huffKind = 'mad'; s.huff = K.annHuffT; return; }
+    const mad = (s.annN || 1) >= K.annMadRung;
+    s.huffKind = mad ? 'mad' : 'lost';
+    const base = mad ? K.annHuffT : K.annPuzzT;
+    // A man you shouted at from forty metres gets the short version of it.
+    s.huff = base * (K.annTailFar + (1 - K.annTailFar) * annWeight(s));
+  }
+
   function armBird(s) {
     s.birdT = 0;
     if ((s.annN || 0) < K.birdRung) return;
@@ -3545,8 +4228,21 @@ export function createAgents(THREE, scene, world) {
     // an innocent subject to show that the two pictures are identical, and it
     // cannot do that if the clip is rolled independently in each strip. It is
     // null in every code path the game takes.
-    const rung = ladderFor(s.annN || 1);
-    startGesture(s, 'react', s.annClip || rung[Math.floor(rnd() * rung.length)]);
+    const tier = rungOf(s.annN || 1);
+    const rung = ladder()[tier];
+    // THE DRAW IS TAKEN FIRST AND UNCONDITIONALLY. Proximity may override its
+    // RESULT below; it must never override whether it happened. See the note on
+    // startPutback: swapping a rolled call site for a named one once moved the
+    // published likelihood ratio from 1.95 to 2.33 without touching a single
+    // probability, because the shared stream walked.
+    const roll = rnd();
+    let id = s.annClip || rung[Math.floor(roll * rung.length)];
+    // ROUND 10 — and a man a long way from you does not stop and search. The
+    // override is confined to the CONFUSION rung: once he is on the annoyance
+    // ladder he has been shouted at three times and distance has stopped being
+    // what the beat is about.
+    if (!s.annClip && !K.annR9 && tier === 0 && annWeight(s) < K.annNearCut) id = 'whoMeGlance';
+    startGesture(s, 'react', id);
     if (!s.gest) return false;
     // Point him at the dome that is actually watching him — or, if he is a
     // bystander, at the poor sod who got named.
@@ -3641,6 +4337,12 @@ export function createAgents(THREE, scene, world) {
       s.timer = Math.max(s.timer, K.annHold);
       s.concealT = Math.max(s.concealT, K.annHold + 1.2);
       s.annOut = 'hold';
+      // ROUND 10 — the price-check line is the client's own "hey, excuse me",
+      // so it gets the confused tail as well. Never the mad one: nobody has
+      // accused him of anything, and `annMadRung` is about being shouted at
+      // repeatedly rather than about the sentence.
+      s.huffKind = 'lost';
+      s.huff = K.annR9 ? 0 : K.annPuzzT * (K.annTailFar + (1 - K.annTailFar) * annWeight(s));
       // Keying the price-check line at the same man four times counts too. It
       // is a different sentence, not a different amount of being shouted at.
       armBird(s);
@@ -3710,12 +4412,13 @@ export function createAgents(THREE, scene, world) {
     } else {
       lookAround(s);
       s.annOut = 'shrug';
-      // AND HE IS ANNOYED ABOUT IT, VISIBLY, FOR LONGER THAN THE CLIP.
-      // GUILTY MEN GET THIS TOO. It is the same head shake, the same posture
-      // and the same brisk walk away from the shelf whether he has a chicken in
-      // his coat or a shopping list in his hand, which is the only way "he
-      // looked annoyed" stays worth nothing. See animateShopper and K.annHuffT.
-      s.huff = K.annHuffT;
+      // AND IT OUTLIVES THE CLIP, BECAUSE IT IS A STATE AND NOT A GESTURE.
+      // GUILTY MEN GET THE IDENTICAL TREATMENT — same duration, same posture,
+      // same walk — whether he has a chicken in his coat or a shopping list in
+      // his hand, which is the only way "he looked annoyed" stays worth
+      // nothing. Round 8 wrote that rule for the huff; round 10 keeps it word
+      // for word for the thing that replaced the huff. See afterPA().
+      afterPA(s);
     }
 
     // WHAT IT COSTS TO SHOUT AT A CUSTOMER, and it is not a complaint: the
@@ -4076,6 +4779,15 @@ export function createAgents(THREE, scene, world) {
           // running, or he sprints out of the aisle doing a shoulder check.
           if (s.paBolt) { s.paBolt = false; clearGesture(s); }
           s.state = 'bolt'; s.bolted = true; s.path = []; s.repathIn = 0;
+          // ROUND 9 (2nd pass) — HIS LEGS ARE FRESH WHEN THE RUN STARTS, and
+          // this is the only place that is unambiguously true. resetShopper()
+          // also sets it, but a body can be armed as a subject WITHOUT a reset
+          // (see the re-arm in benchShift, which picks an existing innocent out
+          // of the crowd), and a man carrying a previous chase's spent legs into
+          // a fresh one is a silent difficulty spike nobody would ever look for.
+          // Costs no rnd() draw, so it cannot walk the seeded stream — see the
+          // startGesture note in the file header for why that matters here.
+          s.legs = 1;
           if (s.hasCart) { s.hasCart = false; s.dropCartAt = { x: s.position.x, z: s.position.z, y: s.heading }; }
           api.onBolt && api.onBolt(s);
         }
@@ -4131,7 +4843,15 @@ export function createAgents(THREE, scene, world) {
     // just what he looks like: the subject you shouted at packs up and walks off
     // at a clip. Never touches a runner — a bolt sets its own pace and a guilty
     // shrugger who bolts later must not be quietly 18% faster for it.
-    if (s.huff > 0 && !s.bolted && target > 0.2) target *= K.annHuffPace;
+    //
+    // ROUND 10 — AND THE SIGN FLIPS FOR THE CONFUSED ONE. A man who has been
+    // told off strides away; a man who cannot work out where a voice came from
+    // slows down and keeps looking. Same channel, same guard, opposite
+    // direction, and the direction is the whole difference between the two
+    // readings at monitor scale.
+    if (s.huff > 0 && !s.bolted && target > 0.2) {
+      target *= s.huffKind === 'mad' ? K.annHuffPace : K.annPuzzPace;
+    }
 
     if (s.angry > 0 && s.state !== 'bolt' && s.state !== 'react') {
       target = 0;
@@ -4590,15 +5310,39 @@ export function createAgents(THREE, scene, world) {
       // him: this store's whole posture language is people folded over a cart,
       // so a man walking with his back straight reads at a distance without
       // needing a face. It is the same picture on a thief who blanked you.
+      //
+      // ROUND 10 — TWO AFTER-STATES, AND THE CONFUSED ONE IS NOT A SMALLER
+      // VERSION OF THE ANGRY ONE. `mad` is the round-8 picture, constant for
+      // constant. `lost` is a body that has not finished the thought: barely
+      // straightens (0.03 against 0.11), and the head KEEPS SWEEPING — a 0.42 Hz
+      // yaw that runs for the whole tail, which is the only channel a man
+      // walking away from you has left. It is slow on purpose: the head shake
+      // this replaces is 2.10 Hz, and the difference between negation and
+      // searching, with no face available, is almost entirely rate.
       const hf = s.huff > 0 ? 1 : 0;
-      r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + (bolting ? 0.24 : 0.02) - hf * 0.11, ed(8));
-      r.neck.rotation.x = lerp(r.neck.rotation.x, bolting ? -0.10 : hf * -0.14, ed(6));
+      const mad = hf && s.huffKind === 'mad';
+      r.chest.rotation.x = lerp(r.chest.rotation.x,
+        r.stoop + (bolting ? 0.24 : 0.02) - hf * (mad ? 0.11 : 0.03), ed(8));
+      r.neck.rotation.x = lerp(r.neck.rotation.x,
+        bolting ? -0.10 : hf * (mad ? -0.14 : -0.07), ed(6));
       // ---- ROUND 9: THE IDLES ------------------------------------------------
       // A body that has stopped moving and is not at a shelf, not angry, not
       // mid-clip and not running. Previously that body stood at perfect
       // attention with both arms out at cart height whether or not it had a
       // cart, and there were up to fourteen of them doing it at once.
       idlePose(s, r, dt, ed, bolting);
+      // The scan, and it goes AFTER idlePose rather than before it. Two
+      // reasons, and the first one is the round-8 head shake's: a 110 ms
+      // first-order lag halves anything periodic put through it, so an
+      // oscillation is added on top of a solved pose and never lerped into one.
+      // The second is that idlePose ASSIGNS neck.rotation.y on three of its
+      // seven poses — written above it, the sweep was silently eaten on exactly
+      // the bodies it matters most for, the ones who have stopped walking and
+      // are standing there still looking. Gated on the tail, so a body nobody
+      // has shouted at pays one comparison rather than one sin.
+      if (hf && !mad && !bolting) {
+        r.neck.rotation.y += Math.sin(s.huff * K.annScanHz * Math.PI * 2) * K.annScanAmp;
+      }
     }
     r.chest.rotation.z = -sw * 0.020 * gait + r.leanZ;
   }
@@ -4635,6 +5379,68 @@ export function createAgents(THREE, scene, world) {
   // The wander is a sine on a per-child frequency, not a random walk, for the
   // usual reason: a random walk would need a draw per frame per child and would
   // put this file's stream on the number of children in the building.
+  // ---- ROUND 10: THE KIDS WALK THROUGH THE SHELVES ------------------------
+  // Client, watching it: "I'm watching the kids run around, and they run
+  // directly through some things at times."
+  //
+  // He is right, and round 9 wrote down the cause itself: a child is furniture
+  // that follows — "not in `shoppers`, no collider, no nav" — and that trade is
+  // what bought a whole new class of body on a byte-identical bench. The trade
+  // was correct. What was wrong was reading "no collider" as "no collision":
+  // the reason a child must not be an AGENT is that agents consume rng draws,
+  // vote in the separation constraint and move every chase number in this file.
+  // NONE OF THAT IS TRUE OF A GEOMETRY QUERY. solids.resolve() is a pure
+  // push-a-circle-out-of-a-box-grid — no rnd(), no shopper state, no nav field,
+  // no allocation — so a child can be stopped by a shelf without acquiring a
+  // single one of the properties that made it dangerous to add.
+  //
+  // WHAT IT IS AND WHAT IT IS NOT. It is a POSITION CLAMP applied after the
+  // follow spring has already decided where the child wants to be, plus the
+  // one line that stops a clamp from looking like a clamp: the velocity
+  // component INTO the surface is removed, so a kid cutting a corner at a
+  // gondola end slides along the shelf face and keeps going instead of grinding
+  // on it at a fraction of speed and then teleporting free. It is NOT pathing.
+  // A child that walks into the end of an aisle still walks into the end of an
+  // aisle; it just does not go through it any more, which is the whole of what
+  // was asked for.
+  //
+  // THE COST, and it is the argument that this is free rather than the claim:
+  //   - `_kp` is a module-level scratch object, so a clamp allocates nothing;
+  //   - one resolve() per WALKING child per frame, at most 4 of them (seated
+  //     children are parented to the cart and are the cart's problem);
+  //   - resolve() reads a 3x3 cell neighbourhood of a 3 m uniform grid, which
+  //     over the store's 74 colliders is 0-4 boxes tested;
+  //   - nothing reads k.x/k.z back. The child is still strictly downstream.
+  // The bench is byte-identical on all four policies; the hashes are in the
+  // round-10 report and the check that proves it is that this function cannot
+  // reach the rng at all.
+  //
+  // AND THE ONE THING THAT WOULD HAVE BROKEN IT. The obvious alternative was to
+  // clamp the child's TARGET — solve the flank point out of the shelf before
+  // the spring chases it. That is worse in the only way that matters here: the
+  // target is derived from the parent's heading, so a target clamp would make
+  // the child's position a function of a solved-against-geometry query taken at
+  // the PARENT's pose, and the day somebody makes carts push shoppers off the
+  // centreline the two would be coupled. Clamping the child's own position
+  // leaves the coupling exactly where round 9 left it: one way, downstream.
+  const _kp = { x: 0, z: 0 };
+  function kidClamp(k) {
+    if (!K.kidCollide) return;
+    _kp.x = k.x; _kp.z = k.z;
+    solids.resolve(_kp, KID_R);
+    const px = _kp.x - k.x, pz = _kp.z - k.z;
+    if (px === 0 && pz === 0) return;
+    k.x = _kp.x; k.z = _kp.z;
+    // Slide, do not stick. `n` is the direction the box pushed him, so the
+    // velocity heading INTO it is the negative projection on n — take exactly
+    // that much out and what is left is the tangential part he keeps walking on.
+    const nl = Math.hypot(px, pz);
+    if (nl < 1e-6) return;
+    const nx = px / nl, nz = pz / nl;
+    const into = k.vx * nx + k.vz * nz;
+    if (into < 0) { k.vx -= nx * into; k.vz -= nz * into; }
+  }
+
   function animateChild(s, dt) {
     const k = s.rig.kid;
     const vis = s.mesh.visible;
@@ -4678,7 +5484,12 @@ export function createAgents(THREE, scene, world) {
     // eight or so. `stopT` is only kept so the catch-up run knows it is one.
     const cyc = k.t % k.spec.stopEvery;
     const planted = cyc < k.spec.stopFor;
-    if (!k.started) { k.x = tx; k.z = tz; k.started = true; }
+    // First frame after a spawn or a respawn. The parent has been teleported and
+    // the flank point is wherever that landed, which in a store this full is
+    // sometimes inside a shelf run — so the placement gets the clamp too, or the
+    // very first thing a new child does is stand in a gondola until the spring
+    // walks it out.
+    if (!k.started) { k.x = tx; k.z = tz; k.started = true; kidClamp(k); }
 
     if (planted) {
       k.vx *= Math.exp(-9 * dt); k.vz *= Math.exp(-9 * dt);
@@ -4698,6 +5509,7 @@ export function createAgents(THREE, scene, world) {
       k.vz += (uz * want - k.vz) * clamp(dt * 6.5, 0, 1);
     }
     k.x += k.vx * dt; k.z += k.vz * dt;
+    kidClamp(k);
     const sp = Math.hypot(k.vx, k.vz);
     if (sp > 0.12) k.heading = Math.atan2(k.vx, k.vz);
     k.root.position.set(k.x, 0, k.z);
@@ -5093,6 +5905,32 @@ export function createAgents(THREE, scene, world) {
     });
   }
 
+  // ---- ROUND 10: THE FRONT END ---------------------------------------------
+  // Cashiers, a bagger, a service-desk clerk and the people they are serving.
+  // The whole feature is in agents/frontend.js and the two things worth knowing
+  // here are WHEN it is built and WHEN it is driven.
+  //
+  // BUILT LAZILY, ON THE FIRST TICK, AND NOT IN THIS CONSTRUCTOR. store.js
+  // publishes `world.frontEnd` from buildStore, so at module-construction time
+  // it usually exists — but "usually" is how the store-rebuild path in tick()
+  // came to exist in the first place, and a front end built against a table
+  // that was not there yet is nine invisible people. One `if` on the first
+  // frame costs nothing and cannot be wrong.
+  //
+  // DRIVEN ONLY WHEN SOMETHING IS RENDERING. `api.report` is the existing
+  // "a game is driving this, not a bench" signal — telemetry() has used it
+  // since round 5 — and eleven rigs of pose maths per tick over a 270,000-tick
+  // bench is a real cost for animation nobody is looking at. The bench result
+  // is unaffected either way (nothing reads these bodies), but a bench that
+  // takes 40% longer for no reason is a tax on every future round.
+  let frontEnd = null;
+  function frontTick(dt, api) {
+    if (frontEnd === null) {
+      frontEnd = makeFrontEnd(THREE, scene, F, world, { count: K.frontEndCount });
+    }
+    if (frontEnd.ok && api.report) frontEnd.update(dt);
+  }
+
   // ---- main tick -----------------------------------------------------------
   function tick(dt, input, api) {
     if (!(dt > 0)) dt = 0;
@@ -5112,6 +5950,7 @@ export function createAgents(THREE, scene, world) {
     updatePowerups(dt);
     for (const s of shoppers) updateShopper(s, dt, api, frozen);
     interactions(dt, api);
+    frontTick(dt, api);
     telemetry(api, dt);
   }
 
@@ -5244,6 +6083,51 @@ export function createAgents(THREE, scene, world) {
     // whole 2.2 s of the drink. That is not a statement about energy drinks, it
     // is a bot that does not know a timer when it sees one. Nobody sips one.
     if (u2.boost > 0) return true;
+    // =====================================================================
+    // ROUND 9 (SECOND PASS) — THE INSTRUMENT WAS PRESSING A KEY INTO A WALL.
+    //
+    // Round 5 fixed the GAME so that a gassed man holding sprint does 2.04 m/s
+    // against his own 2.35 m/s walk — "holding the key while gassed now does
+    // nothing at all". It did not fix the BOT, and every policy below reaches
+    // for the key through `urgent`, which fires at gap < 3.4 m — i.e. exactly
+    // when the man is closest and the cop is most likely to have just emptied
+    // the tank on him. `regenHold` is 0, so holding it while gassed does not
+    // just fail to help, IT PREVENTS RECOVERY, FOREVER.
+    //
+    // The trace that found it (trial 29, mode:'boost', trace:29 in bench):
+    //   t=3.02  boost expires, tank full, gap 1.26 m — he holds, correctly
+    //   t=4.22  tank 0.03
+    //   t=4.52  GASSED. gap 2.21 m, so `urgent` is still true, so he holds
+    //   t=4.5 -> t=17.7   THIRTEEN SECONDS at a flat 2.04 m/s while the thief
+    //                     cruises 3.08. Gap 2.21 -> 15.14 m. Final miss 15.1 m.
+    // No player does that. One shift teaches you that the key is off when the
+    // meter is empty; the bot had no way to learn it and has been holding it
+    // since round 5 shipped the lung.
+    //
+    // WHO IT WAS LYING ABOUT, AND BY HOW MUCH. It costs the boosted cop far
+    // more than the unboosted one, because a drink is what gets you INTO the
+    // close-range duel where `urgent` latches on — which is why it read as
+    // "the drink makes you lose by more". n=100, difficulty 1, `cut` off0:
+    //                        none          drink in hand
+    //   bot holds it (r5-r9) 75%  14.3 ft   74%  24.0 ft
+    //   bot lets go          77%  10.9 ft   77%  10.7 ft
+    // Two points on the unboosted rate and THIRTEEN FEET off the boosted miss.
+    // The whole "a drink makes you lose by MORE" finding was this line.
+    //
+    // `conserve === false` is EXEMPT and must stay exempt: always-sprint is the
+    // naive human who holds the key from the dispatch to the grab, and it is
+    // the bottom rung of round 5's wind ladder. If it learned this it would
+    // stop being the baseline the other four are measured against.
+    // `legacyWind: true` on a bench call restores the old behaviour for every
+    // policy, so every number in this file is recoverable on the old bot.
+    //
+    // THE RULE ITSELF IS NOT HERE. It is `keyUp()` below, applied ONCE to
+    // whatever botInput finally decides, because windPolicy is not the only
+    // place this bot reaches for the key: the "cannot head him off anywhere"
+    // fallback, the doorPosted close-in and camp's inside-3.2 m override all
+    // return a hardcoded `sprint: true` and never come through here. A copy of
+    // the test in each of those is four places to get it wrong — see CLAUDE.md
+    // on exactly one piece of code owning a derivation.
     const frac = u2.stamina / K.staminaMax;
     const urgent = gap < 3.4 || thief.state === 'shove';
     const reserve = st.reserve ?? 0.28;
@@ -5267,6 +6151,12 @@ export function createAgents(THREE, scene, world) {
       // intercept is actually tight") finally matching the code under it.
       : (urgent || slack < 0.35);
   }
+
+  // ROUND 9 (SECOND PASS) — the one place the bot's finger comes off the key.
+  // See the long note in windPolicy for the trace and the price. Applied to
+  // EVERY branch's decision, in botInput, exactly once.
+  const keyUp = (st, want) =>
+    want && !(cop.userData.gassed && st.conserve !== false && !st.legacyWind);
 
   function botGoal(thief, st, dt, tx, tz) {
     const u = cop.userData;
@@ -5299,7 +6189,7 @@ export function createAgents(THREE, scene, world) {
       st.route = routePoints(tx, tz);
     }
     const route = st.route || [];
-    const tSpd = K.thiefRun * K.thiefTired;                 // his cruise, not his ceiling
+    const tSpd = K.botCruise;   // ONE derivation of his cruise — see K.botCruise
     const cSpd = T.copRun * 0.86;
     // ROUND 5 — A BOOST IS A TIMER, NOT A TOP SPEED. This read
     // `copRun * (boost > 0 ? boostMul : 0.86)` — one flat speed for the whole
@@ -5481,7 +6371,7 @@ export function createAgents(THREE, scene, world) {
         if (st.bot !== 'cut' || st.sweep) { tx = st.seen.x; tz = st.seen.z; st.lost = null; }
         else {
           if (!st.lost) st.lost = { x: st.seen.x, z: st.seen.z };
-          let step = K.thiefRun * K.thiefTired * dt;
+          let step = K.botCruise * dt;          // same estimate the intercept uses
           while (step > 0.05) {
             const d = nav.steer(exitF, st.lost.x, st.lost.z, { look: 3.0 });
             if (!d) break;
@@ -5496,7 +6386,7 @@ export function createAgents(THREE, scene, world) {
     }
 
     let g = botGoal(thief, st, dt, tx, tz);
-    let gx = g.x, gz = g.z, sprint = g.sprint !== false;
+    let gx = g.x, gz = g.z, sprint = keyUp(st, g.sprint !== false);
 
     if (mode === 'pickup' && !st.gotBoost) {
       // A competent player, not an oracle: every fifth of a second, look for the
@@ -5520,7 +6410,7 @@ export function createAgents(THREE, scene, world) {
       const p = st.puTarget;
       // Aim past the can into the shelf face — you cannot take it off the shelf
       // by running parallel to it.
-      if (p && p.live) { gx = p.x + p.nx * 0.55; gz = p.z + p.nz * 0.55; sprint = true; }
+      if (p && p.live) { gx = p.x + p.nx * 0.55; gz = p.z + p.nz * 0.55; sprint = keyUp(st, true); }
     }
 
     // lead the target when we can see him and we are actually chasing him
@@ -5659,7 +6549,7 @@ export function createAgents(THREE, scene, world) {
         path: [], repath: 0, goal: { x: 0, z: 0 },
         lag: opts.lag ?? 0.16, hist: [thief.position.x, thief.position.z],
         bot: opts.bot ?? 'cut', conserve: opts.conserve, campFix: opts.campFix,
-        blown: false, reserve: opts.reserve,
+        blown: false, reserve: opts.reserve, legacyWind: !!opts.legacyWind,
         copF: null, copBuf: null, cfT: 0, planT: 0, route: null, campI: null,
         // All the desk actually told him: an aisle number. Not a position in it.
         blind: opts.blind !== false, seen: { x: aisleX(dAisle), z: 0 }, seenT: 0,
@@ -5860,10 +6750,18 @@ export function createAgents(THREE, scene, world) {
       // A swept number that does not carry this is how a file ends up running
       // constants its own report does not describe.
       override: Object.keys(OVR).length ? { ...OVR } : null,
+      // ROUND 9 (2nd pass) — non-null means THIS RUN USED THE PRE-ROUND-9 BOT,
+      // the one that holds the sprint key while gassed. Same contract as
+      // `override`: a measurement taken on the old instrument says so.
+      legacyWind: opts.legacyWind ? true : null,
       // Null when the lung inequality holds. Non-null means the wind numbers on
       // this object do not describe a game where managing your wind pays, and
       // it says which constant broke it. See lungCheck().
       lungBroken: lungCheck().ok ? null : lungCheck(),
+      // Same contract as lungBroken: non-null means the thief's pace curve is
+      // inverted or the bot's model has fallen outside it, and every speed
+      // number on this object is describing a different game. See paceCheck().
+      paceBroken: paceCheck().ok ? null : paceCheck(),
       catchRate: +(caught.length / n * 100).toFixed(1),
       escaped: esc.length, stalled: stall.length,
       // He ditched it rather than walk into you. See onAbort above and dumpT.
@@ -5895,6 +6793,12 @@ export function createAgents(THREE, scene, world) {
       bargeWinded: branch((r) => r.barged && r.bargeStam < 0.35),
       bargeFresh: branch((r) => r.barged && r.bargeStam >= 0.35),
       reachedDoor: R.filter((r) => isFinite(r.doorT)).length,
+      // ROUND 9 (2nd pass) — the seconds a thief ACTUALLY spends on the leaf at
+      // each door, i.e. K.doorShove after EXIT_SPEC's per-door multiplier. It
+      // is on the result because config's `doorShove: 0.85` has not been the
+      // number at the only usable exit since round 6 (it is 0.30 there) and a
+      // constant that is quoted but never printed is how that happens twice.
+      doorShoveEff: EXITS.map((e) => `${e.label}:${e.shove.toFixed(2)}s`).join(' '),
       exitSplit: EXITS.map((e, i) =>
         `${e.label}:${R.filter((r) => r.exitUsed === i).length}`).join(' '),
       copSprintFrac: _f2(_mean(R.map((r) => r.sprintFrac).filter(isFinite))),
@@ -6428,7 +7332,7 @@ export function createAgents(THREE, scene, world) {
   // one body `shouts` times and record what he did the LAST time, for a guilty
   // subject and an innocent one, and divide.
   //
-  // The ladder itself is guilt-blind by construction — ladderFor() takes annN
+  // The ladder itself is guilt-blind by construction — rungOf() takes annN
   // and nothing else — but that is NOT sufficient on its own and it is worth
   // being precise about why. A subject only ever plays a react clip if he
   // SHRUGS, and the shrug probability does depend on guilt (K.annSpook vs
@@ -6742,7 +7646,7 @@ export function createAgents(THREE, scene, world) {
     // debug handles
     // game.js counts down the door alarm off a thief's speed. TUNING.thiefRun is
     // his opening ceiling, not his cruise — use these instead so the ETA is true.
-    thiefCruise: () => K.thiefRun * K.thiefTired,
+    thiefCruise: () => K.botCruise,
     thiefTop: () => K.thiefRun * K.thiefPanic,
     get nav() { return nav; }, get exitField() { return exitF; }, toExit,
     // ROUND 4 CONTRACT ADDITION (additive; nothing that ignores it breaks).
@@ -6770,7 +7674,12 @@ export function createAgents(THREE, scene, world) {
     // itself instead of being quoted as the shipped build. Leave it empty.
     // crossBands() is how the back-route metric finds the store's corridors
     // from the nav grid instead of assuming where they are.
-    override: OVR, crossBands, lungCheck,
+    override: OVR, crossBands, lungCheck, paceCheck,
+    // ROUND 10 — the checkout and service-desk staff. `null` until the first
+    // tick; see frontTick. Exposed so a capture can force a pose without
+    // running the game (`agents.frontEnd.update(2.4)`) and so a store-only
+    // plate can take them off screen in one call (`setVisible(false)`).
+    get frontEnd() { return frontEnd; },
     get thieves() { return shoppers.filter((s) => s.guilty); },
   };
 }

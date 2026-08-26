@@ -44,8 +44,37 @@ export const TUNING = {
   gassedPenalty: 0.62,   // speed multiplier while winded
   boostMul: 1.42,
   boostTime: 3.00,
+  // ROUND 9 — THE DRINK BUYS FOOTWORK, NOT JUST LEGS. `steer()` turns a radius
+  // out of speed and grip, so a boosted 7.17 m/s cop was carrying a 7.32 m
+  // turning circle (sober: 3.35 m) into a lane with 1.58 m of usable half-width.
+  // He was losing the duel the drink had just bought him. Round 5 wrote "fast is
+  // not agile" as prose; this is the arithmetic behind it. Worth +11.0 points of
+  // drink value on its own, the largest single term in restoring it.
+  boostGrip: 2.40,
   suspicionRadius: 4.5,  // thief bolts when cop closes inside this
   catchRadius: 1.15,
+
+  // ---- ROUND 12: HOW FAR THE PURSUER CAN SEE. ONE NUMBER, TWO READERS. ------
+  // For eleven rounds the player's HUD drew the runner's exact position, gap and
+  // door ETA THROUGH SOLID SHELVING, while agents.js's bench bot had to hold
+  // line of sight. Two pieces of code owned "what does the pursuer know", they
+  // disagreed by 11 points of catch rate, and nothing asserted it. game.js now
+  // derives every positional marker from agents' own nav.clearSeg().
+  //
+  // This is the last hand copy in that derivation. It is read TWICE:
+  //   game.js  SIGHT_R                      — already reads it via sightCheck()
+  //   agents.js botInput() blind branch     — STILL A BARE LITERAL `< 20`
+  //
+  // ACTION FOR builder-agents, one line each and then this stops being a
+  // hazard: add `get botSightR() { return t('botSightR', 20.0); }` to the K
+  // block and replace botInput's literal with K.botSightR. game.js's
+  // sightCheck() ALREADY compares SIGHT_R against agents.K.botSightR and is
+  // null-guarded, so it is dormant today and starts asserting the instant that
+  // getter exists — no further change on either side.
+  //
+  // 20 m is deliberately shorter than an aisle (26 m): a shape at the far end of
+  // your own run is a shape, not a subject, and that is the bot's rule too.
+  botSightR: 20.0,
 
   // Thief stamina. He fades to a cruise so both parties gas out together and the
   // gap parks ~2.8m out instead of growing without bound. Adrenaline is a
@@ -55,6 +84,23 @@ export const TUNING = {
   thiefPanic: 0.965,
   thiefPanicGap: 3.00,
   thiefPanicBand: 0.90,
+
+  // --- ROUND 9: THE THIEF'S THIRD TANK ---------------------------------------
+  // Round 5 named this lever by hand and deferred it: "give the THIEF the same
+  // rhythm the cop just got — a cruise that decays under sustained pressure
+  // instead of a flat floor — so that the cop who paced himself still has legs
+  // at second eight." It is in.
+  //
+  // `thiefTired` ABOVE HAS CHANGED MEANING AND ITS VALUE HAS NOT. It is now the
+  // ANCHOR, and the base of the bot's own estimate of him, rather than the man's
+  // flat cruise. His BLOWN cruise is still exactly thiefTired to three decimals,
+  // so nothing was taken away from him; only his first seconds are new. Anyone
+  // sweeping thiefTired is still sweeping the bot's model of the thief as well as
+  // the thief — round 5's warning at that constant stands, and now has one more
+  // reader.
+  thiefFreshMul: 1.183,   // x thiefTired — legs FULL
+  thiefSpentMul: 1.000,   // x thiefTired — legs GONE, i.e. identical to round 8
+  thiefLegs: 34.0,        // s, fresh -> spent
 
   // Powerups sit on the shelf lip and need a real lateral reach, otherwise they
   // land in the cop's lap mid-aisle and every chase is secretly a boosted one.
@@ -159,6 +205,24 @@ export const TUNING = {
   // would — what reads is the body turned side-on to the aisle, held still 0.8s.
   birdRung: 4,
   birdGap: 0.55,
+
+  // --- Round 10: confusion, not anger. The client: "I don't think the shoppers
+  // should stop and shake their hands and get mad. I DO want them to take notice...
+  // I want them to look around and look really confused."
+  // whoMeAffront was MOVED to rung 3, not changed — not one keyframe touched — and
+  // a new whoMeLost took its place: four places he looks and none of them is it,
+  // ending in a two-handed palms-up shrug held 0.55s. In a store whose posture
+  // language is people folded over a trolley, two forearms held out from the body
+  // is a shape nothing else in the file makes. No shake below rung 3.
+  // Every likelihood-ratio cell is IDENTICAL to the ablation: the rebalance changes
+  // what a subject looks like and moves no probability at all.
+  annReach: 14.0,      // m — proximity is a strength, not a switch
+  annNearCut: 0.55,    // below this weight (6.3m) the confusion collapses to a glance
+  annMadRung: 3,       // anger is earned, not the default
+  annPuzzT: 4.5, annPuzzPace: 0.88, annTailFar: 0.42,
+  annScanHz: 0.42,     // head keeps sweeping — an eighth of the 2.10Hz shake it replaces
+  annScanAmp: 0.30,
+  frontEndCount: 7,    // staffed lane, service desk, second lane, bagger
 
   // --- Round 4: two doors, and going through a man ---
   // One door made the thief's destination public knowledge, and public knowledge

@@ -130,7 +130,13 @@ export const COP_WARNING = [
 ];
 
 export const ESCORT = [
-  'SUBJECT ESCORTED TO %D',
+  // ROUND 12 (copy sweep): was 'SUBJECT ESCORTED TO %D', the one line in this
+  // pool with no institution in it — the other three are all the store
+  // noticing something it has no field for. This is the store noticing the
+  // thing it DOES have a field for, and it is the only sentence a chain
+  // actually cares about after a detention. Same family as
+  // 'THIS TITLE IS INTERNAL AND NOT LEGALLY MEANINGFUL.'
+  'SUBJECT ESCORTED TO %D. NO PHYSICAL CONTACT WAS MADE.',
   'SUBJECT DECLINED A BAG',
   'SUBJECT LEFT ON FOOT, NORTHBOUND',
   'SUBJECT SAID SOMETHING AT THE DOOR. UNCLEAR.',
@@ -240,8 +246,16 @@ export const ESCAPE_LOG = [
 // Everything here is the DVR reporting an observation, not a prediction — the
 // box does not know which door he came in by and neither do you. It only ever
 // says what the geometry can still allow. Machine voice, no editorialising.
+// ROUND 12 (copy sweep): these two shipped DEAD for nine rounds. hud.js's
+// pursuit panel carried its own byte-identical string literals and nothing
+// read these, so an edit here would have changed nothing on screen — the exact
+// failure CLAUDE.md opens with, in copy rather than in geometry. hud.js reads
+// them now; there is one owner of these four words again.
 export const DOOR_OPEN = 'BOTH DOORS LIVE';
 export const DOOR_LOCK = 'ROUTE COMMITTED';
+// The third state of the same row, added in round 16 and hardcoded in hud.js
+// beside the other two. Same fix.
+export const DOOR_NOCUT = 'NO CUT — RUN HIM DOWN';
 
 // He has turned and gone for the rear cross-aisle. This is the one decision in
 // the chase that is irreversible and worth thirty metres, and the player used to
@@ -257,11 +271,121 @@ export const VIA_BACK_LOG = [
 // He was going to one door and now he is going to the other one.
 export const DOOR_SWITCH = 'SUBJECT CHANGED DOORS — NOW %D';
 
+// ---------------------------------------------------- ROUND 14: THE BLIND BOLT
+// `TUNING.suspicionRadius` is 4.5 m of RAW 2D DISTANCE, so a man bolts from a
+// cop standing on the far side of a 2.05 m gondola. 12 of 40 sampled bolts fire
+// with `canSee` false, all of them at exactly that radius, and the HUD then —
+// correctly, it has no sightline — says nothing at all. That silence is where
+// round 13's occlusion model stops being visible to the player: the one moment
+// the game decided he is guilty is the one moment the screen is blank.
+//
+// What the player HAS at 4.5 m in a quiet supermarket is the sound. A man going
+// from a standstill to a sprint two aisles-widths away is not a subtle noise,
+// and it is the same class of evidence the exit pedestal is — a real sensor the
+// HUD is allowed to read, naming no aisle and no man.
+//
+// So this line is deliberately shaped by what it must NOT say. No code, because
+// you have not identified him. No aisle, no arrow, no distance, because sound
+// through a gondola run gives you none of those. It says an event happened and
+// that it was close, and it stops.
+export const HEARD_BOLT = 'FOOTSTEPS — SOMEONE JUST RAN, CLOSE BY';
+export const HEARD_BOLT_SUB = 'NOT IN SIGHT';
+
 // -------------------------------------------------- the case is over, sir
 // Whatever happened has happened. The prompt band must stop telling a man to
 // walk at an aisle that no longer contains anybody.
-export const STAND_DOWN = 'SUBJECT GONE — [Q] RETURN TO POST';
-export const STAND_DOWN_DEST = 'STAND DOWN';
+//
+// ---- ROUND 12: THE CLIENT READ THIS ONE OUT LOUD -------------------------
+// "Some of your text really sucks. 'Subject is gone, return to post.'"
+//
+// He is right, and the diagnosis is exact: `SUBJECT GONE` is a STATUS. It is
+// the only line in this file where the store tells you a fact and stops. Every
+// line that works here is the institution being prissy about a mess —
+// GUEST PROVIDED NAME AND SPELLED IT. TWICE. · DOOR SENSOR IS OUT. ·
+// ANALYTICS IS STILL BILLED MONTHLY. — and a status has no attitude to be
+// prissy with.
+//
+// It was also SAYING A THING THAT WAS ALREADY ON THE SCREEN. The stamp two
+// bands up is 38 px of SUBJECT LOST / HE PUT IT BACK / GUEST COMPLAINT FILED,
+// which is the same news in bigger type. The one thing the prompt band has to
+// add is that the case is not yours any more, and the funniest available
+// version of that is the store saying so in the voice it uses for a form.
+//
+// THREE ENDINGS REACH THIS LINE and it has to be true of all of them: he got
+// out (escape), he put it back (abort), or he paid and walked out a customer
+// (leave). `SUBJECT GONE` is only really true of the first. `NO LONGER YOUR
+// CONCERN` is true of all three, says nothing about which, and therefore does
+// not leak guilt — same test as PA_HEED's, applied to the end of the case.
+//
+// And it is the dismissal that stings: thirty seconds ago this man was the
+// only thing in the building, and the terminal is now telling a fat man in a
+// vest that he is not to think about it. Nobody says "no longer your concern"
+// to somebody who did well.
+//
+// REJECTED, and the reasons are the same ones the graveyards below give:
+//   'NO FURTHER ACTION — [Q] RETURN TO POST'   — correct form-speak, and it is
+//     a status again wearing a longer coat. It has no opinion of you.
+//   'CASE CLOSED — NOBODY LEFT TO FOLLOW'      — two facts, both already said
+//     by the stamp and by the marker's absence. Third telling.
+//   'YOU LOST HIM — [Q] RETURN TO POST'        — a verdict, and it is wrong on
+//     two of the three endings. The store does not know how it ended and this
+//     file is careful everywhere else not to pretend it does.
+export const STAND_DOWN = 'SUBJECT IS NO LONGER YOUR CONCERN — [Q] RETURN TO POST';
+
+// ---- ROUND 12: AND FOUR MORE OF THEM WERE NEVER IN THIS FILE AT ALL ------
+// The sweep the client's note asked for found something worse than a flat
+// line: THE PROMPT BAND'S OTHER FOUR STRINGS ARE HARDCODED IN game.js. They
+// are the most-read copy in the game — one of them is on screen for most of
+// every floor minute — and they were never in the file whose entire job is
+// the voice, so nobody sweeping the voice ever saw them. That is the same
+// shape as hud.js's hand-copied camera rig: a second place that owns words.
+//
+// They come here, and the two flat ones get the treatment while they move.
+//
+//   ESTABLISH CONTACT  ->  MAKE GUEST CONTACT
+// `ESTABLISH CONTACT` is a debug state name with a space in it. The store has
+// its own phrase for walking up to a stranger and it is already in this file,
+// in COMPLAINT_STAMP: `GUEST CONTACT — UNFAVORABLE`. So the instruction and
+// the punishment are now the SAME WORDS, which is the joke the retail
+// vocabulary was sitting on all along — the terminal tells you to make guest
+// contact, and then files a form saying your guest contact was unfavorable.
+//
+//   HE IS GONE — FIND HIM  ->  LOST HIM — HE HAS NOT LEFT THE BUILDING
+// The old line is a contradiction read at a sprint (he is gone; find him) and
+// it withholds the one fact the player needs. He has NOT gone: the case is
+// still open, which is a thing the terminal knows for certain, because the
+// moment he is through a door this band says STAND_DOWN instead. Same number
+// of words, one of them now true and useful.
+//
+// PURSUE and PROCEED TO keep their wording. `PROCEED TO` is already the
+// institution talking and `DO NOT LOSE HIM` is the only line in the game with
+// a right to be blunt.
+export const ORDER_PROCEED = 'PROCEED TO %A';
+export const ORDER_CONTACT = 'MAKE GUEST CONTACT';
+export const ORDER_PURSUE = 'PURSUE — DO NOT LOSE HIM';
+export const ORDER_REACQUIRE = 'LOST HIM — HE HAS NOT LEFT THE BUILDING';
+// The stamp that fires when your man makes a door. Here rather than in
+// game.js for the same reason as the four above.
+export const LOST_STAMP = 'SUBJECT LOST';
+
+// ---- ROUND 12: THE AID COSTS NO INK OF ITS OWN TO EXPLAIN ---------------
+// The intercept aid is arrows and a ring. Its first draft taught the ring with
+// a plate reading CUT HIM OFF under it, and hud.js's two ledgers killed that
+// on its first bench — every overprint and every erasure in 9,600 census
+// frames was that one string, under the subject label. See the note where it
+// used to be drawn.
+//
+// So the sentence moved into the band that is already up on every floor frame,
+// where it costs nothing and cannot collide with anything. It replaces
+// ORDER_PURSUE only while the aid is at teaching strength, and it is LATCHED
+// per chase in game.js so the band cannot flicker between the two.
+//
+// It is an ORDER and not a description, for the same reason BACK_OFF is — the
+// two moments in this game where the terminal stops being a terminal are the
+// two where a sentence in character would cost the player the case. And it
+// names no key, also like BACK_OFF: which key runs you at that mark depends on
+// where the camera happens to be pointing.
+export const ORDER_CUT = 'PURSUE — CUT HIM OFF AT THE MARK';
 
 // -------------------------------------------------------------- the demotion
 export const HR_HEAD = ['CHOP FOODS #4417 — PERSONNEL ACTION',
@@ -294,7 +418,12 @@ export const RADIO_DISPATCH = [
   'LEAVING POST. POST IS UNMANNED. NOTED.',
 ];
 export const AISLE_CLEAR = [
-  'AISLE CLEAR. NO SUBJECT.',
+  // ROUND 12 (copy sweep): was 'AISLE CLEAR. NO SUBJECT.', which is the only
+  // line in this pool that is purely a status — the other two are the store
+  // making an excuse for itself, which is the register. This one now makes the
+  // excuse that the analytics box has actually been making all along: see
+  // BEHAVIOUR_TRAP, where `COAT. INDOORS.` is a flag on its own.
+  'AISLE CLEAR. THE BOX HAD FLAGGED A COAT.',
   'NOTHING HERE. SOMEBODY MOVED.',
   'AISLE CLEAR. THE FEED WAS FOUR SECONDS OLD.',
 ];

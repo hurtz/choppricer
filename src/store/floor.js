@@ -534,6 +534,16 @@ export function reflectiveFloor(THREE, opts) {
     uTileVar: { value: 0.22 },      // how much the per-tile wax varies
     uTileTilt: { value: 0.013 },    // how far a tile displaces the mirrored ray
     uSeam: { value: 0.28 },         // how completely the grout kills the mirror
+    // ROUND 15. The grout is a RECESSED MATTE line, so it is two things at
+    // once: it kills the mirror (uSeam, above) and it is darker pigment than
+    // the tile face beside it (this). Round 14 had only the first, and had it
+    // gated off past 13 m, so the far floor carried neither. The albedo half
+    // used to come from the floor MAP, which is exactly the channel that
+    // perspective destroys first — a mip chain averages a 3 mm line into a
+    // 305 mm tile and the line is gone. Computing it per fragment on the same
+    // area-preserving footprint is the only way it survives to the back wall.
+    // 0 here is a byte-exact ablation of this term alone.
+    uSeamAlb: { value: 0.30 },
     // How hard the floor mirrors the SHELVING, as opposed to the lamps. Round 5
     // sampled the wall LUT raw, and the LUT is authored dim on purpose, so the
     // gondolas, the endcaps and the red promo caps were all present in the
@@ -569,6 +579,7 @@ export function reflectiveFloor(THREE, opts) {
       .replace('#include <common>', `#include <common>
 varying vec3 vChopW;
 uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain, uPropOn, uFldGain;
+uniform float uSeamAlb;
 uniform vec2 uBlurA, uBlurB, uBlurMax, uFade, uFldRefl;
 uniform sampler2D uBurn;
 ` + FIELD_GLSL + CHOP_SCENE_GLSL + `
@@ -625,7 +636,47 @@ uniform sampler2D uBurn;
     float tj2 = chopHash( tid + 19.0 );
     vec2 tf = abs( fract( tg ) - 0.5 );
     float near = 1.0 - smoothstep( 3.0, 13.0, camD );
-    float seam = max( smoothstep( 0.435, 0.497, tf.x ), smoothstep( 0.442, 0.497, tf.y ) );
+
+    // ROUND 15 — THE DISTANT FLOOR WAS ONE CONTINUOUS MOTTLE, AND THIS IS WHY.
+    //
+    // The seam used to be gated by NEAR, i.e. by 1 - smoothstep(3, 13, camD),
+    // so beyond THIRTEEN METRES the grout stopped interrupting the mirror
+    // entirely. The paragraph above justifies that with "past twenty metres a
+    // 300 mm tile is under a pixel", and that claim is wrong by an order of
+    // magnitude in one axis and right in the other:
+    //
+    //   1280 px across an 81.5 deg horizontal FOV = 15.7 px/deg. A 305 mm tile
+    //   ACROSS the view at 20 m subtends 0.87 deg = 13.7 px. At the back wall,
+    //   35 m, it is still about 8 px. It is nowhere near a pixel.
+    //   The same tile ALONG the view, from a camera 1.62 m up, spans about
+    //   0.305 * 1.62 / 20^2 rad = 0.07 deg = 1.1 px at 20 m. That one really is
+    //   sub-pixel, and past about 12 m it is gone.
+    //
+    // Foreshortening is anisotropic and the fade was not, so the seams running
+    // ACROSS the aisle — which stay 8 to 21 px wide all the way to the back
+    // wall — were killed along with the ones running along it. Measured on the
+    // shipped build, high-frequency power fraction above 1/8 cyc/px in three
+    // declared floor boxes down aisle 3 (coordinates in the round report), the
+    // mid-field carried 0.148 to 0.221 of the near field's fine structure where
+    // reference/store_12 carries 0.326 of its own.
+    //
+    // The fix is neither 'hold the seam' (round 3 did, and it aliased, which is
+    // what the paragraph above is remembering) nor 'fade the seam' (round 7
+    // did, and this is the result). It is the standard analytic-edge limit:
+    // WIDEN the seam to about a pixel and DROP its amplitude by the same
+    // factor, per axis, from fwidth. The term then converges to the seam's true
+    // AREA FRACTION rather than to zero, which is what a sensor averaging over
+    // that footprint would actually see. No distance constant appears in it.
+    vec2 tw = fwidth( tg );                    // tiles per pixel, per axis
+    const vec2 HW0 = vec2( 0.0615, 0.0555 );   // the seam's real half-width
+    vec2 hw = max( HW0, tw * 0.62 );
+    vec2 amp = HW0 / hw;                       // area-preserving, <= 1
+    vec2 sAx = vec2(
+      smoothstep( 0.5 - hw.x, 0.5 - hw.x * 0.13, tf.x ) * amp.x,
+      smoothstep( 0.5 - hw.y, 0.5 - hw.y * 0.13, tf.y ) * amp.y );
+    float seam = max( sAx.x, sAx.y );
+    // the pigment half, applied before the mirror is added on top
+    gl_FragColor.rgb *= 1.0 - seam * uSeamAlb;
 
     // ROUND 7 — WHY THE GROUT BREAKS READ AS A ZIG-ZAG. Round 6 displaced the
     // mirrored ray by ( tj - 0.5 ) in x and ( tj2 - 0.5 ) in z, i.e. the SAME
@@ -650,7 +701,11 @@ uniform sampler2D uBurn;
     float fres = 0.040 + 0.820 * pow( 1.0 - ny, 5.0 );
     // wax is not uniform; a burnished floor is glossier where the machine ran
     float gloss = uGloss * ( 0.62 + 0.66 * burn );
-    gloss *= 1.0 - near * ( uTileVar * ( 0.5 - tj ) * 0.5 + seam * uSeam );
+    // NEAR still gates the per-tile WAX variation and the cup, which are
+    // genuinely sub-pixel perturbations at range; it no longer gates the seam,
+    // which is not. Two terms that fade for different reasons should not share
+    // one constant.
+    gloss *= 1.0 - ( near * uTileVar * ( 0.5 - tj ) * 0.5 + seam * uSeam );
     // ...and a scuffed tile is a MATTE tile. This is the half of the dirt
     // fault that mattered: an arc that only darkened albedo left the mirror
     // running at full strength straight through it, so the scuff read as paint

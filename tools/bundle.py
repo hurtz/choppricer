@@ -155,15 +155,34 @@ _body = re.search(r'<script type="module">([\s\S]*)</script>', html)
 if _body:
     with tempfile.NamedTemporaryFile("w", suffix=".mjs", delete=False, encoding="utf-8") as _f:
         _f.write(_body.group(1)); _tmp = _f.name
+    # BOTH FORMS, DELIBERATELY. `node --check FILE` parses .js as a CommonJS
+    # script first, and on 2026-08-26 it exited 0 on a src/cctv/shaders.js that
+    # the browser flatly refused to load — a stray backtick inside a GLSL
+    # template literal took the whole page down while the guard said "good".
+    # Two agents and the lead each observed that, and the lead could NOT
+    # construct a minimal reproduction of it, so the trigger condition is not
+    # understood and must not be assumed away. The tempfile here is .mjs, which
+    # in testing did catch every synthetic case — but "the guard I could not
+    # break" is worth exactly nothing next to "the guard that already shipped a
+    # black screen once" (see the note above this block). So run the explicit
+    # module check as well and fail if EITHER complains. Cost: one extra node
+    # invocation per bundle.
+    _src = _body.group(1)
     for _node in ("/usr/local/bin/node", "node"):
         try:
-            _r = subprocess.run([_node, "--check", _tmp], capture_output=True, text=True, timeout=60)
+            _checks = [
+                subprocess.run([_node, "--check", _tmp],
+                               capture_output=True, text=True, timeout=60),
+                subprocess.run([_node, "--input-type=module", "--check"],
+                               input=_src, capture_output=True, text=True, timeout=60),
+            ]
         except (FileNotFoundError, subprocess.TimeoutExpired):
             continue
-        if _r.returncode != 0:
-            os.unlink(_tmp)
-            raise SystemExit("BUNDLE DOES NOT PARSE — refusing to write a broken build:\n"
-                             + (_r.stderr or "").strip()[:600])
+        for _r in _checks:
+            if _r.returncode != 0:
+                os.unlink(_tmp)
+                raise SystemExit("BUNDLE DOES NOT PARSE — refusing to write a broken build:\n"
+                                 + (_r.stderr or "").strip()[:600])
         break
     os.unlink(_tmp)
 

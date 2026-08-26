@@ -177,9 +177,23 @@ export function unwarpFloor(p, maybeY) {
 }
 
 // Local magnification at a PINHOLE pixel — i.e. the point BEFORE warpFloor, not
-// after. `tangential` scales a marker's WIDTH and `radial` its HEIGHT, near the
-// horizontal and vertical axes respectively; at the centre both are 1.1248 and at
-// the corners both fall to 1.
+// after. 'tangential' scales a marker's WIDTH and 'radial' its HEIGHT, near the
+// horizontal and vertical axes respectively.
+//
+// ROUND 14 CORRECTION — THE SENTENCE THAT USED TO BE HERE WAS WRONG FOR HALF ITS
+// OWN OUTPUT. It said 'at the centre both are 1.1248 and at the corners both fall
+// to 1'. The centre is right; the corner is right for ONE of the two terms.
+// Measured on the shipped lens (k 0.12, 1280x720), all four corners:
+//
+//     tangential  1.0000        radial  0.8184
+//
+// so anything sized by 'radial' at the corner is 18% off if it trusts this
+// comment, and the error is invisible because 0.8184 and 1.0 are both plausible.
+// The shape is monotonic in neither term — mid-right edge reads radial 0.8667 /
+// tangential 1.0232, mid-top reads 1.0168 / 1.0864 — so there is no 'falls to'
+// summary that is true. Call the function; it is four lines and it is exact.
+// (A published derivation that is wrong for half its output is this project's
+// recurring bug, and this is the one that had survived longest.)
 //
 // The parameters are named for what they must be because a comment four lines above
 // a function does not travel with a copy-pasted call: a handoff snippet passed the

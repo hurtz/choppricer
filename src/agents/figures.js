@@ -754,30 +754,203 @@ function shopperShoe(THREE, S, kind) {
   return mergeParts(THREE, P.L);
 }
 
+// ===========================================================================
+// ROUND 10 — THE ELBOW. "ARMS ARE STILL RIGID BOXES AT PORTRAIT RANGE."
+// ===========================================================================
+// That was this file's own honest weakness list, and the blind critics said it
+// first. It is right, and it is not about the hand: every arm in this game is a
+// STRAIGHT STICK from shoulder to fingertip, because the rig has one pivot per
+// arm and the clips author a single shoulder angle. Nobody's arm is straight.
+//
+// THE OBVIOUS FIX IS THE WRONG ONE. Add an elbow GROUP, drive it from
+// agents.js, and the hand moves — a bent arm is a shorter arm — which breaks
+// two things at once: the cart-bar pose is geometrically calibrated (the hands
+// are ON the bar at P.cartD, and pulling them 150 mm back is a visible miss at
+// portrait range), and animateShopper SOLVES the held item's position from
+// `FIG.armLen` and the shoulder angles. Round 5 already shipped a floating box
+// beside a man's ear once and this file spent a round arguing that you cannot
+// make an ambiguity case out of a shot with a floating box in it.
+//
+// SO THE BEND IS BAKED, AND THE HAND DOES NOT MOVE. The elbow is placed OFF
+// the shoulder-to-hand line — 98 mm off it, mostly behind and a little
+// outboard — and both segments are re-aimed at it. Shoulder and fingertip end
+// up exactly where the straight stick put them, so:
+//   - FIG.armLen is still the truth and the prop solve is untouched;
+//   - every clip in decoy.js is untouched, and none of them got louder;
+//   - a bent arm needs no new group, no new mesh and no new draw call.
+// It is also what a real arm does: shoulder and hand are given, and the elbow
+// is the free parameter that swings off the line between them.
+//
+// WHICH WAY IT POINTS, AND WHY THAT IS FREE. The offset is authored in ARM-
+// LOCAL space, so it rides the shoulder rotation the clip is driving. A hand
+// on the cart bar (armR -0.95) carries the elbow down and back against the
+// ribs, which is where a person's elbow is when they push a trolley. The same
+// bake with the arm overhead (the bird, armR -2.44) carries it down and
+// forward, which is where an elbow is when an arm is up. One number, correct
+// at both ends of the range, because the range is a rotation of the same body.
+//
+// WHAT IT BUYS AT WHICH SCALE — the round-7 filter, applied honestly:
+//   at 214x120 the arm's outline stops being a line off the shoulder and
+//   becomes a shallow V, and the 98 mm offset is ~7 px on a body 120 px tall.
+//   Small, but it is the outline and not a surface detail, so it survives.
+//   At portrait range it is the difference between a mannequin and a person.
+// The HAND rebuild below it is honestly the other kind — it is worth having and
+// it only pays at 3x. Both are labelled as what they are.
+// Tuned by rendering it at portrait range and looking, which is the only test
+// available for a number like this. 0.090/0.026 was the first cut and it read
+// as a broken arm: the elbow swung far enough out that the forearm left the
+// body's outline entirely. 0.072 back is about 11% of the reach, which is what
+// a relaxed arm actually does, and the outboard term is small because an elbow
+// mostly goes BACKWARD.
+const ELB_BACK = 0.072;    // metres the elbow sits BEHIND the shoulder-hand line
+const ELB_OUT  = 0.016;    // ...and outboard of it
+
+// Aim a part along a segment. Returns the length, the Euler that maps the
+// primitive's own -Y onto (b - a), and a point sampler.
+//
+// three.js composes order 'XYZ' as Rx*Ry*Rz, so with y = 0:
+//   Rx(th) Rz(ph) (0,-1,0) = ( sin ph, -cos ph cos th, -cos ph sin th )
+// which inverts to ph = asin(u), th = atan2(-w, -v). Derived rather than
+// guessed, because a sign error here puts a forearm through a torso and the
+// mistake is invisible in a wireframe.
+function limbSeg(a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+  const len = Math.hypot(dx, dy, dz) || 1e-6;
+  const u = dx / len, v = dy / len, w = dz / len;
+  const ph = Math.asin(u < -1 ? -1 : u > 1 ? 1 : u);
+  const th = Math.atan2(-w, -v);
+  // The rotated local axes, so a thumb or a wristwatch can be placed on the
+  // SIDE or the FRONT of a tilted forearm without anybody doing trigonometry at
+  // the call site. Same composition as above:
+  //   Rx(th) Rz(ph) (1,0,0) = ( cos ph,  sin ph cos th,  sin ph sin th )
+  //   Rx(th) Rz(ph) (0,0,1) = ( 0,      -sin th,         cos th        )
+  const cp = Math.cos(ph), sp = Math.sin(ph), ct = Math.cos(th), st = Math.sin(th);
+  const AX = [cp, sp * ct, sp * st];
+  const AZ = [0, -st, ct];
+  return {
+    len, r: [th, 0, ph],
+    // point at fraction t along the segment...
+    at: (t) => [a[0] + dx * t, a[1] + dy * t, a[2] + dz * t],
+    // ...and one pushed lx metres sideways and lz metres forward IN THE LIMB'S
+    // OWN FRAME.
+    pt: (t, lx, lz) => [
+      a[0] + dx * t + lx * AX[0] + lz * AZ[0],
+      a[1] + dy * t + lx * AX[1] + lz * AZ[1],
+      a[2] + dz * t + lx * AX[2] + lz * AZ[2],
+    ],
+  };
+}
+
+// The two segments of an arm, given where the shoulder ball and the fingertip
+// are. Everything that draws an arm in this file goes through this, so there is
+// exactly one place the elbow lives — CLAUDE.md's rule, and the reason the cop
+// and the shoppers cannot drift apart the way the HUD camera rig did.
+// The elbow sits at 45% of the shoulder-to-fingertip reach, which is where an
+// anatomical elbow is once you measure to the fingertip rather than to the
+// wrist. `side` is +1 for the left arm and -1 for the right, matching every
+// other builder in this file.
+const ELB_F = 0.45;
+function armBones(side, shoulderY, tipX, tipY, tipZ, scale) {
+  const k = scale == null ? 1 : scale;
+  const sh = [0, shoulderY, 0];
+  const tip = [tipX, tipY, tipZ];
+  const el = [
+    tipX * ELB_F + side * ELB_OUT * k,
+    shoulderY + (tipY - shoulderY) * ELB_F,
+    tipZ * ELB_F - ELB_BACK * k,
+  ];
+  return { sh, el, tip, upper: limbSeg(sh, el), fore: limbSeg(el, tip) };
+}
+
+// Where a shopper's arm starts and ends. The fingertip is the number the prop
+// solve implicitly assumes, so it does NOT move: -0.660 is exactly where the
+// old straight stick put it.
+const SH_ARM = (side) => armBones(side, -0.020, side * 0.008, -0.660, 0.010);
+
 function shopperSleeve(THREE, S, long, side) {
   const P = partList(THREE, S);
-  P.ball(0.082, 0.078, 0.080, [0, -0.020, 0], 0xffffff, { seg: 8, rseg: 6 });
+  const B = SH_ARM(side), U = B.upper, F = B.fore;
+  // ROUND 10 — the deltoid is 4 mm fatter and the wrist 8 mm thinner than round
+  // 9's, which sharpens the taper from 1.77:1 to 2.4:1. A real arm is about
+  // 2.3:1 shoulder to wrist; every game arm that reads as a tube is nearer 1.5.
+  // Free, and it is an outline change.
+  P.ball(0.086, 0.080, 0.083, [0, -0.018, 0], 0xffffff, { seg: 8, rseg: 6 });
   if (long) {
-    P.taper(0.078, 0.060, 0.26, [side * 0.004, -0.155, 0], 0xffffff, { seg: 8 });
-    P.taper(0.062, 0.052, 0.26, [side * 0.006, -0.400, 0.004], 0xf8f8f8, { seg: 8 });
-    P.tube(0.058, 0.030, [side * 0.006, -0.522, 0.004], 0xdcdcdc, { seg: 8 });   // cuff
+    P.taper(0.081, 0.062, U.len * 0.98, U.at(0.51), 0xffffff, { seg: 8, r: U.r });
+    // THE ELBOW ITSELF. A ball at the joint is what makes a bend read as an
+    // elbow rather than as a kink in a pipe — the two tapers meet at an angle
+    // and without something round in the corner you can see the seam from
+    // across the store. It must not be BIGGER than either segment or it is a
+    // knuckle: 0.058 against a 0.062 sleeve is a crease, 0.072 was a knot.
+    P.ball(0.058, 0.060, 0.058, B.el, 0xfbfbfb, { seg: 8, rseg: 5 });
+    P.taper(0.056, 0.040, F.len * 0.62, F.at(0.32), 0xf8f8f8, { seg: 8, r: F.r });
+    P.tube(0.042, 0.030, F.at(0.64), 0xdcdcdc, { seg: 8, r: F.r });   // cuff
   } else {
-    P.taper(0.080, 0.066, 0.17, [side * 0.004, -0.105, 0], 0xffffff, { seg: 8 });
-    P.tube(0.070, 0.020, [side * 0.004, -0.196, 0], 0xe0e0e0, { seg: 8 });       // rolled hem
+    P.taper(0.081, 0.068, U.len * 0.56, U.at(0.32), 0xffffff, { seg: 8, r: U.r });
+    P.tube(0.070, 0.022, U.at(0.62), 0xe0e0e0, { seg: 8, r: U.r });   // rolled hem
   }
   return mergeParts(THREE, P.L);
 }
 
+// ROUND 10 — AND THE HAND IS NOT A BOX ANY MORE.
+//
+// This is the OTHER kind of detail and it is labelled honestly: a hand is 55 mm
+// across on a 1.75 m body, so at 214 px it is a third of a pixel and none of
+// what follows can possibly read there. It is for the spot monitor at 3x and
+// for the portrait the client is looking at when he says "the shoppers need
+// more detail" — the same argument round 7 made for the capillaries on the
+// cop's nose, and the same rule: it must not cost a draw call or a material,
+// and it does not, because it is more parts inside a mesh that already merged.
+//
+// A 52 x 78 x 44 mm box is what a hand looks like to a programmer. What a hand
+// looks like is a wedge: wide and thick across the knuckles, narrowing and
+// THINNING to the fingertips, with the fingers curled a few degrees so the tips
+// come forward of the knuckle line, and a thumb that stands off the side rather
+// than being buried in the palm. Five rounded parts instead of one box, and the
+// silhouette gains the two things a box cannot have — a taper and a corner
+// radius.
+// `uv` is the atlas cell, for the cop — his materials run off one 512 texture,
+// and a part with native 0..1 UVs on it would sample all sixteen cells at once.
+// Shoppers pass nothing and get the default.
+function shopperHand(P, F, side, tint, k, uv) {
+  const c = tint || 0xffffff;
+  const s = k || 1;
+  const X = uv ? { uv } : null;
+  P.ball(0.033 * s, 0.032 * s, 0.033 * s, F.at(0.575), c, { seg: 6, rseg: 5, ...X });    // wrist
+  // The heel of the hand: WIDE and FLAT. A hand is an ellipse in section, not a
+  // circle, which is the single thing a tapered tube can never be and is most of
+  // why the old box was reached for in the first place.
+  P.ball(0.030 * s, 0.042 * s, 0.044 * s, F.pt(0.720, 0, 0.004), c, { seg: 8, rseg: 6, r: F.r, ...X });
+  // The fingers. Still a box — at 55 mm a box is the right primitive and round 9
+  // was not wrong about that — but 6 mm thinner, 4 mm narrower, tipped forward
+  // into a slight curl, and CAPPED, so the outline ends in a radius instead of
+  // in a corner. A square end is what the eye calls a box.
+  P.box(0.047 * s, 0.070 * s, 0.034 * s, F.pt(0.858, 0, 0.010), c,
+    { r: [F.r[0] + 0.18, F.r[1], F.r[2]], ...X });
+  P.ball(0.024 * s, 0.016 * s, 0.018 * s, F.pt(0.945, 0, 0.020), c, { seg: 6, rseg: 4, r: F.r, ...X });
+  // The thumb stands off the side of the hand and points along it, so it is a
+  // notch in the outline rather than a bump on the palm.
+  P.tube(0.0115 * s, 0.042 * s, F.pt(0.790, side * -0.026, 0.012), c,
+    { seg: 6, r: [F.r[0] + 0.10, F.r[1], F.r[2] + side * 0.22], ...X });
+  P.ball(0.013 * s, 0.014 * s, 0.013 * s, F.pt(0.856, side * -0.032, 0.016), c, { seg: 6, rseg: 4, ...X });
+  return P;
+}
+
 function shopperForearm(THREE, S, long, side) {
   const P = partList(THREE, S);
+  const B = SH_ARM(side), U = B.upper, F = B.fore;
   if (!long) {
-    P.ball(0.060, 0.058, 0.058, [0, -0.235, 0], 0xffffff, { seg: 8, rseg: 5 });   // elbow
-    P.taper(0.060, 0.046, 0.24, [side * 0.006, -0.375, 0.004], 0xffffff, { seg: 8 });
+    // THE BARE ARM STARTS ABOVE THE HEM, NOT AT THE ELBOW, and getting that
+    // wrong is what the first render of this showed: the sleeve stopped at 62%
+    // of the upper arm and the skin started at the elbow, so a third of every
+    // short-sleeved arm in the store was a hole with the shelving showing
+    // through it. The two meshes have to OVERLAP; they are separate objects and
+    // there is nothing to fill a gap between them.
+    P.taper(0.065, 0.058, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
+    P.ball(0.056, 0.058, 0.056, B.el, 0xffffff, { seg: 8, rseg: 5 });   // elbow
+    P.taper(0.055, 0.036, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
   }
-  P.ball(0.044, 0.040, 0.044, [side * 0.008, -0.512, 0.004], 0xffffff, { seg: 6, rseg: 5 });
-  P.ball(0.038, 0.056, 0.052, [side * 0.008, -0.570, 0.010], 0xffffff, { seg: 8, rseg: 6 }); // palm
-  P.box(0.052, 0.078, 0.044, [side * 0.008, -0.622, 0.014], 0xf6f6f6);                        // fingers
-  P.ball(0.020, 0.030, 0.024, [side * -0.032, -0.566, 0.024], 0xfafafa, { seg: 6, rseg: 4 }); // thumb
+  shopperHand(P, F, side, 0xffffff);
   return mergeParts(THREE, P.L);
 }
 
@@ -802,20 +975,27 @@ function shopperForearm(THREE, S, long, side) {
 // he does look, the joke is actually there.
 function shopperBird(THREE, S, long, side) {
   const P = partList(THREE, S);
+  const B = SH_ARM(side), U = B.upper, F = B.fore;
   if (!long) {
-    P.ball(0.060, 0.058, 0.058, [0, -0.235, 0], 0xffffff, { seg: 8, rseg: 5 });
-    P.taper(0.060, 0.046, 0.24, [side * 0.006, -0.375, 0.004], 0xffffff, { seg: 8 });
+    P.taper(0.065, 0.058, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
+    P.ball(0.056, 0.058, 0.056, B.el, 0xffffff, { seg: 8, rseg: 5 });
+    P.taper(0.055, 0.036, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
   }
-  P.ball(0.044, 0.040, 0.044, [side * 0.008, -0.512, 0.004], 0xffffff, { seg: 6, rseg: 5 });
-  P.ball(0.038, 0.056, 0.052, [side * 0.008, -0.570, 0.010], 0xffffff, { seg: 8, rseg: 6 }); // palm
-  // The fist: same width, two thirds of the length, pulled back into the palm.
-  P.box(0.052, 0.052, 0.046, [side * 0.008, -0.606, 0.012], 0xf2f2f2);
-  P.ball(0.028, 0.020, 0.026, [side * 0.008, -0.632, 0.026], 0xf6f6f6, { seg: 6, rseg: 4 }); // curled knuckles
-  // ...and the one that is not curled. It points along the arm's own -Y, so it
-  // aims wherever the arm aims and needs no separate solve.
-  P.tube(0.0125, 0.055, [side * 0.006, -0.660, 0.006], 0xffffff, { seg: 6 });
-  P.ball(0.0130, 0.014, 0.0130, [side * 0.006, -0.686, 0.006], 0xfbfbfb, { seg: 6, rseg: 4 });
-  P.ball(0.020, 0.030, 0.024, [side * -0.030, -0.578, 0.020], 0xfafafa, { seg: 6, rseg: 4 }); // thumb, tucked
+  // ROUND 10 — re-baked onto the same bones as the ordinary hand, which is the
+  // point of there being bones at all: the swap happens on a live mesh mid-clip
+  // and a wrist that jumped 30 mm when the geometry changed would be a pop you
+  // could see on the spot monitor.
+  P.ball(0.033, 0.032, 0.033, F.at(0.575), 0xffffff, { seg: 6, rseg: 5 });
+  P.ball(0.030, 0.042, 0.044, F.pt(0.720, 0, 0.004), 0xffffff, { seg: 8, rseg: 6, r: F.r });
+  // The fist: the knuckle mass stays, the fingers are curled back into the palm.
+  P.ball(0.028, 0.030, 0.028, F.pt(0.820, 0, 0.008), 0xf2f2f2, { seg: 8, rseg: 5, r: F.r });
+  P.ball(0.025, 0.019, 0.023, F.pt(0.862, 0, 0.022), 0xf6f6f6, { seg: 6, rseg: 4, r: F.r });
+  // ...and the one that is not curled. It runs along the FOREARM's own axis, so
+  // it aims wherever the arm aims and needs no separate solve.
+  P.tube(0.0125, 0.058, F.pt(0.945, 0, 0.004), 0xffffff, { seg: 6, r: F.r });
+  P.ball(0.0130, 0.014, 0.0130, F.pt(1.022, 0, 0.004), 0xfbfbfb, { seg: 6, rseg: 4 });
+  P.tube(0.0115, 0.036, F.pt(0.796, side * -0.026, 0.010), 0xfafafa,
+    { seg: 6, r: [F.r[0] + 0.10, F.r[1], F.r[2] + side * 0.22] });   // thumb, tucked
   return mergeParts(THREE, P.L);
 }
 
@@ -861,42 +1041,94 @@ export const KID = {
   legLen: 0.50,
   shoulderY: 0.34,   // hips-local
   neckY: 0.40,       // hips-local
-  headY: 0.115,      // neck-local centre of the skull
-  crown: 1.11,
+  headY: 0.122,      // neck-local centre of the skull  (round 10: +7 mm)
+  crown: 1.14,       // round 10: the head grew, see kidTorso's note
   armLen: 0.42,
 };
 
+// Children's clothes, and this is the only thing in the child rig that reads at
+// 20 px. Bright, high-chroma, and disjoint from CLOTH/PANTS on purpose: a red
+// or a yellow body a metre tall in a crowd of beige and navy is a child before
+// you have resolved a single feature on it.
+export const KIDCLOTH = [
+  0xd94f3d, 0xe8a33d, 0xf2d24b, 0x4f9d4f, 0x3d7fc4, 0x8a4fb8,
+  0xe86fa0, 0x2fb3a8, 0xf07030, 0xfaf0e0,
+];
+export const KIDPANTS = [0x35507a, 0x2f3a4a, 0x6b4a8a, 0x2f6b52, 0x8a3d3d, 0x4a4a52];
+
+// ===========================================================================
+// ROUND 10 — "AT 214x120 THE CHILDREN READ AS A SMALLER BLOB NEXT TO AN ADULT
+// RATHER THAN AS CHILDREN. THE HEIGHT DIFFERENCE LANDS, THE PROPORTIONS DON'T."
+// ===========================================================================
+// That was this file's own note and it is right. Measured on the round-9 build,
+// which is what made it fixable — the ratio it claimed to have is not the ratio
+// it had:
+//
+//   HEAD HEIGHT AS A FRACTION OF STATURE      round 9      real      round 10
+//     adult                                    15.3%       ~13%       15.3%
+//     child                                    17.0%       ~18%       19.6%
+//     the DIFFERENCE, which is the whole cue    1.7 pts     5 pts      4.3 pts
+//
+// A 1.7-point difference is not a proportion, it is a rounding error, and at 35
+// px tall it is nothing at all — which is exactly what "a smaller blob" means.
+// The adult head is the one that is wrong against reality, but round 1 of this
+// file was fought over people being headless and shrinking it back is not a
+// trade worth making, so the child's head grows instead and the crown goes
+// 1.11 -> 1.14. Stature rolls 0.98 m to 1.28 m, which is a four to eight year
+// old and is what it was.
+//
+// THREE MORE, ALL OUTLINE AND ALL CHEAP:
+//   - THE STANCE. Round 9's legs hung at +/-0.055 on shoulders 0.208 wide, i.e.
+//     a post. Children stand with their feet apart and their toes out. +/-0.072
+//     turns the bottom half into a triangle, which at 35 px is the difference
+//     between a smudge and a stance.
+//   - THE CLOTHES. Children in a supermarket are dressed in primaries and the
+//     adults are not. `KIDCLOTH` is its own palette for the same reason the
+//     cop is French blue over near-black: at the size the monitor wall renders a
+//     person, VALUE AND CHROMA ARE THE SILHOUETTE. This is the one change here
+//     that reads at 20 px, and it costs nothing — the same single pick() off
+//     the same stream, pointed at a different array.
+//   - A CAP. Fourth hairstyle, and it is a hat because a brim is the only thing
+//     you can put on a head at this scale that changes its shape. `ri(0,3)`
+//     instead of `ri(0,2)`: one draw, as before.
 function kidTorso(THREE, S) {
   const P = partList(THREE, S);
   // A barrel with a pot belly and almost no shoulder line. The pot belly is not
   // a joke: under about seven, the abdomen is the widest part of the body, and
   // it is what stops this reading as a slim adult at 40 px.
-  P.ball(0.104, 0.062, 0.086, [0, KID.shoulderY - 0.004, -0.004], 0xffffff, { seg: 10, rseg: 5 });
-  P.ball(0.104, 0.092, 0.086, [0, 0.238, 0.002], 0xffffff, { seg: 10, rseg: 6 });
-  P.ball(0.112, 0.094, 0.096, [0, 0.132, 0.012], 0xf6f6f6, { seg: 10, rseg: 6 });   // pot belly
-  P.ball(0.104, 0.052, 0.088, [0, 0.036, 0.008], 0xe6e6e6, { seg: 10, rseg: 5 });   // hem
+  P.ball(0.101, 0.062, 0.084, [0, KID.shoulderY - 0.004, -0.004], 0xffffff, { seg: 10, rseg: 5 });
+  P.ball(0.102, 0.092, 0.085, [0, 0.238, 0.002], 0xffffff, { seg: 10, rseg: 6 });
+  P.ball(0.113, 0.094, 0.097, [0, 0.132, 0.012], 0xf6f6f6, { seg: 10, rseg: 6 });   // pot belly
+  P.ball(0.105, 0.052, 0.089, [0, 0.036, 0.008], 0xe6e6e6, { seg: 10, rseg: 5 });   // hem
   // Sleeve caps live HERE and not on the arms, so each arm can be one bare-skin
   // mesh instead of a sleeve plus a forearm in two materials. Half the child's
   // draw calls come out of this one decision.
-  P.ball(0.050, 0.050, 0.050, [0.104, KID.shoulderY - 0.012, 0], 0xfbfbfb, { seg: 8, rseg: 5 });
-  P.ball(0.050, 0.050, 0.050, [-0.104, KID.shoulderY - 0.012, 0], 0xfbfbfb, { seg: 8, rseg: 5 });
-  P.tube(0.040, 0.028, [0, KID.neckY - 0.010, 0.002], 0xdcdcdc, { seg: 8 });        // collar
+  P.ball(0.050, 0.050, 0.050, [0.101, KID.shoulderY - 0.012, 0], 0xfbfbfb, { seg: 8, rseg: 5 });
+  P.ball(0.050, 0.050, 0.050, [-0.101, KID.shoulderY - 0.012, 0], 0xfbfbfb, { seg: 8, rseg: 5 });
+  // ROUND 10 — the collar is NARROWER than it was (0.040 -> 0.034). The notch
+  // between a big head and small shoulders is the thing that stops the two
+  // reading as one blob, and a notch is made of the gap either side of it.
+  P.tube(0.034, 0.030, [0, KID.neckY - 0.012, 0.002], 0xdcdcdc, { seg: 8 });        // collar
   return mergeParts(THREE, P.L);
 }
 
 function kidHead(THREE, S) {
   const P = partList(THREE, S);
   const h = KID.headY;
-  P.tube(0.028, 0.052, [0, h - 0.112, -0.004], 0xe8e8e8, { seg: 8 });               // neck
-  P.ball(0.081, 0.085, 0.083, [0, h + 0.008, -0.004], 0xffffff, { seg: 10, rseg: 7 });
-  P.ball(0.068, 0.050, 0.072, [0, h - 0.046, 0.012], 0xfbfbfb, { seg: 10, rseg: 6 }); // cheeks
-  P.ball(0.023, 0.029, 0.016, [0.080, h - 0.004, -0.006], 0xf6f6f6, { seg: 6, rseg: 4 });
-  P.ball(0.023, 0.029, 0.016, [-0.080, h - 0.004, -0.006], 0xf6f6f6, { seg: 6, rseg: 4 });
-  P.ball(0.015, 0.016, 0.017, [0, h - 0.014, 0.070], 0xffffff, { seg: 6, rseg: 5 });  // nose
+  // ROUND 10 — the skull is 13% wider and 15% taller than round 9's, and the
+  // NECK is 4 mm thinner. Both halves matter: a big head on a thick neck is a
+  // bodybuilder, and the gap either side of the neck is what makes the head a
+  // separate object at 35 px instead of a bulge on the shoulders.
+  P.tube(0.024, 0.050, [0, h - 0.124, -0.004], 0xe8e8e8, { seg: 8 });               // neck
+  P.ball(0.092, 0.098, 0.094, [0, h + 0.012, -0.004], 0xffffff, { seg: 10, rseg: 7 });
+  P.ball(0.077, 0.058, 0.081, [0, h - 0.054, 0.014], 0xfbfbfb, { seg: 10, rseg: 6 }); // cheeks
+  P.ball(0.025, 0.032, 0.017, [0.091, h - 0.004, -0.006], 0xf6f6f6, { seg: 6, rseg: 4 });
+  P.ball(0.025, 0.032, 0.017, [-0.091, h - 0.004, -0.006], 0xf6f6f6, { seg: 6, rseg: 4 });
+  P.ball(0.016, 0.017, 0.018, [0, h - 0.016, 0.080], 0xffffff, { seg: 6, rseg: 5 });  // nose
   // The eyes are proportionally enormous and set LOW on the skull, which is the
   // other half of "child" after the head-to-body ratio.
-  P.ball(0.019, 0.014, 0.010, [0.033, h - 0.002, 0.068], 0x54463c, { seg: 6, rseg: 4 });
-  P.ball(0.019, 0.014, 0.010, [-0.033, h - 0.002, 0.068], 0x54463c, { seg: 6, rseg: 4 });
+  P.ball(0.021, 0.016, 0.011, [0.037, h - 0.002, 0.078], 0x54463c, { seg: 6, rseg: 4 });
+  P.ball(0.021, 0.016, 0.011, [-0.037, h - 0.002, 0.078], 0x54463c, { seg: 6, rseg: 4 });
   return mergeParts(THREE, P.L);
 }
 
@@ -904,25 +1136,42 @@ function kidHair(THREE, S, k) {
   const P = partList(THREE, S);
   const h = KID.headY;
   if (k === 0) {                                   // a mop, over the ears
-    P.ball(0.086, 0.076, 0.088, [0, h + 0.016, -0.004], 0xffffff, { seg: 10, rseg: 6 });
-    P.box(0.150, 0.026, 0.038, [0, h + 0.036, 0.062], 0xf2f2f2);                     // fringe
+    P.ball(0.098, 0.088, 0.100, [0, h + 0.020, -0.004], 0xffffff, { seg: 10, rseg: 6 });
+    P.box(0.170, 0.028, 0.042, [0, h + 0.042, 0.070], 0xf2f2f2);                     // fringe
   } else if (k === 1) {                            // bunches, and they stick OUT
-    P.ball(0.084, 0.070, 0.086, [0, h + 0.018, -0.006], 0xffffff, { seg: 10, rseg: 6 });
-    P.ball(0.038, 0.044, 0.038, [0.094, h - 0.006, -0.030], 0xf6f6f6, { seg: 8, rseg: 5 });
-    P.ball(0.038, 0.044, 0.038, [-0.094, h - 0.006, -0.030], 0xf6f6f6, { seg: 8, rseg: 5 });
-  } else {                                         // cropped
-    P.ball(0.083, 0.060, 0.085, [0, h + 0.022, -0.006], 0xffffff, { seg: 10, rseg: 5 });
+    P.ball(0.095, 0.080, 0.098, [0, h + 0.022, -0.006], 0xffffff, { seg: 10, rseg: 6 });
+    P.ball(0.043, 0.050, 0.043, [0.107, h - 0.006, -0.034], 0xf6f6f6, { seg: 8, rseg: 5 });
+    P.ball(0.043, 0.050, 0.043, [-0.107, h - 0.006, -0.034], 0xf6f6f6, { seg: 8, rseg: 5 });
+  } else if (k === 2) {                            // cropped
+    P.ball(0.094, 0.068, 0.096, [0, h + 0.026, -0.006], 0xffffff, { seg: 10, rseg: 5 });
+  } else {
+    // ROUND 10 — A BALL CAP, WORN SLIGHTLY CROOKED. The only thing you can put
+    // on a head at 35 px that changes its SHAPE rather than its colour: the
+    // brim puts 60 mm of flat overhang out one side of a round skull, which is
+    // a profile nothing else in the store has. It is also the cheapest way for
+    // a child to be reading as a child from behind.
+    P.ball(0.093, 0.052, 0.095, [0, h + 0.034, -0.004], 0xffffff, { seg: 10, rseg: 5 });
+    P.ball(0.078, 0.062, 0.080, [0, h + 0.006, -0.004], 0xf4f4f4, { seg: 10, rseg: 5 });
+    P.half(0.098, 0.014, [0, h + 0.024, 0.020], 0xe8e8e8, { r: [0.14, 0.22, 0], seg: 12 });
+    P.ball(0.016, 0.014, 0.016, [0, h + 0.080, -0.004], 0xdedede, { seg: 6, rseg: 4 }); // button
   }
   return mergeParts(THREE, P.L);
 }
 
 // Bare arm, one mesh, skin material — see the note on kidTorso's sleeve caps.
+// ROUND 10 — and it gets the same baked elbow every other arm in this file got,
+// off the same armBones(), scaled to a 0.41 m reach. A child's arms are the
+// half of the body that is always doing something, so a bend in them is worth
+// more here than on an adult holding a trolley bar.
 function kidArm(THREE, S, side) {
   const P = partList(THREE, S);
-  P.taper(0.036, 0.030, 0.20, [side * 0.003, -0.105, 0], 0xffffff, { seg: 7 });
-  P.ball(0.031, 0.030, 0.031, [0, -0.205, 0], 0xf8f8f8, { seg: 6, rseg: 5 });         // elbow
-  P.taper(0.030, 0.024, 0.16, [side * 0.004, -0.290, 0.002], 0xffffff, { seg: 7 });
-  P.ball(0.024, 0.032, 0.028, [side * 0.005, -0.386, 0.006], 0xf4f4f4, { seg: 6, rseg: 5 }); // hand
+  const B = armBones(side, -0.008, side * 0.005, -0.414, 0.006, 0.62);
+  const U = B.upper, F = B.fore;
+  P.taper(0.038, 0.031, U.len * 0.92, U.at(0.50), 0xffffff, { seg: 7, r: U.r });
+  P.ball(0.032, 0.032, 0.032, B.el, 0xf8f8f8, { seg: 6, rseg: 5 });                    // elbow
+  P.taper(0.031, 0.024, F.len * 0.66, F.at(0.36), 0xffffff, { seg: 7, r: F.r });
+  P.ball(0.024, 0.030, 0.027, F.pt(0.80, 0, 0.004), 0xf4f4f4, { seg: 6, rseg: 5, r: F.r }); // hand
+  P.ball(0.019, 0.021, 0.019, F.pt(0.94, 0, 0.010), 0xf0f0f0, { seg: 6, rseg: 4, r: F.r }); // fingers
   return mergeParts(THREE, P.L);
 }
 
@@ -931,11 +1180,15 @@ function kidArm(THREE, S, side) {
 // is ever seen in this store that is a shoe, and it is a draw call we keep.
 function kidLeg(THREE, S, side) {
   const P = partList(THREE, S);
-  P.taper(0.056, 0.048, 0.24, [side * 0.004, -0.120, 0], 0xffffff, { seg: 7 });
-  P.ball(0.042, 0.036, 0.044, [0, -0.245, 0.002], 0xf6f6f6, { seg: 7, rseg: 5 });     // knee
-  P.taper(0.044, 0.036, 0.20, [0, -0.350, 0.002], 0xfafafa, { seg: 7 });
-  P.ball(0.038, 0.028, 0.058, [0, -0.470, 0.020], 0x7e7e7e, { seg: 7, rseg: 5 });     // shoe
-  P.box(0.066, 0.016, 0.118, [0, -0.492, 0.018], 0x606060);
+  // ROUND 10 — thicker thigh, and the shoe is toed OUT by 12 degrees. Both are
+  // outline: a child's leg is not a tapered dowel, and a pair of feet turned
+  // out is a stance rather than a pair of posts. The widening of the stance
+  // itself is in makeChild, where the pivots live.
+  P.taper(0.060, 0.049, 0.24, [side * 0.004, -0.120, 0], 0xffffff, { seg: 7 });
+  P.ball(0.044, 0.038, 0.046, [0, -0.245, 0.002], 0xf6f6f6, { seg: 7, rseg: 5 });     // knee
+  P.taper(0.045, 0.036, 0.20, [0, -0.350, 0.002], 0xfafafa, { seg: 7 });
+  P.ball(0.039, 0.028, 0.060, [0, -0.470, 0.020], 0x7e7e7e, { seg: 7, rseg: 5, r: [0, side * -0.21, 0] });
+  P.box(0.068, 0.016, 0.122, [0, -0.492, 0.018], 0x606060, { r: [0, side * -0.21, 0] });
   return mergeParts(THREE, P.L);
 }
 
@@ -1527,9 +1780,15 @@ function copLeg(THREE, S, side) {
 // Short-sleeve summer uniform: it gets the shoulder patch out where it can be
 // seen and it puts two bands of skin in the silhouette, which is worth more at
 // CCTV resolution than any amount of detail on the sleeve itself.
+// HIS bones. Same construction as a shopper's, same elbow rule, longer reach
+// and a fingertip at -0.674 — which is where the old straight stick ended, so
+// nothing that assumes an arm length has moved.
+const COP_ARM = (side) => armBones(side, -0.032, side * 0.010, -0.674, 0.016);
+
 function copSleeve(THREE, S, side) {
   const P = partList(THREE, S);
   const F = { uv: uvOf('shirt') };
+  const B = COP_ARM(side), U = B.upper;
   // ROUND 7 — THE SLEEVE IS TIGHT ON THE UPPER ARM. The cap of the sleeve is
   // fuller and the hem is 9 mm narrower than it was, so the band BITES: there
   // is a bulge of arm above the cuff and another one below it. A short sleeve
@@ -1537,12 +1796,16 @@ function copSleeve(THREE, S, side) {
   // The cap of the sleeve has to MEET the taper under it or the shoulder grows
   // a ledge and he is wearing a doublet. 0.096 into a 0.094 top is a seam you
   // cannot find; the tightness lives at the other end, in the hem.
-  P.ball(0.096, 0.077, 0.094, [0, -0.032, 0], C.shirt, { seg: 10, rseg: 7, ...F });
-  P.taper(0.088, 0.094, 0.235, [side * 0.004, -0.140, 0], C.shirt, { seg: 10, ...F });
-  P.ball(0.083, 0.022, 0.080, [side * 0.004, -0.252, 0], C.shirt, { seg: 10, rseg: 4, ...F });
-  P.tube(0.075, 0.030, [side * 0.004, -0.274, 0], C.shirtDk, { seg: 10, ...F });   // rolled hem
+  //
+  // ROUND 10 — and it now runs down the UPPER ARM rather than down a stick. The
+  // sleeve already ended at -0.289, a hair above where the elbow turns out to
+  // be, so this is the same garment on a bone that finally exists.
+  P.ball(0.098, 0.079, 0.096, [0, -0.030, 0], C.shirt, { seg: 10, rseg: 7, ...F });
+  P.taper(0.088, 0.096, U.len * 0.76, U.at(0.42), C.shirt, { seg: 10, r: U.r, ...F });
+  P.ball(0.083, 0.022, 0.080, U.at(0.79), C.shirt, { seg: 10, rseg: 4, r: U.r, ...F });
+  P.tube(0.075, 0.030, U.at(0.86), C.shirtDk, { seg: 10, r: U.r, ...F });   // rolled hem
   // shoulder patch, proud of the sleeve, facing outboard
-  P.box(0.006, 0.090, 0.074, [side * 0.096, -0.080, -0.002], C.white,
+  P.box(0.006, 0.090, 0.074, [side * 0.098, -0.080, -0.002], C.white,
     { r: [0, 0, side * -0.06], uv: uvOf('patch') });
   return mergeParts(THREE, P.L);
 }
@@ -1550,16 +1813,25 @@ function copSleeve(THREE, S, side) {
 function copForearm(THREE, S, side) {
   const P = partList(THREE, S);
   const X = { uv: uvOf('flat') };
-  // Wider than the cuff above it, so the arm reads as squeezed out of it.
-  P.ball(0.080, 0.072, 0.078, [0, -0.290, 0], C.skin, { seg: 8, rseg: 6, ...X });
-  P.taper(0.074, 0.054, 0.22, [side * 0.008, -0.412, 0.004], C.skin, { seg: 10, ...X });
-  P.ball(0.050, 0.046, 0.050, [side * 0.010, -0.530, 0.004], C.skin, { seg: 8, rseg: 5, ...X });
-  P.ball(0.044, 0.056, 0.056, [side * 0.010, -0.586, 0.012], C.skin, { seg: 8, rseg: 6, ...X });
-  P.box(0.058, 0.076, 0.050, [side * 0.010, -0.636, 0.016], C.skin, { ...X });
-  P.ball(0.023, 0.032, 0.027, [side * -0.031, -0.582, 0.028], C.skin, { seg: 6, rseg: 5, ...X });
+  const B = COP_ARM(side), U = B.upper, F = B.fore;
+  // Wider than the cuff above it, so the arm reads as squeezed out of it. The
+  // elbow ball now sits AT the joint instead of at an arbitrary y, so the bulge
+  // and the crease are the same feature.
+  // The bare arm has to START ABOVE THE CUFF, not at the elbow — see the note in
+  // shopperForearm; the two meshes are separate objects and a gap between them
+  // is a hole with the store showing through.
+  P.taper(0.080, 0.076, U.len * 0.34, U.at(0.87), C.skin, { seg: 10, r: U.r, ...X });
+  P.ball(0.078, 0.074, 0.077, B.el, C.skin, { seg: 8, rseg: 6, ...X });
+  P.taper(0.076, 0.048, F.len * 0.58, F.at(0.30), C.skin, { seg: 10, r: F.r, ...X });
+  // ROUND 10 — the same hand every shopper got, in his skin and on his atlas
+  // cell, scaled 1.22x because he is a bigger man and his hands were always
+  // modelled bigger. The SHAPE is shared, which is the point of it living in one
+  // function: the day somebody rounds a fingertip, fifteen people get it.
+  shopperHand(P, F, side, C.skin, 1.22, uvOf('flat'));
   if (side < 0) {                                    // watch, right wrist
-    P.tube(0.052, 0.020, [side * 0.010, -0.522, 0.004], 0x22222a, { seg: 8, ...X });
-    P.tube(0.020, 0.026, [side * 0.010, -0.522, 0.038], C.steel, { r: [Math.PI / 2, 0, 0], seg: 8, ...X });
+    P.tube(0.050, 0.020, F.at(0.545), 0x22222a, { seg: 8, r: F.r, ...X });
+    P.tube(0.020, 0.026, F.pt(0.545, 0, 0.034), C.steel,
+      { r: [F.r[0] + Math.PI / 2, F.r[1], F.r[2]], seg: 8, ...X });
   }
   return mergeParts(THREE, P.L);
 }
@@ -1587,13 +1859,12 @@ export function buildFigureGeo(THREE) {
     fore: [[shopperForearm(THREE, S, false, 1), shopperForearm(THREE, S, false, -1)],
            [shopperForearm(THREE, S, true, 1), shopperForearm(THREE, S, true, -1)]],
     // Both are SHORT-forearm bakes, which looks wrong and is not: the mesh that
-    // actually carries a hand in skin is the short forearm on a short-sleeved
-    // person and — see makePerson — the short forearm again on a long-sleeved
-    // one, added under the sleeve so the hand pokes out of it. There is no
-    // long-sleeve bird bake because there is no long-sleeve hand mesh to swap.
-    // The two entries are the two SIDES, because the long-sleeve hand is added
-    // from the +1 bake and the short-sleeve one from -1.
-    bird: [shopperBird(THREE, S, false, 1), shopperBird(THREE, S, false, -1)],
+    // actually carries a hand in skin is `fore[sleeve][1]` on both sleeve
+    // lengths — round 10 collapsed the long-sleeved person's third arm mesh, so
+    // there is now exactly one skin hand per arm and one bird bake per sleeve.
+    // ROUND 10 — [long, short], both for the RIGHT hand (side -1), because that
+    // is the only hand this ever swaps onto. See makePerson.
+    bird: [shopperBird(THREE, S, true, -1), shopperBird(THREE, S, false, -1)],
     // the cop, baked once, one instance
     cop: {
       head: copHead(THREE, S), headKit: copHeadKit(THREE, S),
@@ -1608,7 +1879,7 @@ export function buildFigureGeo(THREE) {
     kid: {
       torso: kidTorso(THREE, S),
       head: kidHead(THREE, S),
-      hair: [0, 1, 2].map((k) => kidHair(THREE, S, k)),
+      hair: [0, 1, 2, 3].map((k) => kidHair(THREE, S, k)),
       arm: [kidArm(THREE, S, 1), kidArm(THREE, S, -1)],
       leg: [kidLeg(THREE, S, 1), kidLeg(THREE, S, -1)],
     },
@@ -1767,9 +2038,12 @@ export function rollPerson(rng) {
     height: rr(0.86, 1.12),                 // 0.95 m to 1.24 m
     skin,                                    // the parent's, which is the point
     hair: age === 'old' ? pick(HAIR) : pick(HAIR),
-    shirt: pick(CLOTH),
-    pants: pick(PANTS),
-    hairStyle: ri(0, 2),
+    // ROUND 10 — children's own palettes. Same single pick() off the same
+    // stream, pointed at a different array, so no draw count moved. See
+    // KIDCLOTH: this is the only part of the child rig that reads at 20 px.
+    shirt: pick(KIDCLOTH),
+    pants: pick(KIDPANTS),
+    hairStyle: ri(0, 3),
     // Gait: a child's legs are half the length of an adult's, so at the same
     // ground speed the cadence is roughly double. That difference is visible at
     // CCTV scale even when the body is eight pixels tall — it is MOVEMENT rate,
@@ -1845,10 +2119,15 @@ export function makeChild(THREE, F, o) {
     const p = new THREE.Group(); p.position.set(x, y, 0);
     p.add(new THREE.Mesh(geo, mat)); return p;
   };
-  const legL = limb(F.kid.leg[0], pants, 0.055, 0);
-  const legR = limb(F.kid.leg[1], pants, -0.055, 0);
-  const armL = limb(F.kid.arm[0], skin, 0.108, KID.shoulderY);
-  const armR = limb(F.kid.arm[1], skin, -0.108, KID.shoulderY);
+  // ROUND 10 — THE STANCE. Round 9 hung the legs at +/-0.055 under shoulders
+  // 0.202 wide, which is a post with a head on it; a child stands with its feet
+  // apart. +/-0.072, and the arms come out with them, so the bottom half of the
+  // silhouette is a triangle. At 35 px tall that is the whole difference
+  // between a smudge and a small person standing there.
+  const legL = limb(F.kid.leg[0], pants, 0.072, 0);
+  const legR = limb(F.kid.leg[1], pants, -0.072, 0);
+  const armL = limb(F.kid.arm[0], skin, 0.105, KID.shoulderY);
+  const armR = limb(F.kid.arm[1], skin, -0.105, KID.shoulderY);
   hips.add(legL); hips.add(legR); hips.add(armL); hips.add(armR);
 
   g.scale.setScalar(o.height);
@@ -1910,25 +2189,36 @@ export function makePerson(THREE, F, o) {
   const hw = 0.098 * b.th * o.girth, sw = 0.190 * b.sh * o.girth;
   const legL = limb(F.leg[o.build][0], pants, hw, 0, [F.shoe[o.shoeKind], shoeM]);
   const legR = limb(F.leg[o.build][1], pants, -hw, 0, [F.shoe[o.shoeKind], shoeM]);
+  // ROUND 10 — TWO MESHES PER ARM, WHATEVER THE SLEEVE, AND THE HAND IS DRAWN
+  // ONCE. Round 9 gave a long-sleeved person THREE arm meshes: the sleeve, the
+  // long `fore` bake in SHIRT — which is a wrist, a palm, fingers and a thumb
+  // in shirt colour — and then the short `fore` bake in SKIN on top of it, at
+  // byte-identical transforms. Two coincident hands, one shirt-coloured, and
+  // which one you saw was whichever the depth test happened to keep. It cost a
+  // mesh, a material and a z-fight on 40% of the crowd.
+  //
+  // The fix is that the second slot is ALWAYS the skin bake: `F.fore[1]` is the
+  // hand alone (for a sleeve that covers the forearm) and `F.fore[0]` is the
+  // bare forearm plus the hand. Long-sleeved people go from 3 arm meshes to 2,
+  // which is 2 draw calls per person back on every long-sleeved body in the
+  // store, and the arm count is now the same for everybody.
   const armL = limb(F.sleeve[o.sleeve][0], shirt, sw, FIG.shoulderY,
-    [F.fore[o.sleeve][0], o.sleeve ? shirt : skin]);
+    [F.fore[o.sleeve][0], skin]);
   const armR = limb(F.sleeve[o.sleeve][1], shirt, -sw, FIG.shoulderY,
-    [F.fore[o.sleeve][1], o.sleeve ? shirt : skin]);
-  // A long-sleeved person still has hands; they are just the same mesh in the
-  // skin material, so the sleeve geometry covers the arm and the hand shows.
-  if (o.sleeve) {
-    armL.add(new THREE.Mesh(F.fore[0][0], skin));
-    armR.add(new THREE.Mesh(F.fore[0][1], skin));
-  }
+    [F.fore[o.sleeve][1], skin]);
   // ROUND 9 — the mesh whose geometry carries the RIGHT HAND, handed back by
   // name so agents.js can swap in the raised-finger bake without counting
-  // children. On a long-sleeved person that is the bare-skin hand added just
-  // above and NOT the sleeved forearm, which is the whole reason this is a
-  // reference rather than an index: `armR.children[1]` is the right mesh on a
-  // short sleeve and the wrong one on a long one, and the bug that produces is
-  // a man giving the camera the finger with a shirtsleeve.
+  // children.
   const handR = armR.children[armR.children.length - 1];
   const handGeo = handR.geometry;                 // what to put back afterwards
+  // ROUND 10 — AND ROUND 9'S TWO BAKES WERE THE WRONG TWO. `F.bird` was
+  // [side +1, side -1], both short-sleeved, indexed by SLEEVE — so a
+  // long-sleeved man giving the camera the finger got the LEFT hand's bake
+  // (thumb 60 mm out on the wrong side) and a short-sleeved one got the right
+  // hand by luck of the index. The right hand is ALWAYS built from side -1;
+  // what actually varies with the sleeve is whether the bake carries a bare
+  // forearm. The bakery now holds those two and this expression is finally
+  // asking the question it looks like it is asking.
   const birdGeo = F.bird[o.sleeve ? 0 : 1];
   hips.add(legL); hips.add(legR); chest.add(armL); chest.add(armR);
 

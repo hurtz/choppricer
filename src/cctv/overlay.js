@@ -815,24 +815,55 @@ export function paintSpotOsd(cv, o) {
 }
 
 /** Much lighter stamp for the on-foot view — it is still recorded footage. */
+// ROUND 8 — THIS IS THE "TIMESTAMP DRAWS OVER ITSELF" BUG, AND IT WAS TWO
+// SEPARATE COLLISIONS WITH builder-game's HUD, not one.
+//
+//   REC + pip at (W-22, 20)          landed under the HUD's OWN DVR clock in
+//                                    the top status bar. Two recorders' voices
+//                                    inside 30 px of each other.
+//   date/time at (W-22, H-20-CH_H*2) = y 686 at 720 tall, and the HUD's bottom
+//                                    bar starts at 684. It printed the stamp
+//                                    straight through "[Q] RETURN TO POST".
+//                                    shots/cctv_r8_floor_burnin_before.png.
+//
+// builder-game's fix was to switch the whole layer off (game.js sets
+// c.floorBurnIn = false at construction), which is why nobody has seen this
+// since — and which also cost the on-foot view the one cue that says it is
+// recorded footage rather than a first-person camera.
+//
+// WHERE IT GOES NOW, AND IT IS MEASURED, NOT CHOSEN. HUD alpha coverage was
+// sampled over 24 floor states (8 aisles x 3 points in the approach) in five
+// candidate 312x24 bands:
+//
+//     band                          worst    mean
+//     top-right, under the bar      15.0%   12.7%
+//     top-right, one line lower     28.7%   24.2%
+//     top-LEFT, under the bar       50.0%   34.2%   (the dispatch panel)
+//     bottom-right, y 604           0.0%    0.0%    <-- label line
+//     bottom-right, y 646           0.0%    0.0%    <-- stamp line
+//
+// so the stamp is ONE cluster in the bottom-right, which is where a real
+// recorder burns it in anyway, and the rect is published as
+// cctv.floorStampRect so the next HUD change can see it coming.
+// The canvas IS the stamp rect now — W,H are cctv.floorStampRect's w,h and every
+// coordinate below is local to it. See the note on the canvas in cctv.js: this
+// used to be a 1280x720 RGBA canvas cleared and re-uploaded three times a second
+// to move nineteen characters.
 export function paintFloorBurnIn(cv, W, H, now, blink, label) {
   const ctx = cv.getContext('2d');
   ctx.clearRect(0, 0, W, H);
   const { date, time } = stampParts(now);
-  const rx = W - 22;
+  const stamp = `${date} ${time}`;
+  const rx = W - 2;                     // 2 px so the keyline is not clipped
+  const yStamp = H - CH_H * 2 - 2;      // one line height at scale 2
 
-  drawTextR(ctx, 'REC', rx, 20, 2, blink ? 'rgba(255,120,110,0.9)' : 'rgba(150,84,80,0.4)', SHA);
-  const dotX = rx - textW('REC', 2) - 10;
+  drawTextR(ctx, label || '', rx, 2, 2, 'rgba(232,238,228,0.74)', SHA);
+  drawTextR(ctx, stamp, rx, yStamp, 2, 'rgba(232,238,228,0.82)', SHA);
+
+  // The pip leads the stamp line, the way it does on the spot monitor. It is
+  // the recorder's only animation on this view and it is 4.5 px.
+  const dotX = rx - textW(stamp, 2) - 13;
   ctx.fillStyle = blink ? 'rgba(255,58,48,0.92)' : 'rgba(112,34,30,0.45)';
-  ctx.beginPath(); ctx.arc(dotX, 26, 4.5, 0, 7); ctx.fill();
-
-  drawText(ctx, label, 22, 20, 2, 'rgba(232,238,228,0.80)', SHA);
-  // `LINE` was never defined — this threw a ReferenceError out of renderFloor
-  // every time the stamp repainted (once a second, and again on every REC
-  // blink), which took main.js's step() down with it BEFORE game.render(),
-  // so the whole HUD dropped a frame each time. It survived because
-  // updateFloorBurnIn stores the cache key before painting, so the throw is
-  // once per key change rather than every frame. One line height at scale 2.
-  drawTextR(ctx, `${date} ${time}`, rx, H - 20 - CH_H * 2, 2, 'rgba(232,238,228,0.80)', SHA);
+  ctx.beginPath(); ctx.arc(dotX, yStamp + CH_H, 4.5, 0, 7); ctx.fill();
   return cv;
 }

@@ -134,7 +134,15 @@ export function ceilTex(THREE) {
     // different years out of different cartons and they yellow at different
     // rates. A 10-point lightness spread is what makes the grid read as
     // DISCRETE UNITS rather than as a ruled pattern on one surface.
-    const base = [rr(rng, 36, 52), rr(rng, 7, 19), patched ? rr(rng, 74, 82) : rr(rng, 86, 96)];
+    //
+    // ROUND 11 — SATURATION 7-19 -> 4-10. Measured on two verified pure-tile
+    // patches: reference/store_00 (1250,165,1390,230) is HLS sat 6.8% and
+    // reference/store_05 (1450,215,1700,290) is 13.0%. This board was reading
+    // 21-24% in frame, because a 13%-saturated map under an 11%-saturated tint
+    // multiplies to about 22% — the same compounding round 5 found on the
+    // floor. Mineral fibre board is very close to neutral; the warmth in a
+    // real store ceiling comes from the LAMPS, not from the board.
+    const base = [rr(rng, 38, 48), rr(rng, 4, 10), patched ? rr(rng, 74, 82) : rr(rng, 86, 96)];
     g.fillStyle = hsl(base[0], base[1], base[2]);
     g.fillRect(tx * SX + 3, ty * SY + 3, SX - 6, SY - 6);
     // Fissure direction is set by how the plank was laid — half the ceiling
@@ -149,27 +157,78 @@ export function ceilTex(THREE) {
     g.translate(cx0, cy0);
     if (turned) g.rotate(Math.PI / 2);
     g.translate(-cx0, -cy0);
-    // PINHOLES. Sparse, small, and mostly a touch darker than the board — a
-    // pressed acoustic face is perforated, not sprayed with gravel.
-    for (let i = 0; i < 900; i++) {
-      g.fillStyle = rng() < 0.80
-        ? `rgba(126,117,98,${rr(rng, 0.10, 0.26)})`
-        : `rgba(255,253,247,${rr(rng, 0.10, 0.28)})`;
-      const w = rr(rng, 1.1, 2.3);
-      g.fillRect(tx * SX + rng() * SX, ty * SY + rng() * SY, w, w * rr(rng, 0.8, 1.2));
-    }
-    // FISSURES. Long, shallow, running roughly with the plank — 30 of them,
-    // not 150, and each one visibly a cut rather than a scribble.
-    for (let i = 0; i < 30; i++) {
-      g.strokeStyle = rng() < 0.66
-        ? `rgba(112,103,86,${rr(rng, 0.16, 0.34)})`
-        : `rgba(255,252,244,${rr(rng, 0.14, 0.30)})`;
-      g.lineWidth = rr(rng, 1.4, 3.2);
+    // ---- THE FACE OF THE BOARD -------------------------------------------
+    // ROUND 11. THE SCALE OF EVERYTHING BELOW WAS WRONG BY A FACTOR OF TEN,
+    // and it is worth writing down how a texture can be wrong at a scale
+    // nobody looks at and still lose the frame.
+    //
+    // This map is 1024 px over a 2.44 m repeat, so it runs at 419.7 px/m —
+    // 0.42 px per millimetre — and one tile cell is 256 px = 610 mm. The old
+    // fissure loop walked four segments of up to 46 px each, so a single
+    // "fissure" ran up to 184 px: FOUR HUNDRED AND FORTY MILLIMETRES, most of
+    // the way across the tile. Thirty of those per tile is not an acoustic
+    // face, it is marbling, and marbling is exactly what it read as: a
+    // 20x magnification of the ceiling (shots/r11_tileplate.png) shows
+    // half-metre angular scribbles like lightning bolts.
+    //
+    // The scale is the whole point, because of what MIPPING does with it. A
+    // 20 mm feature averages to nothing by the second mip and the tile goes
+    // calm — which is precisely what the reference photographs do: verified
+    // pure-tile patches in reference/store_00 and reference/store_05 are flat
+    // pale fields with a fine speckle and no structure above about 30 mm. A
+    // 440 mm feature survives every mip level there is, so it was still
+    // there, as veining, at twenty metres. Same texture, same colours, same
+    // count — wrong length, and the whole top third of the frame reads as
+    // travertine instead of mineral fibre.
+    //
+    // Real fine-fissured board: cuts 10-40 mm long, 2-4 mm wide, several
+    // hundred per tile, mostly with the machine direction and a wide scatter.
+    // Batched into eight (colour x alpha) buckets so 520 cuts cost eight
+    // stroke() calls rather than 520 — the old loop set strokeStyle per item.
+    const FISS = [
+      'rgba(118,109,92,0.14)', 'rgba(118,109,92,0.22)',
+      'rgba(104,96,80,0.30)', 'rgba(96,88,72,0.38)',
+      'rgba(255,252,244,0.12)', 'rgba(255,253,247,0.20)',
+      'rgba(255,254,250,0.28)', 'rgba(255,255,252,0.16)',
+    ];
+    for (let b = 0; b < FISS.length; b++) {
+      g.strokeStyle = FISS[b];
+      g.lineWidth = b % 4 === 3 ? 1.9 : b % 4 === 2 ? 1.5 : 1.1;
       g.beginPath();
-      let x = tx * SX + rng() * SX, y = ty * SY + rng() * SY;
-      g.moveTo(x, y);
-      for (let k = 0; k < 4; k++) g.lineTo(x += rr(rng, -12, 12), y += rr(rng, -46, 46));
+      for (let i = 0; i < 65; i++) {
+        // 4-14 px.  The map is anisotropic in world terms — store.js repeats
+        // it every 2.44 m in u and 4.88 m in v for a 610 x 1220 board — so
+        // one canvas pixel is 2.4 mm across the board and 4.8 mm along it.
+        // These cuts are therefore 10-33 mm across and 19-67 mm along, which
+        // is a fine-fissured face in both directions. A cut kinks once; it
+        // does not zigzag.
+        const len = rr(rng, 4, 14);
+        const a = Math.PI / 2 + rr(rng, -0.44, 0.44);
+        let x = tx * SX + rng() * SX, y = ty * SY + rng() * SY;
+        g.moveTo(x, y);
+        x += Math.cos(a) * len * 0.6; y += Math.sin(a) * len * 0.6;
+        g.lineTo(x, y);
+        const a2 = a + rr(rng, -0.55, 0.55);
+        g.lineTo(x + Math.cos(a2) * len * 0.4, y + Math.sin(a2) * len * 0.4);
+      }
       g.stroke();
+    }
+    // PINHOLES. A pressed acoustic face is perforated on roughly 10 mm
+    // centres, so the field is DENSE and each hole is 2-4 mm — 0.9-1.7 px
+    // here. The old 1.1-2.3 px at 900 per tile was 2.6-5.5 mm holes at 25 mm
+    // centres: individually too big, collectively too sparse, so they read as
+    // grit rather than as perforation. Bucketed for the same reason as above.
+    const HOLE = [
+      'rgba(126,117,98,0.13)', 'rgba(126,117,98,0.20)', 'rgba(112,104,88,0.27)',
+      'rgba(255,253,247,0.15)', 'rgba(255,254,250,0.22)',
+    ];
+    for (let b = 0; b < HOLE.length; b++) {
+      g.fillStyle = HOLE[b];
+      const n = b < 3 ? 420 : 180;
+      for (let i = 0; i < n; i++) {
+        const w = rr(rng, 0.9, 1.7);
+        g.fillRect(tx * SX + rng() * SX, ty * SY + rng() * SY, w, w * rr(rng, 0.85, 1.15));
+      }
     }
     g.restore();
     if (grille) {                            // eggcrate return-air register
@@ -210,25 +269,49 @@ export function ceilTex(THREE) {
       g.fillRect(tx * SX + 3, ty * SY + 3, SX - 6, SY - 6);
     }
   }
-  // T-BAR. A real 15/16in grid reads as a light metal face with a hard shadow
-  // line on one side of it — that shadow is what survives to twenty metres.
-  // Cross tees along u (610 mm), main runners along v (1220 mm) — the main
-  // runner is the heavier section and is drawn wider.
+  // T-BAR. ROUND 11 — THE GRID WAS THE WRONG POLARITY.
+  //
+  // The comment above this code has said "a light metal face with a hard
+  // shadow line" since round 3, and the code under it drew the opposite. A
+  // 10 px (24 mm, correct for a 15/16 in tee) band of rgba(26,23,17,0.92)
+  // went down FIRST, a 6.2 px light core went on top of it, and then a
+  // SEPARATE 3.2 px band at rgba(20,17,12,0.72) was ruled beside it. Net:
+  // 13.2 px of dark carrying 6.2 px of light. Mip that once and the dark
+  // wins, so the ceiling was ruled with a dark olive lattice.
+  //
+  // Measured, folded to one grid period and normalised to the local tile
+  // level (see the profile instrument in the report): this render's grid ran
+  // min 0.62 / max 1.01 — no face brighter than the board anywhere. The one
+  // reference cut with a trustworthy period lock, reference/store_03 at
+  // (700,60,1100,130), runs min 0.76 / max 1.09. Every reference crop shows
+  // the same thing by eye: the grid is the BRIGHT line, because it is painted
+  // aluminium hanging under a board that is only lit by bounce, and the tee
+  // catches the lamps at an angle the board does not.
+  //
+  // So: the face goes down as the bright element, and the reveal where the
+  // board sits on the flange is a THIN low-contrast line, not a slab.
   const bar = (x, y, w, h, heavy) => {
-    g.fillStyle = 'rgba(26,23,17,0.92)';
+    g.fillStyle = 'rgba(60,54,42,0.30)';                 // the tee's own edge
     g.fillRect(x - w, y - h, w * 2, h * 2);
-    g.fillStyle = '#d6cfb9';
-    g.fillRect(x - w * 0.62, y - h * 0.62, w * 1.24, h * 1.24);
-    g.fillStyle = heavy ? 'rgba(255,254,250,0.98)' : 'rgba(252,249,240,0.90)';
-    g.fillRect(x - w * 0.28, y - h * 0.28, w * 0.56, h * 0.56);
+    g.fillStyle = heavy ? 'rgba(250,248,240,0.94)' : 'rgba(246,243,234,0.90)';
+    g.fillRect(x - w * 0.86, y - h * 0.86, w * 1.72, h * 1.72);
+    g.fillStyle = heavy ? 'rgba(255,255,252,0.72)' : 'rgba(255,254,248,0.55)';
+    g.fillRect(x - w * 0.34, y - h * 0.34, w * 0.68, h * 0.68);
   };
+  // ...and the SECOND half of the polarity bug: the two axes of this map are
+  // not the same scale. u repeats every 2.44 m and v every 4.88 m, so 5.0 px
+  // of half-width in u is 24 mm — correct for a 15/16 in tee — while the 6.4
+  // used in v was 61 mm, two and a half times a real main runner. The grid
+  // was drawn as a rectangle of dark whose long bars were also the fattest.
   for (let i = 0; i <= TX; i++) bar(i * SX, N / 2, 5.0, N / 2, false);
-  for (let i = 0; i <= TY; i++) bar(N / 2, i * SY, N / 2, 6.4, true);
-  // the shadow gap under the flange — one side only, which is what reads as a
-  // suspended grid rather than as a painted lattice
-  g.fillStyle = 'rgba(20,17,12,0.72)';
-  for (let i = 0; i <= TX; i++) g.fillRect(i * SX + 5.0, 0, 3.2, N);
-  for (let i = 0; i <= TY; i++) g.fillRect(0, i * SY + 6.4, N, 4.0);
+  for (let i = 0; i <= TY; i++) bar(N / 2, i * SY, N / 2, 2.8, true);
+  // the reveal under the flange — one side only, which is what reads as a
+  // suspended grid rather than as a painted lattice. 1.7 px at 0.34, where
+  // round 3 had 3.2-4.0 px at 0.72: a shadow in a 40 mm gap between a board
+  // and a tee is a hairline, and a hairline is all a photograph shows.
+  g.fillStyle = 'rgba(52,46,36,0.34)';
+  for (let i = 0; i <= TX; i++) g.fillRect(i * SX + 5.0, 0, 1.7, N);
+  for (let i = 0; i <= TY; i++) g.fillRect(0, i * SY + 2.8, N, 1.0);
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 16 });
 }
 
@@ -744,7 +827,44 @@ export function floorWearTex(THREE, plan) {
 // put real detail into the top third of the frame, which was the single
 // lowest-detail band in every round-2 render.
 export const DANGLE_COLS = 4, DANGLE_ROWS = 4;
-export function danglerAtlas(THREE) {
+// ROUND 16 — WHICH CELL BELONGS TO WHICH DEPARTMENT.
+// Gating the grammar is only half of it: a correctly-gated FROZEN ONLY card is
+// still wrong if store.js hangs it over the cereal aisle. So every cell in both
+// promo atlases now declares the department it was drawn for, store.js picks a
+// cell that matches the aisle it is hanging it in, and the two halves are
+// checked against each other by signCellCheck() below.
+//
+// The generic slots are not padding. A front-of-store wall board and the
+// perimeter decor band advertise the whole shop, so a third of each atlas is
+// deliberately department-free and those are the cells those sites draw from.
+export const PROMO_DEPT = [];
+export const DANGLE_DEPT = [];
+function cellDept(list, i, depts) {
+  // Every FOURTH cell is generic, and the rest walk the department list in
+  // order. The first draft used `i % 3 === 2` with a folded index and the
+  // walk skipped entries — with 16 cells and 9 departments it never produced a
+  // `frozen` cell at all, so FROZEN ONLY was gated correctly in the grammar and
+  // then had nowhere to be printed. Dead copy, and the reason signCellCheck()
+  // asserts coverage in BOTH directions rather than only checking for strays.
+  //   12 department cells / 4 generic, over 16.
+  if (i % 4 === 3 || !depts.length) { list[i] = null; return null; }
+  const k = Math.floor(i / 4) * 3 + (i % 4);
+  const d = depts[k % depts.length];
+  list[i] = d;
+  return d;
+}
+// Pick a cell whose department matches, falling back to a generic one. Returns
+// an index into the atlas. `want` null asks for a generic cell specifically.
+export function promoCellFor(list, want, r) {
+  const ok = [];
+  for (let i = 0; i < list.length; i++) {
+    if (want == null ? list[i] == null : (list[i] === want || list[i] == null)) ok.push(i);
+  }
+  if (!ok.length) return 0;
+  return ok[Math.floor(r * ok.length) % ok.length];
+}
+
+export function danglerAtlas(THREE, depts = []) {
   // Same grammar as the endcap boards. Round 7 had eight hand-written sets
   // here and four in promoAtlas, which is where "SAVE $1.50 twice in one
   // frame" came from — two short lists sampled independently still collide.
@@ -754,7 +874,8 @@ export function danglerAtlas(THREE) {
     g.save();
     g.translate((i % DANGLE_COLS) * CW, Math.floor(i / DANGLE_COLS) * CH);
     g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
-    promoCard(g, CW, CH, 90210 + i * 53, { hole: true });
+    promoCard(g, CW, CH, 90210 + i * 53,
+      { hole: true, dept: cellDept(DANGLE_DEPT, i, depts) });
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
@@ -1259,7 +1380,10 @@ const PROMO_SCHEME = [
 // what a deal looks like in this store.
 function promoCard(g, W, H, seed, opts = {}) {
   const rng = makeRng(seed * 22695477 + 7);
-  const d = promoDeal(seed);
+  // ROUND 16 — opts.dept. See promoDeal in light.js: the grammar was correct
+  // and department-blind, which is how SAVE $4.19 PER LB got printed over
+  // SNACKS / CHIPS. A cell with dept null is a genuinely department-free site.
+  const d = promoDeal(seed, opts.dept || null);
   const S = PROMO_SCHEME[Math.floor(rng() * PROMO_SCHEME.length) % PROMO_SCHEME.length];
   const lay = Math.floor(rng() * 4);
   const pad = H * 0.055;
@@ -1343,17 +1467,38 @@ function promoCard(g, W, H, seed, opts = {}) {
 }
 
 export const PROMO_COLS = 4, PROMO_ROWS = 4;
-export function promoAtlas(THREE) {
+export function promoAtlas(THREE, depts = []) {
   const W = 320, H = 176;
   const [c, g] = cv(W * PROMO_COLS, H * PROMO_ROWS);
   for (let i = 0; i < PROMO_COLS * PROMO_ROWS; i++) {
     g.save();
     g.translate((i % PROMO_COLS) * W, Math.floor(i / PROMO_COLS) * H);
     g.beginPath(); g.rect(0, 0, W, H); g.clip();
-    promoCard(g, W, H, 1301 + i * 37);
+    promoCard(g, W, H, 1301 + i * 37, { dept: cellDept(PROMO_DEPT, i, depts) });
     g.restore();
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
+}
+
+// The other half of the gate, asserted. signCheck() in light.js proves the
+// GRAMMAR never emits a gated string for the wrong department; this proves the
+// ATLAS never puts a gated cell where a department cannot use it, which is the
+// failure the grammar check is structurally blind to.
+export function signCellCheck(depts) {
+  const bad = [];
+  for (const [name, list] of [['promo', PROMO_DEPT], ['dangler', DANGLE_DEPT]]) {
+    if (!list.length) { bad.push(name + ' atlas built with no department map'); continue; }
+    const gen = list.filter((d) => d == null).length;
+    if (!gen) bad.push(name + ' atlas has no department-free cell; the front-of-store '
+      + 'boards and the perimeter band have nothing correct to draw');
+    for (const d of list) if (d != null && !depts.includes(d)) bad.push(name + ' cell claims unknown department ' + d);
+    // every named department must have at least one cell of its own, or the
+    // picker silently falls back to generic for that aisle for ever
+    for (const d of depts) {
+      if (!list.includes(d)) bad.push(name + ' atlas has no cell for department ' + d);
+    }
+  }
+  return bad;
 }
 
 // GLOW — soft radial/elliptical smear used for floor reflections & light bloom.

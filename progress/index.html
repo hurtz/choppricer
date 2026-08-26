@@ -54,12 +54,21 @@ main{padding:20px 22px;display:grid;gap:16px;
 <section id="feed"><h2>ROUND FEED</h2><div id="rows"></div></section>
 <div id="lb"><img></div>
 <script>
-const ORDER=['store','cctv','agents','game'];
-const TITLE={store:'STORE',cctv:'CCTV',agents:'CHASE',game:'GAME'};
+const LEAD=['store','cctv','agents','game'];
+// Every piece in status.json gets a card. The four above are the ones the brief
+// names, so they sort first; anything else a round invents appears after them
+// rather than being silently invisible, which is what shipped before.
+let ORDER=LEAD.slice();
+const TITLE={store:'STORE',cctv:'CCTV',agents:'CHASE',game:'GAME',cop:'COP',audio:'AUDIO',camera:'CAMERA',config:'CONFIG',shoppers:'SHOPPERS'};
 const DESC={store:'aisles, product density, ceiling, signage',
  cctv:'monitor wall, grain, distortion, timestamp',
  agents:'thief AI, stamina, powerups, catch feel',
- game:'modes, scoring, complaints, rank'};
+ game:'modes, scoring, complaints, rank',
+ cop:'the fat man himself: build, waddle, breath',
+ audio:'store ambience, PA, foley, push-to-talk',
+ camera:'the on-foot chase rig',
+ config:'the shared world contract and TUNING',
+ shoppers:'crowd: gait, idles, children, reactions'};
 const ago=t=>{const s=(Date.now()/1e3)-t;if(s<60)return Math.floor(s)+'s';
  if(s<3600)return Math.floor(s/60)+'m';return Math.floor(s/3600)+'h'};
 const esc=s=>(s||'').replace(/[<>&]/g,c=>({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]));
@@ -67,10 +76,29 @@ async function tick(){
  let d;try{d=await(await fetch('status.json?'+Date.now())).json()}
  catch(e){document.getElementById('live').textContent='OFFLINE';return}
  document.getElementById('live').textContent='LIVE · '+ago(d.updated)+' ago';
+ ORDER=LEAD.concat(Object.keys(d.pieces||{}).filter(k=>!LEAD.includes(k)).sort());
+ // ---- ONLY REBUILD WHEN SOMETHING CHANGED --------------------------------
+ // This polls every 2 s and used to reassign grid.innerHTML unconditionally,
+ // which destroys and re-creates every <img> on the page each tick. At 57
+ // screenshots that is 57 loads restarted every two seconds: the cards with the
+ // most history — i.e. the pieces that have done the most work — were the ones
+ // that never finished painting, so STORE showed a row of black boxes while
+ // CCTV, with fewer shots, looked fine. Hashing the payload and returning early
+ // makes the images load once and stay loaded, and it makes the page free to
+ // leave open for hours, which is the entire point of it.
+ const sig=JSON.stringify([ORDER,d.pieces]);
+ if(sig!==tick._sig){tick._sig=sig;
  document.getElementById('grid').innerHTML=ORDER.map(k=>{
   const p=(d.pieces||{})[k];if(!p)return '';
-  const shots=(p.shots||[]).map(s=>
-   `<figure><img loading=lazy src="${s.path}?${Math.floor(s.t)}"><figcaption>r${s.round}</figcaption></figure>`).join('');
+  const shots=(p.shots||[]).map(s=>{
+   // Grid shows a ~480px JPEG from tools/thumbs.py; the lightbox opens the real
+   // PNG off data-full. Loading the originals here cost 98 MB a page view for a
+   // strip 90px wide, and the pieces with the most history were the ones that
+   // never painted. onerror falls back to the original so a shot filed since the
+   // last thumbs run still shows rather than turning into a broken box.
+   const th='thumbs/'+s.path.split('/').pop().replace(/\.png$/,'.jpg');
+   return `<figure><img loading=lazy src="${th}?${Math.floor(s.t)}" data-full="${s.path}?${Math.floor(s.t)}" onerror="this.onerror=null;this.src=this.dataset.full"><figcaption>r${s.round}</figcaption></figure>`;
+  }).join('');
   return `<div class=card>
    <div class=chd><span class=name>${TITLE[k]||k}</span>
     <span class=rd>round ${p.round}</span>
@@ -81,7 +109,9 @@ async function tick(){
     ${p.note?`<div class=lbl>LATEST</div><div class=txt>${esc(p.note)}</div>`:''}
     ${p.gap?`<div class=lbl>BIGGEST GAP</div><div class="txt gaptxt">${esc(p.gap)}</div>`:''}
     ${p.verdict?`<div class=lbl>VERDICT</div><div class=txt>${esc(p.verdict)}</div>`:''}
-   </div></div>`}).join('');
+   </div></div>`}).join('');}
+ const lsig=JSON.stringify(d.log||[]);
+ if(lsig===tick._lsig)return; tick._lsig=lsig;
  document.getElementById('rows').innerHTML=(d.log||[]).map(l=>
   `<div class=row><time>${ago(l.t)} ago</time><b>${(TITLE[l.piece]||l.piece)}</b>
    <span class=rl>r${l.round}·${l.role}</span><span>${esc(l.text)}</span></div>`).join('');
@@ -89,7 +119,7 @@ async function tick(){
 const lb=document.getElementById('lb');
 document.addEventListener('click',e=>{
  if(e.target.tagName==='IMG'&&e.target.closest('.shots')){
-  lb.querySelector('img').src=e.target.src;lb.style.display='grid'}
+  lb.querySelector('img').src=e.target.dataset.full||e.target.src;lb.style.display='grid'}
  else if(e.target.closest('#lb'))lb.style.display='none'});
 tick();setInterval(tick,2000);
 </script></body></html>

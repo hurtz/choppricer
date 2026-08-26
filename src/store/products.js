@@ -14,6 +14,10 @@
 //   * top decks are pulled forward to the lip, bottom decks sink back
 
 import { rr, ri, pick } from './kit.js';
+// ROUND 17 — the one owner of "what is in atlas cell i". See plan.js's header:
+// the cell->department convention used to be written down in three files and
+// had already gone wrong for FROZEN.
+import { cellsOfDept, cellsOfSide, planDeptCheck, planFamilyCheck } from './plan.js';
 
 // h,s,l triples -> brand colours. Grocery packaging is loud and saturated.
 //
@@ -50,6 +54,41 @@ const mix = (...keys) => keys.flatMap((k) => C[k]);
 
 // kinds: t=type, w=[min,max] facing width, h=[min,max] height, d=depth fraction
 // run=[min,max] facings PER VARIETY (a brand block stacks 1-4 of these)
+// ---------------------------------------------------------------------------
+// ROUND 18 — SILHOUETTE ASPECT, DECLARED PER OUTLINE AND ASSERTED.
+//
+// r17's critic: "one lathe in the canned aisle reads as a GREEN WINE GOBLET —
+// a silhouette that belongs in no grocery aisle." It was `tallJar`, at
+// w[0.082,0.105] x h[0.20,0.27]: up to 3.29 times as tall as it is wide, drawn
+// on the jarL profile, which pinches to a neck and flares again for a lug lid.
+// Stretch that outline past about 2.6 and the neck becomes a stem.
+//
+// Plausible aspect is a property of the OUTLINE, not of the SKU that borrows
+// it, so it is declared once here against real packages rather than tuned per
+// kind. The measurements these came from:
+//
+//     15 oz can 75x110 = 1.47   28 oz can 100x120 = 1.20   soup 66x101 = 1.53
+//     sauce jar 85x175 = 2.06   tall olive jar 70x170 = 2.43
+//     margarine tub 115x60 = 0.52   yoghurt 95x105 = 1.11
+//     coffee canister 100x175 = 1.75   crisp drum 78x250 = 3.20
+//     2 L PET 110x327 = 2.97   20 oz PET 68x240 = 3.53
+//     1 gal jug 150x245 = 1.63   32 oz trigger spray 100x265 = 2.65
+//
+// aspectCheck() runs at module load and THROWS, in the lungCheck() style — so
+// a future kind added with a vase in it fails on the page instead of shipping
+// as one SKU nobody screenshotted. It guards the CLASS: every kind, every
+// outline, at both ends of both ranges.
+const ASPECT = {
+  rim:   [1.00, 2.00],   // a rolled-rim food can
+  jarL:  [1.45, 2.60],   // a glass jar with a lug lid
+  tub:   [0.45, 1.30],   // margarine, yoghurt, dips
+  plain: [1.45, 3.30],   // a drum or a canister
+  soda:  [2.55, 3.80],   // PET
+  jug:   [1.45, 2.60],   // detergent, milk, juice
+  squat: [1.00, 2.30],   // a squat jar or a stubby bottle
+  spray: [2.15, 3.25],   // trigger cleaner
+};
+
 const K = {
   cerealBox: { t: 'box', w: [0.17, 0.23], h: [0.28, 0.35], d: 0.72, run: [2, 4] },
   midBox:    { t: 'box', w: [0.10, 0.16], h: [0.17, 0.24], d: 0.80, run: [2, 5] },
@@ -65,14 +104,19 @@ const K = {
   // — real variation is silhouette."
   can:       { t: 'can', shape: 'rim',  w: [0.068, 0.086], h: [0.10, 0.13], d: 1.0, run: [3, 7] },
   bigCan:    { t: 'can', shape: 'rim',  w: [0.098, 0.115], h: [0.15, 0.19], d: 1.0, run: [2, 5] },
-  jar:       { t: 'can', shape: 'jarL', w: [0.075, 0.098], h: [0.14, 0.19], d: 1.0, run: [2, 5] },
-  tallJar:   { t: 'can', shape: 'jarL', w: [0.082, 0.105], h: [0.20, 0.27], d: 1.0, run: [2, 4] },
+  jar:       { t: 'can', shape: 'jarL', w: [0.075, 0.098], h: [0.150, 0.190], d: 1.0, run: [2, 5] },
+  // ROUND 18 — WAS w[0.082,0.105] h[0.20,0.27], i.e. up to 3.29 tall as it is
+  // wide, on the jarL outline: a pinched neck under a flared lug lid. r17's
+  // critic called it exactly — "one lathe in the canned aisle reads as a GREEN
+  // WINE GOBLET, a silhouette that belongs in no grocery aisle". A 24 oz
+  // pasta-sauce jar is 2.06, a tall olive jar 2.43. See ASPECT above.
+  tallJar:   { t: 'can', shape: 'jarL', w: [0.088, 0.108], h: [0.185, 0.225], d: 1.0, run: [2, 4] },
   tub:       { t: 'can', shape: 'tub',  w: [0.090, 0.130], h: [0.075, 0.115], d: 1.0, run: [2, 5] },
-  bigTub:    { t: 'can', shape: 'tub',  w: [0.125, 0.165], h: [0.13, 0.19], d: 1.0, run: [1, 3] },
-  drum:      { t: 'can', shape: 'plain', w: [0.088, 0.108], h: [0.16, 0.22], d: 1.0, run: [2, 4] },
-  bottle:    { t: 'bottle', shape: 'spray', w: [0.070, 0.090], h: [0.24, 0.32], d: 1.0, run: [3, 6] },
-  jug:       { t: 'bottle', shape: 'jug',   w: [0.115, 0.150], h: [0.26, 0.34], d: 1.0, run: [2, 4] },
-  sodaBtl:   { t: 'bottle', shape: 'soda',  w: [0.078, 0.095], h: [0.28, 0.34], d: 1.0, run: [3, 7] },
+  bigTub:    { t: 'can', shape: 'tub',  w: [0.125, 0.165], h: [0.115, 0.160], d: 1.0, run: [1, 3] },
+  drum:      { t: 'can', shape: 'plain', w: [0.088, 0.108], h: [0.165, 0.225], d: 1.0, run: [2, 4] },
+  bottle:    { t: 'bottle', shape: 'spray', w: [0.086, 0.104], h: [0.230, 0.275], d: 1.0, run: [3, 6] },
+  jug:       { t: 'bottle', shape: 'jug',   w: [0.130, 0.160], h: [0.240, 0.310], d: 1.0, run: [2, 4] },
+  sodaBtl:   { t: 'bottle', shape: 'soda',  w: [0.088, 0.104], h: [0.270, 0.325], d: 1.0, run: [3, 7] },
   squat:     { t: 'bottle', shape: 'squat', w: [0.088, 0.110], h: [0.15, 0.20], d: 1.0, run: [2, 5] },
   bag:       { t: 'bag', w: [0.19, 0.30], h: [0.24, 0.33], d: 0.55, run: [1, 3] },
   smallBag:  { t: 'bag', w: [0.11, 0.18], h: [0.15, 0.23], d: 0.60, run: [2, 4] },
@@ -91,6 +135,29 @@ const K = {
   sleeve:    { t: 'box', w: [0.14, 0.22], h: [0.19, 0.27], d: 0.16, run: [3, 7] },
   thinBox:   { t: 'box', w: [0.075, 0.115], h: [0.16, 0.23], d: 0.20, run: [4, 8] },
 };
+
+// The assertion. Reported as well as thrown, so a round can quote how much
+// headroom each outline has rather than only that it passed.
+export function aspectCheck() {
+  const bad = [];
+  const rows = [];
+  for (const [name, k] of Object.entries(K)) {
+    if (!k.shape || !ASPECT[k.shape]) continue;
+    const [lo, hi] = ASPECT[k.shape];
+    const amin = k.h[0] / k.w[1], amax = k.h[1] / k.w[0];
+    rows.push({ name, shape: k.shape, amin: +amin.toFixed(2), amax: +amax.toFixed(2), lo, hi });
+    if (amax > hi + 1e-9) bad.push(`${name} (${k.shape}) reaches ${amax.toFixed(2)}:1, past ${hi}:1`);
+    if (amin < lo - 1e-9) bad.push(`${name} (${k.shape}) can go to ${amin.toFixed(2)}:1, under ${lo}:1`);
+  }
+  return { bad, rows };
+}
+{
+  const r = aspectCheck();
+  if (r.bad.length) {
+    throw new Error('products.js aspect: ' + r.bad.length + ' outline(s) out of range — '
+      + r.bad.join(' | '));
+  }
+}
 
 // Every department gets at least one non-box kind in `mustSoft` so no deck is
 // ever an unbroken wall of cuboids.
@@ -160,36 +227,59 @@ export const FROZEN = {
   colors: mix('white', 'blue', 'blue', 'blue', 'teal', 'silver', 'red', 'green'),
 };
 
-// Atlas-cell pools. Cell i of each atlas was drawn with department i%8's
-// vocabulary, so a department takes its themed cells plus a few strays —
-// real neighbouring SKUs are not all from one design family.
-// ROUND 5. The strays used to be drawn from the WHOLE atlas, which put a
-// carton of crackers — complete with its warm serving-suggestion photo — on the
-// cleaning shelf four times out of eight. Cells 6 and 7 mod 8 are the non-food
-// vocabularies (cleaning, health & beauty); a non-food department now takes its
-// strays from the other non-food cells only. Food departments still borrow
-// freely from each other, which is real: neighbouring SKUs on a grocery shelf
-// genuinely are not all from one design family.
-function poolFor(idx, total, strays) {
-  const p = [];
-  for (let k = idx % 8; k < total; k += 8) p.push(k);
-  const nonFood = (idx % 8) >= 6;
-  for (let k = 0; k < strays; k++) {
-    let c = (idx * 5 + k * 7 + 3) % total;
-    if (nonFood !== ((c % 8) >= 6)) c = (c - (c % 8)) + (nonFood ? 6 + (k % 2) : (c + 1) % 6);
-    p.push(c % total);
-  }
-  return p;
-}
+// Atlas-cell pools. A department takes its own themed cells plus a few strays,
+// because real neighbouring SKUs are not all from one design family.
+//
+// ROUND 5's finding stands and is preserved below: the strays used to be drawn
+// from the WHOLE atlas, which put a carton of crackers — complete with its warm
+// serving-suggestion photo — on the cleaning shelf four times out of eight. A
+// non-food department takes its strays from the other non-food cells only;
+// food departments still borrow freely from each other, which is real.
+//
+// ROUND 17 — WHAT CHANGED IS HOW A CELL IS FOUND, NOT THE POLICY. Round 5's
+// rule was spelled `(idx % 8) >= 6`, and its own comment admitted it was "true
+// only by the ordering of DEPTS in products.js". The cell membership was
+// spelled `for (k = idx % 8; k < total; k += 8)` with `total` hard-coded 24 and
+// 8 — which is a fourth copy of the atlas size, and it is why widening the
+// atlas needed an edit in this file at all. Both now come from plan.js, which
+// deals the cells and knows which department and which side of the food line
+// each one landed on. `total` is gone; there is nothing here to keep in sync.
+const strayList = (atlas, key, n) => {
+  const side = cellsOfSide(atlas, key).filter((c) => !cellsOfDept(atlas, key).includes(c));
+  const out = [];
+  // deterministic, evenly spaced through the eligible list rather than random:
+  // a department's stray set should be stable across reloads so a shelf that
+  // looked right in a screenshot looks the same in the next one.
+  for (let k = 0; k < n && side.length; k++) out.push(side[(k * 7 + 3) % side.length]);
+  return out;
+};
+const poolFor = (atlas, key, strays) => [...cellsOfDept(atlas, key), ...strayList(atlas, key, strays)];
 [...DEPTS, FROZEN].forEach((d, i) => {
   d.idx = i;
   d.cells = {
-    box: poolFor(i, 24, 5),
-    bag: poolFor(i, 8, 2),
-    can: poolFor(i, 8, 2),
-    bottle: poolFor(i, 8, 2),
+    box: poolFor('carton', d.key, 5),
+    bag: poolFor('pouch', d.key, 2),
+    can: poolFor('can', d.key, 2),
+    bottle: poolFor('bottle', d.key, 2),
   };
 });
+// Two copies of a department ordering, one assertion that fires when they
+// disagree — CLAUDE.md's lungCheck() pattern. Reordering DEPTS, renaming a key
+// or adding a department without telling plan.js throws here at module load
+// instead of silently re-pointing every cell pool in the store.
+{
+  const bad = planDeptCheck([...DEPTS.map((d) => d.key), FROZEN.key]);
+  // ...and the same for WHICH FAMILIES each department shelves. plan.js has to
+  // know, because a bottle cell dealt to a department that never places one is
+  // baked and unreachable — which is exactly how the first r17 build put
+  // soySplash and sportBottle in the atlas and not in the store.
+  const fam = {};
+  for (const d of [...DEPTS, FROZEN]) {
+    fam[d.key] = [...new Set([...(d.kinds || []), ...(d.soft || [])].map((k) => k.t))];
+  }
+  bad.push(...planFamilyCheck(fam));
+  if (bad.length) throw new Error('products.js/plan.js department drift: ' + bad.join(' | '));
+}
 
 // ---------------------------------------------------------------------------
 // Fill one shelf deck with product.
@@ -272,7 +362,11 @@ export function fillBackRow(B, rng, dept, opts) {
     const h = Math.max(0.06, Math.min(headroom - 0.02, rr(rng, headroom * 0.5, headroom * 0.97)));
     const pd = Math.min(depth, rr(rng, 0.10, 0.19));
     const hsl = pick(rng, dept.colors);
-    const cell = (rng() * 24) | 0;
+    // ROUND 17 — was `(rng() * 24) | 0`: the atlas size hard-coded a fifth
+    // time, AND a back row that ignored the department entirely. These boxes
+    // are mostly occluded, but they show through every gap in the facings, so
+    // a bakery gap showing a bottle of bleach behind it is a real tell.
+    const cell = pick(rng, dept.cells.box);
     const n = ri(rng, 1, 4);
     for (let k = 0; k < n && a < a1 - w * 0.5; k++) {
       col.setHSL(hsl[0] / 360, Math.min(1, hsl[1] / 100 * rr(rng, 1.1, 1.45)),

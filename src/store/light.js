@@ -397,7 +397,34 @@ uniform vec4 uFldCore;     // coreStrength, coreBias, coreGain, coreReach
 uniform vec4 uFldSk;       // skirt near radius, radius ratio, -, -
 uniform vec4 uFldCav;      // cavity strength, crevice strength, -, crevice height
 uniform vec3 uFldBounce;   // colour of the light coming back off the floor
+uniform vec4 uFldSide;     // ROUND 14: aisle-bounce gain, march step, -, -
 uniform float uFldDbg;     // 0 off, 1 visibility, 2 bounce, 3 height, 4 core
+// PER-MATERIAL, 1 for a lit material and 0 for an unlit one — set by patchAO
+// off the material's own type, the way applyAO's skip rules are properties of
+// the material rather than a name list. A bounce term is a LIGHT, and a
+// MeshBasicMaterial has no lighting to add to: its texel value already IS its
+// final colour, so room bounce on one is not dim light arriving, it is the
+// print getting brighter than it prints. The hanging aisle-sign faces are
+// exactly that material and they already clip at any exposure.
+uniform float uFldLit;
+// ROUND 13 — THE FIXTURES, AS LIGHT. See chopLamp below.
+uniform vec4 uLampGeo;     // row x0, row pitch, lamp plane y, lattice half-span x
+uniform vec4 uLampCfg;     // diffuse gain, specular exponent, row half-span z, spec scale
+uniform vec3 uLampCol;
+uniform float uLampSpec;   // PER-MATERIAL specular gain; 0 = matte, see patchAO
+// ROUND 17 — THE ENTRANCE. See chopDay below.
+uniform vec4 uDayA;        // door 1: centre x, half width, glass plane z, head y
+uniform vec4 uDayB;        // door 2, same four
+uniform vec4 uDayCfg;      // gain (0 = off), reach in metres, lateral spread, -
+uniform vec3 uDayCol;      // daylight, which is NOT the colour of the lamps
+// PER-TEXEL finish, written by whoever knows it. ../store/pack.js sets it from
+// the mask's print-brightness channel, which is what makes white shrink film
+// and bare tinplate flare while printed ink stays dull — the round-2 argument,
+// finally applied to the lamps as well as to the directionals. It is declared
+// HERE, defaulting to a flat 1, because this chunk is injected at <common>,
+// i.e. ahead of every material's own code: a global that some shaders declare
+// and others do not is a compile error waiting for round 14.
+float chopGlossX = 1.0;
 
 vec2 chopFldUV( vec2 p ) {
   return vec2( ( p.x - uFldMap.y ) * uFldMap.x, ( p.y - uFldMap.w ) * uFldMap.z );
@@ -665,7 +692,76 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
   // get. A sealed point returns 1 - strength rather than 0, which is the
   // difference between a shadow and "no light was sampled here" — the flat
   // black the blind test measured on every bottom deck.
-  float skirt = 1.0 - uFldCfg.z * ( occ / max( wsum, 0.05 ) );
+  //
+  // ROUND 14 — THAT FLOOR IS A CONSTANT AND IT IS THE BOTTOM OF THE PRODUCT
+  // WALL'S WHOLE LIGHTNESS DISTRIBUTION. Round 13 measured the shading factor
+  // at p5 0.102, and 0.102 is not a measurement of anything: it is
+  // 1 - uFldCfg.z, typed here. One number decides how dark the darkest fifth
+  // of every shelf in the building is.
+  //
+  // ROUND 15 — CORRECTION, AND IT IS WRONG TWICE.
+  //
+  // First the arithmetic. ../store.js ships ao: 0.88, so uFldCfg.z is 0.88 and
+  // the typed floor is 1 - 0.88 = 0.120. Not 0.102, and not the 0.149 that
+  // round 14 itself re-measured further down this file. The three numbers were
+  // being treated as one.
+  //
+  // Second, and this is the part that matters: IT IS NOT AN IDENTITY. Tested
+  // as a within-run uniform toggle on one page load, byte-identical restore
+  // proven by md5, camera at aisleX(3), 1.62, -9.0 looking at aisleX(3), 1.30,
+  // 12.0 — swinging the typed floor from 0.120 to 0.320, a change of +0.200,
+  // moves shelf-band (y 0.30-0.72, full width) linear-luminance p5 from 0.0308
+  // to 0.0333. A swing of +0.0025. The typed constant transmits 1.3% of itself
+  // to the statistic it was said to BE. Round 14's critic ran the same test on
+  // the shading factor rather than on framebuffer luminance and got +0.067 on
+  // the same +0.200; different quantity, same verdict.
+  //
+  // The reason is geometric and obvious once stated: almost nothing in a shelf
+  // band is a sealed point. The p5 pixel is a facing deep in a cavity that
+  // still sees a slice of aisle, so it lands on the smooth part of the curve,
+  // not on its clamp. A constant that bounds a distribution is not the same
+  // object as the distribution's own percentile, and "this measurement is
+  // really just that constant" is a claim that has to be swept, not asserted
+  // from the shape of the formula.
+  //
+  // What it stands for is a point that can see none of the ceiling, and the
+  // honest value of that is not a constant — it is what the surfaces around it
+  // hand back. An enclosure whose walls have reflectance rho and whose opening
+  // is a fraction f of its hemisphere settles at E_direct / ( 1 - rho * (1-f) ),
+  // the integrating-cavity solution, because the light that fails to leave
+  // keeps bouncing. A supermarket shelf is a strong version of that case: a
+  // cream-painted steel box, 350 mm tall and 450 mm deep, open along its whole
+  // front, packed with coated board and film at rho 0.5-0.7. Nothing about it
+  // is sealed.
+  //
+  // uFldCav.z is that rho, and at 0 this expression is BYTE-IDENTICAL to the
+  // round-9 one — the whole measured contact profile is the rho = 0 column, and
+  // it is not being re-tuned behind anyone's back. What rho buys, at z = 0.90:
+  //
+  //     occluded fraction   0.0   0.2   0.4   0.5   0.6   0.8   0.9   1.0
+  //     rho 0 (round 9)    1.00  0.82  0.64  0.55  0.46  0.28  0.19  0.10
+  //     rho 0.55, inside=1 1.00  0.92  0.83  0.77  0.70  0.50  0.38  0.22
+  // AND IT IS GATED ON THERE ACTUALLY BEING A CAVITY, which the first version
+  // of this was not, and the lift map caught it: an open aisle floor standing
+  // beside a gondola has occluded fraction 0.3-0.5, so the ungated form lifted
+  // it 20-30% — and 0.3-0.5 is exactly the range the round-9 and round-10
+  // contact profiles were measured in, against reference/store_04's freezer
+  // plinth and store_05's end panel. That is measured work and lifting it is
+  // not a side effect, it is a regression.
+  //
+  // The gate is the physics, not a patch. An integrating cavity is a point
+  // INSIDE an enclosure. A floor point beside a fixture is not inside anything
+  // — it is a half-plane occlusion, open to the whole ceiling on one side, and
+  // there is no second wall to trade the light with. inside is already this
+  // file's measure of "how much solid is standing over me", 0 in the open aisle
+  // and 1 for a facing halfway up a gondola, and it is hoisted above the skirt
+  // for that reason. With it, every open-floor contact profile in the building
+  // is byte-identical to round 9's.
+  float dn = max( 0.0, - N.y );
+  float inCol = chopFldTop( Pin.xz, 0.0 );
+  float inside = smoothstep( 0.10, 0.45, inCol - Pin.y - 0.02 );
+  float ofr = occ / max( wsum, 0.05 );
+  float skirt = ( 1.0 - uFldCfg.z * ofr ) / ( 1.0 - uFldCav.z * inside * ofr );
   // ...and the core, remapped. A half-plane occluder saturates the raw
   // coverage at 0.5 — that is what a half-plane IS — so uFldCore.y is the
   // noise floor and uFldCore.z the gain that puts a wall standing beside a
@@ -703,9 +799,8 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
   // an underside cannot see the floor because the fixture's own base is
   // between it and the floor. Reflected light does not arrive through a
   // gondola.
-  float dn = max( 0.0, - N.y );
-  float inCol = chopFldTop( Pin.xz, 0.0 );
-  float inside = smoothstep( 0.10, 0.45, inCol - Pin.y - 0.02 );
+  // dn / inCol / inside are computed above the skirt now — round 14 needed
+  // inside there to gate the cavity return. One derivation, one place.
   vis *= 1.0 - uFldCav.x * dn * inside;
   b *= 1.0 - dn * inside;
 
@@ -742,6 +837,343 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
   return vec2( clamp( vis, 0.0, 1.0 ), clamp( b, 0.0, 1.0 ) );
 }
 
+// ---------------------------------------------------------------------------
+// ROUND 15 — CORRECTION TO HOW THE TERM BELOW WAS REPORTED, kept here because
+// this is the term the claim was made about.
+//
+// Round 14 headlined a median gain of +0.41 across six poses. The spread on
+// that was +/- 0.57. It straddles zero and it should have been reported as
+// indistinguishable from zero rather than as a gain. Its %chr and p25 gains
+// were real and were not reported with their spreads either: +1.31 +/- 0.49
+// and +1.30 +/- 0.29, both 6 of 6 poses.
+//
+// Also corrected: round 14 said the term cost "+0.00 open floor in both
+// poses". That is not exact. The innermost skirt lifts +0.015 / +0.037 /
+// +0.027 at 0 / 4 / 8 px and the contact profile's MAE against the reference
+// goes 0.152 -> 0.155. A wash, and not a regression — but "+0.00" was a
+// rounding presented as an identity, which is the same mistake as the one
+// corrected above chopAO's floor, one decimal smaller.
+//
+// The rule this file now follows: quote the spread with every paired
+// statistic, and if it straddles zero, say so instead of quoting the mean.
+// Every paired figure in round 15's own notes is written that way — see the
+// side sweep in ../store.js and the mirror statistic in ../store.js buildSeg.
+//
+// ---------------------------------------------------------------------------
+// ROUND 14 — THE RUN ACROSS THE AISLE. THE OTHER HALF OF A VERTICAL FACING'S
+// HEMISPHERE, WHICH THIS FILE HAS NEVER SAMPLED.
+//
+// WHAT WAS MEASURED. Under one symmetric rule — chromatic = C* > 20, whole
+// frame, no mask, identical on render and photograph — the render's chromatic
+// population sits about 8 L* below the reference set's:
+//
+//                        %chr    p25    med    p75    p95   %>80
+//     render, 6 poses    24.5   31.9   41.7   52.4   75.0   3.02
+//     reference, 14      32.8   34.4   50.3   62.6   77.4   2.96
+//
+// ROUND 15 — CORRECTION. "p95 AND %>80 ALREADY AGREE" WAS NOT MEASURED
+// SYMMETRICALLY, AND IT IS NOT A SAFE PREMISE.
+//
+// The table above put the RENDER through the references' q87 4:2:0 encode and
+// left the photographs alone, and round 14 read the resulting move as "under
+// 1 L*". Round 14's critic measured that same move at +1.98 median / +4.36
+// p95, and then found the reason: re-encoding an ALREADY-q87 photograph moves
+// the median +0.095 and the render's SECOND encode moves +0.18, so the large
+// first move is a one-time PNG->JPEG transition the photographs had already
+// made and the render had not. It is a transition artefact, not a codec
+// correction. Measured symmetrically on the r14 build the critic read p95
+// 80.38 render against 77.49 reference and %>80 5.21 against 2.97 — the
+// bright end HOT, not level.
+//
+// Re-measured this round with both sides through one further q87 4:2:0 encode
+// and the second pass shown to be small first (render at most +0.19 median,
+// photographs at most -0.08, both sides checked before any number was used),
+// whole frame, no mask, C* > 20, six aisle poses against all 14 reference
+// files: render p95 77.37 against a reference median of 77.59, and %>L*80 3.93
+// against 3.07. On THIS build the bright end is a little hot rather than a lot.
+//
+// The correction that matters is not the decimal, it is the reasoning. p95 and
+// %>80 were used as a PREMISE — "the peak is right, therefore no global lever
+// can be right" — and the reference range for those two statistics is p95
+// 65.3 to 93.1 and %>80 0.5 to 18.3 across the fourteen files. A statistic
+// whose reference band is that wide cannot carry a kill argument for a whole
+// class of levers, whichever side of its median the render lands on.
+//
+// The individual measurements below stand and are worth keeping: on the
+// captured frames exposure x1.35 puts the median at 48.7 and p95 at 83.8; a
+// luminance-preserving warm cast puts the median at 50.4 and %>80 at 11.1;
+// saturation x1.6 puts %chr at 63.9. Each fixes the body by wrecking the top,
+// and each is a reason to prefer a term to a gain. What does not stand is
+// "and therefore the top is already right".
+//
+// WHERE THE DEFICIT ACTUALLY IS. Split the frame by (L*, C*) on the same crop
+// both sides (shelf band y 0.25-0.72), as % of the cropped frame:
+//
+//        C* > 20 area       L*20-40   L*40-50   L*50-60   L*60-70   L*70-80
+//     render                  12.35      5.98      3.88      1.75      1.16
+//     reference                8.64      6.35      5.45      4.31      2.32
+//
+// The render has the RIGHT TOTAL chromatic area (28.1% against 30.2%) and the
+// wrong lightness for it: a surplus of dark chroma and a 2.5x deficit from
+// L* 50 to 80. Its chroma is product print, and its product print is dark.
+//
+// WHY IT IS DARK, AS GEOMETRY RATHER THAN AS A GAIN. Take a product facing
+// 1.2 m up on a gondola, normal across a 4.0 m aisle. The form factor from a
+// differential vertical surface to an infinite strip subtending elevations
+// a1..a2 is ( sin a2 - sin a1 ) / 2, so its hemisphere divides as
+//
+//     ceiling, +12 deg to +90      ( 1.000 - 0.208 ) / 2  =  0.396
+//     the run across the aisle,
+//       -16.7 deg to +12 deg       ( 0.208 + 0.287 ) / 2  =  0.248
+//     floor, -90 deg to -16.7 deg  ( 1.000 - 0.287 ) / 2  =  0.354
+//
+// A QUARTER of what a facing sees is the run on the other side of the aisle,
+// and it is the highest-cosine quarter, because a vertical surface weights its
+// own horizon most. Round 13's per-light ablation measured where a facing's
+// light actually comes from: 32.2% ambient, 30.4% hemisphere, 9.8% key, 0.0%
+// fill, 8.3% floor bounce — and 0.0% from the opposite run, because until this
+// function there was nothing in the file that looked sideways. chopAO's spiral
+// weights a cone 35 degrees UP; a run whose top subtends 12 degrees barely
+// registers in it, which is why the missing light did not show up as
+// occlusion either.
+//
+// Solving the two facings together at rho = 0.5 gives E = E0 / ( 1 - 0.248 *
+// 0.5 ) = 1.14 x E0. Adding the floor's own physical share on top — 0.354 x
+// rho_floor against the 8.3% the render collects — puts a facing about 1.3x
+// under, which is the same factor the L* deficit above asks for by a
+// completely independent route. That agreement is the reason this term is a
+// term and not a gain.
+//
+// WHAT IT DELIBERATELY DOES NOT TOUCH, and this is what protects p95:
+//   * anything horizontal. lat = |N.xz| is 0 for the floor, the ceiling, deck
+//     tops and shelf undersides, so the term is exactly zero there.
+//   * anything unlit. uFldLit is 0 on a MeshBasicMaterial — the hanging sign
+//     faces, which already clip.
+//   * the lamps and the lens, which are chopNoAO and never patched at all.
+// The bright end of this frame is ceiling, lamps, sign faces and deck tops.
+// None of them is in that list.
+//
+// THE COLOUR IS NOT A CONSTANT. uFldBounce is one swatch for the whole floor,
+// which is right for a floor because a floor is one material. The run across
+// the aisle is a wall of packaging and it is a different colour every metre,
+// so the term reads chopFldCol at the point it actually hit — the same two-band
+// sampler the mirrors use, at the fragment's own height. Light coming off a
+// wall of cereal boxes is the colour of cereal boxes.
+vec3 chopAisle( vec3 P, vec3 N ) {
+  float lat = length( N.xz );
+  if ( lat < 0.06 || uFldSide.x <= 0.0 ) return vec3( 0.0 );
+  vec2 dir = N.xz / lat;
+  // FOUR HEIGHT TAPS AND ONE COLOUR TAP, in that order and not interleaved.
+  // chopFldCol costs two fetches, so reading it inside the march would be
+  // twelve fetches against chopAO's forty for a term worth an eighth of the
+  // light. March the cheap channel to find WHERE the blocker is, then read its
+  // colour once, at the distance the march actually found.
+  //
+  // rem is how much of the horizon is still unaccounted for, so a run 1.0 m
+  // away hides the one 4.2 m behind it instead of both contributing. An aisle
+  // is not transparent, and summing every hit is how a bounce term becomes fog.
+  float rem = 1.0, F = 0.0, rw = 0.0, w = 0.0;
+  for ( int i = 0; i < 4; i ++ ) {
+    float r = uFldSide.y * ( 0.25 + 0.40 * float( i ) );
+    vec2 q = P.xz + dir * r;
+    float lod = log2( max( 1.0, r * uFldCfg.y * 0.5 ) );
+    float top = chopFldTop( q, lod );
+    // The strip it subtends from here: base on the floor, top at that height.
+    float dy = top - P.y;
+    float f = max( 0.0, 0.5 * ( dy / sqrt( dy * dy + r * r )
+                              + P.y / sqrt( P.y * P.y + r * r ) ) );
+    // ...and how much of the horizon this hit actually claims. A column that
+    // does not reach the fragment's own height is not across the aisle from it.
+    float take = smoothstep( P.y - 0.55, P.y + 0.10, top ) * rem;
+    F += f * take; rw += r * take; w += take;
+    rem -= take;
+  }
+  if ( F <= 0.0 ) return vec3( 0.0 );
+  float rc = rw / max( w, 1e-3 );
+  vec3 col = chopFldCol( P.xz + dir * rc, P.y,
+                         log2( max( 1.0, rc * uFldCfg.y * 0.5 ) ) );
+  return col * ( F * uFldSide.x * lat * uFldLit );
+}
+
+// ---------------------------------------------------------------------------
+// ROUND 13 — THE LAMPS ARE WHERE THE LAMPS ARE.
+//
+// WHAT WAS MEASURED. Per-light ablation on the stage-7 product mask, one page
+// load, byte-identical restore: a vertical gondola facing collects 32.2% of its
+// light from AmbientLight, 30.4% from HemisphereLight, 9.8% from the key
+// directional and 0.0% from the fill. The aisle floor in the same frame
+// collects 35.4% from the key. So two thirds of a facing's light arrives from
+// the two terms that are CONSTANT over a vertical plane — ambient is constant
+// everywhere, and a hemisphere light at N.y = 0 is a fixed 50/50 sky/ground mix
+// whichever way the facing points — and the resulting shading factor
+// (framebuffer luminance / albedo luminance) is flat: p5 0.102, p50 0.353,
+// p95 0.450. p95/p50 = 1.27. The lighting adds almost no variance of its own.
+//
+// WHY THAT IS FATAL RATHER THAN MERELY DULL. A constant shading factor k maps
+// the albedo's (L* + 16) to k^(1/3) * (L* + 16) — the cube root is the whole of
+// the CIE lightness curve. k = 0.353 gives 0.707, so an albedo of L* 93, the
+// brightest bare-stock texel in the building, could then only ever arrive at
+// L* 62.
+//
+// ROUND 14 — THAT LAST SENTENCE IS STALE AND MUST NOT BE CARRIED FORWARD. The
+// algebra is right; its premise is not, because k is no longer that constant.
+// Re-measured this round on the product mask over six named poses, albedo from
+// PKG_STAGE 4 against the lit plate: k runs p5 0.149, p50 0.407, p95 0.913,
+// p95/p50 = 2.24. An albedo of L* 93 arrives at L* 78, not 62, and the cap
+// argument no longer describes this build.
+// Measured on the mask: 1.2% of facings above L* 65 and 0.0% above L* 80,
+// against 15.0% and 3.8% over five declared reference regions. Everything
+// bright in the render's shelf band is therefore FIXTURE — deck edges, rails
+// and price tags, which are near-neutral — and everything chromatic is dark.
+// In the same rectangle: 62% product at median L* 37.0 / C* 14.6, 38% fixture
+// at median L* 50.8 / C* 12.3 with a quarter of it over L* 65. That is the
+// L* 50-65 chroma hole exactly, and it is why whole-frame % (L* > 50 & C* > 25)
+// is 3.90 against a 4.06-25.33 range over all fourteen reference files.
+//
+// AND THE SPECULAR PATH CANNOT HELP, GEOMETRICALLY. pack.js has had a real
+// per-texel specular since round 2. It has nothing to reflect: both directional
+// lights sit at 66.8 and 26.6 degrees of elevation, so the mirror direction off
+// a VERTICAL facing — or off a vertical can, whose normal sweeps the horizontal
+// azimuths and nothing else — points into the floor. A camera at aisle height
+// can never see it. No gain on any directional light changes that; it is a
+// statement about where the light is, not how much of it there is.
+//
+// WHAT THE STORE ACTUALLY BUILDS. ../store.js runs continuous troffer strips
+// PARALLEL to the aisles, one over every aisle centreline and one over every
+// gondola run, interleaving to a lattice of pitch PITCH/2 at y = CEIL_H - 0.006.
+// The far end of such a row is a nearly HORIZONTAL source — 11 degrees of
+// elevation at twenty metres — and its reflection off a vertical cylinder does
+// reach a camera looking down the aisle. That is the bright vertical band down
+// every can in reference/store_00_Drinks and every bottle in store_05_Ingles,
+// and it is the one light in the room a directional can not stand in for.
+//
+// So this is not another light. It is the fixtures that are already up there,
+// evaluated per fragment:
+//
+//   ONE ROW, as an infinite Lambertian line at ( xr, lampY ) running along Z.
+//   Integrating I0 * cos(emit) * max( 0, N . u ) / r^2 along it, with the N.z
+//   term vanishing by symmetry and  integral dz / r^4 = pi / ( 2 d^3 ):
+//
+//       E  =  G * H * max( 0, N.x * a + N.y * H ) / d^3
+//       a = xr - P.x,  H = lampY - P.y,  d^2 = a^2 + H^2
+//
+//   Check it against the trivial case: a floor point directly under a row,
+//   a = 0, N = ( 0, 1, 0 ), gives G/H — inverse first power of the height, which
+//   is what a line source does and what a point source does not.
+//
+// WHAT THIS TERM DOES NOT DO, MEASURED, SO ROUND 14 DOES NOT SPEND ITSELF ON IT.
+// The DIFFUSE half of this is exposure-equivalent. Control, on one page load:
+// turn the lamp term off entirely and scale all four store lights by 1.17 /
+// 1.25 / 1.35 instead, then compare at matched whole-frame median L*:
+//
+//                        frame  prod  %>65  medC*  %L50C25  p90C*  C*|50-65
+//     round 12            51.6  39.6   1.2   16.0     2.10   27.4      11.5
+//     EXPOSURE x1.25      55.2  43.3   7.3   17.1     5.23   29.0      13.2
+//     LAMP DIFFUSE        55.3  42.3   5.8   16.8     4.91   28.9      14.5
+//
+// A plain exposure lift matches or beats it on every column but one. The reason
+// is geometric and it retires the idea rather than the tuning: a 2.65 m row
+// pitch under a 5.2 m ceiling IS a uniform luminous plane at shelf range, so no
+// arrangement of it can put variance on a shelf face that a constant did not
+// already have. The shading factor's p95/p50 is 1.28 with the term and 1.28
+// without it.
+//
+// ROUND 14 — THE REASON THIS TERM STAYS WAS WRITTEN DOWN WRONG, AND A WRONG
+// REASON ABOVE WORKING CODE IS HOW THE NEXT ROUND TALKS ITSELF OUT OF A CORRECT
+// CHANGE. It said the diffuse stays because "it is what the specular hangs
+// off". It is not. chopLampRow computes dif and spec from the same a / H / d
+// and then returns them as INDEPENDENT components; uLampCfg.x scales only .x.
+// Re-verified this round on one page load, debug channel 6, three captures:
+//
+//     lampGain 0.45  md5 ef0c5a8c...     0.00  md5 ef0c5a8c...     0.45  same
+//     0 pixels differ, 0 levels, on a 1280x720 plate
+//
+// The specular is byte-identical with the diffuse switched off entirely. Set
+// this gain to 0 and every lamp highlight in the building is still there.
+//
+// So the honest reasons, and they are enough: it is the real source geometry —
+// the light is emitted where the fixtures actually hang, which is what let
+// round 13 take the key down from a sun to something a drop ceiling could be —
+// and it is not free, it is worth a mean +5.7 levels and a p95 of +20 on a lit
+// aisle plate. It is simply EXPOSURE-EQUIVALENT, which is a statement about
+// what could stand in for it, not a statement that it does nothing. Round 13's
+// actual gain was PKG_SAT and this function's .y, not its .x.
+//
+// EVERY CONSTANT IS PASSED IN, NONE IS COPIED. uLampGeo/uLampCfg are filled from
+// ../store.js's own ROW_X0, ROW_P, ROW_HX, ROW_HZ, LY and AP_W — the same
+// variables lightRow() is called with. Moving an aisle moves the geometry, the
+// ceiling's row lift, the floor's reflection and this light together, because
+// there is one set of numbers and four readers. That is the CLAUDE.md rule, and
+// the ceiling row-lift block sixty lines above lightRow() is the precedent.
+
+// The recessed troffer's photometric cutoff: how much of the lamp is still
+// visible at a ray whose cosine to the fixture's own downward normal is ct.
+// This is the SAME curve as floor.js's chopLensCut and the same one the lens
+// material in ../store.js applies to the fixture itself. A prismatic lens goes
+// to grazing transmission past about 60 degrees off nadir and then the door
+// flange takes the far tube. Round 10 established it; a second copy of it that
+// could drift is exactly what this file is not allowed to grow.
+float chopLampCut( float ct ) {
+  return 0.145 + 0.855 * smoothstep( 0.055, 0.62, clamp( ct, 0.0, 1.0 ) );
+}
+
+// One row. .x = diffuse irradiance, .y = specular lobe about R.
+vec2 chopLampRow( float xr, vec3 P, vec3 N, vec3 R, float wantSpec ) {
+  float a = xr - P.x;
+  float H = uLampGeo.z - P.y;
+  if ( H <= 0.05 ) return vec2( 0.0 );
+  float d2 = a * a + H * H;
+  float d = sqrt( d2 );
+  // IS THE ROW EVEN VISIBLE FROM HERE. One mip-2 tap at 60% of the way across,
+  // against the height the ray to the lamp has reached by then. Without it the
+  // bottom deck of a gondola is lit by rows three aisles away that its own
+  // opposite gondola is standing in front of — which is the same class of
+  // mistake as the round-7 prop list, made in the other direction.
+  float sx = clamp( a, -3.2, 3.2 ) * 0.6;
+  float hb = chopFldTop( P.xz + vec2( sx, 0.0 ), 2.0 );
+  float rayY = P.y + H * ( abs( sx ) / max( abs( a ), 1e-3 ) );
+  float open = 1.0 - smoothstep( rayY - 0.12, rayY + 0.26, hb );
+
+  float dif = H * max( 0.0, N.x * a + N.y * H ) / ( d2 * d );
+  dif *= chopLampCut( H / d );
+
+  float spec = 0.0;
+  if ( wantSpec > 0.0 ) {
+    // Where along an infinite line does the reflection vector come closest?
+    // With A = ( a, H, 0 ) and the line running along +Z, maximising
+    // ( R.A + t R.z ) / sqrt( |A|^2 + t^2 ) gives t* = R.z |A|^2 / ( R.A ).
+    // A row BEHIND the reflection ( R.A <= 0 ) simply has no highlight.
+    float RA = R.x * a + R.y * H;
+    if ( RA > 0.0 ) {
+      float t = R.z * d2 / RA;
+      float r = sqrt( d2 + t * t );
+      float ct = ( RA + t * R.z ) / r;
+      spec = pow( clamp( ct, 0.0, 1.0 ), uLampCfg.y ) * chopLampCut( H / r );
+    }
+  }
+  return vec2( dif, spec ) * open;
+}
+
+// The five nearest rows. Beyond +-2 pitches a row is either behind the shading
+// point's own gondola or behind the one across the aisle, and the open test
+// would zero it anyway at four times the cost.
+vec2 chopLamp( vec3 P, vec3 N, vec3 V ) {
+  float k0 = floor( ( P.x - uLampGeo.x ) / uLampGeo.y + 0.5 );
+  vec3 R = reflect( -V, N );
+  float cx = uLampGeo.x + uLampGeo.w;          // lattice centre, derived not typed
+  vec2 acc = vec2( 0.0 );
+  for ( int i = -2; i <= 2; i ++ ) {
+    float xr = uLampGeo.x + ( k0 + float( i ) ) * uLampGeo.y;
+    float inX = 1.0 - smoothstep( uLampGeo.w, uLampGeo.w + 1.1, abs( xr - cx ) );
+    if ( inX <= 0.0 ) continue;
+    acc += chopLampRow( xr, P, N, R, uLampSpec ) * inX;
+  }
+  // ...and the rows stop before the front and back walls, the same
+  // HALF + 2.1 lightRow() is called with.
+  acc *= 1.0 - smoothstep( uLampCfg.z, uLampCfg.z + 1.4, abs( P.z ) );
+  return acc;
+}
+
 // The mirror's view of the same field. Returns rgb = what stands at p in the
 // band a reflection sees, a = how much of the ray's lobe that column fills at
 // height y. One function so the floor and the glass cannot disagree about what
@@ -760,6 +1192,64 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
 // fills 1.30 m of the 1.40 m normalisation and reads ~0.93, a gondola tops out
 // at 2.05 m and reads ~0.54, so the gate sits between them and a header is
 // never mistaken for a sign hanging over the aisle in front of it.
+// ---------------------------------------------------------------------------
+// THE ENTRANCE, AS A LIGHT SOURCE. ROUND 17.
+//
+// Blind test 9, still open going into this round: "a 4 m glass wall on a lit
+// exterior contributes ZERO light to the floor in front of it." Exactly true,
+// and the reason is structural rather than a missed constant — the storefront
+// is a textured PLATE. tex.js paints blown sky, a treeline and a car park onto
+// it, signs.js gives it a gloss, and not one photon of it reaches anything,
+// because a MeshBasic quad has no more effect on the room than a poster does.
+//
+// WHY THIS IS NOT A three.js LIGHT. Two reasons, and the second is the one
+// that decides it:
+//
+//   * A PointLight or a SpotLight at the door adds a light-loop iteration to
+//     EVERY lit fragment in a 47 x 38 m building to illuminate the eight
+//     metres in front of two doors. This term costs one compare outside its
+//     reach — P.z > plane + reach is spatially coherent, so the branch is
+//     free where the light is not.
+//   * Neither of them is occluded by anything. The checkout run stands 1.4 m
+//     from Door 1 and a real doorway wash stops dead at it. The field ALREADY
+//     holds every stand, cart and bollard in the building at 23 mm, so three
+//     taps up the ray toward the aperture buy a shadow the light loop cannot
+//     have without a shadow map.
+//
+// THE FALL-OFF IS A WINDOW'S, NOT A POINT'S. A source of finite height h seen
+// from distance d subtends an angle that goes as h/(h+d), and irradiance as
+// the square of it — so it is flat within a metre of the glass and down to a
+// quarter of that at d = h. An inverse-square from a point at the door plane
+// would instead be singular at the threshold, which is the wrong shape at
+// exactly the distance the player stands.
+float chopDayOne( vec4 A, vec3 P, vec3 N ) {
+  float d = P.z - A.z;
+  float dz = max( d, 0.30 );
+  float k = A.w / ( A.w + dz );
+  // lateral: full strength inside the opening, with a shoulder that widens as
+  // the wash spreads into the room
+  float lat = 1.0 - smoothstep( A.y, A.y + 0.85 + dz * uDayCfg.z, abs( P.x - A.x ) );
+  if ( lat <= 0.0 ) return 0.0;
+  vec3 C = vec3( A.x, A.w * 0.55, A.z );
+  vec3 L = normalize( C - P );
+  float nl = max( 0.0, dot( N, L ) );
+  if ( nl <= 0.0 ) return 0.0;
+  float vis = 1.0;
+  for ( int i = 0; i < 3; i++ ) {
+    vec3 Q = mix( P, C, ( float( i ) + 0.6 ) * 0.28 );
+    float h = chopFldTop( Q.xz, 2.0 );
+    vis *= 1.0 - 0.62 * smoothstep( Q.y - 0.28, Q.y + 0.12, h );
+  }
+  return k * k * lat * nl * vis;
+}
+vec3 chopDay( vec3 P, vec3 N ) {
+  if ( uDayCfg.x <= 0.0 ) return vec3( 0.0 );
+  float d = P.z - uDayA.z;
+  if ( d < -0.6 || d > uDayCfg.y ) return vec3( 0.0 );
+  return uDayCol * ( uDayCfg.x
+    * ( chopDayOne( uDayA, P, N ) + chopDayOne( uDayB, P, N ) ) );
+}
+
 float chopFldFill( vec2 p, float y, float lod ) {
   vec4 s = chopFldAt( p, lod );
   float h = s.a * uFldCfg.x;
@@ -784,20 +1274,43 @@ vec4 chopFldHit( vec3 Q, float lod, float soft ) {
 // or the glass already put there, which is what a shadow physically does.
 const AO_FRAG = `
 {
-  vec2 chopA = chopAO( vAoW, normalize( vAoN ) );
+  vec3 chopN = normalize( vAoN );
+  vec2 chopA = chopAO( vAoW, chopN );
+  vec2 chopLp = chopLamp( vAoW, chopN, normalize( cameraPosition - vAoW ) );
   gl_FragColor.rgb *= chopA.x;
+  // The fixtures. Diffuse takes the surface's own pigment; the specular is the
+  // lamp's own colour, because a highlight is an image of the source and not of
+  // the paint under it. Both ride the same visibility the rest of the shading
+  // does — a facing sealed inside a cavity does not get lit by a troffer.
+  gl_FragColor.rgb += diffuseColor.rgb * uLampCol * ( chopLp.x * uLampCfg.x * chopA.x );
+  gl_FragColor.rgb += uLampCol * ( chopLp.y * uLampSpec * uLampCfg.w * chopGlossX * chopA.x );
   gl_FragColor.rgb += diffuseColor.rgb * uFldBounce * ( chopA.y * uFldCfg.w );
+  // ROUND 14 — the run across the aisle. It rides chopA.x for the same reason
+  // the lamp terms do: a facing sealed inside a cavity is not lit by anything
+  // out in the aisle. It does NOT ride chopA.y, which is the floor, nor is it
+  // any part of it: chopAO's bounce lobe points DOWN at open floor and this
+  // one points sideways at what is standing. Different hemisphere, different
+  // source, no double count.
+  gl_FragColor.rgb += diffuseColor.rgb * chopAisle( vAoW, chopN ) * chopA.x;
+  // The doorway. uFldLit for the same reason the aisle bounce is not on a
+  // MeshBasic: daylight arriving is light, and a printed sign face has no
+  // lighting to add it to.
+  gl_FragColor.rgb += diffuseColor.rgb * chopDay( vAoW, chopN ) * uFldLit;
   // 1 = visibility, 2 = bounce, 3 = field height under the fragment, 4 = the
   // contact core on its own, which is the term round 9 added and the one worth
-  // being able to look at in isolation. Driven from the console:
+  // being able to look at in isolation, 5 = the lamp diffuse, 6 = the lamp
+  // specular, 7 = the round-14 aisle bounce. Driven from the console:
   //   __CHOP.scene.userData.chopField.uniforms.uFldDbg.value = 1
   if ( uFldDbg > 0.5 ) {
-    vec3 nn = normalize( vAoN );
     gl_FragColor.rgb = uFldDbg < 1.5 ? vec3( chopA.x )
       : ( uFldDbg < 2.5 ? vec3( chopA.y )
       : ( uFldDbg < 3.5 ? vec3( chopFldTop( vAoW.xz, 0.0 ) / uFldCfg.x )
-      : vec3( 1.0 - clamp( ( chopCore( vAoW, nn, 0.7 ) - uFldCore.y )
-          * uFldCore.z, 0.0, 1.0 ) ) ) );
+      : ( uFldDbg < 4.5 ? vec3( 1.0 - clamp( ( chopCore( vAoW, chopN, 0.7 ) - uFldCore.y )
+          * uFldCore.z, 0.0, 1.0 ) )
+      : ( uFldDbg < 5.5 ? vec3( chopLp.x * uLampCfg.x )
+      : ( uFldDbg < 6.5 ? vec3( chopLp.y )
+      : ( uFldDbg < 7.5 ? chopAisle( vAoW, chopN ) * chopA.x
+                        : chopDay( vAoW, chopN ) ) ) ) ) ) );
   }
 }
 `;
@@ -833,6 +1346,22 @@ export function patchAO(THREE, m, U) {
   m.onBeforeCompile = (sh, renderer) => {
     if (prev) prev.call(m, sh, renderer);
     Object.assign(sh.uniforms, U);
+    // PER-MATERIAL, and deliberately not in the shared bag. A lamp highlight is
+    // a property of the finish — shrink film, a coated carton, a can, a PET
+    // bottle — not of the room, and the floor and the freezer glass already
+    // trace the same rows themselves (floor.js chopLight), so handing them a
+    // second copy would double the one thing in the frame that is easiest to
+    // over-cook. Assigning AFTER the shared bag gives this material its own
+    // uniform object rather than aliasing everybody else's.
+    sh.uniforms.uLampSpec = { value: m.userData.chopLampSpec ?? 0 };
+    m.userData.chopLampU = sh.uniforms.uLampSpec;
+    // ROUND 14, same reasoning and the same per-material scope. Read off the
+    // material's TYPE, not off a name list: an unlit material's texel value is
+    // already its final colour, so a bounce term on one is not light arriving,
+    // it is the print getting brighter than it prints. applyAO's skip rules are
+    // properties of the material for the same reason.
+    sh.uniforms.uFldLit = { value: m.isMeshBasicMaterial ? 0 : 1 };
+    m.userData.chopLitU = sh.uniforms.uFldLit;
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>' + AO_VERT_HEAD)
       .replace('#include <begin_vertex>', '#include <begin_vertex>' + AO_VERT_BODY);
@@ -934,10 +1463,83 @@ export function fieldUniforms(THREE, field, opts = {}) {
     // sill, which is LIT cream to within about 12 mm of the floor and then
     // falls to the darkest value in the frame.
     uFldCav: {
-      value: new THREE.Vector4(opts.cav ?? 0.78, opts.crev ?? 0.72, 0,
-        opts.crevH ?? 0.090),
+      // .z is ROUND 14's cavity reflectance — the rho in the integrating-cavity
+      // lift above chopAO's skirt. 0 reproduces round 9 exactly; it is a
+      // reflectance, so the only defensible range is what shelf steel and
+      // coated board actually reflect.
+      value: new THREE.Vector4(opts.cav ?? 0.78, opts.crev ?? 0.72,
+        opts.cavRho ?? 0, opts.crevH ?? 0.090),
     },
     uFldBounce: { value: new THREE.Color(opts.bounceCol ?? 0xb9a887) },
+    // ROUND 17 — the entrance. Defaults are a NO-OP (gain 0), on the same
+    // principle as uLampGeo above: a default aperture here would be a second
+    // copy of where the doors are, and ../store.js is the only file that knows
+    // what it actually built. `day` is [cx, halfW, planeZ, headY] per door.
+    uDayA: { value: new THREE.Vector4(...((opts.day && opts.day[0]) ?? [0, 0, 0, 1])) },
+    uDayB: { value: new THREE.Vector4(...((opts.day && opts.day[1]) ?? [0, 0, 0, 1])) },
+    uDayCfg: {
+      value: new THREE.Vector4(opts.day ? (opts.dayGain ?? 1.0) : 0,
+        opts.dayReach ?? 9.5, opts.daySpread ?? 0.42, 0),
+    },
+    uDayCol: { value: new THREE.Color(opts.dayCol ?? 0xbcd2f0) },
+    // ROUND 13 — THE FIXTURES. Every one of these six numbers is handed in by
+    // ../store.js from the variables lightRow() is actually called with; there
+    // is no default row plan here on purpose, because a default is a second
+    // copy that cannot be told when the first one moves. lampGeo missing means
+    // "no lamps", not "assume the round-13 layout".
+    uLampGeo: { value: new THREE.Vector4(...(opts.lampGeo ?? [0, 1, -1, 0])) },
+    uLampCfg: {
+      // gain / specular exponent / row half-span z / -
+      //
+      // GAIN. Calibrated, not chosen: the term is switched on with the key and
+      // the ambient held, the product mask's shading factor is read off the
+      // stage ladder, and the key is then taken down until whole-frame median
+      // L* returns to where it was. See the round-13 note in ../store.js for
+      // the sweep and what each step cost.
+      //
+      // EXPONENT. Not free either. The aperture is 0.60 m wide (AP_W) and a
+      // facing sits about 4 m from the row over the aisle, so the source
+      // subtends 8.6 degrees. pow( cos, n ) falls to half at
+      // acos( 0.5^(1/n) ), which is 8.7 degrees at n = 60. A tighter lobe
+      // draws a lamp narrower than the lamp is.
+      // .w is a GLOBAL scale on every material's specular gain, and it exists
+      // because the per-material one is not a usable control surface: the
+      // package materials are cloned per batch, so walking the scene and
+      // writing each clone's own uniform silently misses most of them. That
+      // cost an hour of this round — two sweep rows came back byte-identical
+      // and a "specular off" control was not off. One scalar everybody
+      // multiplies by cannot have that failure mode.
+      value: new THREE.Vector4(opts.lampGain ?? 0, opts.lampExp ?? 60,
+        opts.lampSpanZ ?? 1e-3, opts.lampSpecScale ?? 1),
+    },
+    uLampCol: { value: new THREE.Color(opts.lampCol ?? 0xfff6ea) },
+    // Shared DEFAULT only. patchAO overwrites this per material — see there.
+    uLampSpec: { value: 0 },
+    // ROUND 14 — THE RUN ACROSS THE AISLE. See chopAisle for the form-factor
+    // derivation; these are the two numbers it needs and neither is a taste
+    // value.
+    //
+    // .x is the room's irradiance at facing height, in the same units the rest
+    // of this shader adds in — the term computes form factor x the blocker's
+    // own albedo (read from the field, not typed) and this is the third factor,
+    // how brightly that blocker is lit. It is ONE global scalar and that is
+    // deliberate: the round-13 note above uLampCfg.w records an hour lost to
+    // per-material uniforms on materials three clones per batch, where a
+    // "specular off" control was not off. A single scalar everybody multiplies
+    // cannot have that failure mode, so `= 0` here really is the ablation.
+    //
+    // .y is the march scale and ../store.js hands it AISLE_GAP itself, so the
+    // four taps land at 0.25 / 0.65 / 1.05 / 1.45 of an aisle width — a shelf
+    // back right behind the facing, two inside the aisle, one exactly on the
+    // opposite run, one past it. Widen the aisle in config.js and the march
+    // widens with it; there is no 4.0 typed anywhere in this file.
+    uFldSide: {
+      value: new THREE.Vector4(opts.side ?? 0, opts.sideStep ?? 1.5, 0, 0),
+    },
+    // Shared DEFAULT only, same as uLampSpec. 1 so that a material which somehow
+    // reaches this shader without going through patchAO behaves like a lit one;
+    // the unlit case is the exception and it is stated explicitly there.
+    uFldLit: { value: 1 },
     uFldDbg: { value: 0 },
   };
 }
@@ -958,12 +1560,56 @@ export function fieldUniforms(THREE, field, opts = {}) {
 // the asset count.
 const CENTS = [9, 19, 25, 29, 33, 39, 44, 49, 50, 59, 66, 69, 77, 79, 88, 89, 97, 99];
 const DOLLARS = [1, 1, 1, 2, 2, 2, 3, 3, 4, 5, 5, 6, 7, 8, 9, 10, 12, 15];
-const QUAL = [
+// ROUND 16 — THE SIGNAGE HAD THE SAME BUG THE PACKAGING HAD, AND IT WAS
+// CALLED BLIND BEFORE THE CRITIC OPENED ANY SOURCE.
+//
+// The r16 brief: "promoDeal(seed) and promoCard(g, W, H, seed, opts) take NO
+// DEPARTMENT. The `save` branch fires on 16% of all deals and prints
+// SAVE $D.CC PER LB — a weighed-goods price — over SNACKS / CHIPS. FROZEN ONLY
+// and PLUS DEPOSIT sit in the qualifier pool with no department gate."
+//
+// Which is exactly the r15 packaging defect one surface along: a correct
+// grammar sampled without reference to what it is describing. And it is the
+// worse half of the cue — eleven of the r15 critic's eighteen render calls came
+// off a hanging sign or promo tag.
+//
+// Qualifiers split into ones any department can print and ones that are a claim
+// about the goods. A gate here is a physical fact, not a taste call:
+//   PLUS DEPOSIT   only where there is a deposit container   -> soda
+//   FROZEN ONLY    only where the goods are frozen           -> frozen
+//   PER LB         only where the goods are sold by weight   -> nothing here
+const QUAL_ANY = [
   'WITH CARD', 'LIMIT 4', 'LIMIT 2', 'MIX OR MATCH', 'SELECT VARIETIES',
   'WHILE SUPPLIES LAST', 'MEMBER PRICE', 'EVERY DAY', 'SAVE MORE',
   'LIMIT 6 PER VISIT', 'ASSORTED SIZES', 'THIS WEEK ONLY', 'NO CARD NEEDED',
-  'SELECT SIZES', 'IN STORE ONLY', 'FROZEN ONLY', 'PLUS DEPOSIT',
+  'SELECT SIZES', 'IN STORE ONLY',
 ];
+const QUAL_DEPT = {
+  soda:   ['PLUS DEPOSIT', 'PLUS CRV', 'SINGLES ONLY'],
+  frozen: ['FROZEN ONLY', 'KEEP FROZEN'],
+  paper:  ['BULK PACK ONLY'],
+  health: ['SEE PHARMACIST', 'ADULT USE ONLY'],
+};
+
+// How a saving is quoted, per department. THE POINT OF THE WHOLE GATE:
+// `PER LB` is a weighed-goods unit and this store has no weighed department —
+// no butcher, no produce scale, no deli counter — so it is unreachable, and
+// SIGN_GAPS below says so out loud rather than leaving it to be discovered.
+// If a future round adds a service counter, mark it weighed and PER LB is
+// live again for that department and only that department.
+const DEPT_UNIT = {
+  soda:      ['ON 2', 'PER 12 PK', 'EACH'],
+  frozen:    ['ON 2', 'EACH', 'PER PKG'],
+  paper:     ['ON 2', 'EACH', 'PER PACK'],
+  health:    ['ON 2', 'EACH'],
+  bakery:    ['ON 2', 'EACH', 'PER PKG'],
+  canned:    ['ON 2', 'EACH', 'ON 4'],
+  pasta:     ['ON 2', 'EACH', 'ON 4'],
+  snacks:    ['ON 2', 'EACH', 'PER BAG'],
+  breakfast: ['ON 2', 'EACH', 'PER BOX'],
+};
+const WEIGHED = {};           // dept -> true. Empty on purpose; see above.
+const UNIT_ANY = ['ON 2', 'EACH'];
 const HEADS = [
   'LOW PRICE', 'HOT BUY', 'SAVE', 'DEAL', 'PRICE DROP', 'MANAGER SPECIAL',
   'ROLLBACK', 'CLUB DEAL', 'FRESH DEAL', 'MARKDOWN', 'VALUE PICK', 'BIG SAVE',
@@ -971,13 +1617,20 @@ const HEADS = [
 ];
 
 // A deal, drawn from the grammar. `seed` makes it deterministic per site.
-export function promoDeal(seed) {
+// `dept` is a DEPTS key or null. Null means a genuinely department-free site —
+// the front-of-store wall boards and the perimeter decor band advertise the
+// whole shop — and it draws only from the ungated pools, which is the honest
+// behaviour rather than a fallback.
+export function promoDeal(seed, dept) {
   const rng = makeRng(seed * 2654435761 + 0x9e37);
   const P = (a) => a[Math.floor(rng() * a.length) % a.length];
   const money = (d, c) => '$' + d + '.' + String(c).padStart(2, '0');
   const roll = rng();
   const head = P(HEADS);
-  const qual = P(QUAL);
+  const dq = (dept && QUAL_DEPT[dept]) || [];
+  // department qualifiers are a third of the pool where they exist, so they
+  // read as characteristic of that aisle rather than as a rare curiosity
+  const qual = (dq.length && rng() < 0.34) ? P(dq) : P(QUAL_ANY);
   if (roll < 0.16) {
     const n = rng() < 0.7 ? 2 : 3;
     return { head: 'BUY ' + n, big: 'GET 1', sub: 'FREE', qual, kind: 'bogo' };
@@ -997,8 +1650,53 @@ export function promoDeal(seed) {
   }
   if (roll < 0.86) {
     const d = P(DOLLARS), c = P(CENTS);
-    return { head: 'SAVE', big: money(d, c), sub: 'PER LB', qual, kind: 'save' };
+    const unit = WEIGHED[dept] ? 'PER LB'
+      : P((dept && DEPT_UNIT[dept]) || UNIT_ANY);
+    return { head: 'SAVE', big: money(d, c), sub: unit, qual, kind: 'save' };
   }
   const d = P(DOLLARS), c = P(CENTS);
   return { head, big: money(d, c), sub: rng() < 0.5 ? 'EACH' : 'EA', qual, kind: 'price' };
+}
+
+// The signage half of copyCheck(): exhaustively sweep the grammar and report any
+// gated string reaching a department it does not belong to. Named departments
+// only — a null-dept site can never emit one by construction, which this also
+// proves rather than assuming.
+export function signCheck(depts, n = 4000) {
+  const bad = [];
+  const gated = new Map();
+  for (const d of Object.keys(QUAL_DEPT)) for (const q of QUAL_DEPT[d]) gated.set(q, d);
+  const seen = new Set();
+  for (const dept of [...depts, null]) {
+    for (let i = 0; i < n; i++) {
+      const deal = promoDeal(i * 7919 + 13, dept);
+      const owner = gated.get(deal.qual);
+      if (owner && owner !== dept) {
+        bad.push('"' + deal.qual + '" belongs to ' + owner + ' but reached '
+          + (dept || 'a department-free site'));
+      }
+      if (deal.sub === 'PER LB' && !WEIGHED[dept]) {
+        bad.push('"SAVE ' + deal.big + ' PER LB" — a weighed-goods price — reached '
+          + (dept || 'a department-free site') + ', which sells nothing by weight');
+      }
+      if (owner) seen.add(deal.qual);
+    }
+  }
+  // ...and the other direction: a gated string nothing can print is dead copy.
+  for (const q of gated.keys()) {
+    if (!seen.has(q) && depts.includes(gated.get(q))) bad.push('unreachable qualifier: ' + q);
+  }
+  return bad;
+}
+
+// Stated, not discovered. Round 15's copyGaps() is the pattern: a gap that is
+// WRITTEN DOWN is a decision, and a gap that is found later is a bug.
+export function signGaps() {
+  return {
+    weighedDepartments: Object.keys(WEIGHED),
+    perLbReachable: Object.keys(WEIGHED).length > 0,
+    gatedQualifiers: Object.fromEntries(Object.entries(QUAL_DEPT)),
+    note: 'PER LB is unreachable because this store has no scale — no butcher, '
+        + 'produce or deli counter. Mark a department in WEIGHED to bring it back.',
+  };
 }

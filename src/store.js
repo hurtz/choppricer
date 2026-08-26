@@ -15,6 +15,7 @@ import * as TX from './store/tex.js';
 import * as PK from './store/pack.js';
 import * as FL from './store/floor.js';
 import * as SG from './store/signs.js';
+import * as FR from './store/front.js';
 // cctv.js owns where the cameras hang; config's CAMERAS[].pos is only a fallback.
 // cctv.js does not import store.js, so this is not a cycle.
 import { cameraRig } from './cctv.js';
@@ -60,8 +61,21 @@ const P = {
   cart:     0xa9adb2,
 };
 
-// Atlas cell i is drawn with department i%8's vocabulary — see products.js.
+// RETIRED r17 — "atlas cell i is drawn with department i%8's vocabulary".
+// That convention was written down here, in products.js's poolFor() and in
+// pack.js's deptKeys[i % deptKeys.length]: three copies of one derivation, the
+// hazard CLAUDE.md opens with. It had already gone wrong — FROZEN.idx is 8, so
+// 8 % 8 = 0 and every frozen case was stocked with bakery-vocabulary packages.
+// src/store/plan.js is now the one owner of what is in cell i, both files read
+// it, and products.js asserts its department order against it at load.
 const DEPT_KEYS = DEPTS.map((d) => d.key);
+// ROUND 16 — the promo atlases cover the AISLE departments plus the back-wall
+// freezer run, which is a real department a shopper sees and buys from but is
+// not in DEPTS (products.js exports FROZEN separately, because it fills a wall
+// rather than a gondola). Building the sign atlases off DEPT_KEYS alone left
+// QUAL_DEPT.frozen — FROZEN ONLY, KEEP FROZEN — correctly gated in the grammar
+// and unreachable in the store, which is dead copy wearing a fix.
+const SIGN_DEPTS = [...DEPT_KEYS, FROZEN.key];
 
 let TEX = null;
 function textures(THREE) {
@@ -76,10 +90,10 @@ function textures(THREE) {
     wood: TX.woodTex(THREE, [30, 40, 60], 77),
     wall: TX.wallTex(THREE),
     // round-2 packaging: real printed type, one atlas per package family
-    boxA: PK.cartonAtlas(THREE, DEPT_KEYS),
-    bagA: PK.pouchAtlas(THREE, DEPT_KEYS),
-    can: PK.canAtlas(THREE, DEPT_KEYS),
-    bottle: PK.bottleAtlas(THREE, DEPT_KEYS),
+    boxA: PK.cartonAtlas(THREE),
+    bagA: PK.pouchAtlas(THREE),
+    can: PK.canAtlas(THREE),
+    bottle: PK.bottleAtlas(THREE),
     tag: PK.tagAtlas(THREE),
     // round-3: ambient occlusion, gondola hardware, floor wear, ceiling clutter
     slot: TX.slotTex(THREE),
@@ -88,11 +102,19 @@ function textures(THREE) {
     // `wear` is NOT built here: it is derived from the store's own traffic
     // plan and so cannot exist before the run layout does. See THE TRAFFIC
     // PLAN below, where it is assigned onto T.
-    dangle: TX.danglerAtlas(THREE),
+    dangle: TX.danglerAtlas(THREE, SIGN_DEPTS),
     sign: TX.signAtlas(THREE, DEPTS),
     blade: TX.bladeAtlas(THREE, DEPTS),
-    lane: TX.laneAtlas(THREE),
-    promo: TX.promoAtlas(THREE),
+    // ROUND 17 — the front end. tex.js's laneAtlas() drew a bare numeral; the
+    // replacement in store/front.js carries the cap bands, the express lanes'
+    // second line and the four screws that hold the acrylic on, and it is the
+    // one place that decides WHICH lanes are express (FR.EXPRESS), so the sign
+    // and the anchor table cannot disagree.
+    lane: FR.laneSignAtlas(THREE),
+    screen: FR.screenAtlas(THREE),
+    fsign: FR.frontSignAtlas(THREE),
+    mag: FR.magAtlas(THREE),
+    promo: TX.promoAtlas(THREE, SIGN_DEPTS),
     glow: TX.glowTex(THREE),
     // round-6's contact ramp and ground pool are gone — light.js computes the
     // same darkening per fragment, everywhere, instead of on cards. See the
@@ -109,6 +131,29 @@ function textures(THREE) {
       { t: 'FROZEN FOODS', bg: '#3d5a86', fg: '#fdf7e6' },
     ]),
   };
+  // ROUND 17 — THE BAKEDNESS CHECK, RUN AGAINST WHAT WAS ACTUALLY DRAWN.
+  // Round 16's depictCheck() passed at 100% while 51 of 81 motifs were never
+  // baked onto anything, because it asserted a property of the SKU table. This
+  // reads pack.js's CELL_LOG — one entry written by the drawing code per cell —
+  // and throws if a motif the table can reach never made it onto a canvas.
+  // pack.js also fires it from inside the last atlas builder, so this call is a
+  // belt rather than the mechanism; what it adds is the reading, which the
+  // round quotes and the next round can compare against.
+  TEX.packStats = PK.packCheck();
+  // ROUND 18 — LEGIBILITY. Three rounds shipped a wordmark that could not be
+  // read (CORNERSTONE, PENNYWHISTLE, WINDROW), each fixed on its own SKU and
+  // each replaced by another. fitText() now guarantees the worst-case print
+  // step at the one place every wordmark in the store is drawn; this asserts
+  // the guarantee held, and catches any future type drawn around it.
+  {
+    const bad = PK.typeCheck();
+    if (bad.length) {
+      throw new Error('store.js type: ' + bad.length + ' unreadable run(s) — '
+        + bad.slice(0, 5).map((e) => e.atlas + '#' + e.cell + ' "' + e.txt + '" step '
+          + e.step).join(' | '));
+    }
+    TEX.typeStats = PK.typeStats();
+  }
   return TEX;
 }
 
@@ -123,6 +168,19 @@ const qZ = (Q, x, y, z, w, h, dir, uv) =>
   Q.rect([x, y, z], [dir > 0 ? w / 2 : -w / 2, 0, 0], [0, h / 2, 0], uv[0], uv[1], uv[2], uv[3]);
 const qX = (Q, x, y, z, d, h, dir, uv) =>
   Q.rect([x, y, z], [0, 0, dir > 0 ? -d / 2 : d / 2], [0, h / 2, 0], uv[0], uv[1], uv[2], uv[3]);
+// ...and the same quad tipped back about the Z axis, for anything that leans:
+// a magazine pocket, a PIN pad on its swivel, a card clipped to a bag rack.
+// `tip` > 0 leans the TOP of the panel away from the side it faces.
+const qXtip = (Q, x, y, z, d, h, dir, uv, tip) =>
+  Q.rect([x, y, z], [0, 0, dir > 0 ? -d / 2 : d / 2],
+    [-dir * Math.sin(tip) * h / 2, Math.cos(tip) * h / 2, 0],
+    uv[0], uv[1], uv[2], uv[3]);
+// the same, for a quad in the XY plane: a PIN pad or a counter card tipped up
+// toward the person standing in front of it.
+const qZtip = (Q, x, y, z, w, h, dir, uv, tip) =>
+  Q.rect([x, y, z], [dir > 0 ? w / 2 : -w / 2, 0, 0],
+    [0, Math.cos(tip) * h / 2, -dir * Math.sin(tip) * h / 2],
+    uv[0], uv[1], uv[2], uv[3]);
 const qDown = (Q, x, y, z, w, l, uv) =>
   Q.rect([x, y, z], [w / 2, 0, 0], [0, 0, l / 2], uv[0], uv[1], uv[2], uv[3]);
 const qUp = (Q, x, y, z, w, l, uv) =>
@@ -196,6 +254,15 @@ const BOTTLE_PROFILES = {
 };
 function bottleGeo(THREE, key) {
   const pts = BOTTLE_PROFILES[key].map(([r, y]) => new THREE.Vector2(r, y));
+  // ROUND 18 — 9 SEGMENTS, MEASURED AND KEPT. Swept 9 -> 14 on both lathe
+  // families to see whether the facet columns were feeding the round class's
+  // x-anisotropy. They are not: within-frame class contrast K went 0.895 ->
+  // 0.884 over the same six published poses, against a pose-to-pose spread of
+  // +/-0.06 — i.e. inside the noise — for 2.74 M -> 3.37 M triangles (+23%).
+  // LatheGeometry's normals are already smooth around Y, so the facets cost a
+  // silhouette and not a shading band, and at the 22-60 px a facing actually
+  // subtends (aniso.js facingPx) a 9-gon outline is under half a pixel of
+  // error. Reverted. AGENTS_BRIEF: publish the sweep that did not pay.
   return new THREE.LatheGeometry(pts, 9);
 }
 
@@ -245,7 +312,7 @@ const CAN_PROFILES = {
 };
 function canGeo(THREE, key) {
   const pts = CAN_PROFILES[key].map(([r, y]) => new THREE.Vector2(r, y));
-  return new THREE.LatheGeometry(pts, 10);
+  return new THREE.LatheGeometry(pts, 10);   // see bottleGeo: 14 was swept and did not pay
 }
 
 // STAND-UP POUCH. Coffee, pet food, salad, baby food — the fastest-growing
@@ -306,6 +373,10 @@ function wrapGeo(THREE) {
 export function buildStore(THREE, scene) {
   const colliders = [];
   const powerupSpots = [];
+  // ROUND 17 — the front end's anchor table. Filled by the checkout and
+  // service-desk blocks below and handed to agents.js on the return value AND
+  // on scene.userData.chopFrontEnd; see FRONT_END at the bottom of this file.
+  let DESK_POSE = null;
   const rng = makeRng(0x5f0c1a);
   const col = new THREE.Color();
   const T = textures(THREE);
@@ -426,6 +497,28 @@ export function buildStore(THREE, scene) {
       color: 0xffffff, shininess: 42, specular: 0x6a665c,
     }),
   };
+  // ROUND 13 — which finishes can show a LAMP, and how much of one.
+  //
+  // The specular above has existed since round 2 and has never once put a
+  // highlight on a product facing, because it is fed by two directional lights
+  // at 66.8 and 26.6 degrees of elevation and the mirror direction off a
+  // vertical facing — or off a vertical can, whose normal only ever sweeps the
+  // horizontal azimuths — points into the floor. A camera at aisle height
+  // cannot see it. What CAN be seen is the troffer row running away down the
+  // aisle: twenty metres along it the source sits at 11 degrees of elevation,
+  // and that is the bright vertical band down every can in
+  // reference/store_00_Drinks and every bottle in store_05_Ingles.
+  //
+  // These are per-FAMILY gains and they are ordered by finish, not by taste:
+  // PET and glass over tinplate over foil laminate over coated board. The
+  // per-TEXEL half comes from the same print-brightness channel the Phong
+  // gloss already uses — pack.js writes chopGlossX — so white film flares and
+  // printed ink stays dull, which is the round-2 argument finally applied to
+  // the lamps as well.
+  M.pkgBox.userData.chopLampSpec = 0.26;
+  M.pkgBag.userData.chopLampSpec = 0.72;
+  M.pkgCan.userData.chopLampSpec = 0.90;
+  M.pkgBottle.userData.chopLampSpec = 1.15;
 
   // ONE geometry per package family, UVs normalised into unit-cell space. The
   // per-instance aCell attribute offsets into the atlas, so 24 carton designs
@@ -435,15 +528,26 @@ export function buildStore(THREE, scene) {
     wrap: PK.unitCellUV(THREE, G.wrap, 'box', PK.ATLAS.carton.wrap),
     bag: PK.unitCellUV(THREE, G.bag, 'box', PK.ATLAS.pouch.wrap),
     gusset: PK.unitCellUV(THREE, G.gusset, 'box', PK.ATLAS.pouch.wrap),
-    can: PK.unitCellUV(THREE, G.can, 'can', 0),
-    rim: PK.unitCellUV(THREE, G.cRim, 'lathe', 0),
-    jarL: PK.unitCellUV(THREE, G.cJar, 'lathe', 0),
-    tub: PK.unitCellUV(THREE, G.cTub, 'lathe', 0),
-    soda: PK.unitCellUV(THREE, G.bottle, 'lathe', 0),
-    jug: PK.unitCellUV(THREE, G.bJug, 'lathe', 0),
-    squat: PK.unitCellUV(THREE, G.bSquat, 'lathe', 0),
-    spray: PK.unitCellUV(THREE, G.bSpray, 'lathe', 0),
+    // ROUND 18 — every round shape is handed the BARREL WINDOW of the atlas
+    // that prints it. That window is the contract between pack.js's artwork
+    // and this unwrap; before it existed, LatheGeometry's index-based v put
+    // 88-90% of each label on the end discs. See the `barrel` note in plan.js
+    // and latheBands() in pack.js.
+    can: PK.unitCellUV(THREE, G.can, 'can', 0, PK.ATLAS.can.barrel, 'can/cylinder'),
+    rim: PK.unitCellUV(THREE, G.cRim, 'lathe', 0, PK.ATLAS.can.barrel, 'can/rim'),
+    jarL: PK.unitCellUV(THREE, G.cJar, 'lathe', 0, PK.ATLAS.can.barrel, 'can/jar'),
+    tub: PK.unitCellUV(THREE, G.cTub, 'lathe', 0, PK.ATLAS.can.barrel, 'can/tub'),
+    soda: PK.unitCellUV(THREE, G.bottle, 'lathe', 0, PK.ATLAS.bottle.barrel, 'bottle/soda'),
+    jug: PK.unitCellUV(THREE, G.bJug, 'lathe', 0, PK.ATLAS.bottle.barrel, 'bottle/jug'),
+    squat: PK.unitCellUV(THREE, G.bSquat, 'lathe', 0, PK.ATLAS.bottle.barrel, 'bottle/squat'),
+    spray: PK.unitCellUV(THREE, G.bSpray, 'lathe', 0, PK.ATLAS.bottle.barrel, 'bottle/spray'),
   };
+  // Fails the page load, where the watch sees it, rather than shipping a store
+  // whose round packages are printed through a point index. See latheCheck().
+  {
+    const bad = PK.latheCheck();
+    if (bad.length) throw new Error('store.js lathe unwrap: ' + bad.join(' | '));
+  }
   const BSHAPES = ['soda', 'jug', 'squat', 'spray'];
   const CSHAPES = ['can', 'rim', 'jarL', 'tub'];
 
@@ -506,13 +610,33 @@ export function buildStore(THREE, scene) {
   const BfixC = new Batch(THREE, G.box, M.fix);
   const BtubeC = new Batch(THREE, G.tube, M.fix, null, true);
   const BfixF = new Batch(THREE, G.box, M.fix);
+  // ROUND 17 — STAINLESS AS ITS OWN BATCH. The front end is 60% brushed steel
+  // in reference/store_07 (belt kerbs, scanner deck, bagging well, the service
+  // desk's returns bay) and Bfix is a flat Lambert: a stainless trough shaded
+  // as matte paint is why the old checkstand read as furniture. M.steel is the
+  // Phong the drums and casters already use, so this costs one draw call and
+  // no new material.
+  const Bsteel = new Batch(THREE, G.box, M.steel);
   const fix = (x, y, z, sx, sy, sz, hex, B = Bfix) => { col.setHex(hex); B.box(x, y, z, sx, sy, sz, col); };
+  const st = (x, y, z, sx, sy, sz, hex = 0xd8d5cc) => {
+    col.setHex(hex); Bsteel.box(x, y, z, sx, sy, sz, col);
+  };
   const tube = (x, y, z, ex, ey, ez, r, len, hex, B = Btube) => { col.setHex(hex); B.push(x, y, z, ex, ey, ez, r, len, r, col); };
   const drum = (x, y, z, r, len, hex) => { col.setHex(hex); Bdrum.push(x, y, z, 0, 0, 0, r, len, r, col); };
 
   // quad soups
   const Qrail = new Quads(), Qsign = new Quads(), Qblade = new Quads();
   const Qlane = new Quads(), Qpromo = new Quads(), Qwsign = new Quads();
+  // ROUND 17 — THE FRONT END.
+  //   Qscreen  self-lit LCDs: till, PIN pad, scale, scanner glass, desk
+  //            terminals. MeshBasic, because a screen IS its own light and
+  //            shading one with the room is what made every previous monitor
+  //            in this store read as a painted rectangle.
+  //   Qfsign   printed plates: CUSTOMER SERVICE, the policy copy, the bag-rack
+  //            cards. Lit, through signMat like every other printed surface.
+  //   Qmag     magazine covers on the impulse racks. See store/front.js for
+  //            why a rack of faces is worth its own draw call on this project.
+  const Qscreen = new Quads(), Qfsign = new Quads(), Qmag = new Quads();
   const Qflag = new Quads();       // coupon flags: same artwork, 100 mm, own LOD
   // Qstrip is COLOURED. ROUND 7 — "fixtures are unbroken emissive ribbons, all
   // identical in brightness and hue." The brightness half was already false
@@ -550,6 +674,8 @@ export function buildStore(THREE, scene) {
     Qflag.field = c(0xd6a840);
     Qlane.field = c(0xf0ead8);
     Qwsign.field = c(0xdbd2bc);
+    Qfsign.field = c(0xe0d8c2);     // front-end plates: cream board, dark copy
+    Qmag.field = c(0xa89a92);       // a magazine rack averages to a warm mud
   };
   paintSoups();
   // ROUND-4 additions.
@@ -861,12 +987,79 @@ export function buildStore(THREE, scene) {
   // below the troffer lenses, which is the correct ordering.
   // The map is a 600 x 1200 plank grid, so u repeats every 2.44 m and v every
   // 4.88 m — the two axes are deliberately NOT the same.
-  const ceilPlane = new THREE.Mesh(
-    new THREE.PlaneGeometry(SW, SD),
-    new THREE.MeshBasicMaterial({
-      map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 2.44, SD / 4.88); return t; })(),
-      color: 0xe4dccb,
-    }));
+  // ROUND 11 — THE CEILING IS NOT THE BRIGHTEST BIG SURFACE. ROUND 6 HAD IT
+  // BACKWARDS AND I CAN SHOW IT ON THE PHOTOGRAPHS.
+  //
+  // Round 6's note above says a supermarket ceiling is "the SECOND-BRIGHTEST
+  // surface in the frame after the lamps themselves", found V ~0.42 on the
+  // ceiling against ~0.55 on the floor, called that inversion impossible, and
+  // lifted the ceiling. Measured on the references, that inversion is what a
+  // real store does:
+  //
+  //   ceiling tile / open floor, medians over strips in the same frame
+  //     reference/store_05 (drop tile, bright modern store)   0.630 / 0.735 = 0.86
+  //     reference/store_02 (dark deck, dim old store)         0.588 / 0.613 = 0.96
+  //     reference/store_01 (dark deck)                        0.214 / 0.563 = 0.38
+  //     this render before this change                        0.736 / 0.510 = 1.44
+  //
+  // The physics is the argument round 6 skipped. A RECESSED troffer throws its
+  // flux DOWN into the room; the tile field between fixtures gets essentially
+  // nothing direct, and is lit by bounce off the floor and the product. The
+  // floor meanwhile is polished VCT taking the lamps specularly at a grazing
+  // angle. So the floor is brighter, in every one of the three references, and
+  // the render had the top third of every frame glowing.
+  //
+  // Verified pure-tile patches, HLS: reference/store_00 (1250,165,1390,230) is
+  // luma 0.660 at 6.8% saturation; reference/store_05 (1450,215,1700,290) is
+  // 0.690 at 13.0%. This render measured 0.736 at 21.4% in the same framing.
+  // Half of that comes out of ceilTex's own chroma (see tex.js) and the rest
+  // out of this tint, which was 0xe4dccb.
+  //
+  // AND THE TILE IS NOT A FLAT SLAB. Dropping an unlit Basic plane's tint is
+  // exactly the move that made round 4b's ceiling read as mud, so the value
+  // that comes off is replaced by STRUCTURE: the board within about half a
+  // metre of a light row is genuinely brighter, because the flange spills
+  // sideways onto it, and rowLift() below computes that from the same row
+  // pitch lightRow() lays the fixtures on. One derivation, two consumers.
+  const ceilMat = new THREE.MeshBasicMaterial({
+    map: (() => { const t = T.ceil.clone(); t.needsUpdate = true; t.repeat.set(SW / 2.44, SD / 4.88); return t; })(),
+    // 0xe4dccb -> 0xd0cabe landed the in-frame tile at luma 0.700 / sat 13.8%
+    // against ref00 0.660/6.8% and ref05 0.690/13.0%; this last 3.6% takes it
+    // to the midpoint of the two references rather than the top of the range.
+    color: 0xc8c3b7,
+  });
+  // ROW LIFT. The board beside a fixture is brighter than the board halfway
+  // between two, because a recessed troffer's flange spills sideways onto the
+  // tile it is let into. Every number here is DERIVED from the same row plan
+  // lightRow() is called with sixty lines below — aisle centrelines at
+  // aisleX(i) and gondola centrelines at aisleX(i) + PITCH/2 interleave to one
+  // uniform lattice of pitch PITCH/2 — so moving an aisle moves the lift with
+  // it. Nothing here is a second copy of the row plan; if lightRow's arguments
+  // change and this does not, ROW_HZ is the one line that has to follow, and
+  // it is written against the same HALF + 2.1 that the call site uses.
+  const ROW_P = PITCH / 2;
+  const ROW_X0 = aisleX(0);
+  const ROW_HX = (AISLE_COUNT - 1) * PITCH / 2;    // half-extent of the lattice
+  const ROW_HZ = HALF + 2.1;                       // lightRow()'s own z span
+  const ROW_SIG = 0.52;                            // metres of sideways spill
+  ceilMat.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vCeilW;')
+      .replace('#include <begin_vertex>',
+        '#include <begin_vertex>\n\tvCeilW = ( modelMatrix * vec4( transformed, 1.0 ) ).xyz;');
+    sh.fragmentShader = sh.fragmentShader
+      .replace('#include <common>', '#include <common>\nvarying vec3 vCeilW;')
+      .replace('#include <tonemapping_fragment>', `
+{
+  float d = abs( mod( vCeilW.x - ${ROW_X0.toFixed(4)} + ${(ROW_P / 2).toFixed(4)}, ${ROW_P.toFixed(4)} ) - ${(ROW_P / 2).toFixed(4)} );
+  float inX = 1.0 - smoothstep( ${ROW_HX.toFixed(3)}, ${(ROW_HX + 1.1).toFixed(3)}, abs( vCeilW.x - ${((ROW_X0 + ROW_HX)).toFixed(4)} ) );
+  float inZ = 1.0 - smoothstep( ${ROW_HZ.toFixed(3)}, ${(ROW_HZ + 1.4).toFixed(3)}, abs( vCeilW.z ) );
+  gl_FragColor.rgb *= 1.0 + 0.17 * inX * inZ * exp( -d * d * ${(1 / (2 * ROW_SIG * ROW_SIG)).toFixed(4)} );
+}
+` + '#include <tonemapping_fragment>');
+  };
+  ceilMat.customProgramCacheKey = () => 'chopCeilRowLift1';
+  const ceilPlane = new THREE.Mesh(new THREE.PlaneGeometry(SW, SD), ceilMat);
   // ROUND 6: was -0.9. A T-bar grid at 40 m subtends well under a pixel, and
   // forcing a sharp mip on it ruled a hard white lattice across the whole far
   // ceiling. Let the mip chain do its job past about fifteen metres; the tile
@@ -1134,17 +1327,35 @@ export function buildStore(THREE, scene) {
   //
   // Everything below is now placed RELATIVE to MAIN_Y +- MAIN_R, which is the
   // only way this class of fault does not come back.
+  // ROUND 11 — COUNT AND SATURATION, both measured.
+  //
+  // SATURATION: the most saturated warm pixels in any reference ceiling band
+  // are reference/store_00's red promo sign at HLS 51% and reference/store_04's
+  // wood slat panel at 55%. The rendered sprinkler main was landing at 74% at
+  // hue 13 — half again more saturated than the most saturated thing in any
+  // real ceiling in the set. Note the authored swatch was only 54%: the AO
+  // pass adds `diffuseColor * uFldBounce * bounce`, and uFldBounce is a warm
+  // 0xb9a887, so a red surface gets more red added than blue and comes out of
+  // the shader MORE saturated than it went in. Authoring at 38% is what lands
+  // at the reference's 52% after that. Anything measured on a swatch in this
+  // file is measured before the bounce term, which is worth remembering the
+  // next time a colour looks right in the source and wrong on screen.
+  //
+  // COUNT: 7 mains over 38 m is one every 5.4 m. Every drop-tile reference in
+  // the set shows no exposed pipe at all, so 5 is still generous; see the
+  // conduit note below for the full dark-fraction measurement.
   const MAIN_Y = CEIL_H - 0.30, MAIN_R = 0.072;
   const MAIN_TOP = MAIN_Y + MAIN_R, MAIN_BOT = MAIN_Y - MAIN_R;
-  for (let k = 0; k < 7; k++) {
-    const z = STORE.minZ + 2.6 + k * (SD - 5) / 6 + rr(rng, -0.25, 0.25);
-    tube(CX, MAIN_Y, z, 0, 0, Math.PI / 2, MAIN_R, SW - 1.2, 0xb04a34, BtubeC);
+  const MAIN_COL = 0x9d5547, MAIN_DK = 0x89473b;
+  for (let k = 0; k < 5; k++) {
+    const z = STORE.minZ + 3.2 + k * (SD - 6.4) / 4 + rr(rng, -0.25, 0.25);
+    tube(CX, MAIN_Y, z, 0, 0, Math.PI / 2, MAIN_R, SW - 1.2, MAIN_COL, BtubeC);
     // GROOVED COUPLINGS. A 150 mm main arrives in 6.4 m sticks and every joint
     // is a Victaulic coupling: a collar a third wider than the pipe with two
     // bolt pads standing off it. Eighty millimetres of a forty-metre run, and
     // the only thing that makes it read as pipe rather than as extrusion.
     for (let x = STORE.minX + 1.6; x < STORE.maxX - 1.4; x += 6.4) {
-      tube(x, MAIN_Y, z, 0, 0, Math.PI / 2, MAIN_R * 1.36, 0.115, 0x8c3a29, BtubeC);
+      tube(x, MAIN_Y, z, 0, 0, Math.PI / 2, MAIN_R * 1.36, 0.115, MAIN_DK, BtubeC);
       for (const s of [-1, 1]) {
         fix(x, MAIN_Y + s * MAIN_R * 1.46, z, 0.06, 0.045, 0.085, 0x6a5949, BfixC);
       }
@@ -1172,10 +1383,10 @@ export function buildStore(THREE, scene) {
       fix(x, hy - 0.086, z, 0.068, 0.008, 0.068, 0xe2dbc6, BfixC);        // deflector
     }
     // ...and what a 150 mm pipe 300 mm under a tile field actually does to it.
-    pipeShade(CX, z, SW - 1.2, 0.44, 'x');
+    pipeShade(CX, z, SW - 1.2, 0.30, 'x');
   }
-  for (let k = 0; k < 6; k++) {                // branch lines running along Z
-    const x = offRow(STORE.minX + 4.2 + k * (SW - 9) / 5 + rr(rng, -0.5, 0.5));
+  for (let k = 0; k < 4; k++) {                // branch lines running along Z
+    const x = offRow(STORE.minX + 5.0 + k * (SW - 10) / 3 + rr(rng, -0.5, 0.5));
     // ROUND-4 BUG. This euler was (0,0,0), which leaves a LatheGeometry-style
     // cylinder on its default +Y axis: every one of these six "branch lines"
     // was a 40 m vertical red pole standing free in the middle of an aisle,
@@ -1185,7 +1396,7 @@ export function buildStore(THREE, scene) {
     // (4b: and it hung at CEIL_H-0.155 with a 45 mm radius, so its crown sat
     // 5 mm inside the door plane — one of the shard sources.)
     const by = CLUTTER_Y - 0.055, br = 0.045;
-    tube(x, by, CZ, Math.PI / 2, 0, 0, br, SD - 2.2, 0x9c4230, BtubeC);
+    tube(x, by, CZ, Math.PI / 2, 0, 0, br, SD - 2.2, MAIN_COL, BtubeC);
     for (let z = STORE.minZ + 3; z < STORE.maxZ - 2; z += 3.05) {
       // hanger rod up to the tile, then the clevis on the pipe — same relative
       // placement as the mains, for the same reason.
@@ -1198,7 +1409,7 @@ export function buildStore(THREE, scene) {
         fix(x, by - br - 0.082, z, 0.056, 0.007, 0.056, 0xe2dbc6, BfixC);
       }
     }
-    pipeShade(x, CZ, SD - 2.2, 0.30, 'z');
+    pipeShade(x, CZ, SD - 2.2, 0.22, 'z');
   }
   for (let k = 0; k < 12; k++) {
     const x = offRow(STORE.minX + 3 + (k % 6) * (SW - 6) / 5 + rr(rng, -0.5, 0.5));
@@ -1222,7 +1433,32 @@ export function buildStore(THREE, scene) {
   // shadow it drops on them is real. Conduit running ALONG an aisle at the same
   // x as a light row is what threaded a black rod down the length of a lit
   // troffer, so those get pushed off the row as well as below the door plane.
-  for (let k = 0; k < 11; k++) {             // conduit / loose data cable
+  // ROUND 11 — 11 RUNS -> 5, AND ALL OF THEM GALVANISED.
+  //
+  // Measured on three hand-verified pure-ceiling rectangles (the crops are in
+  // the round-11 report as evidence, so the regions can be checked rather than
+  // taken on trust), fraction of ceiling darker than its own median by 0.18:
+  //
+  //     reference/store_00  (1190,0,1400,125)     2.66%
+  //     reference/store_04  (80,0,700,120)        4.69%
+  //     reference/store_05  (1150,140,1800,330)   4.89%
+  //     this render         (300,0,900,62)       20.52%
+  //     this render         (120,95,700,175)     26.56%
+  //
+  // Four to eight times the dark content of any reference, and once the tile
+  // stopped being marbled (see tex.js) it became the loudest thing left in the
+  // top third of the frame. The cause is arithmetic, not art: 11 runs across X
+  // plus 7 along Z plus 7 sprinkler mains plus 6 branches plus 2 full-length
+  // track tubes is 33 dark rules crossing a ceiling, and every drop-tile
+  // reference in the set — store_00, store_03, store_04, store_05 — shows
+  // ZERO exposed pipe or conduit, because in a tile ceiling all of it is in
+  // the plenum above the board. The brief asks for sprinkler pipes, so they
+  // stay; what cannot stay is thirty-three of them.
+  //
+  // The colour was also self-contradictory: the round-4b comment below says
+  // conduit in a store is galvanised EMT and light grey, and then `k % 3` put
+  // a third of the runs in 0x6e675a, which is not galvanised anything.
+  for (let k = 0; k < 5; k++) {              // conduit / loose data cable
     const z = STORE.minZ + 3 + rng() * (SD - 6);
     const x0 = STORE.minX + rr(rng, 1, 8), x1 = STORE.maxX - rr(rng, 1, 8);
     // 4b: these were 36-64 mm across in near-black (0x3c3a34), which at twenty
@@ -1232,16 +1468,16 @@ export function buildStore(THREE, scene) {
     // EMT and the cable is run in trays: light grey, and thick enough to have a
     // lit side and a shaded side rather than being a mathematical line.
     tube((x0 + x1) / 2, CLUTTER_Y - rr(rng, 0.01, 0.07), z, 0, 0, Math.PI / 2,
-      rr(rng, 0.030, 0.052), x1 - x0, k % 3 ? 0x9c9482 : 0x6e675a, BtubeC);
+      rr(rng, 0.030, 0.052), x1 - x0, 0xa9a291, BtubeC);
     for (let x = x0 + 1.5; x < x1; x += rr(rng, 2.4, 5.0)) {
       fix(x, CLUTTER_Y, z, 0.07, 0.10, 0.07, 0x8d8676, BfixC);
     }
   }
-  for (let k = 0; k < 7; k++) {              // and the runs going the other way
+  for (let k = 0; k < 3; k++) {              // and the runs going the other way
     const x = offRow(STORE.minX + 3 + rng() * (SW - 6));
     const z0 = STORE.minZ + rr(rng, 1, 7), z1 = STORE.maxZ - rr(rng, 1, 7);
     tube(x, CLUTTER_Y - rr(rng, 0.0, 0.06), (z0 + z1) / 2, Math.PI / 2, 0, 0,
-      rr(rng, 0.028, 0.046), z1 - z0, k % 2 ? 0x9c9482 : 0x746c5e, BtubeC);
+      rr(rng, 0.028, 0.046), z1 - z0, 0xa9a291, BtubeC);
     for (let z = z0 + 1.8; z < z1; z += rr(rng, 2.6, 5.4)) {
       fix(x, CLUTTER_Y + 0.005, z, 0.06, 0.09, 0.06, 0x8d8676, BfixC);
     }
@@ -1249,12 +1485,18 @@ export function buildStore(THREE, scene) {
   // PERIMETER TRACK LIGHTING. Aisle 0 and aisle 7 are nearly six metres wide
   // and their ceiling band measured five points below every interior aisle;
   // a track run over the wall shelving is what a real store puts there.
+  // ROUND 11 — the track itself was 0x33363b and its heads 0x2c2f33, i.e. two
+  // 34 m near-black rules plus forty near-black lumps, in the two widest
+  // aisles in the building. Real track is an extruded aluminium channel and
+  // real heads on a grocery perimeter are white or bronze; the near-black was
+  // costing more dark ceiling than the whole sprinkler grid. Head spacing also
+  // goes 1.45 -> 1.95 m, which is what a 3-circuit track is actually loaded to.
   for (const tx of [STORE.minX + 2.3, STORE.maxX - 2.3]) {
-    tube(tx, CEIL_H - 0.20, CZ, Math.PI / 2, 0, 0, 0.035, SD - 4.0, 0x33363b, BtubeC);
-    for (let z = STORE.minZ + 3.0; z < STORE.maxZ - 2.0; z += 1.45) {
+    tube(tx, CEIL_H - 0.20, CZ, Math.PI / 2, 0, 0, 0.030, SD - 4.0, 0x8d8778, BtubeC);
+    for (let z = STORE.minZ + 3.0; z < STORE.maxZ - 2.0; z += 1.95) {
       const lean = tx < 0 ? 0.55 : -0.55;
-      fix(tx, CEIL_H - 0.31, z, 0.07, 0.20, 0.07, 0x2c2f33, BfixC);
-      tube(tx + lean * 0.16, CEIL_H - 0.42, z, 0, 0, lean, 0.055, 0.24, 0x2c2f33, BtubeC);
+      fix(tx, CEIL_H - 0.31, z, 0.07, 0.20, 0.07, 0x6d675c, BfixC);
+      tube(tx + lean * 0.16, CEIL_H - 0.42, z, 0, 0, lean, 0.055, 0.24, 0x6d675c, BtubeC);
       fix(tx + lean * 0.24, CEIL_H - 0.50, z, 0.11, 0.05, 0.11, 0xf6efdc, BfixC);
     }
   }
@@ -1342,9 +1584,24 @@ export function buildStore(THREE, scene) {
   // Cardboard cards on string at wildly varying heights. They cost almost
   // nothing and they put genuine detail into the top third of the frame, which
   // measured as the single flattest region in every round-2 render.
-  const dangle = (x0, z, y) => {
+  // ROUND 16 — `dept`. A dangler hangs over ONE gondola pair, so it knows which
+  // department it is advertising, and cellUV((rng()*16)|0) did not. That is how
+  // FROZEN ONLY ended up over the cereal aisle; the grammar gate in light.js
+  // stops the wrong WORDS being generated and this stops the right words being
+  // hung in the wrong place. Both halves are needed — see signCellCheck().
+  {
+    // Same contract as copyCheck() in brands.js: fail LOUDLY. A promo grammar
+    // that has quietly lost its gate prints a plausible wrong sentence over a
+    // whole aisle, which is the failure mode a screenshot does not flag.
+    const sg = LT.signCheck(SIGN_DEPTS);
+    const sc = TX.signCellCheck(SIGN_DEPTS);
+    if (sg.length || sc.length) {
+      throw new Error('promo signage gate: ' + [...sg.slice(0, 4), ...sc.slice(0, 4)].join(' | '));
+    }
+  }
+  const dangle = (x0, z, y, dept) => {
     const x = offLamp(x0);
-    const uv = cellUV((rng() * 16) | 0, 4, 4);
+    const uv = cellUV(TX.promoCellFor(TX.DANGLE_DEPT, dept === undefined ? null : dept, rng()), 4, 4);
     const w = rr(rng, 0.26, 0.40), h = w * rr(rng, 0.68, 0.86);
     const yaw = rr(rng, -0.5, 0.5);
     const cs = Math.cos(yaw) * w / 2, sn = Math.sin(yaw) * w / 2;
@@ -1378,24 +1635,38 @@ export function buildStore(THREE, scene) {
   for (let i = 0; i < AISLE_COUNT - 1; i++) {
     const gx = aisleX(i) + PITCH / 2;
     for (let k = 0; k < 11; k++) {
-      dangle(gx + rr(rng, -0.62, 0.62), rr(rng, -HALF + 1, HALF - 1), rr(rng, 3.40, 4.60));
+      // the gondola at gx carries DEPTS[i] on its left face and DEPTS[i+1] on
+      // its right, so a card over the centreline can honestly advertise either
+      dangle(gx + rr(rng, -0.62, 0.62), rr(rng, -HALF + 1, HALF - 1), rr(rng, 3.40, 4.60),
+        DEPT_KEYS[(i + (rng() < 0.5 ? 0 : 1)) % DEPT_KEYS.length]);
     }
     for (let k = 0; k < 7; k++) {
-      dangle(gx + rr(rng, -0.90, 0.90), rr(rng, -HALF + 1.5, HALF - 1.5), rr(rng, 2.86, 3.40));
+      dangle(gx + rr(rng, -0.90, 0.90), rr(rng, -HALF + 1.5, HALF - 1.5), rr(rng, 2.86, 3.40),
+        DEPT_KEYS[(i + (rng() < 0.5 ? 0 : 1)) % DEPT_KEYS.length]);
     }
   }
   for (let i = 0; i < AISLE_COUNT; i++) {
+    // a card hung ON the aisle centreline is inside that aisle, so it advertises
+    // one of the two departments facing into it
     for (let k = 0; k < 6; k++) {
-      dangle(aisleX(i) + rr(rng, -1.1, 1.1), rr(rng, -HALF + 1.5, HALF - 1.5), rr(rng, 2.90, 3.55));
+      dangle(aisleX(i) + rr(rng, -1.1, 1.1), rr(rng, -HALF + 1.5, HALF - 1.5), rr(rng, 2.90, 3.55),
+        DEPT_KEYS[(i + (rng() < 0.5 ? 0 : 1)) % DEPT_KEYS.length]);
     }
   }
+  // The two cross-aisles are DEPARTMENT-FREE on purpose: a card over the front
+  // walkway is above the checkouts and the whole shop is behind it, so it draws
+  // from the generic third of the atlas. Written out rather than left to the
+  // default, because "no department" is a decision here and a bug everywhere else.
   for (let k = 0; k < 22; k++) {
     dangle(STORE.minX + 3 + rng() * (SW - 6), FRONT_WALK_Z + rr(rng, -2.6, 1.8),
-      rr(rng, 3.2, 4.5));
+      rr(rng, 3.2, 4.5), null);
   }
+  // The BACK walkway runs the length of the freezer wall, so a card hanging
+  // over it is advertising the frozen department and can say KEEP FROZEN. The
+  // FRONT walkway above the checkouts genuinely is department-free.
   for (let k = 0; k < 12; k++) {
     dangle(STORE.minX + 3 + rng() * (SW - 6), BACK_WALK_Z + rr(rng, -1.6, 1.6),
-      rr(rng, 3.3, 4.5));
+      rr(rng, 3.3, 4.5), rng() < 0.62 ? FROZEN.key : null);
   }
   scene.onBeforeRender = (r, sc, cam) => {
     const p = cam && cam.position;
@@ -1509,11 +1780,14 @@ export function buildStore(THREE, scene) {
   const PERIM = {
     key: 'perim', steps: [0.235, 0.395, 0.285, 0.505, 0.325, 0.445], vacancy: 1.5, base: 0.145,
   };
-  function deckPlan(r, prof) {
+  // ROUND 15 — topY is an argument. A 66 in gondola does not carry a 78 in
+  // gondola's shelf count, so a shorter run has to lose a deck rather than have
+  // its top one clipped off. Defaults to SHELF_H, which is round 14 exactly.
+  function deckPlan(r, prof, topY = SHELF_H) {
     const ys = [];
     let y = prof.base + rr(r, -0.012, 0.030);
     let guard = 0;
-    while (y < SHELF_H - 0.235 && guard++ < 14) {
+    while (y < topY - 0.235 && guard++ < 14) {
       ys.push(y);
       y += pick(r, prof.steps) + 0.036;
     }
@@ -1558,25 +1832,72 @@ export function buildStore(THREE, scene) {
     if (isZ) fix(lip + dir * 0.022, y + 0.010, a, 0.030, 0.028, 0.014, 0xdcd5c2);
     else fix(a, y + 0.010, lip + dir * 0.022, 0.014, 0.028, 0.030, 0xdcd5c2);
   }
-  function railRun(lip, y, a0, a1, dir, stepFn) {
-    const n = Math.max(1, Math.round((a1 - a0) / SECT));
-    const w = (a1 - a0) / n;
-    for (let k = 0; k < n; k++) {
-      const s = a0 + k * w + 0.011, e = a0 + (k + 1) * w - 0.011;
-      qX(Qrail, lip + dir * 0.012, y + (stepFn ? stepFn(k) : 0), (s + e) / 2,
-        e - s, 0.062, dir, [0, 0, (e - s), 1]);
+  // ROUND 15 — ph. A price rail is a C-channel cut to the 4 ft shelf under it,
+  // so the section ENDS are where the uprights are, and where the uprights are
+  // depends on where the run was started. Round 14 laid n equal sections
+  // between a0 and a1 with n = round(len / SECT), which is the same integer for
+  // every run in the building: the rail ends of the run on your left were at
+  // the same z as the rail ends of the run on your right, all the way to the
+  // vanishing point. Laying them on a phase-shifted comb instead leaves a short
+  // partial section at each end, which is what a real run that did not divide
+  // evenly into 4 ft actually looks like.
+  // ---- THE RAIL CHANNEL ITSELF. ROUND 17. --------------------------------
+  //
+  // Blind test 9, still open: "one label block repeated at identical pitch
+  // along every rail. Real rails have varying widths, gaps, tags at different
+  // heights, peel-up corners, sale tags stapled over."
+  //
+  // Round 14 fixed HALF of that and the half it fixed is the wrong half. It
+  // laid the cuts on a phase-shifted comb so two runs facing each other stopped
+  // ending at the same z — which is real, and which the critic was not
+  // complaining about. WITHIN a run every section was still exactly SECT long,
+  // every channel was exactly 62 mm tall, every channel was present, and every
+  // channel sat at exactly the deck's y. Four dead-straight periodicities.
+  //
+  // What a real run of channel is: 4 ft extrusion cut on site, so lengths are
+  // 4 ft MINUS whatever the last guy trimmed; three profiles in the building
+  // because three buyers ordered over ten years; a section missing here and
+  // there where somebody pulled one to reuse; and none of them clipped to the
+  // same millimetre of deck lip. That is four numbers, applied once, here,
+  // rather than at the twenty call sites — the same argument as ragged().
+  //
+  //   dw     +/-16% on section length          kills the pitch
+  //   miss   4.5% of sections absent           kills "every lip has a strip"
+  //   h      62 / 45 / 74 mm, weighted         kills the constant height
+  //   dy     +/-4 mm on where it clipped       kills the dead-straight line
+  const RAIL_H = [0.062, 0.062, 0.062, 0.045, 0.074];
+  const railSeg = (emit, a0, a1, base) => {
+    let a = a0;
+    let first = true;
+    while (a < a1 - 0.06) {
+      const len = SECT * rr(rng, 0.84, 1.16);
+      const b = Math.min(a1, a + len);
+      const s = a + 0.011, e = b - 0.011;
+      a = b;
+      if (e - s < 0.08) continue;
+      // A run does not start with a hole and it does not end with one: a gap
+      // at an end reads as the run being short, not as a missing channel.
+      const inner = !first && b < a1 - 0.06;
+      first = false;
+      if (inner && rng() < 0.045) continue;
+      emit((s + e) / 2, e - s, base + rr(rng, -0.004, 0.004),
+        RAIL_H[(rng() * RAIL_H.length) | 0]);
     }
+  };
+  function railRun(lip, y, a0, a1, dir, stepFn, ph = 0) {
+    let k = 0;
+    railSeg((mid, w, yy, h) => {
+      qX(Qrail, lip + dir * 0.012, yy + (stepFn ? stepFn(k++) : 0), mid,
+        w, h, dir, [0, 0, w, 1]);
+    }, a0 + (ph % SECT) * 0.5, a1, y);
     for (let a = a0 + rr(rng, 0.6, FLAG_EVERY); a < a1 - 0.2; a += rr(rng, 2.9, FLAG_EVERY * 3.4)) {
       couponFlag(lip, y, a, dir, true);
     }
   }
   function railRunX(cz, y, a0, a1, dir) {
-    const n = Math.max(1, Math.round((a1 - a0) / SECT));
-    const w = (a1 - a0) / n;
-    for (let k = 0; k < n; k++) {
-      const s = a0 + k * w + 0.011, e = a0 + (k + 1) * w - 0.011;
-      qZ(Qrail, (s + e) / 2, y, cz, e - s, 0.062, dir, [0, 0, (e - s), 1]);
-    }
+    railSeg((mid, w, yy, h) => {
+      qZ(Qrail, mid, yy, cz, w, h, dir, [0, 0, w, 1]);
+    }, a0, a1, y);
     for (let a = a0 + rr(rng, 0.6, FLAG_EVERY); a < a1 - 0.2; a += rr(rng, 2.9, FLAG_EVERY * 3.4)) {
       couponFlag(cz, y, a, dir, false);
     }
@@ -1606,6 +1927,11 @@ export function buildStore(THREE, scene) {
   // missing because somebody pulled it and never replaced it. That is four
   // numbers and it applies to every tag in the building, because it is done
   // here rather than at seven call sites.
+  // ROUND 17 — the two states round 9's list named and did not build: a card
+  // whose outer corner has PEELED OUT of the channel, and a sale card STAPLED
+  // OVER the SKU card underneath it. Both are emitted from here for the same
+  // reason the jitter is: there are twenty call sites and none of them should
+  // know about either.
   const ragged = (h) => {
     if (rng() < 0.055) return null;                       // pulled and never replaced
     return {
@@ -1613,19 +1939,59 @@ export function buildStore(THREE, scene) {
       // one in six went in crooked; the rest are within half a degree
       tilt: rng() < 0.17 ? rr(rng, -0.105, 0.105) : rr(rng, -0.012, 0.012),
       h: h * (rng() < 0.13 ? rr(rng, 0.68, 0.78) : rr(rng, 0.94, 1.05)),
+      // a card that has come out of its channel at one end. 4 to 9 mm of kick
+      // over the outer quarter — enough to catch a lamp along its own edge,
+      // which is what makes it visible at all.
+      peel: rng() < 0.07 ? { f: rr(rng, 0.62, 0.78), k: rr(rng, 0.004, 0.009) } : null,
+      // and the yellow card somebody stapled over the top of it last Tuesday
+      over: rng() < 0.10 ? {
+        c: rr(rng, -0.30, 0.30), w: rr(rng, 0.52, 0.76),
+        t: rr(rng, -0.22, 0.22), p: rr(rng, 0.0016, 0.0032),
+      } : null,
     };
+  };
+  // One emitter for both axes. `C` is the card centre, `R`/`U` its half-extent
+  // vectors, `N` the unit outward normal — the only thing that differs between
+  // a rail on a gondola face and one on a back-wall run.
+  const ragCard = (C, R, U, N, uv, g) => {
+    if (g.peel) {
+      const f = g.peel.f, k = g.peel.k;
+      const mid = [C[0] + R[0] * (f - 1), C[1] + R[1] * (f - 1), C[2] + R[2] * (f - 1)];
+      Qtag.rect(mid, [R[0] * f, R[1] * f, R[2] * f], U,
+        uv[0], uv[1], uv[0] + (uv[2] - uv[0]) * f, uv[3]);
+      const fc = [C[0] + R[0] * f + N[0] * k * 0.5,
+        C[1] + R[1] * f + N[1] * k * 0.5, C[2] + R[2] * f + N[2] * k * 0.5];
+      Qtag.rect(fc, [R[0] * (1 - f) + N[0] * k, R[1] * (1 - f) + N[1] * k,
+        R[2] * (1 - f) + N[2] * k], U,
+      uv[0] + (uv[2] - uv[0]) * f, uv[1], uv[2], uv[3]);
+    } else {
+      Qtag.rect(C, R, U, uv[0], uv[1], uv[2], uv[3]);
+    }
+    if (g.over) {
+      const o = g.over, uv2 = tagUV(null);
+      const cs = Math.cos(o.t), sn = Math.sin(o.t);
+      // rotate R and U about N by o.t — a stapled card is never square to the
+      // one under it, and a rotation in the card's own plane is what that is
+      const R2 = [R[0] * cs - U[0] * sn, R[1] * cs - U[1] * sn, R[2] * cs - U[2] * sn];
+      const U2 = [R[0] * sn + U[0] * cs, R[1] * sn + U[1] * cs, R[2] * sn + U[2] * cs];
+      Qtag.rect([C[0] + R[0] * o.c + N[0] * o.p, C[1] + R[1] * o.c + N[1] * o.p,
+        C[2] + R[2] * o.c + N[2] * o.p],
+      [R2[0] * o.w, R2[1] * o.w, R2[2] * o.w],
+      [U2[0] * 0.86, U2[1] * 0.86, U2[2] * 0.86],
+      uv2[0], uv2[1], uv2[2], uv2[3]);
+    }
   };
   const ragX = (x, y, z, d, h, dir, kindT) => {
     const g = ragged(h); if (!g) return;
     const uv = tagUV(kindT), hd = dir > 0 ? -d / 2 : d / 2;
-    Qtag.rect([x, y + g.dy, z], [0, g.tilt * d * 0.5, hd], [0, g.h / 2, 0],
-      uv[0], uv[1], uv[2], uv[3]);
+    ragCard([x, y + g.dy, z], [0, g.tilt * d * 0.5, hd], [0, g.h / 2, 0],
+      [dir, 0, 0], uv, g);
   };
   const ragZ = (x, y, z, w, h, dir, kindT) => {
     const g = ragged(h); if (!g) return;
     const uv = tagUV(kindT), hw = dir > 0 ? w / 2 : -w / 2;
-    Qtag.rect([x, y + g.dy, z], [hw, g.tilt * w * 0.5, 0], [0, g.h / 2, 0],
-      uv[0], uv[1], uv[2], uv[3]);
+    ragCard([x, y + g.dy, z], [hw, g.tilt * w * 0.5, 0], [0, g.h / 2, 0],
+      [0, 0, dir], uv, g);
   };
 
   function buildRun(idx, x, halfW, faces, opts = {}) {
@@ -1644,7 +2010,62 @@ export function buildStore(THREE, scene) {
     // one shoppers actually stand in front of, and the blades nearest it are
     // the ones that have to be readable from the cross-aisle.
     const xEnd = Math.abs(z1 - CROSS_Z) < Math.abs(z0 - CROSS_Z) ? z1 : z0;
-    const DECK = deckPlan(rng, prof);
+    // ROUND 15 — THE AISLE MIRRORED ITSELF, AND THIS IS WHERE IT DID IT.
+    //
+    // Measured before the fix, whole-frame and region-free: mirror self-MAE in
+    // L* divided by the frame's own random-pair MAE (0 = the frame is exactly
+    // its own reflection, 1 = mirroring tells you nothing the frame did not),
+    // axis searched over the central +/-12% of columns, both sides through the
+    // identical rule at 960 px wide:
+    //
+    //     six reference aisle photographs   0.656 - 0.824, median 0.723
+    //     render, three down-aisle poses    0.530 / 0.649 / 0.654
+    //
+    // Every render pose sat below every photograph, and the low one sat 0.126
+    // below the most symmetric reference in the set. BOX and LANCZOS agree to
+    // 0.004, so unlike the four statistics AGENTS_BRIEF retired, this one is
+    // not a function of the kernel.
+    //
+    // WHY. Everything longitudinal in a run was computed from z0 and len, and
+    // z0 and len are IDENTICAL for every run in the building. So the blade
+    // signs, the kick-plate joints, the price-rail section ends and the
+    // uprights of the run on your left landed at the same z, to the
+    // millimetre, as the run on your right — and the blades landed at the same
+    // height as well. A down-aisle frame is mostly two shelf runs converging,
+    // and both of them were phase-locked to the same comb.
+    //
+    // Two gondola runs installed on different days are not in phase, and no
+    // planogram tries to put them in phase. PH is that: one longitudinal
+    // offset per FACE, applied to every comb the face owns, so the two runs
+    // you see across an aisle come from different gondolas and therefore
+    // different offsets. It is a phase, not a jitter — the 4 ft section pitch
+    // is a real manufactured pitch and stays exactly 4 ft.
+    const ph32 = (a) => {
+      let v = ((a >>> 0) * 2654435761) >>> 0;
+      v ^= v >>> 15; v = (v * 2246822519) >>> 0; v ^= v >>> 13;
+      return (v >>> 0) / 4294967296;
+    };
+    const RUNPH = ph32(idx * 7919 + 13);
+    // ROUND 15 — AND THE RUNS ARE NOT ALL THE SAME HEIGHT.
+    // Dephasing the combs (below) moved the shelf-band mirror statistic
+    // +0.083 +/- 0.033 over six interior aisles, 6 of 6 up, and left it at
+    // 0.741 against a reference band of 0.765-0.906. What was still perfectly
+    // mirrored is the gondola OUTLINE: both runs 2.05 m, both 1.3 m deep, both
+    // topped by a dead-level cap converging on the same vanishing point.
+    //
+    // Real fixture catalogues are 54 / 66 / 72 / 78 in and a planogram mixes
+    // them by department — a paper-goods run is tall because the product is
+    // bulky and light, a canned-goods run is short because it is not. So TOP
+    // is per RUN, derived from SHELF_H rather than typed (config.js still owns
+    // the number; this is a catalogue around it), and it is clumped by idx so
+    // the height is a property of the fixture and not per-frame noise.
+    //
+    // The range is bounded at 0.86-1.12 x SHELF_H = 1.76-2.30 m for a reason
+    // that is NOT aesthetic: camera.js line 581 and game/sight.js bucket every
+    // collider with max.y in (1.5, 2.5] to the same inflated sight height, so
+    // anywhere inside that band this changes the picture and provably does not
+    // change what the cop or a camera can see over. Outside it, it would.
+    const TOP = SHELF_H * [0.88, 1.0, 1.12, 1.0, 0.88, 1.12, 1.0][idx % 7];
     // NOTCH STEPS. ROUND 7 — "everything is orthogonal: every sign dead level
     // and parallel, every deck at the identical notch height."
     //
@@ -1657,7 +2078,15 @@ export function buildStore(THREE, scene) {
     // Quantised to the real 25.4 mm notch, seeded per run so the two faces of
     // one gondola do NOT step together (they are hung independently), and the
     // bottom deck is left alone because it sits on the base, not on notches.
-    const NSEED = (Math.abs(Math.round(x * 100)) * 7919) >>> 0;
+    // ROUND 15 — Math.abs() WAS A MIRROR, AND IT MIRRORED THE WHOLE STORE.
+    // The island gondolas sit at (i - 3) * PITCH for i = 0..6, i.e. at
+    // -15.9 -10.6 -5.3 0 +5.3 +10.6 +15.9 — exactly symmetric about x = 0. So
+    // abs(x) gave gondolas 2 and 4, 1 and 5, 0 and 6 the SAME seed, and the
+    // notch stair of the left half of the building was a reflection of the
+    // right half, bay for bay. Three mirrored pairs, free, for two rounds.
+    // idx is unique per run and dir separates the two faces of one gondola,
+    // which is what the paragraph above always claimed was happening.
+    const NSEED = ((idx * 2654435761) ^ (Math.round(x * 100) + 262144) * 7919) >>> 0;
     const notch = (k, d) => {
       if (d === 0) return 0;
       const h = ((NSEED + k * 2654435761 + d * 40503) >>> 0) / 4294967296;
@@ -1677,8 +2106,7 @@ export function buildStore(THREE, scene) {
     // reference photographs. What is left is the part the field cannot know:
     // stock rotation puts the fresher, glossier cases at eye level and the
     // tired stuff on the bottom deck. A tenth of a stop, not most of one.
-    const LIT = DECK.map((_, i) => 0.95 + 0.12 * Math.pow(i / Math.max(1, DECK.length - 1), 0.82));
-    const dd = deckDepths(halfW - 0.05, DECK.length);
+
 
     // KICK PLATE + BASE. ROUND 9 — DENTED, AND DENTED IN SECTIONS.
     //
@@ -1693,7 +2121,12 @@ export function buildStore(THREE, scene) {
     // tolerance no supermarket has ever met.
     {
       const KSEC = 1.22;                       // one stamped section
-      const nk = Math.max(1, Math.round(len / KSEC));
+      // ROUND 15 — per-RUN section count. round(len / KSEC) is the same integer
+      // for every run in the store, so the dark reveal at every kick joint used
+      // to line up across the aisle. A kick is clipped on section by section
+      // and nobody counts; +/-1 section over 12 m is well inside what a real
+      // install does, and it takes the joints out of phase for good.
+      const nk = Math.max(1, Math.round(len / KSEC + (RUNPH - 0.5) * 1.6));
       for (let s = 0; s < nk; s++) {
         const sl = len / nk;
         const sz = zmid - len / 2 + (s + 0.5) * sl;
@@ -1719,19 +2152,37 @@ export function buildStore(THREE, scene) {
     // panel: it shows in the bottom of every cavity and across the whole of
     // any bare bay, and round 2 put a smooth beige slab there.
     if (faces.length === 2) {
-      fix(x, 1.10, zmid, 0.07, 1.90, len, P.peg);
+      const PGH = TOP - 0.15, PGC = 0.15 + PGH / 2;
+      fix(x, PGC, zmid, 0.07, PGH, len, P.peg);
       for (const s2 of [-1, 1]) {
-        qX(Qpeg, x + s2 * 0.037, 1.10, zmid, len, 1.90, s2, [0, 0, len / 0.30, 1.90 / 0.30]);
+        qX(Qpeg, x + s2 * 0.037, PGC, zmid, len, PGH, s2, [0, 0, len / 0.30, PGH / 0.30]);
       }
     } else {
       const bx = x - faces[0].dir * (halfW - 0.04);
-      fix(bx, 1.10, zmid, 0.08, 1.90, len, P.peg);
-      qX(Qpeg, bx + faces[0].dir * 0.042, 1.10, zmid, len, 1.90, faces[0].dir,
-        [0, 0, len / 0.30, 1.90 / 0.30]);
+      const PGH = TOP - 0.15, PGC = 0.15 + PGH / 2;
+      fix(bx, PGC, zmid, 0.08, PGH, len, P.peg);
+      qX(Qpeg, bx + faces[0].dir * 0.042, PGC, zmid, len, PGH, faces[0].dir,
+        [0, 0, len / 0.30, PGH / 0.30]);
     }
 
     for (const f of faces) {
       const lip = x + f.dir * halfW;
+      // ROUND 15 — THE DECK LADDER IS PER FACE NOW.
+      // The notch comment above already says the two faces of one gondola are
+      // hung independently, and the notch honoured that. The ladder itself did
+      // not: one deckPlan() was computed per SEGMENT and both faces shared it,
+      // so the shelf lines of a run and the shelf lines of the run opposite it
+      // sat at the same heights whenever the two carried the same profile —
+      // and RUN_PROFILE clumps profiles deliberately, so that is aisles 1 and
+      // 4 by construction. Hanging each face on its own ladder is both what a
+      // real gondola is and the largest horizontal-line asymmetry available.
+      const DECK = deckPlan(rng, prof, TOP);
+      const LIT = DECK.map((_, i2) => 0.95 + 0.12 * Math.pow(i2 / Math.max(1, DECK.length - 1), 0.82));
+      const dd = deckDepths(halfW - 0.05, DECK.length);
+      // ...and the face's own longitudinal phase. dir separates the two faces
+      // of ONE gondola; idx separates the two gondolas that bound an aisle,
+      // which is the pair a player is actually looking at.
+      const PH = ph32(idx * 40507 + (f.dir > 0 ? 101 : 307)) * SECT;
       // what the strip overhead is actually doing above THIS face, sampled per
       // facing block — a bay under a dead unit comes out visibly dimmer
       const faceLit = (z) => 0.78 + 0.30 * lampAt(x + f.dir * 0.95, z);
@@ -1757,8 +2208,8 @@ export function buildStore(THREE, scene) {
         // continuous extruded bar the full 25 m of the aisle, which is a very
         // strong architectural giveaway even at distance: real shelving is
         // assembled from 3-4ft sections and every joint shows.
-        railRun(lip, DECK[d] - 0.020, z0, z1, f.dir, (k) => notch(k, d));
-        const head = (DECK[d + 1] !== undefined ? DECK[d + 1] : SHELF_H + 0.03) - DECK[d] - 0.036;
+        railRun(lip, DECK[d] - 0.020, z0, z1, f.dir, (k) => notch(k, d), PH);
+        const head = (DECK[d + 1] !== undefined ? DECK[d + 1] : TOP + 0.03) - DECK[d] - 0.036;
         // cavity gradient: dark under the shelf above, fading down. Also what
         // makes a sold-out void read as a black hole rather than a beige gap.
         // CAVITY AMBIENT OCCLUSION — multiply-blended across the mouth of the
@@ -1839,11 +2290,19 @@ export function buildStore(THREE, scene) {
       // at ~1in pitch all the way up. The slot column is the strongest small
       // vertical rhythm in an aisle and it was completely missing.
       const UPW = 0.072;
-      for (let z = z0; z <= z1 + 0.01; z += SECT) {
-        fix(lip - f.dir * 0.026, 1.06, z, 0.052, 2.00, UPW, P.upright);
-        qX(Qslot, lip + f.dir * 0.004, 1.06, z, UPW, 2.00, f.dir, [0, 0, 1, 2.00 / 0.05]);
+      // ...on the same phase-shifted comb as the rail, because a rail section
+      // terminates AT an upright. Two runs across an aisle now have their slot
+      // columns interleaved rather than paired, which is the strongest small
+      // vertical rhythm in the frame and was previously in lockstep.
+      for (let z = z0 + (PH % SECT || SECT) - SECT; z <= z1 + 0.01; z += SECT) {
+        if (z < z0 - 0.001) continue;
+        // an upright is cut to the fixture height, so it and its slot column
+        // both follow TOP. The foot stays on the base at 0.06.
+        const UPH = TOP + 0.01 - 0.06, UPC = 0.06 + UPH / 2;
+        fix(lip - f.dir * 0.026, UPC, z, 0.052, UPH, UPW, P.upright);
+        qX(Qslot, lip + f.dir * 0.004, UPC, z, UPW, UPH, f.dir, [0, 0, 1, UPH / 0.05]);
         // the two flanges that catch the shelf brackets
-        fix(lip - f.dir * 0.058, 1.06, z, 0.045, 2.00, UPW * 0.55, 0x9d9583);
+        fix(lip - f.dir * 0.058, UPC, z, 0.045, UPH, UPW * 0.55, 0x9d9583);
       }
       // CLIP STRIPS. A plastic ladder of hooks hung off a shelf lip carrying a
       // column of single-serve pouches — cross-merchandising, in every real
@@ -1870,7 +2329,7 @@ export function buildStore(THREE, scene) {
       // ray is tested against the gondola bodies before it reaches the ceiling,
       // and a blurred 1-D lookup supplies what that run's wall looks like.)
       // top rail / valance
-      fix(lip - f.dir * 0.05, SHELF_H + 0.02, zmid, 0.11, 0.07, len, P.deckDark);
+      fix(lip - f.dir * 0.05, TOP + 0.02, zmid, 0.11, 0.07, len, P.deckDark);
       // SHELF-TOP CATEGORY BLADES. Round 4 hung exactly one per face, at a
       // fixed 30% down the run. A real store repeats them every three or four
       // metres along the whole run and on BOTH faces — reference/store_04 shows
@@ -1882,14 +2341,25 @@ export function buildStore(THREE, scene) {
       // the cross-aisle reads it.
       if (f.aisle !== undefined) {
         const uv = cellUV(f.aisle % 8, 1, 8);
-        const nB = Math.max(1, Math.round(len / 4.35));
+        // ROUND 15 — the blades were the loudest half of the mirror. Both runs
+        // bounding an aisle got the same nB from the same len, the same t
+        // ladder from the same z0, and a hard-typed y of 2.31 — so a player
+        // looking down an aisle saw blade signs in matched pairs, level with
+        // each other, at identical depths, all the way to the back wall. They
+        // are big bright cards at eye line and they carried the symmetry.
+        // A blade hangs off two brackets clipped to the gondola top rail; the
+        // count per run is whatever fits, the spacing is whatever the stocker
+        // walked off, and the two brackets are rarely in the same notch.
+        const nB = Math.max(1, Math.round(len / 4.35 + (PH / SECT - 0.5) * 0.9));
+        const by = TOP + 0.26 + (PH / SECT - 0.5) * 0.070;
         for (let k = 0; k < nB; k++) {
           const t = nB === 1 ? 0.5 : (k + 0.5) / nB;
-          let bz = z0 + 1.35 + t * (len - 2.7);
+          let bz = z0 + 1.35 + t * (len - 2.7) + (PH / SECT - 0.5) * 1.55;
           if (k === nB - 1) bz = xEnd + (xEnd === z1 ? -1.42 : 1.42);
-          fix(lip + f.dir * 0.04, 2.31, bz, 0.028, 0.58, 2.30, 0xe6dfc9);
-          qX(Qblade, lip + f.dir * 0.066, 2.31, bz, 2.24, 0.52, f.dir, uv);
-          for (const s of [-1, 1]) fix(lip - f.dir * 0.05, 2.10, bz + s * 0.95, 0.15, 0.08, 0.04, P.metal);
+          bz = Math.max(z0 + 1.2, Math.min(z1 - 1.2, bz));
+          fix(lip + f.dir * 0.04, by, bz, 0.028, 0.58, 2.30, 0xe6dfc9);
+          qX(Qblade, lip + f.dir * 0.066, by, bz, 2.24, 0.52, f.dir, uv);
+          for (const s of [-1, 1]) fix(lip - f.dir * 0.05, by - 0.21, bz + s * 0.95, 0.15, 0.08, 0.04, P.metal);
         }
       }
       // CONTACT SHADOW AT THE FLOOR. ROUND 6. Round 5 emitted a broad ambient
@@ -1909,7 +2379,7 @@ export function buildStore(THREE, scene) {
     if (opts.endcaps) {
       for (const dir of [-1, 1]) {
         const zEnd = dir > 0 ? z1 : z0;
-        fix(x, 1.06, zEnd + dir * 0.03, halfW * 2, 2.06, 0.07, 0xffffff, Bwood);
+        fix(x, (TOP + 0.01) / 2 + 0.03, zEnd + dir * 0.03, halfW * 2, TOP + 0.01, 0.07, 0xffffff, Bwood);
         const lip = zEnd + dir * (EC_D + 0.06);
         fix(x, 0.075, zEnd + dir * (EC_D / 2 + 0.05), halfW * 2 - 0.08, 0.15, EC_D + 0.1, P.kick);
         for (let d = 0; d < ECDECK.length; d++) {
@@ -1933,9 +2403,10 @@ export function buildStore(THREE, scene) {
           });
         }
         // promo header
-        fix(x, 2.34, zEnd + dir * 0.10, halfW * 2 + 0.18, 0.70, 0.06, 0xf4ecd8);
-        qZ(Qpromo, x, 2.34, zEnd + dir * (0.10 + 0.045), halfW * 2 + 0.10, 0.62, dir,
-          cellUV((idx * 7 + (dir > 0 ? 5 : 0)) % 16, 4, 4));
+        fix(x, TOP + 0.29, zEnd + dir * 0.10, halfW * 2 + 0.18, 0.70, 0.06, 0xf4ecd8);
+        qZ(Qpromo, x, TOP + 0.29, zEnd + dir * (0.10 + 0.045), halfW * 2 + 0.10, 0.62, dir,
+          cellUV(TX.promoCellFor(TX.PROMO_DEPT, faces[0].dept.key,
+            ((idx * 7 + (dir > 0 ? 5 : 0)) % 16) / 16), 4, 4));
         // stub uprights framing the endcap
         fix(x - halfW + 0.03, 1.06, lip - dir * 0.05, 0.06, 1.95, 0.09, P.upright);
         fix(x + halfW - 0.03, 1.06, lip - dir * 0.05, 0.06, 1.95, 0.09, P.upright);
@@ -1958,7 +2429,7 @@ export function buildStore(THREE, scene) {
       if (rng() < 0.10) { z += rr(rng, 0.4, 1.4); continue; }
       const w = rr(rng, 0.22, 0.62), dx = rr(rng, -0.15, 0.15);
       const n = ri(rng, 1, 4);
-      let y = SHELF_H + 0.06;
+      let y = TOP + 0.06;
       const warm = rng() < 0.55;
       for (let sIdx = 0; sIdx < n; sIdx++) {
         const h = rr(rng, 0.13, 0.27);
@@ -2055,7 +2526,11 @@ export function buildStore(THREE, scene) {
     // COLLIDER, per segment. This is the load-bearing half of the cross-aisle:
     // the walkway is only walkable because these two boxes stop short of it.
     const pad = opts.endcaps ? ECPAD : 0.02;
-    solid(x - halfW - 0.02, 0, z0 - pad, x + halfW + 0.02, SHELF_H, z1 + pad);
+    // ...and the collider carries the run's REAL top, not SHELF_H. camera.js
+    // and game/sight.js both read this box; handing them 2.05 for a 1.76 m
+    // fixture is the CLAUDE.md hazard (one derivation, two copies) with a
+    // sight-line consequence, and it costs nothing to be honest here.
+    solid(x - halfW - 0.02, 0, z0 - pad, x + halfW + 0.02, TOP, z1 + pad);
     }
   }
 
@@ -2292,48 +2767,331 @@ export function buildStore(THREE, scene) {
   }
 
   // =========================================================================
-  // CHECKOUT LANES
+  // THE FRONT END — CHECKOUT LANES.  ROUND 17.
   // =========================================================================
+  // The client, playing it: "We need a fully functional checkout and customer
+  // service. Those are key elements to this that they're missing... it makes
+  // it feel a little bit more like an actual functional grocery store."
+  //
+  // What was here was eight cream boxes with a black slab on top, a grey box
+  // for a register and a cylinder for a bagging carousel. Nothing about it said
+  // what any of it was FOR, and nothing in it gave agents.js a place to put a
+  // person. Both halves are fixed here: the stand is built out of the parts a
+  // checkstand actually has, and every place a body belongs is exported in
+  // FRONT_END at the bottom of this file rather than left for agents.js to
+  // guess at from geometry it cannot see.
+  //
+  // THE THREE NUMBERS THAT ARE NOT FREE, and why they are what they are:
+  //
+  // 1. THE STAND IS 0.92 m WIDE AND THAT IS ALMOST ALL OF THE COLLIDER. The
+  //    old build put the register and the bagging carousel out to the SIDE of
+  //    the belt and wrapped a single 1.44 m collider round the lot, leaving
+  //    1.90 m of walkable channel on a 3.34 m pitch. Folding the register and
+  //    the bag well onto the stand's own top surface — which is where they are
+  //    on a real one — takes the blocked band to 1.13 m including the impulse
+  //    rack, and gives the channel 2.21 m. The chase gets a WIDER front end
+  //    out of this round, not a narrower one.
+  //
+  // 2. THE STANDS STOP AT z = -18.72 AND THE RUNWAY IS SOUTH OF THEM. This is
+  //    the one thing in here that is a bug fix rather than dressing. nav.js
+  //    runs a 0.42 m grid from STORE.minZ inflated by a 0.52 m body pad, so
+  //    its first usable row south of walkMinZ sits at z = -19.37. The old lane
+  //    collider reached z = -19.50, which blocks that row across the whole
+  //    checkout run — so all eight lanes were DEAD-END CHANNELS a fleeing man
+  //    could walk into and not come out of the far end of. Ending the stands
+  //    at -18.72 clears the row by 0.13 m and the front of the store becomes
+  //    what it is in a real shop: a runway from the registers to either door.
+  //
+  // 3. THE RUN STARTS AT x = STORE.minX + 7.80. Door 1's vestibule return
+  //    stands at x = -17.43 and the old run's first stand overlapped it. It is
+  //    also simply right: nobody puts a register in front of the way in.
   const Bfront = newPkg();
-  const LANE_N = Math.min(8, 10);
-  const laneZ0 = STORE.minZ + 0.6, laneZ1 = FRONT_WALK_Z - 0.9;
-  const laneLen = laneZ1 - laneZ0, laneCZ = (laneZ0 + laneZ1) / 2;
-  const laneX0 = STORE.minX + 6.2, lanePitch = 3.34;
+  const LANE_N = 8;
+  const laneNZ = -17.32;                     // the mouth, at the front walkway
+  const laneSZ = -18.72;                     // the south end. See note 2.
+  const laneCZ = (laneNZ + laneSZ) / 2, laneLen = laneNZ - laneSZ;
+  const laneX0 = STORE.minX + 7.80, lanePitch = 3.34;
+  const laneAt = (k) => laneX0 + k * lanePitch;
+  // Belt / deck / bagging split the 1.40 m of stand. A real express checkstand
+  // is about 3 m long; this store's front strip is 3.5 m deep wall to walkway,
+  // so the stand is scaled to the building rather than the building to the
+  // stand — the same call the aisle gondolas already make against AISLE_LEN.
+  const BELT_N = laneNZ - 0.03, BELT_S = -17.95;
+  const DECK_N = BELT_S, DECK_S = -18.30;
+  const BAG_N = DECK_S, BAG_S = laneSZ + 0.04;
+  const LAM = 0xa89c88;                      // checkstand laminate, grey-brown
+
+  // Instance indices in Bsteel for the parts that change with the lane's
+  // state, so FRONT_END.setLaneOpen() can drive them without a second material
+  // and without a draw call of its own. [lamp, bar, post] per lane.
+  const laneStateIdx = [];
+  const lanePose = [];                       // the exported anchor records
+
   for (let k = 0; k < LANE_N; k++) {
-    const x = laneX0 + k * lanePitch;
-    // belt counter
-    fix(x, 0.46, laneCZ, 0.66, 0.92, laneLen, P.counter);
-    fix(x, 0.94, laneCZ, 0.60, 0.05, laneLen - 0.5, P.belt);
-    fix(x, 0.55, laneCZ, 0.70, 0.07, laneLen, P.terra);
-    // register + scanner tower
-    fix(x + 0.52, 0.52, laneZ1 - 0.9, 0.5, 1.04, 0.7, P.counter);
-    fix(x + 0.52, 1.16, laneZ1 - 0.9, 0.34, 0.26, 0.30, 0x33383f);
-    // bagging carousel
-    fix(x - 0.55, 0.50, laneZ0 + 0.9, 0.52, 1.00, 0.8, P.metal);
-    // lane number lightbox on a post
-    tube(x, 1.6, laneZ1 - 0.2, 0, 0, 0, 0.05, 3.0, 0xb5ae9c);
-    const uv = cellUV((k * 5 + 3) % 16, 4, 4);
-    // the lightbox is a real box; the two printed faces stand 15 mm clear of it
-    // (they used to sit INSIDE the 50 mm post and z-fought with it)
-    fix(x, 2.62, laneZ1 - 0.20, 0.68, 0.68, 0.13, 0xece5d1);
-    qZ(Qlane, x, 2.62, laneZ1 - 0.28, 0.62, 0.62, -1, uv);
-    qZ(Qlane, x, 2.62, laneZ1 - 0.12, 0.62, 0.62, 1, uv);
-    // candy rack facing the lane
+    const cx = laneAt(k);
+    const open = !FR.CLOSED_AT_START.includes(k);
+    const express = FR.EXPRESS.includes(k);
     const B = Bfront;
-    for (let d = 0; d < 4; d++) {
-      const y = 0.42 + d * 0.34;
-      fix(x - 0.42, y - 0.015, laneCZ + 0.4, 0.28, 0.03, 2.0, P.deck);
-      fix(x - 0.42, y - 0.036, laneCZ + 0.4, 0.26, 0.016, 1.98, P.shelfUnder);
-      railRun(x - 0.42 - 0.15, y - 0.018, laneCZ - 0.6, laneCZ + 1.4, -1);
-      fillShelf(B, rng, DEPTS[3], {
-        axis: 'z', a0: laneCZ - 0.6, a1: laneCZ + 1.4, lip: x - 0.42 - 0.14, face: -1,
-        deckY: y, headroom: 0.30, depth: 0.26, lit: 1.02, col, pull: 0.9, vacancy: 0.5,
-        tag: (aStart, aw, kindT) => {
-          ragX(x - 0.42 - 0.132, y - 0.019, aStart + aw / 2, aw, 0.044, -1, kindT);
-        },
+    const midOf = (a, b) => (a + b) / 2;
+
+    // ---- the carcass ------------------------------------------------------
+    // Laminate on three sides over a recessed toe kick, with the store's
+    // terracotta accent band where every other fixture in here carries one.
+    fix(cx, 0.53, laneCZ, 0.92, 0.80, laneLen, LAM, Bwood);
+    fix(cx, 0.065, laneCZ, 0.80, 0.13, laneLen - 0.02, P.kick);
+    fix(cx, 0.955, laneCZ, 0.94, 0.03, laneLen + 0.02, P.counter);   // the top
+    fix(cx, 0.905, laneCZ, 0.945, 0.045, laneLen + 0.03, P.terra);   // accent
+    // the chrome bumper rail down the customer side — after the stainless it
+    // is the most visible thing on a checkstand, and it is what stops a cart
+    fix(cx - 0.478, 0.83, laneCZ, 0.035, 0.035, laneLen - 0.10, 0xc4c9ce);
+    for (const bz of [laneNZ - 0.12, laneSZ + 0.12]) {
+      fix(cx - 0.466, 0.885, bz, 0.03, 0.14, 0.03, 0xb0b5ba);
+    }
+
+    // ---- the belt ---------------------------------------------------------
+    // A well between two stainless kerbs, offset to the customer side. The
+    // rubber runs through Bwood rather than a flat swatch: that map is a
+    // LONGITUDINAL grain, which is exactly the structure a woven food-grade
+    // belt has, and it costs no material and no draw call to say so.
+    const bx = cx - 0.21, bw = 0.46, beltMid = midOf(BELT_N, BELT_S);
+    const beltLen = BELT_N - BELT_S;
+    st(cx - 0.455, 0.985, beltMid, 0.05, 0.09, beltLen);
+    st(cx + 0.025, 0.985, beltMid, 0.05, 0.09, beltLen);
+    fix(bx, 0.972, beltMid, bw, 0.032, beltLen, 0x24242a, Bwood);
+    // the divider bar. Parked at the head of the belt on a closed lane and
+    // lying wherever the last customer dropped it on an open one.
+    {
+      const dz = open ? rr(rng, BELT_S + 0.16, BELT_N - 0.14) : BELT_S + 0.09;
+      fix(bx, 1.005, dz, bw + 0.02, 0.032, 0.05, 0x2a2f36);
+      fix(bx, 1.030, dz, bw - 0.10, 0.02, 0.028, 0xc8402c);
+    }
+    // ...and, on an open lane, somebody's shopping standing on it.
+    if (open) {
+      fillShelf(B, rng, DEPTS[(k * 3 + 1) % DEPTS.length], {
+        axis: 'z', a0: BELT_S + 0.12, a1: BELT_N - 0.12, lip: cx - 0.40, face: -1,
+        deckY: 0.990, headroom: 0.34, depth: 0.38, lit: 1.06, col,
+        pull: 0.85, vacancy: 2.8,
       });
     }
-    solid(x - 0.62, 0, laneZ0 - 0.1, x + 0.82, 1.1, laneZ1 + 0.1);
+
+    // ---- the register deck ------------------------------------------------
+    const deckMid = midOf(DECK_N, DECK_S), deckLen = DECK_N - DECK_S;
+    st(cx, 0.985, deckMid, 0.94, 0.04, deckLen);
+    // scanner/scale: the sapphire window let into the deck, and the bi-optic
+    // tower standing off the back of it with a second window facing across the
+    // belt. Only the horizontal one shows the line.
+    qUp(Qscreen, cx - 0.20, 1.009, DECK_N - 0.16, 0.30, 0.26,
+      cellUV(open ? 11 : 10, 4, 4));
+    st(cx - 0.20, 1.115, DECK_N - 0.30, 0.32, 0.22, 0.13);
+    qX(Qscreen, cx - 0.363, 1.100, DECK_N - 0.30, 0.12, 0.15, -1, cellUV(10, 4, 4));
+    st(cx - 0.20, 1.250, DECK_N - 0.30, 0.32, 0.07, 0.13);
+    qX(Qscreen, cx - 0.363, 1.250, DECK_N - 0.30, 0.11, 0.05, -1,
+      cellUV(open ? 9 : 8, 4, 4));
+    // the receipt printer. A named-brand box with a paper tongue hanging out
+    // of it is the sort of DEPICTED REAL OBJECT round 15's critic said this
+    // render contains none of; the silhouette does the work.
+    fix(cx + 0.235, 1.06, DECK_N - 0.14, 0.21, 0.17, 0.29, 0x26282c);
+    fix(cx + 0.235, 1.155, DECK_N - 0.14, 0.22, 0.03, 0.30, 0x3a3d42);
+    fix(cx + 0.235, 1.166, DECK_N - 0.28, 0.10, 0.006, 0.10, 0xf7f4ec);
+    fix(cx + 0.235, 1.150, DECK_N - 0.335, 0.10, 0.05, 0.010, 0xf3efe4);
+    // the till, on a pole, screen to the cashier
+    tube(cx + 0.30, 1.19, DECK_S + 0.20, 0, 0, 0, 0.019, 0.44, 0x8b9198);
+    fix(cx + 0.30, 1.51, DECK_S + 0.20, 0.055, 0.27, 0.35, 0x24262a);
+    qX(Qscreen, cx + 0.269, 1.51, DECK_S + 0.20, 0.31, 0.23, -1,
+      cellUV(open ? (k % 2) : 3, 4, 4));
+    // the card terminal, on a swivel arm, screen and keypad to the CUSTOMER
+    tube(cx - 0.40, 1.07, DECK_N - 0.06, 0, 0, 0, 0.015, 0.21, 0xb8bdc2);
+    fix(cx - 0.455, 1.235, DECK_N - 0.06, 0.11, 0.20, 0.145, 0x2c2f34);
+    qXtip(Qscreen, cx - 0.513, 1.292, DECK_N - 0.06, 0.115, 0.082, -1,
+      cellUV(open ? 4 : 3, 4, 4), 0.30);
+    qXtip(Qscreen, cx - 0.513, 1.196, DECK_N - 0.06, 0.115, 0.082, -1,
+      cellUV(6, 4, 4), 0.30);
+    // cash drawer front, coin dispenser and the till key, all cashier side
+    fix(cx + 0.468, 0.79, DECK_S + 0.18, 0.03, 0.17, 0.40, 0xcfc9bb);
+    fix(cx + 0.485, 0.79, DECK_S + 0.18, 0.014, 0.03, 0.16, 0x9aa0a6);
+    fix(cx + 0.450, 1.03, DECK_S - 0.09, 0.10, 0.13, 0.11, 0x3a3d42);
+
+    // ---- the bagging well -------------------------------------------------
+    const bagMid = midOf(BAG_N, BAG_S), bagLen = BAG_N - BAG_S;
+    st(cx, 0.80, bagMid, 0.88, 0.26, bagLen);
+    st(cx, 0.955, bagMid, 0.92, 0.05, bagLen + 0.04);
+    st(cx, 0.90, bagMid, 0.74, 0.10, bagLen - 0.12, 0x9b9a92);
+    for (const s of [-1, 1]) {
+      tube(cx + s * 0.31, 1.16, bagMid, 0, 0, 0, 0.013, 0.40, 0xc6cbd0);
+    }
+    fix(cx, 1.355, bagMid, 0.66, 0.024, 0.024, 0xc6cbd0);
+    // the bags themselves. Thin, pale and never hanging straight — six of them
+    // is the difference between a stainless trough and a station somebody works
+    // at, and they are pushed through Bfix.push directly so each gets its own
+    // yaw and roll instead of eight axis-aligned slabs.
+    for (let bgi = 0; bgi < 6; bgi++) {
+      col.setHex(0xe7ebe9); col.offsetHSL(0, 0, rr(rng, -0.06, 0.03));
+      Bfix.push(cx + rr(rng, -0.28, 0.28), 1.10, bagMid + rr(rng, -0.13, 0.13),
+        0, rr(rng, -0.45, 0.45), rr(rng, -0.11, 0.11), 0.15, 0.34, 0.075, col);
+    }
+    fix(cx + 0.30, 1.06, BAG_S + 0.14, 0.24, 0.20, 0.10, 0xc39a63);   // paper stack
+    // ...and the card that is clipped to every bag rack in America
+    fix(cx - 0.322, 1.245, BAG_N - 0.13, 0.03, 0.10, 0.03, 0x9aa0a6);
+    qXtip(Qfsign, cx - 0.345, 1.245, BAG_N - 0.13, 0.20, 0.10, -1,
+      cellUV(12, 4, 4), rr(rng, -0.10, 0.10));
+
+    // ---- the impulse rack, on the EAST face --------------------------------
+    // It serves the channel to its east, i.e. the NEXT lane's queue — which is
+    // how a real front end works: you queue with one stand's merchandising on
+    // your left and the next stand's belt on your right.
+    // THE BUG THIS BLOCK WAS BUILT WITH, AND IT IS A GENERIC ONE. The first
+    // version made the rack a SOLID 0.18 m block from floor to 1.44 and then
+    // filled its decks with `lip` at the block's own front face — so every
+    // facing extended BACKWARD into the volume of the block and was drawn
+    // inside it. The decks looked bare from every angle and nothing was
+    // missing: 11 facings per deck were being placed and buried. A fixture
+    // that stocks itself is a back panel plus decks, never a slab, and the
+    // tell is that fillShelf's `depth` and the body's own depth were the same
+    // number pointing in opposite directions.
+    const rBack = cx + 0.505, rLip = cx + 0.675;
+    const rN = laneNZ - 0.02, rS = -18.16;
+    const rMid = midOf(rN, rS), rLen = rN - rS;
+    fix(rBack, 0.78, rMid, 0.09, 1.52, rLen, 0xbfb5a0);              // back panel
+    for (const gz of [rS + 0.018, rN - 0.018]) {                     // end gables
+      fix(cx + 0.59, 0.78, gz, 0.26, 1.52, 0.036, 0xb3a992);
+    }
+    fix(cx + 0.59, 0.07, rMid, 0.24, 0.14, rLen - 0.06, P.kick);
+    const cooler = k % 3 === 1;
+    if (cooler) {
+      // A GLASS-DOOR DRINKS MERCHANDISER instead of candy on every third lane.
+      // store_06 has one of these at every second checkstand and they are the
+      // brightest objects in that photograph — a lit case is what breaks a run
+      // of eight identical cream boxes. It shares Qglass with the reach-ins,
+      // so the lit front end mirrors the room the same way the freezer wall
+      // does and it costs no material. Height stays at 1.54: a taller case
+      // would be more typical and would also start hiding a runner from the
+      // player in the strip where the endgame is decided.
+      // ...and it is a SHELL, for the reason in the note above: the first
+      // version of the cooler repeated the candy rack's bug in the same commit
+      // — a solid 0.25 m cabinet with three decks stocked into the middle of
+      // it, so every bottle was drawn inside the cabinet and the case read as
+      // a blank cream slab. The interior of a merchandiser is a void.
+      for (const gz of [rS + 0.03, rN - 0.03]) {
+        fix(cx + 0.585, 0.82, gz, 0.25, 1.16, 0.06, P.cooler);
+      }
+      fix(cx + 0.585, 1.40, rMid, 0.25, 0.11, rLen, P.cooler);          // head
+      fix(cx + 0.585, 0.19, rMid, 0.25, 0.28, rLen, P.cooler);          // base
+      fix(cx + 0.585, 0.075, rMid, 0.23, 0.15, rLen - 0.04, P.kickCool);
+      // THE INTERIOR HAS TO BE DEEP ENOUGH FOR WHAT IS PUT IN IT, and the
+      // first shipped version was not: back panel at cx+0.555 and glass at
+      // cx+0.688 leaves 133 mm, so the BACK row — lip cx+0.545, depth 0.10 —
+      // was stocked THROUGH the back panel and every one of its bottles was
+      // outside the case. Third instance of the same mistake in this one
+      // block, and all three have the shape "a fixture's own body occupies the
+      // volume its own stock needs". The interior is now 215 mm, which is what
+      // two ranks of PET actually take.
+      fix(cx + 0.492, 0.90, rMid, 0.016, 1.02, rLen - 0.12, P.coolerIn);
+      for (let d = 0; d < 3; d++) {
+        const y = 0.42 + d * 0.32;
+        fix(cx + 0.60, y - 0.012, rMid, 0.22, 0.024, rLen - 0.10, 0xfbf6ea);
+        railRun(cx + 0.668, y - 0.014, rS + 0.07, rN - 0.07, 1);
+        // TWO RANKS. A drinks case is the most densely faced fixture in a
+        // supermarket — nothing in one is one-deep — and the front rank alone
+        // put four facings behind a metre of glass you can read at arm's
+        // length. vacancy is pulled right down for the same reason: a bare bay
+        // is a shelf story, and this case is the only fixture in the building
+        // the player ever stands 600 mm from.
+        fillBackRow(B, rng, DEPTS[4], {
+          axis: 'z', a0: rS + 0.07, a1: rN - 0.07, lip: cx + 0.578, face: 1,
+          deckY: y, headroom: 0.30, depth: 0.085, lit: 0.60, col,
+        });
+        fillShelf(B, rng, DEPTS[4], {
+          axis: 'z', a0: rS + 0.07, a1: rN - 0.07, lip: cx + 0.674, face: 1,
+          deckY: y, headroom: 0.30, depth: 0.095, lit: 0.94, col, pull: 0.96,
+          vacancy: 0.06,
+        });
+      }
+      qX(Qglass, cx + 0.700, 0.82, rMid, rLen - 0.08, 1.16, 1, FULL);
+      for (const gz of [rS + 0.065, rN - 0.065]) {
+        tube(cx + 0.684, 0.82, gz, 0, 0, 0, 0.010, 1.12, 0xfff9ec);
+      }
+      fix(cx + 0.585, 1.51, rMid, 0.27, 0.13, rLen + 0.03, P.sage);
+      qX(Qfsign, cx + 0.726, 1.51, rMid, rLen - 0.14, 0.11, 1, cellUV(8, 4, 4));
+    } else {
+      for (let d = 0; d < 2; d++) {
+        const y = 0.46 + d * 0.32;
+        fix(cx + 0.59, y - 0.015, rMid, 0.20, 0.03, rLen - 0.06, P.deck);
+        fix(cx + 0.59, y - 0.036, rMid, 0.18, 0.016, rLen - 0.08, P.shelfUnder);
+        railRun(rLip - 0.012, y - 0.018, rS + 0.03, rN - 0.03, 1);
+        fillShelf(B, rng, DEPTS[3], {
+          axis: 'z', a0: rS + 0.04, a1: rN - 0.04, lip: rLip - 0.020, face: 1,
+          deckY: y, headroom: 0.29, depth: 0.16, lit: 1.02, col, pull: 0.94,
+          vacancy: 0.18,
+          tag: (aStart, aw, kindT) => {
+            ragX(rLip - 0.028, y - 0.019, aStart + aw / 2, aw, 0.044, 1, kindT);
+          },
+        });
+      }
+      // MAGAZINES. Two tiers of slanted pockets above the candy, which is where
+      // every checkout in the reference set keeps them. See store/front.js for
+      // why this rack is worth a draw call on this project: it is the only
+      // fixture in a supermarket made entirely of depicted real objects at eye
+      // height, and "the render contains no depicted real-world object" is the
+      // sentence the round-15 critic reduced the whole blind test to.
+      for (let t = 0; t < 2; t++) {
+        const y = 1.22 + t * 0.22;
+        fix(cx + 0.60, y - 0.118, rMid, 0.19, 0.022, rLen - 0.06, 0xb6ad99);
+        const nSlot = 3;
+        for (let s = 0; s < nSlot; s++) {
+          const w = (rLen - 0.10) / nSlot;
+          const mz = rS + 0.05 + (s + 0.5) * w;
+          qXtip(Qmag, rLip - 0.010, y, mz, w * 0.90, 0.235, 1,
+            cellUV((k * 5 + t * 3 + s) % 16, 4, 4), 0.22);
+        }
+        fix(rLip - 0.016, y - 0.136, rMid, 0.020, 0.020, rLen - 0.08, 0xa8a294);
+      }
+    }
+
+    // ---- the lane sign, the pole and the lamp ------------------------------
+    tube(cx, 1.78, laneNZ - 0.10, 0, 0, 0, 0.045, 3.56, 0xb5ae9c);
+    const uv = cellUV(k, 4, 2);
+    fix(cx, 2.62, laneNZ - 0.10, 0.68, 0.68, 0.13, 0xece5d1);
+    qZ(Qlane, cx, 2.62, laneNZ - 0.18, 0.62, 0.62, -1, uv);
+    qZ(Qlane, cx, 2.62, laneNZ - 0.02, 0.62, 0.62, 1, uv);
+    fix(cx, 2.985, laneNZ - 0.10, 0.22, 0.09, 0.22, 0x6f6a5e);        // lamp base
+    if (express) {
+      // the express lanes carry the item-count plate under the number box
+      fix(cx, 2.19, laneNZ - 0.10, 0.50, 0.19, 0.05, 0xf1e9d5);
+      for (const s of [-1, 1]) {
+        qZ(Qfsign, cx, 2.19, laneNZ - 0.10 + s * 0.032, 0.45, 0.15, s, cellUV(14, 4, 4));
+      }
+    }
+    // ---- what the lane's STATE looks like ----------------------------------
+    // Three Bsteel instances, recorded by index. The lamp changes colour and
+    // the barrier changes scale, both through InstancedMesh writes that add no
+    // material and no draw call. A closed lane is also visibly different in
+    // four ways nothing has to switch: the till and PIN pad screens are dark,
+    // the belt is bare, the divider bar is parked at the head of it, and the
+    // impulse rack is fully faced because nobody has been buying off it.
+    laneStateIdx.push([Bsteel.n, Bsteel.n + 1, Bsteel.n + 2]);
+    st(cx, 3.115, laneNZ - 0.10, 0.17, 0.17, 0.17, 0x4cff8a);         // the lamp
+    st(cx - 1.03, 0.99, laneNZ - 0.02, 1.14, 0.05, 0.05);             // chain bar
+    st(cx - 1.58, 0.50, laneNZ - 0.02, 0.06, 1.00, 0.06);             // its post
+
+    // ---- collider ---------------------------------------------------------
+    // ONE box: stand plus impulse rack, 1.13 m of a 3.34 m pitch. Height 1.44
+    // is the impulse rack, and it is deliberately under the 1.6 m at which
+    // camera.js stops letting the player see over a front-end fixture — the
+    // endgame is decided in this strip and it has to stay readable.
+    solid(cx - 0.48, 0, laneSZ, cx + 0.73, 1.58, laneNZ);
+
+    lanePose.push({
+      index: k, number: k + 1, open, express,
+      x: cx, z0: laneSZ, z1: laneNZ,
+      cashier: { x: cx - 0.80, z: DECK_S + 0.14, face: [0.16, 0.99], clearR: 0.30 },
+      customer: { x: cx - 0.84, z: BELT_N - 0.34, face: [0.74, -0.67] },
+      bagger: { x: cx - 0.82, z: bagMid, face: [0.97, 0.24] },
+      pickup: { x: cx - 0.30, y: 1.00, z: bagMid },
+      belt: { x: bx, y: 0.99, z0: BELT_S, z1: BELT_N, w: bw },
+      mouth: { x: cx - 0.86, z: laneNZ + 0.24 },
+      queue: { x: cx - 0.86, z: laneNZ + 0.24, dir: [0, 1], pitch: 0.78, slots: 4 },
+      signY: 2.62, lampY: 3.115,
+    });
   }
 
   flushPkg(Bfront, 'frontend');
@@ -2371,8 +3129,14 @@ export function buildStore(THREE, scene) {
   // own collider stops at z = STORE.minZ and the whole assembly stands inside
   // it. Anything solid at a door would put a wall between a runner and the way
   // out — and the door beat is priced in TUNING.doorShove, not in geometry.
+  // Where the daylight actually comes in. Collected BY the builder that draws
+  // the glass, so light.js's aperture and the plate the player sees cannot
+  // drift apart — the same argument as uLampGeo being handed in rather than
+  // defaulted. [centre x, half width, plane z, head height].
+  const DAY_APS = [];
   function storefront(cx, halfW, label) {
     const fz = STORE.minZ;                 // the wall plane
+    DAY_APS.push([cx, halfW, fz + 0.06, 3.05]);
     const gx0 = cx - halfW, gx1 = cx + halfW, w = gx1 - gx0;
     // ---- what is outside ---------------------------------------------------
     // A textured plate, not a flat swatch: blown sky under a dark canopy
@@ -2472,14 +3236,234 @@ export function buildStore(THREE, scene) {
   // service desk's back shelving, which stands on the same wall 2 m along.
   storefront(EXIT2.x - 0.30, 2.85, 1);
 
-  // service desk
+  // =========================================================================
+  // CUSTOMER SERVICE.  ROUND 17.
+  // =========================================================================
+  // What was here: a 6.4 m wood-fronted box, a cream slab on top, a sage
+  // stripe on the wall behind, and a 2.1 m grey shelf. Nothing said what it
+  // was, nobody could work at it, and it is the room the cop's own desk phase
+  // is set in.
+  //
+  // A real one is a counter with two service positions, a returns bay dropped
+  // lower than the rest of it, a locked glass cabinet of cigarettes and
+  // lottery behind the clerk, a queue rail in front, a bell, and about six
+  // pieces of printed policy nobody reads. All of that is here, and the two
+  // clerk positions and two customer positions are exported so agents.js can
+  // staff it.
+  //
+  // THE CLERK ALLEY IS NOT A NAV POCKET, and it is worth saying why rather
+  // than hoping. It is 0.73 m deep between the counter and the cabinet, and
+  // nav.js inflates every collider by a 0.52 m body pad — so the alley closes
+  // completely and the grid sees one solid block from the counter face to the
+  // wall. A clerk standing in it is PLACED, not pathed, which is what the
+  // exported anchor is for.
   const sd = SERVICE_DESK;
-  fix(sd.x, 0.55, sd.z, 6.4, 1.10, 1.10, 0xffffff, Bwood);
-  fix(sd.x, 1.13, sd.z, 6.6, 0.08, 1.26, P.counter);
-  fix(sd.x, 2.55, sd.z - 0.2, 5.2, 0.62, 0.10, P.sage);
-  solid(sd.x - 3.2, 0, sd.z - 0.6, sd.x + 3.2, 1.15, sd.z + 0.6);
-  // a couple of tall shelves behind the desk
-  fix(sd.x, 1.05, STORE.minZ + 0.5, 6.4, 2.1, 0.5, P.deckDark);
+  const DK_X0 = sd.x - 3.25, DK_X1 = sd.x + 3.25;     // 6.50 m of counter
+  const DK_N = sd.z + 0.50, DK_S = sd.z - 0.60;       // the customer face is DK_N
+  const DK_Y = 1.08;                                   // counter height
+  const CAB_S = STORE.minZ + 0.23, CAB_N = CAB_S + 0.44;
+  const RET_X1 = DK_X0 + 1.75;                         // the returns bay ends here
+  {
+    const dz = (DK_N + DK_S) / 2, dd = DK_N - DK_S;
+    // ---- the counter, in two spans -----------------------------------------
+    // The RETURNS BAY is dropped 235 mm and topped in stainless, because what
+    // lands on it is somebody's leaking rotisserie chicken and a printer that
+    // would not work. It is a separate span rather than a plate laid on top of
+    // the main run: a lower top INSIDE the main carcass would be buried by it.
+    const spans = [
+      [DK_X0, RET_X1, 0.845, 0x9d907b],       // returns
+      [RET_X1, DK_X1, DK_Y, 0xa1937d],        // the two service positions
+    ];
+    for (const [sx0, sx1, ty, hex] of spans) {
+      const smid = (sx0 + sx1) / 2, sw = sx1 - sx0;
+      fix(smid, (ty - 0.16) / 2 + 0.11, dz, sw, ty - 0.18, dd, hex, Bwood);
+      fix(smid, 0.07, dz, sw - 0.14, 0.14, dd - 0.10, P.kick);
+      fix(smid, ty - 0.045, dz, sw + 0.05, 0.055, dd + 0.05, P.terra);
+      if (ty > 1.0) fix(smid, ty + 0.02, dz, sw + 0.10, 0.05, dd + 0.10, P.counter);
+      else st(smid, ty + 0.02, dz, sw + 0.10, 0.05, dd + 0.10);
+      // the chrome grab rail down the customer face, and its brackets
+      fix(smid, ty - 0.22, DK_N + 0.055, sw - 0.24, 0.035, 0.035, 0xc4c9ce);
+      for (const gx of [sx0 + 0.28, sx1 - 0.28]) {
+        fix(gx, ty - 0.16, DK_N + 0.042, 0.03, 0.15, 0.03, 0xb0b5ba);
+      }
+    }
+    qZ(Qfsign, (DK_X0 + RET_X1) / 2, 0.50, DK_N + 0.062, 1.40, 0.30, 1, cellUV(1, 4, 4));
+    // ...with go-backs on it. Three cartons somebody brought back, and the
+    // grey tote they get dumped into when the clerk gives up.
+    for (let g = 0; g < 3; g++) {
+      col.setHex([0xc9b48f, 0xb8543c, 0x7f8ea4][g]);
+      Bfix.push(DK_X0 + 0.40 + g * 0.45, 0.985, dz + rr(rng, -0.12, 0.12),
+        0, rr(rng, -0.5, 0.5), 0, rr(rng, 0.20, 0.30), 0.23, rr(rng, 0.16, 0.24), col);
+    }
+    fix(DK_X0 + 0.55, 0.22, DK_S - 0.42, 0.62, 0.42, 0.44, 0x6e7681);   // floor tote
+    fix(DK_X0 + 0.55, 0.44, DK_S - 0.42, 0.66, 0.04, 0.48, 0x59616a);
+
+    // ---- the two service positions ----------------------------------------
+    // Each one is a till screen to the clerk, a PIN pad to the customer, a
+    // printer and a phone. They are the same kit as a checkout lane because in
+    // a real store they literally are.
+    const POS = [DK_X0 + 2.55, DK_X1 - 1.30];
+    for (let i = 0; i < POS.length; i++) {
+      const px = POS[i];
+      tube(px, 1.28, DK_S + 0.30, 0, 0, 0, 0.019, 0.42, 0x8b9198);
+      fix(px, 1.60, DK_S + 0.30, 0.055, 0.27, 0.35, 0x24262a);
+      qZ(Qscreen, px, 1.60, DK_S + 0.30 - 0.031, 0.31, 0.23, -1, cellUV(13 + i, 4, 4));
+      // the PIN pad, on the customer side of the counter, tipped up
+      fix(px + 0.36, 1.235, DK_N - 0.16, 0.15, 0.19, 0.11, 0x2c2f34);
+      qZtip(Qscreen, px + 0.36, 1.292, DK_N - 0.104, 0.13, 0.085, 1,
+        cellUV(i ? 7 : 4, 4, 4), 0.32);
+      qZtip(Qscreen, px + 0.36, 1.196, DK_N - 0.104, 0.13, 0.085, 1,
+        cellUV(6, 4, 4), 0.32);
+      // printer and phone
+      fix(px - 0.34, 1.19, DK_S + 0.24, 0.21, 0.17, 0.29, 0x26282c);
+      fix(px - 0.34, 1.285, DK_S + 0.24, 0.22, 0.03, 0.30, 0x3a3d42);
+      fix(px - 0.34, 1.296, DK_S + 0.10, 0.10, 0.006, 0.10, 0xf7f4ec);
+      fix(px - 0.62, 1.15, DK_S + 0.26, 0.13, 0.06, 0.22, 0x2a2d32);
+      fix(px - 0.62, 1.21, DK_S + 0.30, 0.11, 0.06, 0.12, 0x33373d);
+    }
+    // the bell. Small, chrome, and the single most recognisable object on a
+    // service desk — it is why the plate above it can just say RING BELL.
+    drum(DK_X0 + 1.98, 1.135, DK_N - 0.24, 0.052, 0.04, 0x9aa0a6);
+    col.setHex(0xd4d9de);
+    Borb.push(DK_X0 + 1.98, 1.195, DK_N - 0.24, 0, 0, 0, 0.115, 0.078, 0.115, col);
+    tube(DK_X0 + 1.98, 1.255, DK_N - 0.24, 0, 0, 0, 0.012, 0.05, 0xb6bbc0);
+    // ...and the rest of what is on a service counter: a form pad, a pen on a
+    // chain, a tape gun and the bag of go-backs nobody has taken out yet.
+    fix(DK_X0 + 2.62, 1.115, DK_N - 0.30, 0.22, 0.012, 0.30, 0xf6f2e6);
+    fix(DK_X0 + 2.62, 1.128, DK_N - 0.30, 0.20, 0.014, 0.28, 0xfbf8ee);
+    fix(DK_X0 + 2.90, 1.118, DK_N - 0.26, 0.015, 0.014, 0.13, 0x2b3a6b);
+    fix(DK_X0 + 3.30, 1.16, DK_N - 0.34, 0.13, 0.11, 0.16, 0x3d4249);
+    fix(DK_X0 + 4.55, 1.19, DK_N - 0.32, 0.26, 0.18, 0.22, 0xdcd4c0);
+    // a small A-frame beside it with the policy on it
+    fix(DK_X0 + 1.24, 1.00, DK_N - 0.26, 0.30, 0.28, 0.06, 0x2c3038);
+    qZtip(Qfsign, DK_X0 + 1.24, 1.00, DK_N - 0.222, 0.27, 0.25, 1,
+      cellUV(10, 4, 4), 0.16);
+    // the lottery ticket dispenser standing on the counter at the far end
+    fix(DK_X1 - 0.42, 1.36, DK_S + 0.34, 0.42, 0.52, 0.20, 0x2b3350);
+    for (let r = 0; r < 3; r++) for (let cq = 0; cq < 4; cq++) {
+      col.setHex([0xe8b400, 0xc8202a, 0x0f7a3d, 0x1a9fd0][cq]);
+      Bfix.box(DK_X1 - 0.58 + cq * 0.105, 1.20 + r * 0.16, DK_S + 0.24,
+        0.085, 0.13, 0.03, col);
+    }
+    qZ(Qfsign, DK_X1 - 0.42, 1.60, DK_S + 0.235, 0.40, 0.14, -1, cellUV(2, 4, 4));
+
+    // ---- the cabinet behind the clerk --------------------------------------
+    // Locked glass over a base cupboard: cigarettes above, lottery rolls and
+    // gift cards below. Drawn as instances rather than a texture — 176 boxes
+    // is nothing, it goes in the batches that already exist, and it has real
+    // depth behind the glass, which a printed panel cannot have.
+    const cmid = (CAB_S + CAB_N) / 2, cabX0 = DK_X0 + 0.30, cabX1 = DK_X1 - 0.30;
+    const cabMid = (cabX0 + cabX1) / 2, cabW = cabX1 - cabX0;
+    fix(cabMid, 0.47, cmid, cabW, 0.94, CAB_N - CAB_S, 0x8f8471, Bwood);
+    fix(cabMid, 0.07, cmid, cabW - 0.12, 0.14, CAB_N - CAB_S - 0.10, P.kick);
+    fix(cabMid, 0.965, cmid, cabW + 0.06, 0.05, CAB_N - CAB_S + 0.06, P.counter);
+    fix(cabMid, 1.62, CAB_S + 0.06, cabW, 1.26, 0.09, P.peg);        // cabinet back
+    fix(cabMid, 2.30, cmid, cabW + 0.08, 0.14, CAB_N - CAB_S + 0.08, P.deckDark);
+    fix(cabMid, 2.52, cmid, cabW + 0.10, 0.34, CAB_N - CAB_S + 0.10, P.sage);  // valance
+    for (const [cxs, cellS] of [[cabMid - cabW / 4, 3], [cabMid + cabW / 4, 2]]) {
+      qZ(Qfsign, cxs, 2.52, CAB_N + 0.062, cabW / 2 - 0.20, 0.26, 1, cellUV(cellS, 4, 4));
+    }
+    for (let sh = 0; sh < 3; sh++) {
+      const sy = 1.14 + sh * 0.38;
+      fix(cabMid, sy - 0.012, cmid, cabW - 0.06, 0.024, CAB_N - CAB_S - 0.10, 0xdcd6c6);
+      // what is on it: cigarette cartons up top, lottery and gift cards below
+      let px2 = cabX0 + 0.06;
+      while (px2 < cabX1 - 0.08) {
+        const w = rr(rng, 0.055, 0.085);
+        const h = sh === 0 ? rr(rng, 0.19, 0.24) : rr(rng, 0.22, 0.30);
+        const hsl = sh === 0
+          ? [[0, 0, 88], [352, 80, 38], [222, 72, 28], [145, 82, 22], [46, 92, 46],
+            [275, 46, 34], [0, 0, 12], [28, 78, 40]][(rng() * 8) | 0]
+          : [[46, 94, 48], [352, 84, 40], [145, 80, 26], [26, 88, 44], [200, 78, 40],
+            [0, 0, 86], [320, 72, 40], [222, 68, 30]][(rng() * 8) | 0];
+        col.setHSL(hsl[0] / 360, hsl[1] / 100, hsl[2] / 100);
+        const dz2 = rr(rng, 0.07, 0.11);
+        Bfix.box(px2 + w / 2, sy + h / 2, cmid + 0.04, w, h, dz2, col);
+        // a second rank behind the first, darker for being further in
+        col.offsetHSL(0, 0, -0.10);
+        Bfix.box(px2 + w / 2, sy + h / 2, cmid - 0.09, w, h * rr(rng, 0.92, 1.0), dz2, col);
+        // the pack's own foil band, which is the strongest line in a cabinet
+        col.setHSL(0, 0, 0.86);
+        Bfix.box(px2 + w / 2, sy + h * rr(rng, 0.62, 0.78), cmid + 0.04 + dz2 / 2,
+          w * 0.92, h * 0.10, 0.006, col);
+        px2 += w + rr(rng, 0.004, 0.014);
+      }
+    }
+    // the glass. Same soup and same material as the freezer doors, so the
+    // cabinet mirrors the room the way the reach-ins do rather than being a
+    // different kind of glass ten metres away from them.
+    for (let gx2 = cabX0; gx2 < cabX1 - 0.20; gx2 += 1.02) {
+      const w = Math.min(1.02, cabX1 - gx2);
+      qZ(Qglass, gx2 + w / 2, 1.63, CAB_N + 0.005, w - 0.04, 1.28, 1, FULL);
+      fix(gx2, 1.63, CAB_N + 0.01, 0.035, 1.30, 0.05, 0xb0b5ba);
+      tube(gx2 + 0.055, 1.63, CAB_N + 0.045, 0, 0, 0, 0.010, 1.20, 0xdfe4e9);
+    }
+    fix(cabMid, 1.63, CAB_N + 0.01, 0.035, 1.30, 0.05, 0xb0b5ba);
+    fix(cabMid, 1.00, CAB_N + 0.02, cabW, 0.05, 0.06, 0xc9c3b1);
+    fix(cabMid, 2.26, CAB_N + 0.02, cabW, 0.06, 0.06, 0xc9c3b1);
+
+    // ---- the overhead sign -------------------------------------------------
+    // Hung, not stuck to the wall: a service desk sign is a double-sided
+    // lightbox on four drops, and you read it from the middle of the store.
+    const SGY = 3.28, sgw = 5.20;
+    fix(sd.x, SGY, DK_N - 0.20, sgw, 0.74, 0.16, 0xece5d1);
+    fix(sd.x, SGY + 0.42, DK_N - 0.20, sgw + 0.10, 0.10, 0.22, P.terra);
+    for (const s of [-1, 1]) {
+      qZ(Qfsign, sd.x, SGY, DK_N - 0.20 + s * 0.086, sgw - 0.24, 0.60, s, cellUV(0, 4, 4));
+    }
+    for (const ax2 of [sd.x - sgw / 2 + 0.30, sd.x + sgw / 2 - 0.30]) {
+      for (const az2 of [DK_N - 0.32, DK_N - 0.08]) {
+        tube(ax2, (SGY + 0.42 + CEIL_H) / 2, az2, 0, 0, 0, 0.011,
+          CEIL_H - SGY - 0.42, 0xa8a294);
+      }
+    }
+    // the policy plates, on the wall either side of the cabinet where every
+    // service desk in America keeps them
+    for (const [wx, cellP] of [[DK_X0 - 0.42, 4], [DK_X1 + 0.42, 6]]) {
+      fix(wx, 1.72, STORE.minZ + 0.06, 0.72, 0.94, 0.04, 0x2c3038, BfixF);
+      qZ(Qfsign, wx, 1.72, STORE.minZ + 0.085, 0.66, 0.86, 1, cellUV(cellP, 4, 4));
+    }
+    fix(sd.x - 1.70, 2.94, STORE.minZ + 0.06, 2.30, 0.44, 0.04, 0x2c3038, BfixF);
+    qZ(Qfsign, sd.x - 1.70, 2.94, STORE.minZ + 0.085, 2.14, 0.38, 1, cellUV(7, 4, 4));
+    // The security monitor. This room is the cop's own post and the desk phase
+    // is played in it, so a quad feed hanging over the cabinet is the cheapest
+    // possible way to say so on the floor as well as in the HUD.
+    fix(sd.x + 1.85, 2.86, CAB_S + 0.30, 0.86, 0.60, 0.10);
+    qZ(Qscreen, sd.x + 1.85, 2.86, CAB_S + 0.352, 0.78, 0.52, 1, cellUV(15, 4, 4));
+    fix(sd.x + 1.85, 2.52, CAB_S + 0.24, 0.16, 0.10, 0.22, 0x6f6a5e);
+
+    // ---- the queue rail ----------------------------------------------------
+    // Retractable-belt stanchions. NO COLLIDERS, exactly like the storefront
+    // bollards: a 60 mm post is smaller than a nav cell and giving it one
+    // would block a whole 0.42 m square of the front cross-aisle for nothing.
+    const QZ = DK_N + 1.05;
+    const posts = [sd.x - 2.30, sd.x - 0.50, sd.x + 1.30, sd.x + 2.60];
+    for (let i = 0; i < posts.length; i++) {
+      drum(posts[i], 0.02, QZ, 0.17, 0.04, 0x4a4f55);
+      tube(posts[i], 0.50, QZ, 0, 0, 0, 0.024, 0.96, 0xb6bbc0);
+      drum(posts[i], 1.00, QZ, 0.048, 0.10, 0x3d4249);
+      if (i + 1 < posts.length) {
+        const a = posts[i], b = posts[i + 1];
+        fix((a + b) / 2, 0.93, QZ, b - a, 0.048, 0.012, 0x8f2a1c);
+        fix((a + b) / 2, 0.93, QZ, b - a, 0.012, 0.014, 0x6d1f14);
+      }
+    }
+
+    // ---- colliders ---------------------------------------------------------
+    solid(DK_X0, 0, DK_S, DK_X1, DK_Y + 0.05, DK_N);
+    solid(cabX0 - 0.05, 0, CAB_S - 0.05, cabX1 + 0.05, 2.35, CAB_N + 0.05);
+
+    DESK_POSE = {
+      x: sd.x, z: sd.z, counterY: DK_Y, faceZ: DK_N, backZ: DK_S,
+      x0: DK_X0, x1: DK_X1,
+      clerks: POS.map((px) => ({ x: px, z: (DK_S + CAB_N) / 2, face: [0, 1], clearR: 0.28 })),
+      customers: POS.map((px) => ({ x: px + 0.36, z: DK_N + 0.62, face: [0, -1] })),
+      queue: { x: sd.x - 0.50, z: DK_N + 1.42, dir: [0, 1], pitch: 0.80, slots: 5 },
+      bell: { x: DK_X0 + 1.98, y: 1.20, z: DK_N - 0.22 },
+      returns: { x: (DK_X0 + RET_X1) / 2, y: 0.87, z: DK_N + 0.62 },
+      lottery: { x: DK_X1 - 0.42, y: 1.36, z: DK_N + 0.62 },
+    };
+  }
 
   // =========================================================================
   // BACK WALL — refrigerated glass cases
@@ -3074,6 +4058,11 @@ export function buildStore(THREE, scene) {
     [Borb, 'produce'], [Bdrum, 'drums'], [Bwheel, 'casters']]) {
     const m = b.build(n); if (m) root.add(m);
   }
+  // Kept, rather than dropped into the loop above, because FRONT_END.setLaneOpen
+  // writes matrices and colours into this one mesh at run time. One mesh, one
+  // draw call, and the lane-state switch costs no material of its own.
+  const steelMesh = Bsteel.build('frontEndSteel');
+  if (steelMesh) root.add(steelMesh);
   for (const [b, n] of [[BfixC, 'ceilFixtures'], [BtubeC, 'ceilPipes']]) {
     const m = b.build(n); if (m) ceilGroup.add(m);
   }
@@ -3124,6 +4113,24 @@ export function buildStore(THREE, scene) {
     // to move together: the core covers 0 to reach*0.47 m and the skirt starts
     // at skirtR, and if a gap opens between them the profile gets a shelf in it.
     core: 0.84, coreBias: 0.020, coreGain: 2.20, coreReach: 1.90,
+    // ROUND 17 — THE ENTRANCE. Blind test 9's fourth open item: "a 4 m glass
+    // wall on a lit exterior contributes zero light to the floor in front of
+    // it." See chopDay in store/light.js for the model and why it is not a
+    // three.js light. The three numbers here:
+    //
+    //   dayGain 1.15  set by matching the LIT FLOOR at the threshold to the
+    //                 daylight plate standing behind it. The plate is what
+    //                 tex.js paints — blown sky over asphalt — and a floor
+    //                 tile 300 mm inside the door cannot be darker than it was
+    //                 with the door bricked up, which is what it was.
+    //   dayReach 9.5  the wash is at 0.16 of its threshold value by 8 m, which
+    //                 is where the checkout run starts. Past that the term is
+    //                 a compare and nothing else.
+    //   dayCol        NOT the lamp colour. The whole point of a doorway is
+    //                 that it is the one cool light in a 3500 K room, and the
+    //                 boundary where it meets the troffers is the tell.
+    day: DAY_APS, dayGain: 1.15, dayReach: 9.5, daySpread: 0.42,
+    dayCol: 0xbdd2ef,
     // ...and the skirt's near radius, which is the single number that sets how
     // WIDE the falloff is. 0.08 (round 8) put the whole ramp inside 10 px;
     // 0.34 put it at 40-50 and 0.46 at 60-70, which is where the reference is.
@@ -3131,6 +4138,99 @@ export function buildStore(THREE, scene) {
     // ROUND 10 — the cavity and the crevice. See chopAO in light.js for what
     // each is and why a down-facing surface took no occlusion at all before.
     cav: 0.78, crev: 0.72, crevH: 0.090,
+    // =====================================================================
+    // ROUND 13 — THE TROFFER ROWS, AS LIGHT AND NOT ONLY AS GEOMETRY.
+    // =====================================================================
+    // The whole argument is in the chopLamp note in store/light.js. In one
+    // line: a per-light ablation showed 63% of a vertical facing's light comes
+    // from AmbientLight + HemisphereLight, both of which are CONSTANT over a
+    // vertical plane, so the product wall's shading factor is flat (p5 0.102,
+    // p50 0.353, p95 0.450) and a flat factor k compresses the albedo's
+    // (L* + 16) by k^(1/3). ROUND 14 — do not carry the "caps the building at
+    // L* 62" line forward: the algebra was right and its premise is stale.
+    // Re-measured on the product mask over six named poses, k is p5 0.149 /
+    // p50 0.407 / p95 0.913, p95/p50 = 2.24, and an albedo of L* 93 now
+    // arrives at L* 78.
+    //
+    // These six values are the SAME variables lightRow() is called with, four
+    // hundred lines below. Nothing here is a second copy of the row plan: move
+    // an aisle and the fixtures, the ceiling's row lift, the floor's
+    // reflection and this light all move together.
+    lampGeo: [ROW_X0, ROW_P, LY, ROW_HX],
+    lampSpanZ: ROW_HZ,
+    // GAIN — swept live on one page load against the stage ladder, with the
+    // ambient and the key held, then the key taken down to put whole-frame
+    // median L* back. Numbers in the round-13 report.
+    lampGain: 0.45, lampSpecScale: 0.18,
+    // The lamps run 3000-5000 K per unit (see LAMP_B / the strip atlas); this
+    // is the run average a camera white-balances toward, which is why it is
+    // barely warm rather than the 3000 K the warmest units actually are.
+    lampCol: 0xfff4e4,
+    // =====================================================================
+    // ROUND 14 — THE RUN ACROSS THE AISLE.
+    // =====================================================================
+    // See chopAisle in store/light.js for the whole argument. In one line: a
+    // vertical product facing gets 0.248 of its cosine-weighted hemisphere
+    // from the run on the other side of the aisle — the form factor of an
+    // infinite strip from -16.7 to +12 degrees — and round 13's per-light
+    // ablation measured that source at 0.0% of a facing's light, because
+    // nothing in the file looked sideways.
+    //
+    // The step is AISLE_GAP itself, not a copy of it. Move the aisle and the
+    // march moves with it, the same contract lampGeo has with ROW_P.
+    // GAIN. Not swept to taste: it is the room's irradiance at facing height,
+    // the third factor in ( form factor ) x ( blocker albedo, read from the
+    // field ) x ( how brightly the blocker is lit ). Measured on this build,
+    // product mask over six poses: the shading factor k runs p5 0.149, p50
+    // 0.407, p95 0.913, and p95 is specular. An UNOCCLUDED vertical facing
+    // under a luminous ceiling plane sits at half the horizontal, so 0.50 is
+    // the level the opposite run is standing in.
+    // ROUND 15 — 0.50 -> 3.00, SWEPT AND LANDED. Round 14 shipped 0.50 without
+    // ever sweeping it, and killed a lever that reached only %chr 27.88 while
+    // shipping a build that reached 26.09 — judging the lever against the
+    // PHOTOGRAPH and the shipped work against nothing.
+    //
+    // The sweep, as a WITHIN-RUN uniform toggle on one page load, six aisle
+    // poses (camera at aisleX(i), 1.62, -9.0 looking at aisleX(i), 1.30, 12.0
+    // for i = 1..6), one symmetric q87 4:2:0 encode on BOTH sides — and the
+    // second encode moves the render's median at most +0.19 and the
+    // photographs' at most -0.08, so the transition is spent and the residual
+    // is under half an L*. Error against the 14-file reference median:
+    //
+    //     side    %chr     p25     med     p75     p95    %>80
+    //     0.00  -11.23   -1.69   -5.36   -7.26   -0.07   +0.95
+    //     0.50  -10.69   -1.03   -5.02   -7.12   -0.22   +0.87
+    //     1.00  -10.19   -0.36   -4.29   -6.65   -0.33   +0.82
+    //     2.00   -9.09   +1.11   -2.78   -5.09   -0.43   +0.75
+    //     3.00   -8.09   +2.47   -1.52   -3.10   +0.09   +0.90
+    //
+    // 70% of the median gap, and the top of the histogram does not move: the
+    // paired 0.50 -> 3.00 delta is p95 +0.31 +/- 0.55 (4 of 6) and %>L*80
+    // +0.03 +/- 0.19 (4 of 6) — both straddle zero. The ceiling band moves
+    // +0.069 L* where an exposure x1.35 moves it +7.8, a factor of 113, and
+    // the whole-frame blown fraction moves +0.012 on a +/-0.165 pose spread.
+    // The contact profile is not "within noise", it is EXACTLY unchanged:
+    // 0.000 at every one of 0/4/8/12/16/24/32/48 px, because chopAisle returns
+    // zero for lat < 0.06 and a floor has lat = 0. This is not an exposure
+    // lever wearing a hat.
+    //
+    // WHY 3.0 IS NOT ABOVE PHYSICS, WHICH IS THE OBVIOUS OBJECTION. The scalar
+    // reads as "how brightly the opposite run is lit", and 3.0 would be absurd
+    // for that. But it is multiplied by a FOUR-TAP form factor that
+    // under-collects, so what it actually buys is the delivered lift, and that
+    // is measurable: chromatic-body median (L* + 16) goes 60.39 at side 0.00
+    // to 64.23 at 3.00, a ratio of 1.064, which is 1.064^3 = 1.20x in
+    // luminance. The two-facing solve in light.js asks for about 1.3x. At 3.00
+    // the term is still UNDER its own derivation; at 0.50 it delivered 1.02x,
+    // i.e. essentially nothing, which is why round 13's per-light ablation read
+    // 0.0% from the opposite run.
+    side: 3.00, sideStep: AISLE_GAP,
+    // CAVITY REFLECTANCE. See the integrating-cavity note above chopAO's skirt.
+    // A shelf box is cream-painted steel at rho ~0.70 lined with coated board
+    // and film at 0.50-0.60; 0.55 is that enclosure, and 0 is byte-identically
+    // round 9. It is a reflectance and it is the only thing in this round with
+    // a physical range rather than a sweep range.
+    cavRho: 0.55,
   });
   {
     Object.assign(floorMat.userData.chop, FLDU);
@@ -3141,6 +4241,13 @@ export function buildStore(THREE, scene) {
       field: FIELD, uniforms: FLDU, solids: FIELD.n,
       bakeMs: +(performance.now() - bakeT0).toFixed(1),
     };
+    // ROUND 12 stage probe — see PKG_STAGE in store/pack.js for the ladder.
+    //   __CHOP.scene.userData.chopPkgStage.value = 4   // look at the albedo
+    //   __CHOP.scene.userData.chopPkgStock.value.set(1,1,1)   // round-11 stock
+    scene.userData.chopPkgStage = PK.PKG_STAGE;
+    scene.userData.chopPkgStock = PK.PKG_STOCK;
+    //   __CHOP.scene.userData.chopPkgSat.value = 1.0   // round-12 print back
+    scene.userData.chopPkgSat = PK.PKG_SAT;
     setFieldSink(null);
   }
 
@@ -3234,6 +4341,42 @@ export function buildStore(THREE, scene) {
     color: 0xeee7d6, grid: [1, 4], near: 9.0, far: 26.0, lod: 6.0,
     gloss: 0.32, top: 0.18, foot: 0.12, name: 'wallSignMat',
   }), 'wallSigns');
+  // ROUND 17 — THE FRONT END'S THREE SOUPS.
+  //
+  // Qscreen is a MeshBasic and that is the whole argument for it existing.
+  // Every monitor this store has ever drawn was a dark Lambert box with a
+  // lighter rectangle on it, i.e. a PAINTING of a screen shaded by the room —
+  // and a screen is the one surface in a supermarket that is its own light
+  // source. `chopNoAO` keeps light.js off it for the same reason the aisle
+  // sign faces are exempt: room bounce on an emitter is not dim light
+  // arriving, it is the display getting brighter than it displays.
+  soup(Qscreen, Object.assign(new THREE.MeshBasicMaterial({
+    map: T.screen, color: 0xffffff,
+  }), { userData: { chopNoAO: true } }), 'frontScreens');
+  soup(Qfsign, SM(T.fsign, {
+    // A 6 m CUSTOMER SERVICE lightbox reads from the back of the store; the
+    // 220 mm PAPER OR PLASTIC card clipped to a bag rack does not read from
+    // two metres. Same atlas, so the acuity curve is set for the LARGE member
+    // of the family and the small ones dissolve early, which is the right way
+    // round — a card that stays crisp at range is the round-7 fault.
+    color: 0xf4eedf, grid: [4, 4], near: 4.0, far: 16.0, lod: 4.0,
+    gloss: 0.52, top: 0.20, foot: 0.14, name: 'frontSignMat',
+  }), 'frontSigns');
+  soup(Qmag, SM(T.mag, {
+    color: 0xffffff, grid: [4, 4], near: 2.2, far: 7.0, lod: 4.0,
+    gloss: 0.88, glareMax: 0.58, tilt: 0.22, top: 0.10, foot: 0.10,
+    name: 'magMat',
+  }), 'magazines');
+  // FRUSTUM CULL THESE THREE, unlike every other soup in this file. soup()
+  // turns culling OFF because a rail soup or a sign soup spans the whole
+  // 47 x 38 m building and its bounding sphere is therefore always on screen —
+  // testing it is pure cost. These three live entirely in the 3.5 m strip at
+  // the front, so the test is worth having: it takes all three off the two
+  // most expensive poses in the store, which both look AWAY from the front end.
+  for (const n of ['frontScreens', 'frontSigns', 'magazines']) {
+    const m = root.getObjectByName(n);
+    if (m) { m.frustumCulled = true; m.geometry.computeBoundingSphere(); }
+  }
   soup(Qcool, new THREE.MeshBasicMaterial({ map: T.coolerBack, color: 0xffffff }), 'coolerBack');
   // ROUND-4. The mip bias that used to be on the lens map was forcing a sharp
   // mip on a 3 px prismatic ladder at 70 degrees off normal, and the result was
@@ -3442,14 +4585,63 @@ export function buildStore(THREE, scene) {
   // luminance of 89 against 94-154 for the reference set; a vertical facing
   // takes almost nothing from a key coming in at 68 degrees, so ambient is the
   // only term that reaches it.
+  //
+  // ROUND 13 — THE SUN COMES DOWN AND THE CEILING GOES UP, and one number in
+  // this block is now measured rather than chosen.
+  //
+  // A per-light ablation (one page load, byte-identical restore) on the
+  // stage-7 product mask and on a declared aisle-floor rectangle:
+  //
+  //                     share of a VERTICAL      share of the
+  //                     gondola facing           aisle floor
+  //     Ambient 0.44          32.2%                  12.9%
+  //     Hemisphere 0.66       30.4%                  20.6%
+  //     Key 1.24               9.8%                  35.4%
+  //     Fill 0.32              0.0%                   3.8%
+  //     field floor-bounce     8.3%                   0.0%
+  //
+  // The key is a SUN. Its vertical-to-horizontal irradiance ratio is fixed by
+  // its elevation. ROUND 14 — THREE CORRECTIONS TO THIS SENTENCE, and the third
+  // one changes the size of the argument that follows it.
+  //   1. key.position is ( CX+5, CEIL_H+16, CZ-7 ), so the horizontal offset is
+  //      hypot(5,7) = 8.602 against a height of 21.2. The elevation is
+  //      67.91 degrees, not 66.8.
+  //   2. 0.235 is not a cotangent of anything. It is 5 / 21.2 — the x offset
+  //      over the height, with the 7 m of z dropped. cot(66.8) is 0.4286.
+  //   3. The number the argument actually wants is cot(67.91) = 0.4058, which
+  //      is 1.7x the figure it was written with. So a facing pointed straight
+  //      at the key's azimuth takes 0.406 / 0.575 = 71% of what the same watt
+  //      delivers from the hemisphere, not the 41% claimed below. Averaged over
+  //      azimuths it is less, because a facing turned away from the key takes
+  //      nothing from it at all, and that azimuth average is the honest number
+  //      for a product wall — but it is not 0.235 either.
+  // The DIRECTION of round 13's move is unaffected: a plane still beats a sun
+  // on a vertical surface. The MARGIN was overstated. A drop ceiling of troffers is not a
+  // sun, it is a luminous PLANE, and a plane delivers 0.5 of its horizontal
+  // irradiance to an unobstructed vertical surface — 0.575 for this hemisphere
+  // light once its ground term is counted. So every watt sitting in the key
+  // reaches a shelf face at 41% of the rate the same watt reaches it from the
+  // hemisphere. Moving light from the key to the hemisphere is the physically
+  // right direction independently of any statistic, and the fill — 3.8% of the
+  // floor and 0.0% of the face, i.e. the least useful light in the rig — goes
+  // down to a trace of cool on the shadow side.
+  //
+  // WHAT THIS IS NOT. It is NOT where the round's gain came from, and the
+  // control that says so is in the report: scaling all four of these lights
+  // together by 1.25, with the lamp term off, matches every product statistic
+  // the redistribution buys. A 2.65 m row pitch under a 5.2 m ceiling IS a
+  // uniform luminous plane at shelf range, so no arrangement of it can put
+  // variance on a shelf face that the ambient did not already have. The gain
+  // this round came from PKG_SAT and from the lamp SPECULAR, which is the one
+  // thing no directional light can supply. See store/light.js.
   scene.add(new THREE.AmbientLight(0xfff4e6, 0.44));
-  const hemi = new THREE.HemisphereLight(0xfcfdff, 0x736a58, 0.66);
+  const hemi = new THREE.HemisphereLight(0xfcfdff, 0x736a58, 0.73);
   hemi.position.set(0, CEIL_H, 0);
   scene.add(hemi);
   // Steeper as well as stronger: this used to come in at about 30 degrees off
   // horizontal, i.e. from the side, which is the one direction a supermarket is
   // never lit from and which put the brightest face on the shelf UPRIGHTS.
-  const key = new THREE.DirectionalLight(0xfffaf2, 1.24);
+  const key = new THREE.DirectionalLight(0xfffaf2, 0.68);
   key.position.set(CX + 5, CEIL_H + 16, CZ - 7);
   key.target.position.set(CX, 0, CZ);
   key.castShadow = true;
@@ -3458,11 +4650,166 @@ export function buildStore(THREE, scene) {
   sc.left = -SW * 0.6; sc.right = SW * 0.6; sc.top = SD * 0.6; sc.bottom = -SD * 0.6;
   sc.near = 1; sc.far = 70; sc.updateProjectionMatrix();
   scene.add(key); scene.add(key.target);
-  const fill = new THREE.DirectionalLight(0xdfeaff, 0.32);
+  const fill = new THREE.DirectionalLight(0xdfeaff, 0.10);
   fill.position.set(CX - 12, CEIL_H + 4, CZ + 14);
   scene.add(fill);
 
   scene.fog = new THREE.Fog(0xdcd6c6, 32, 110);
 
-  return { colliders, powerupSpots };
+  // ROUND 17 — SHELF CHECK. THE ASSERTION AGAINST THE SCENE GRAPH.
+  //
+  // pack.js's bakeCheck() asserts every motif reaches a CANVAS, which is the
+  // stage round 16's depictCheck() could not see. It is still not the last
+  // stage. The first r17 build passed bakeCheck() at 81/81 and the census said
+  // only 79 motifs were on a shelf: 8 of 18 bottle cells were dealt to
+  // departments that never place a bottle, so soySplash and sportBottle were
+  // baked, verified, and invisible.
+  //
+  // BAKED IS NOT PLACED. This walks the InstancedMeshes that were just built,
+  // recovers each instance's cell from its own `aCell` attribute, and asserts
+  // that every baked cell has at least one instance somewhere in the store. It
+  // reads the artefact the player sees and nothing else — no table, no plan, no
+  // convention. AGENTS_BRIEF: "assert against the artefact the player sees".
+  scene.userData.chopShelfCheck = () => {
+    const grids = PK.ATLAS;
+    const byDims = new Map();
+    for (const k of Object.keys(grids)) {
+      byDims.set((grids[k].cols * grids[k].cw) + 'x' + (grids[k].rows * grids[k].ch), k);
+    }
+    const seen = {}; const count = {};
+    for (const k of Object.keys(grids)) { seen[k] = new Set(); count[k] = 0; }
+    scene.traverse((o) => {
+      if (!o.isInstancedMesh) return;
+      const aCell = o.geometry.attributes && o.geometry.attributes.aCell;
+      const im = o.material && o.material.map && o.material.map.image;
+      const k = aCell && im && byDims.get(im.width + 'x' + im.height);
+      if (!k) return;
+      const { cols, rows } = grids[k];
+      for (let i = 0; i < o.count; i++) {
+        const cx = Math.round(aCell.getX(i) * cols);
+        const cy = rows - 1 - Math.round(aCell.getY(i) * rows);
+        seen[k].add(cy * cols + cx);
+        count[k]++;
+      }
+    });
+    const bad = [];
+    for (const k of Object.keys(grids)) {
+      const n = grids[k].cols * grids[k].rows;
+      for (let i = 0; i < n; i++) {
+        if (!seen[k].has(i)) {
+          const rec = PK.CELL_LOG.find((r) => r.atlas === k && r.i === i);
+          bad.push(k + '#' + i + ' "' + (rec ? rec.desc : '?') + '" (motif '
+            + (rec ? rec.motif : '?') + ') is BAKED BUT NEVER PLACED');
+        }
+      }
+    }
+    const motifs = new Set(), nouns = new Set(), brands = new Set();
+    for (const r of PK.CELL_LOG) {
+      if (!seen[r.atlas] || !seen[r.atlas].has(r.i)) continue;
+      if (r.motif) motifs.add(r.motif);
+      nouns.add(r.desc);
+      if (r.brand) brands.add(r.brand);
+    }
+    return {
+      bad,
+      instances: Object.values(count).reduce((a, b) => a + b, 0),
+      perAtlas: Object.keys(grids).map((k) => k + ':' + seen[k].size + '/'
+        + (grids[k].cols * grids[k].rows)).join(' '),
+      motifsOnShelf: motifs.size,
+      nounsOnShelf: nouns.size,
+      brandsOnShelf: brands.size,
+    };
+  };
+  {
+    const r = scene.userData.chopShelfCheck();
+    if (r.bad.length) {
+      throw new Error('store.js shelf: ' + r.bad.length + ' unreachable cell(s) — '
+        + r.bad.slice(0, 6).join(' | '));
+    }
+    scene.userData.chopShelfStats = r;
+  }
+
+  // =========================================================================
+  // FRONT_END — THE ANCHOR TABLE. ROUND 17.
+  // =========================================================================
+  // agents.js builds the people; this file builds the place. The contract
+  // between them is this object, and the reason it exists rather than a set of
+  // coordinates in agents.js is the rule CLAUDE.md opens with: exactly one
+  // piece of code owns a derivation. Where a cashier stands is a fact about
+  // the checkstand's geometry. If the stand moves 200 mm, a hard-coded number
+  // in another file is silently wrong and nothing fails.
+  //
+  // It is returned from buildStore AND published on scene.userData.chopFrontEnd
+  // so a consumer that never sees the return value can still find it.
+  //
+  //   lanes[k] = {
+  //     index, number, open, express,       // number is what the sign says
+  //     x, z0, z1,                          // the stand: z0 south, z1 mouth
+  //     cashier  {x, z, face:[dx,dz], clearR}
+  //     customer {x, z, face}               // unloading at the belt
+  //     bagger   {x, z, face}               // at the bagging well
+  //     pickup   {x, y, z}                  // where a filled bag sits
+  //     belt     {x, y, z0, z1, w}          // the belt surface, for props
+  //     mouth    {x, z}                     // where the channel starts
+  //     queue    {x, z, dir:[dx,dz], pitch, slots}
+  //     signY, lampY
+  //   }
+  //   desk = {
+  //     x, z, counterY, faceZ, backZ, x0, x1,
+  //     clerks[2]    {x, z, face, clearR}   // behind the counter
+  //     customers[2] {x, z, face}           // in front of it
+  //     queue {x, z, dir, pitch, slots}
+  //     bell, returns, lottery  {x, y, z}
+  //   }
+  //   runway = { z, x0, x1 }   the walkable strip between the stands and the
+  //                            front wall. See note 2 in the checkout block:
+  //                            it exists because nav.js's first free grid row
+  //                            south of walkMinZ is at z = -19.37, and the old
+  //                            lane collider blocked it.
+  //   setLaneOpen(k, open)     switches the lamp over the lane and takes the
+  //                            closed-lane barrier away. Returns the new state.
+  //
+  // FACE VECTORS are unit [dx, dz] in world metres — the direction the body is
+  // LOOKING, not the direction it walks. clearR is how much room that anchor
+  // actually has before it touches the fixture, which for a cashier tucked
+  // against a checkstand is 0.30 m and not the 0.42 m body radius: a cashier
+  // leaning on their own counter is correct, so do not push them out of it.
+  const _lampOn = new THREE.Color(0x4cff8a);
+  const _lampOff = new THREE.Color(0x2f353b);
+  const _hidden = new THREE.Matrix4().makeScale(1e-5, 1e-5, 1e-5);
+  const _barM = (steelMesh ? laneStateIdx : []).map(([, bi, pi]) => {
+    const a = new THREE.Matrix4(), b = new THREE.Matrix4();
+    steelMesh.getMatrixAt(bi, a); steelMesh.getMatrixAt(pi, b);
+    return [a, b];
+  });
+  const setLaneOpen = (k, open) => {
+    const L = lanePose[k];
+    if (!L || !steelMesh) return null;
+    L.open = !!open;
+    const [li, bi, pi] = laneStateIdx[k];
+    steelMesh.setColorAt(li, open ? _lampOn : _lampOff);
+    if (steelMesh.instanceColor) steelMesh.instanceColor.needsUpdate = true;
+    steelMesh.setMatrixAt(bi, open ? _hidden : _barM[k][0]);
+    steelMesh.setMatrixAt(pi, open ? _hidden : _barM[k][1]);
+    steelMesh.instanceMatrix.needsUpdate = true;
+    return L.open;
+  };
+  // Everything was pushed in the OPEN state (lamp green, barrier at full
+  // scale); this is what puts the shipped shift on the floor. It also means
+  // the toggle is exercised at build on every lane, so a broken index shows up
+  // as a wrong-looking store rather than as a bug the first time agents.js
+  // calls it — the AGENTS_BRIEF rule about assertions that have never fired.
+  for (let k = 0; k < lanePose.length; k++) setLaneOpen(k, lanePose[k].open);
+
+  const FRONT_END = {
+    version: 1,
+    lanes: lanePose,
+    desk: DESK_POSE,
+    runway: { z: -19.37, x0: STORE.minX + 1.2, x1: 16.1 },
+    laneMouthZ: laneNZ,
+    setLaneOpen,
+  };
+  scene.userData.chopFrontEnd = FRONT_END;
+
+  return { colliders, powerupSpots, frontEnd: FRONT_END };
 }

@@ -76,8 +76,8 @@
 // every steal is 1.9 s, the durations ARE the tell and a player with a
 // stopwatch beats the game. So the durations overlap on purpose: steals run
 // 1.75-2.60 s, decoys 1.60-2.70 s, and the shortest SPONTANEOUS clip in the
-// file is a decoy while the longest is also a decoy. (Round 8's react clips are
-// 1.95-2.80 s and bracket both pools, but nothing rolls one by accident — they
+// file is a decoy while the longest is also a decoy. (The PA answer clips run
+// 1.95-3.60 s and bracket both pools, but nothing rolls one by accident — they
 // only ever play in answer to the PA, so they are not in that contest. The
 // 0.98 s startle is shorter than anything else here and that is safe for the
 // same reason: it is never rolled, only ever named, and by the time its length
@@ -425,10 +425,16 @@ export const GESTURES = [
   // happens NEXT: at 0.62 s one of these four men drops his hands off the cart
   // bar, and by 0.98 s he is running.
   //
-  // If you edit heard(), you are editing all FIVE — the three shrugs, the
-  // startle and `putbackPA` above — which is the point of it. The day somebody
-  // makes the startle read better they make the annoyed man read better too,
-  // and there is no keyframe either of them owns alone.
+  // If you edit heard(), you are editing ELEVEN clips — every answer a body in
+  // this store can give a PA, on every rung: the three confusion clips, the
+  // four escalation clips, the two birds, the startle and `putbackPA` — which
+  // is the point of it. The day somebody makes the startle read better they
+  // make the confused man read better too, and there is no keyframe either of
+  // them owns alone. (Round 8 wrote "all FIVE" here and it was true then; round
+  // 9 added five clips and round 10 a sixth without anyone updating the count,
+  // which is exactly how a correct comment goes quietly wrong. The number is
+  // `GESTURES.filter(g => g.keys[0].u === 0 && g.keys[1] && g.id.startsWith('whoMe')).length`
+  // plus putbackPA if you would rather not trust a written one.)
   //
   // NONE of these contains an object, a reach or a concealment: the information
   // a player is allowed to take off a react clip is "he heard it", never "he did
@@ -440,26 +446,101 @@ export const GESTURES = [
   // 2.80 s huff open on the identical picture.
 
   {
-    // THE CEILING CHECK. He sweeps the aisle, finds the speaker, holds on it —
-    // and the hold is the realisation. Then he tells the ceiling no.
-    id: 'whoMe', tell: 'react', dur: 2.45, item: SMALL,
+    // THE CEILING CHECK, AND IT DOES NOT RESOLVE.
+    //
+    // ROUND 10. Round 8 ended this clip on the head shake, and the client has
+    // now told us that is the wrong ending: "I don't think the shoppers should
+    // necessarily stop and shake their hands and get mad ... I want them to
+    // look around and look really confused." So the beat that used to be
+    // NOT HAVING IT is now STILL LOOKING — he thinks he has found the speaker,
+    // holds on it, and then it is not there after all, so his head comes down
+    // to the shelf and goes straight back up again. `shake` is 0 in every key.
+    //
+    // The unresolved ending is the whole change and it is one keyframe: at
+    // 1.62 s he is looking at the shelf like a man who has given up, and at
+    // 1.85 s he is looking at the ceiling again. A single reversal is what
+    // separates "he heard it and dismissed it" from "he cannot place it", and
+    // it costs nothing because the neck was already moving.
+    id: 'whoMe', tell: 'react', dur: 2.55, item: SMALL,
     keys: [
-      ...heard(2.45),
-      kf(0.78 / 2.45, { armR: -0.90, armL: -0.92, neck: -0.34, look: 0.52, turn: -0.08 }),
-      kf(1.05 / 2.45, { armR: -1.00, armL: -0.94, neck: -0.62, look: 0.10 }),
-      kf(1.38 / 2.45, { armR: -1.00, armL: -0.94, neck: -0.58, look: -0.06, chest: -0.08 }),
-      kf(1.62 / 2.45, { armR: -0.86, armL: -0.92, neck: -0.20, chest: -0.10 }),
-      kf(1.75 / 2.45, { armR: -0.88, armL: -0.92, neck: 0.02, chest: -0.06, shake: 0.34 }),
-      kf(2.05 / 2.45, { armR: -1.06, armL: -0.98, neck: 0.06, chest: -0.04, shake: 0.34 }),
-      kf(2.22 / 2.45, { armR: -1.02, armL: -1.00, neck: 0.24, chest: 0.14 }),
+      ...heard(2.55),
+      kf(0.78 / 2.55, { armR: -0.90, armL: -0.92, neck: -0.34, look: 0.52, turn: -0.08 }),
+      kf(1.05 / 2.55, { armR: -1.00, armL: -0.94, neck: -0.62, look: 0.10 }),
+      // The hold. He thinks that is it.
+      kf(1.38 / 2.55, { armR: -1.00, armL: -0.94, neck: -0.58, look: -0.06, chest: -0.08 }),
+      // ...it is not. Back down to the shelf.
+      kf(1.66 / 2.55, { armR: -0.92, armL: -0.93, neck: 0.16, look: -0.34, chest: -0.02 }),
+      // STILL LOOKING. Up again, the other way, slower than the first time.
+      kf(1.98 / 2.55, { armR: -0.94, armL: -0.94, neck: -0.50, look: 0.34, chest: -0.10 }),
+      // Half a shrug: one hand off the bar, palm up, and the shoulders hitch.
+      kf(2.22 / 2.55, { armR: -1.34, armRz: 0.58, armL: -0.96, neck: -0.24, chest: -0.12 }),
+      kf(2.38 / 2.55, { armR: -1.08, armRz: 0.26, armL: -0.98, neck: 0.20, chest: 0.12 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+    ],
+  },
+  {
+    // ROUND 10 — "LOOK AROUND AND LOOK REALLY CONFUSED". THE LONG ONE.
+    //
+    // This is the clip the client's sentence describes end to end, and it
+    // replaces `whoMeAffront` in the first-shout pool rather than joining it:
+    // the affront has not been deleted, it has been moved up the ladder to the
+    // third shout, where being annoyed is earned. See LADDER in agents.js.
+    //
+    // FOUR PLACES HE LOOKS AND NONE OF THEM IS IT: down the aisle one way,
+    // right round behind him — the whole BODY comes with it, which is the beat
+    // that survives at 214 px because a body that has turned 60 degrees off the
+    // shelf is a different silhouette from one that has not — then up at the
+    // ceiling, then the shrug.
+    //
+    // THE SHRUG IS THE POINT AND IT IS A SILHOUETTE, NOT A FACE. Both hands
+    // come off the cart bar, elbows in, forearms out and up, palms open. In a
+    // store whose entire posture language is people folded over a trolley, two
+    // forearms held out away from the body is a shape nothing else in this file
+    // makes — and it is the one gesture that means "I don't know" without a
+    // face, without a caption and without a sound. Held for 0.55 s, which is
+    // long enough to read on a monitor tile and short enough not to mime.
+    //
+    // NO `shake` ANYWHERE. That is the whole rebalance in one line: the head
+    // shake is negation and negation is the end of a thought. A man who is
+    // confused has not finished having it.
+    id: 'whoMeLost', tell: 'react', dur: 3.00, item: SMALL,
+    keys: [
+      ...heard(3.00),
+      // 1. Keeps turning the way heard() started him, on down the aisle.
+      kf(0.76 / 3.00, { armR: -0.90, armL: -0.92, neck: -0.18, look: 0.58, turn: -0.30 }),
+      // 2. ...and right round behind him. Nobody there either.
+      kf(1.06 / 3.00, { armR: -0.90, armL: -0.92, neck: -0.10, look: 0.26, turn: -1.02 }),
+      kf(1.30 / 3.00, { armR: -0.92, armL: -0.93, neck: -0.14, look: -0.24, turn: -0.86 }),
+      // 3. Up at the ceiling, and a hold that does not pay off.
+      kf(1.60 / 3.00, { armR: -0.94, armL: -0.94, neck: -0.54, look: 0.06, turn: -0.48, chest: -0.10 }),
+      kf(1.88 / 3.00, { armR: -0.96, armL: -0.95, neck: -0.56, look: -0.02, turn: -0.40, chest: -0.12 }),
+      // 4. THE SHRUG. Both palms up, shoulders hitched, held.
+      kf(2.14 / 3.00, { armR: -1.44, armRz: 0.74, armL: -1.42, armLz: -0.72, neck: -0.26, turn: -0.30, chest: -0.16 }),
+      kf(2.52 / 3.00, { armR: -1.46, armRz: 0.76, armL: -1.44, armLz: -0.74, neck: -0.08, turn: -0.26, chest: -0.14 }),
+      // ...and one more look up on the way down, because he still has not
+      // worked it out. Then back to the shelf, none the wiser.
+      kf(2.74 / 3.00, { armR: -1.12, armRz: 0.34, armL: -1.10, armLz: -0.32, neck: -0.42, turn: -0.14, chest: -0.06 }),
+      kf(2.90 / 3.00, { armR: -1.00, armRz: 0.02, armL: -0.98, armLz: -0.02, neck: 0.22, chest: 0.12 }),
       kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
     ],
   },
   {
     // "ME?" Hand off the bar and onto his own chest, a half turn to see who is
     // behind him, nobody, then up to the ceiling — and the affront lands on the
-    // camera rather than on a person, which is worse. Longest of the four.
-    id: 'whoMeAffront', tell: 'react', dur: 2.80, item: SMALL,
+    // camera rather than on a person, which is worse.
+    //
+    // ROUND 10 — MOVED, NOT CHANGED. Not one keyframe of this clip has been
+    // touched; what changed is that it is now the SECOND rung of the ladder in
+    // agents.js rather than one of the three a first announcement can draw.
+    // The client's note is that the anger arrives too early, and the cheapest
+    // honest answer to "too early" is later, not smaller.
+    //
+    // `tell` goes 'react' -> 'escalate' with it, and that is not cosmetic:
+    // OF('react') is the pool pickGesture rolls by modulo and it had three
+    // entries when every distribution in this file was measured. `whoMeLost`
+    // took this one's place in it, so it still has three. Same rule round 8
+    // wrote for the startle and round 9 wrote for the bird.
+    id: 'whoMeAffront', tell: 'escalate', dur: 2.80, item: SMALL,
     keys: [
       ...heard(2.80),
       kf(0.72 / 2.80, { armR: -1.62, armRz: 0.62, armL: -0.92, look: -0.30, turn: -0.62, chest: -0.04 }),
@@ -474,19 +555,28 @@ export const GESTURES = [
     ],
   },
   {
-    // THE SHORT ONE. Round 7 made this "deliberately almost nothing to look at"
-    // and that stays true — it is 0.85 s shorter than the affront and the shake
-    // is a third smaller — but it runs the same four beats, because a clip that
-    // SKIPPED the realisation would be a clip a player could learn to read as
-    // "that one is not the shake, so it is not going anywhere".
+    // THE SHORT ONE, AND ROUND 10 GAVE IT A SECOND JOB.
+    //
+    // Round 7 made this "deliberately almost nothing to look at" and that is
+    // still what it is. What changed is WHO GETS IT: agents.js now picks the
+    // reaction by how close the announcement was as well as by which shout it
+    // is, and this is the far end of that. A man twelve metres down the next
+    // aisle hears a voice, looks up, cannot see anybody, and goes back to his
+    // shopping — which is what people do, and which is what makes the man three
+    // metres away stopping dead and searching mean something.
+    //
+    // The shake came out of it (round 10; see `whoMe`). What is left in its
+    // place is one more sweep and a shoulder hitch — the smallest possible
+    // "I have no idea", at a distance where nothing bigger would read anyway.
     id: 'whoMeGlance', tell: 'react', dur: 1.95, item: SMALL,
     keys: [
       ...heard(1.95),
       kf(0.70 / 1.95, { armR: -0.94, armL: -0.94, neck: -0.46, look: 0.18, turn: -0.12 }),
       kf(0.95 / 1.95, { armR: -0.96, armL: -0.94, neck: -0.34, look: 0.0, chest: -0.06 }),
-      kf(1.10 / 1.95, { armR: -0.98, armL: -0.95, neck: 0.0, chest: -0.05, shake: 0.24 }),
-      kf(1.40 / 1.95, { armR: -1.00, armL: -0.96, neck: 0.08, chest: -0.03, shake: 0.24 }),
-      kf(1.58 / 1.95, { armR: -0.98, armL: -0.96, neck: 0.22, chest: 0.12 }),
+      // One more sweep, the other way, and he gives up on it.
+      kf(1.18 / 1.95, { armR: -0.98, armL: -0.95, neck: -0.30, look: -0.44, chest: -0.05 }),
+      kf(1.44 / 1.95, { armR: -1.10, armRz: 0.38, armL: -0.98, neck: -0.12, chest: -0.08 }),
+      kf(1.62 / 1.95, { armR: -0.99, armRz: 0.08, armL: -0.96, neck: 0.22, chest: 0.12 }),
       kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, look: 0.0, turn: 0.0 }),
     ],
   },

@@ -553,6 +553,54 @@ function camper(ctx, opts) {
 
 const POLICIES = { observer, reader, announcer, tattle, random, camper, idle };
 
+// ===========================================================================
+// ROUND 16 — run() IS REPRODUCIBLE, AND THE PRECONDITION IS ZERO FRAMES
+// ===========================================================================
+// Round 15 recovered a determinism here and built a control on it: after a page
+// reload with a fixed seed order, two pools of run() come back byte-identical,
+// which is what let it prove a HUD edit was game-neutral. That is real and it
+// reproduced 5/5. IT ALSO HAS A PRECONDITION NOBODY WROTE DOWN, and the
+// precondition is easy to break by accident:
+//
+//     simulation frames stepped        observer   thieves / caught / points
+//     since page load
+//     ---------------------------      --------   -------------------------
+//     none                                        4 / 3 / 495
+//     step(0)      <- WHAT snap() DOES            3 / 3 / 374
+//     step(1/60)                                  4 / 4 / 482
+//     run(0.5)                                    4 / 4 / 482
+//
+// ONE SCREENSHOT BEFORE A BENCH MOVES EVERY NUMBER IN IT. The mechanism is the
+// one game.js's COLD table already names: agents seeds its RNG once at module
+// init and agents.reset() does not reseed, so the agents stream carries over
+// from whatever ran before. Patching Math.random above pins the GAME side and
+// leaves that stream alone — deliberately, see the mulberry32 note — which is
+// why "same seed" is not the same thing as "same run" unless the page is fresh.
+//
+// So: TAKE YOUR CAPTURES AFTER YOUR BENCHES, OR RELOAD BETWEEN THEM. It
+// survives at all in a browser pane because rAF is frozen there (one tick in
+// three seconds even fronted); on a fronted tab it would not.
+//
+// ROUND 16 USED THIS AND IT HELD. Two 4x240 s observer pools at seed 7717, on
+// two fresh page loads with nothing stepped before either, across a layout
+// change to hud.js:
+//
+//     _strings           218,924   218,924
+//     _plates            125,570   125,570
+//     _platesTranslucent 594,308   594,308
+//     _overprints             12         0
+//     _erasures               68         0
+//
+// The first three being byte-identical is the control: the same HUD was drawn
+// on the same frames with the same elements, so the last two moved because the
+// POSITIONS changed and nothing else did. A denominator that reproduces to the
+// unit is worth more than any claim about the numerator.
+//
+// The stronger control still available, from round 15 and not bettered here:
+// `census:false` removes the entire HUD draw path in one run and every one of
+// 6,851 chars of game-side state comes back byte-identical — which makes HUD
+// game-neutrality STRUCTURAL rather than empirical, since hud.js contains zero
+// Math.random calls.
 // ------------------------------------------------------------------- the shift
 export async function run(ctx, opts = {}) {
   const { game, agents } = ctx;
@@ -620,6 +668,12 @@ export async function run(ctx, opts = {}) {
       annKeyed: 0, anns: 0, annHeed: 0, annShrug: 0, annBolt: 0,
     };
     let windows = [], cases = [];
+    // ROUND 12 — WHAT THE PLAYER WAS TOLD, counted over the same shift seconds
+    // as everything else on this object. agents.bench() measures the bot's
+    // information; nothing measured this file's, which is how the two came to
+    // differ by eleven points of catch rate for eleven rounds without a single
+    // published number noticing. Reset per policy so the rows are comparable.
+    if (game.bot.sightLedgerReset) game.bot.sightLedgerReset();
     const census = { _frames: 0, _desk: 0, _floor: 0 };
     const stateC = { deskT: 0, alarmT: 0, hardT: 0, softT: 0, pipT: 0, flagT: 0, blinkT: 0, blinkTiles: 0 };
     for (let k = 0; k < shifts; k++) {
@@ -629,7 +683,32 @@ export async function run(ctx, opts = {}) {
         if (typeof agg[key] === 'number' && key in r) agg[key] += r[key];
       }
       for (let n = 0; n < agg.liveT.length; n++) agg.liveT[n] += r.liveT[n] || 0;
-      for (const k of Object.keys(r.census || {})) census[k] = (census[k] || 0) + r.census[k];
+      // ROUND 15: numbers pool by addition, everything else by first-wins. The
+      // census carries one string now (`_overprintWorst`, see hud.js's INK
+      // LEDGER) and `(undefined || 0) + aString` pools to "0[object Object]"-
+      // shaped junk without erroring — the exact silent-corruption shape this
+      // project keeps retiring metrics over.
+      for (const k of Object.keys(r.census || {})) {
+        const v = r.census[k];
+        if (k === '_overprintWorst' || k === '_worstPx') continue;   // worst-of, below
+        if (k === '_eraseWorst' || k === '_erasePct') continue;      // ROUND 16, same
+        if (typeof v === 'number') census[k] = (census[k] || 0) + v;
+        else if (v != null && census[k] == null) census[k] = v;
+      }
+      if (r.census && r.census._overprintWorst != null
+        && (census._worstPx == null || r.census._worstPx > census._worstPx)) {
+        census._worstPx = r.census._worstPx;
+        census._overprintWorst = r.census._overprintWorst;
+      }
+      // ROUND 16 — the PLATE ledger's worst-of, pooled the same way. `_erasePct`
+      // is a NUMBER and would otherwise have summed to a nonsense percentage
+      // across shifts, which is the same silent-corruption shape the comment
+      // above is about, one field along.
+      if (r.census && r.census._eraseWorst != null
+        && (census._erasePct == null || r.census._erasePct > census._erasePct)) {
+        census._erasePct = r.census._erasePct;
+        census._eraseWorst = r.census._eraseWorst;
+      }
       for (const k of Object.keys(r.stateC || {})) stateC[k] = (stateC[k] || 0) + r.stateC[k];
       windows = windows.concat(r.windows);
       cases = cases.concat(r.cases);
@@ -645,7 +724,44 @@ export async function run(ctx, opts = {}) {
     if (census._frames) {
       const pct = (n, of) => +(100 * (n || 0) / Math.max(1, of)).toFixed(1);
       const c = { _frames: census._frames, _deskPct: pct(census._desk, census._frames),
-        _floorPct: pct(census._floor, census._frames) };
+        _floorPct: pct(census._floor, census._frames),
+        // ROUND 15 — hud.js's INK LEDGER, pooled over every census frame of
+        // every shift. `_overprints` is the number of drawn-string collisions
+        // and it MUST BE 0: the round-14 FOOTSTEPS banner printed the word NOT
+        // underneath BY on 3.7% of floor frames and nothing in the repo noticed.
+        // `_strings` is the denominator so a zero can be told from an instrument
+        // that never ran.
+        _strings: census._strings || 0,
+        _overprints: census._overprints || 0,
+        // Collisions where one of the two is drawn under alpha 0.2 — the CRT
+        // burn-in ghost, by design. Reported, never pooled into the line above,
+        // because a check that silently drops a category is the failure mode
+        // that follows a check that cries wolf.
+        _overprintsGhosted: census._overprintsGhosted || 0,
+        _overprintWorst: census._overprintWorst || null,
+        _overprintWorstPx: census._worstPx || 0,
+        // ROUND 16 — hud.js's PLATE LEDGER. `_erasures` is the number of drawn
+        // strings a LATER opaque fill painted over, which is the mechanism that
+        // actually removes words from this HUD; `_overprints` above cannot see
+        // one of them because an eraser is a fillRect and not a second string.
+        // `_plates` is the denominator (fills at effective alpha >= 0.5) and
+        // `_platesTranslucent` counts the ones filtered out, so the alpha rule
+        // is auditable instead of silent — a naive globalAlpha test puts the
+        // whole of _platesTranslucent in the numerator and the four real
+        // erasers in the denominator.
+        _plates: census._plates || 0,
+        _platesTranslucent: census._platesTranslucent || 0,
+        _erasures: census._erasures || 0,
+        _eraseNear: census._eraseNear || 0,
+        _eraseNearSites: Object.keys(census).filter((k) => k.slice(0, 5) === 'ERZN ')
+          .sort((a, b) => census[b] - census[a]).map((k) => `${census[k]}x  ${k.slice(5)}`),
+        _eraseWorst: census._eraseWorst || null,
+        _eraseWorstPct: census._erasePct || 0,
+        // The class tally. 94 erasures naming three painting sites is a fix;
+        // 94 erasures naming a number is a complaint.
+        _eraseSites: Object.keys(census).filter((k) => k.slice(0, 4) === 'ERZ ')
+          .sort((a, b) => census[b] - census[a])
+          .map((k) => `${census[k]}x  ${k.slice(4)}`) };
       const DESK = new Set(['officer', 'roster', 'rosterEmpty', 'dispatch', 'dispatchArmed',
         'dispatchIdle', 'deskKeyHint', 'paBtn', 'pipTiles', 'pipFresh', 'bandRow2', 'rowRunning',
         // ROUND 10: `rowPA` is an announcement's reaction on a roster row and
@@ -654,11 +770,46 @@ export async function run(ctx, opts = {}) {
         // that never keys the handset — see the announcer policy.
         'rowPA', 'paCost', 'rowWhere',
         'alarm', 'alarmHard', 'alarmSoft']);
-      const FLOOR = new Set(['dispatched', 'pursuit', 'backBanner', 'wind', 'pulse', 'gassedFrame',
+      const FLOOR = new Set(['dispatched', 'pursuit', 'backBanner',
+        // ROUND 16: frames where the door race is out of reach on every door
+        // and the panel has handed the emphasis to GAP. Read against `pursuit`
+        // — noCut/pursuit is the fraction of a chase spent looking at a race
+        // that had already been decided, which is the quantity the design
+        // complaint was about ("over as information before it was over as
+        // gameplay"). It should be LARGE; that is the finding, not a defect.
+        'pursuitNoCut', 'wind', 'pulse', 'gassedFrame',
         'record', 'prompt', 'backOff', 'dialogue', 'stamp', 'paPanel', 'paIdle', 'pan', 'floorKeyHint',
+        // ROUND 14: `heard` is the blind-bolt cue. It is a floor element and it
+        // should read LOW — it fires on the bolts the sight model cannot see,
+        // which is a minority of them, and a large number here means it has
+        // stopped being an exception.
+        'heard',
+        // ROUND 12: the intercept aid. TWO numbers matter and they pull in
+        // opposite directions, which is why both are reported rather than one.
+        //
+        //   cutPath / pursuit    should be HIGH. The aid exists for chases and
+        //                        an aid that is absent during them is written,
+        //                        not shipped.
+        //   cutPath x _floorPct  is the anti-clutter number, and it is the one
+        //                        round 9 was about: the alarm plate it deleted
+        //                        censused at 41% of an IDLE shift. This must
+        //                        stay near the fraction of a shift that IS a
+        //                        chase, because the element is nulled by
+        //                        game.js the frame a case closes.
+        //
+        // `cutTurn` is the subset of those frames where the route was NOT in
+        // front of the camera and the aid fell back to one arrow at the cop's
+        // feet. It is reported separately because it is a measurement of the
+        // CHASE, not of the HUD: a large number means most chases are decided
+        // behind the player, which is exactly the complaint the round is about.
+        // ...and the reason column. The identity to check is
+        //     cutPath + cutBlind + cutLate + cutCold  ==  pursuit
+        // — every chase frame is accounted for by exactly one of them.
+        'cutPath', 'cutTurn', 'cutBlind', 'cutLate', 'cutCold',
         'brackets', 'doorTags', 'floorAlarm']);
       for (const k of Object.keys(census)) {
-        if (k[0] === '_' || k === 'pipTiles') continue;
+        if (k[0] === '_' || k === 'pipTiles'
+          || k.slice(0, 4) === 'ERZ ' || k.slice(0, 5) === 'ERZN ') continue;
         const of = DESK.has(k) ? census._desk : FLOOR.has(k) ? census._floor : census._frames;
         c[k] = pct(census[k], of);
       }
@@ -707,6 +858,16 @@ export async function run(ctx, opts = {}) {
     agg.repeatsPerShift = +(agg.hRepeat / shifts).toFixed(2);
     agg.abortsPerShift = +(agg.aborts / shifts).toFixed(2);
     agg.leavesPerShift = +(agg.leaves / shifts).toFixed(2);
+    // The sight model, on this policy's own frames.
+    if (game.bot.sightLedger) {
+      const sl = game.bot.sightLedger();
+      agg.sight = sl;
+      // Same contract as agents' lungBroken/paceBroken: null when the model
+      // holds, and the reason when it does not. A points total measured while
+      // the HUD was leaking ground truth is describing a different game, and it
+      // has to say so on its own object rather than be quoted.
+      agg.sightBroken = sl.sightCheck.ok ? null : sl.sightCheck;
+    }
     out[name] = agg;
   }
   Object.assign(game.bot.FIX, fixWas);
@@ -868,7 +1029,32 @@ async function shift(ctx, policyName, opts) {
       if (game.st.mode === 'desk') census._desk++;
       else if (game.st.mode === 'floor') census._floor++;
       const c = game.hud.sample(game._g);
-      for (const k of Object.keys(c)) census[k] = (census[k] || 0) + c[k];
+      // ROUND 15: numbers add, strings keep the FIRST. `_overprintWorst` (see
+      // hud.js's INK LEDGER) is a string, and `(undefined || 0) + aString`
+      // concatenates silently — the first run of this instrument pooled ten
+      // examples into one unreadable line and lost the "worst" it was named for.
+      // Worst-of across frames cannot be done by addition; it is picked below.
+      for (const k of Object.keys(c)) {
+        const v = c[k];
+        // ROUND 16: `_erasePct` is a worst-of and a NUMBER, so the additive
+        // branch swallowed it and the first reading of this instrument published
+        // a worst single-string coverage of 2382.4% — 68 erasures' percentages
+        // summed. The same trap the round-15 comment above is about, one field
+        // along, and it took a pooling loop this file has TWO copies of: the
+        // cross-shift one was fixed and this one was not. Both now skip.
+        if (k === '_overprintWorst' || k === '_worstPx') continue;
+        if (k === '_eraseWorst' || k === '_erasePct') continue;
+        if (typeof v === 'number') census[k] = (census[k] || 0) + v;
+        else if (v != null && census[k] == null) census[k] = v;
+      }
+      if (c._overprintWorst != null
+        && (census._worstPx == null || c._worstPx > census._worstPx)) {
+        census._worstPx = c._worstPx; census._overprintWorst = c._overprintWorst;
+      }
+      if (c._eraseWorst != null
+        && (census._erasePct == null || c._erasePct > census._erasePct)) {
+        census._erasePct = c._erasePct; census._eraseWorst = c._eraseWorst;
+      }
     }
     // Count filed complaints off st.complaints. It only ever rises, except at a
     // demotion which resets it to zero — that is a fall, so it is ignored here
