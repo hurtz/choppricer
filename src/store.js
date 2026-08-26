@@ -3090,6 +3090,13 @@ export function buildStore(THREE, scene) {
       belt: { x: bx, y: 0.99, z0: BELT_S, z1: BELT_N, w: bw },
       mouth: { x: cx - 0.86, z: laneNZ + 0.24 },
       queue: { x: cx - 0.86, z: laneNZ + 0.24, dir: [0, 1], pitch: 0.78, slots: 4 },
+      // THE ONE CELL IN THIS LANE THAT IS NAV-FREE. The four standing anchors
+      // above are PLACEMENT points and every one of them is inside a blocked
+      // grid cell — deliberately, because nav.js inflates by a 0.52 m body pad
+      // and a cashier belongs 0.34 m from their own counter. Pathing to one of
+      // them therefore fails. Path here first, then step. Verified free on the
+      // shipped grid for all eight lanes; the probe is in the round-17 report.
+      approach: { x: cx - 1.30, z: laneNZ - 0.35 },
       signY: 2.62, lampY: 3.115,
     });
   }
@@ -3459,6 +3466,7 @@ export function buildStore(THREE, scene) {
       clerks: POS.map((px) => ({ x: px, z: (DK_S + CAB_N) / 2, face: [0, 1], clearR: 0.28 })),
       customers: POS.map((px) => ({ x: px + 0.36, z: DK_N + 0.62, face: [0, -1] })),
       queue: { x: sd.x - 0.50, z: DK_N + 1.42, dir: [0, 1], pitch: 0.80, slots: 5 },
+      approach: { x: sd.x, z: DK_N + 0.95 },   // nav-free; see the lane note
       bell: { x: DK_X0 + 1.98, y: 1.20, z: DK_N - 0.22 },
       returns: { x: (DK_X0 + RET_X1) / 2, y: 0.87, z: DK_N + 0.62 },
       lottery: { x: DK_X1 - 0.42, y: 1.36, z: DK_N + 0.62 },
@@ -3860,8 +3868,17 @@ export function buildStore(THREE, scene) {
     solid(x - 0.42, 0, z - 0.6, x + 0.42, 1.0, z + 0.6, false);
   }
   const Bcart = newPkg();
-  // the corral by the doors: nested, so the pitch is a basket depth, not a cart
-  for (let k = 0; k < 6; k++) cart(EXIT.x + 2.0 + k * 0.40, STORE.minZ + 2.4, 0.03 * k, false);
+  // The corral by the doors: nested, so the pitch is a basket depth, not a cart.
+  //
+  // ROUND 17 — MOVED 2.6 m WEST, and this is a chase fix rather than dressing.
+  // The Door 1 corral ran x -19.27..-16.43 with its colliders, and the checkout
+  // run now starts at x -16.53: it stood squarely in TILL 1's queue channel and
+  // sealed it — probed on the live grid, every cell of that channel between
+  // z -18.34 and -16.66 was blocked, so the lane agents.js is meant to staff
+  // could not be walked to at all. The lane run moved this round, so the corral
+  // is what has to move; parked against the glazing it is also where a real one
+  // is, which is the usual outcome when a fixture is in the wrong place.
+  for (let k = 0; k < 6; k++) cart(EXIT.x - 0.6 + k * 0.40, STORE.minZ + 2.4, 0.03 * k, false);
   // ...and one at Door 2, parked on the far side from the service desk so its
   // colliders sit 2.5 m clear of the lane a runner takes at that door.
   for (let k = 0; k < 5; k++) {
@@ -4801,15 +4818,105 @@ export function buildStore(THREE, scene) {
   // calls it — the AGENTS_BRIEF rule about assertions that have never fired.
   for (let k = 0; k < lanePose.length; k++) setLaneOpen(k, lanePose[k].open);
 
+  // ---- THE TILL REGISTRY -------------------------------------------------
+  // Asked for by game.js: a stable label and a world position per till, in the
+  // shape agents.exits publishes doors, so lines.js can address a courtesy
+  // announcement to a PLACE rather than to "FRONT END".
+  //
+  // `open` is a GETTER onto the lane record, not a copy. That is the whole
+  // point: setLaneOpen writes one field and this registry cannot go stale,
+  // which is the failure mode CLAUDE.md opens with and the one a second
+  // hand-maintained list of the same fact guarantees.
+  //
+  // x/z is the REGISTER, i.e. the thing the announcement is about. Where a
+  // BODY stands at that till is a different question and lives one level down
+  // in FRONT_END.lanes[k].cashier / .customer / .bagger.
+  const tills = lanePose.map((L) => {
+    const rec = {
+      id: 'till' + L.index,
+      label: 'TILL ' + L.number,
+      express: L.express,
+      kind: 'till',
+      x: L.x, z: (L.z0 + L.z1) / 2,
+      lane: L.index,
+    };
+    Object.defineProperty(rec, 'open', { get: () => L.open, enumerable: true });
+    return rec;
+  });
+  if (DESK_POSE) {
+    tills.push({
+      id: 'desk', label: 'CUSTOMER SERVICE', kind: 'desk',
+      express: false, open: true, x: DESK_POSE.x, z: DESK_POSE.z, lane: -1,
+    });
+  }
+
+  // ---- RESERVED COLLIDER SLOTS FOR OCCUPIED ANCHORS ----------------------
+  // Declared by the character builder, and it is right: eleven bodies stand in
+  // the front end and none of them is solid, so a fleeing thief runs through a
+  // cashier. Making them solid is a CHASE change and belongs in its own round
+  // with its own bench. What belongs HERE is the half that makes that round
+  // cheap — one list owning every solid at the front end, so the nav grid gets
+  // the bodies exactly the way it already gets the fixtures.
+  //
+  // Slots are allocated LAZILY, and that is deliberate rather than lazy. Two
+  // reasons, and the second one is the whole trick:
+  //
+  //   * Pre-appending 28 boxes moves world.colliders.length from 75 to 103
+  //     today, for no present benefit, and the character builder is currently
+  //     reading collider count as a control. A round should not move a number
+  //     somebody else is measuring in order to prepare for a later round.
+  //   * agents.js already rebuilds its grid when world.colliders.length
+  //     CHANGES. Allocating on first claim therefore fires the trigger that is
+  //     already there, with no agents-side change at all. A pre-allocated pool
+  //     would have needed one, and would have failed SILENTLY without it —
+  //     bodies in the collider list and invisible to the grid, which is worse
+  //     than not being there because nothing disagrees with anything.
+  //
+  // A released slot is PARKED 50 m outside STORE.minX rather than zeroed: nav
+  // inflates every footprint by a 0.52 m body pad and marks any cell whose
+  // centre lands inside, so a zero-volume box at the origin still blocks a
+  // 1.04 m square. A box entirely outside the bounds is skipped by makeNav's
+  // first test and costs nothing.
+  //
+  // WHAT THE CHASE ROUND STILL HAS TO DECIDE: a body that MOVES needs the grid
+  // rebuilt, and the length trigger only fires on allocate. Either keep the
+  // front-end bodies stationary while occupied (which they are — a cashier
+  // stands at a till) or watch FRONT_END.solidsVersion, which every
+  // setBodySolid/clearBodySolid bumps.
+  const PARK_X = STORE.minX - 50;
+  const bodySlots = [];
   const FRONT_END = {
-    version: 1,
+    version: 2,
     lanes: lanePose,
     desk: DESK_POSE,
+    tills,
     runway: { z: -19.37, x0: STORE.minX + 1.2, x1: 16.1 },
     laneMouthZ: laneNZ,
     setLaneOpen,
+    // --- the occupied-anchor hook. Nothing in the shipped build calls these.
+    bodySlots,
+    solidsVersion: 0,
+    setBodySolid(i, x, z, r = 0.42, h = 1.75) {
+      if (i < 0 || i >= 28) return false;
+      let b = bodySlots[i];
+      if (!b) {
+        b = new THREE.Box3(new THREE.Vector3(), new THREE.Vector3());
+        bodySlots[i] = b;
+        colliders.push(b);            // this is the agents-side rebuild trigger
+      }
+      b.min.set(x - r, 0, z - r); b.max.set(x + r, h, z + r);
+      FRONT_END.solidsVersion++;
+      return true;
+    },
+    clearBodySolid(i) {
+      const b = bodySlots[i]; if (!b) return false;
+      b.min.set(PARK_X, 0, 0); b.max.set(PARK_X + 0.1, 1.8, 0.1);
+      FRONT_END.solidsVersion++;
+      return true;
+    },
   };
   scene.userData.chopFrontEnd = FRONT_END;
+  scene.userData.chopTills = tills;
 
-  return { colliders, powerupSpots, frontEnd: FRONT_END };
+  return { colliders, powerupSpots, frontEnd: FRONT_END, tills };
 }
