@@ -52,6 +52,15 @@ FREE = re.compile(r'(cc[- ]by|cc0|public domain|pd-|attribution)', re.I)
 
 def main():
     os.makedirs(OUT, exist_ok=True)
+    # A file a human moved to _rejected/ must never come back. Without this the
+    # fetcher re-downloaded both 1955 Amsterdam street scenes at a higher
+    # resolution the round after they were thrown out, and a critic found them
+    # sitting in the bar. Curation that the tool undoes is not curation.
+    rej = os.path.join(OUT, '_rejected')
+    thrown = set()
+    if os.path.isdir(rej):
+        for f in os.listdir(rej):
+            thrown.add(re.sub(r'^ppl_\d+_', '', f).rsplit('.', 1)[0].lower())
     have = {f for f in os.listdir(OUT)}
     n = len([f for f in have if f.lower().endswith(('.jpg', '.jpeg', '.png'))])
     seen, cands = set(), []
@@ -87,7 +96,16 @@ def main():
             lic = em.get('LicenseShortName', {}).get('value', '')
             if not FREE.search(lic): continue
             base = p['title'].split(':', 1)[1]
-            safe = re.sub(r'[^A-Za-z0-9_.-]', '_', base)[:60]
+            stem, _, ext = base.rpartition('.')
+            # Truncate the STEM, never the whole name: [:60] on the full string
+            # silently ate the extension on long titles, and an extensionless
+            # file is invisible to every *.jpg glob in this repo -- including
+            # the one counting how big the bar is. Three files hid that way.
+            safe = re.sub(r'[^A-Za-z0-9_.-]', '_', stem)[:52] + '.' + (ext.lower() or 'jpg')
+            if re.sub(r'[^A-Za-z0-9_.-]', '_', stem).lower()[:52] in \
+               {t[:52] for t in thrown}:
+                print(f'  skip (previously rejected) {stem[:40]}')
+                continue
             dest = os.path.join(OUT, f'ppl_{n:02d}_{safe}')
             if os.path.exists(dest): continue
             url = ii.get('thumburl') or ii.get('url')
