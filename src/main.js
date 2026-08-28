@@ -199,6 +199,89 @@ async function snapClean(name, pose, opts = {}) {
   const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
   return res.text();
 }
+// ---- PEOPLE CAPTURE -----------------------------------------------------
+// A frame PLUS a box per visible body, in image pixels, written to a JSON
+// sidecar. tools/people_blindset.py crops from those boxes.
+//
+// Why the boxes come from here and not from a builder's eye: the store's blind
+// harness carries a leak ledger, and leak 1 is "builder-chosen crops flattered
+// the build". A people test has to crop — a 1280x720 frame of this store is
+// mostly store, and a critic scoring whole frames is scoring shelves. Deriving
+// the window from the agent's own world position is the only way to crop
+// without anyone choosing which shopper looks good. The photo side is
+// annotated by hand and says so; this side cannot be.
+//
+// The box is a projected Box3, not a guessed capsule height, so it keeps
+// working while figures.js changes shape underneath it — which it is doing.
+function peopleBoxes(cam) {
+  const bodies = [];
+  const push = (o) => { if (o && o.visible) bodies.push(o); };
+  for (const s of (agents.shoppers || [])) {
+    if (s && s.mesh && s.mesh.visible && !s.caught && !s.escaped) push(s.mesh);
+  }
+  push(agents.cop);
+  const box = new THREE.Box3(), v = new THREE.Vector3();
+  const out = [];
+  cam.updateMatrixWorld();
+  cam.updateProjectionMatrix();
+  for (const b of bodies) {
+    box.setFromObject(b);
+    if (box.isEmpty()) continue;
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, behind = 0;
+    for (let i = 0; i < 8; i++) {
+      v.set(i & 1 ? box.max.x : box.min.x,
+            i & 2 ? box.max.y : box.min.y,
+            i & 4 ? box.max.z : box.min.z);
+      // Any corner behind the near plane makes the projection meaningless —
+      // w flips sign and the box smears across the frame. Drop the body.
+      if (v.clone().applyMatrix4(cam.matrixWorldInverse).z > -0.05) { behind++; break; }
+      v.project(cam);
+      const px = (v.x * 0.5 + 0.5) * RENDER_W, py = (-v.y * 0.5 + 0.5) * RENDER_H;
+      if (px < x0) x0 = px; if (px > x1) x1 = px;
+      if (py < y0) y0 = py; if (py > y1) y1 = py;
+    }
+    if (behind) continue;
+    const w = x1 - x0, h = y1 - y0;
+    // Off-frame or degenerate. 24px is the floor the harness can resample from
+    // without the tile being interpolation rather than craft.
+    if (h < 24 || x1 < 0 || y1 < 0 || x0 > RENDER_W || y0 > RENDER_H) continue;
+    // Partly cut by the frame edge: a half-body tile tests the crop, not the
+    // build, and the photo side has no equivalent because a photographer
+    // frames their subject.
+    if (x0 < 0 || y0 < 0 || x1 > RENDER_W || y1 > RENDER_H) continue;
+    out.push({ x: +x0.toFixed(1), y: +y0.toFixed(1), w: +w.toFixed(1), h: +h.toFixed(1) });
+  }
+  return out;
+}
+async function snapPeople(name, pose) {
+  step(0);
+  const cam = pose ? probeCam : floorCam;
+  if (pose) {
+    probeCam.fov = pose.fov ?? 52;
+    probeCam.position.set(...pose.pos);
+    probeCam.lookAt(...pose.look);
+    probeCam.updateProjectionMatrix();
+  }
+  const hidden = hud.style.display;
+  hud.style.display = 'none';
+  let url;
+  try {
+    renderer.render(scene, cam);
+    url = renderer.domElement.toDataURL('image/png');
+  } finally {
+    hud.style.display = hidden;
+  }
+  const boxes = peopleBoxes(cam);
+  const png = await post(name, url);
+  // The sidecar is the whole point; if it does not land, the plate is useless
+  // and a silent miss would put a harness with no render side into a critic's
+  // hands. Throw, the way post() learned to.
+  const res = await fetch('/side?name=' + encodeURIComponent(name) + '.boxes',
+                          { method: 'POST', body: JSON.stringify(boxes) });
+  if (!res.ok) throw new Error('SIDECAR FAILED (' + name + '): HTTP ' + res.status);
+  return { png, bodies: boxes.length };
+}
+
 // ---- MUTE FOR AUTOMATED TESTING -----------------------------------------
 // Every agent driving this page clicks and presses keys, and those are exactly
 // the gestures a browser requires before it will start an AudioContext — so a
@@ -260,7 +343,7 @@ function resumeLoop() { if (!rafOn) { rafOn = true; last = performance.now(); re
 window.__CHOP = {
   audio, recordAudio, chaseCam,
   THREE, scene, renderer, agents, game, cctv, world, input, keys, snap, run, step,
-  snapClean, probeCam,
+  snapClean, snapPeople, probeCam,
   pause() { rafOn = false; }, resume() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } },
   mute: setMuted, get muted() { return MUTED; },
 };

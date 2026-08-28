@@ -4205,7 +4205,11 @@ export function createAgents(THREE, scene, world) {
     // Eye height off the rig, so a short person tips his head further back than
     // a tall one at the same distance — which is free, and is the sort of thing
     // that makes fourteen bodies look like fourteen people.
-    const eye = (FIG.hipY + FIG.neckY + FIG.headY) * s.rig.root.scale.y;
+    // ROUND 11 — the rig's own eye height. The three FIG constants added up to
+    // one number for every body in the store, which was true when a body was
+    // a scaled copy of one skeleton and stopped being true the moment leg
+    // length became a per-person fraction of stature.
+    const eye = s.rig.eyeY * s.rig.root.scale.y;
     s.camPitch = -Math.atan2(Math.max(0.2, best.y - eye), Math.max(0.6, bd));
   }
   // ...and the bystander version. A man who is in earshot when somebody else
@@ -4961,7 +4965,11 @@ export function createAgents(THREE, scene, world) {
     // Toe-out is one assignment and it is worth having: it is set ONCE per frame
     // rather than driven, so it costs nothing, and a duck-footed walk and a
     // pigeon-toed one are different people from across a store.
-    r.legL.rotation.y = P.toe; r.legR.rotation.y = -P.toe;
+    // ROUND 11 — AND THE TWO FEET ARE INDEPENDENT. `P.toe` mirrored one value,
+    // so every body in this store was symmetric from the ankles up; the lead's
+    // first note off the reference photographs is that not one person in them
+    // is. One roll per foot costs the same as one roll for both.
+    r.legL.rotation.y = P.toe + r.rest.toeL; r.legR.rotation.y = -P.toe + r.rest.toeR;
     // Same two fixes as the cop: hips and chest counter-rotate, and the bob is
     // highest at mid-stance rather than at the strike. `roll` and `bounce` are
     // the swagger dial — a heavy body rolls its hips and drops hard onto each
@@ -4969,7 +4977,17 @@ export function createAgents(THREE, scene, world) {
     // and a walk at any distance you can still see the body at.
     r.hips.rotation.y = sw * 0.055 * gait * P.roll;
     r.chest.rotation.y = -sw * 0.085 * gait * P.roll;
-    r.hips.rotation.z = sw * 0.030 * gait * P.roll;
+    // ---- ROUND 11: CONTRAPPOSTO, AND IT FADES OUT AS HE STARTS WALKING -----
+    // Standing on one leg puts that hip up and the opposite shoulder down. It
+    // is a REST angle rolled per body in figures.js, and it is added here
+    // rather than assigned because this channel is also the gait's hip roll and
+    // an assignment would eat one of the two. The `1 - 0.62*gait` is the whole
+    // physical claim: a body at rest has its weight parked on one leg, a body
+    // walking is alternating, so the parked tilt has to go away as it does.
+    // A carried basket adds its lean into `rest.chestZ` at construction — same
+    // channel, same fade, and nothing per-frame knows a basket exists.
+    r.rest0 = 1 - 0.62 * gait;
+    r.hips.rotation.z = sw * 0.030 * gait * P.roll + r.rest.hipZ * r.rest0;
     r.hips.position.y = r.hipY + (Math.abs(sw) - 0.5) * 0.030 * gait * P.bounce;
     r.neck.rotation.y = lerp(r.neck.rotation.y, s.look, ed(8));
     // Idle breathing, so a browsing shopper is not a statue. Cheap: one lerp.
@@ -5133,7 +5151,13 @@ export function createAgents(THREE, scene, world) {
       //     = ( L sin az, -L cos az cos ax, -L cos az sin ax )
       // The shoulder itself is read off the rig, so girth, build and height all
       // come out correct per body instead of being assumed.
-      const AL = FIG.armLen;
+      // ROUND 11 — off the RIG, not off the module constant. Arm length is now
+      // a per-person number (0.95-1.05 of the old flat one), and this solve
+      // places a held item along the arm from the shoulder: read the constant
+      // and a short-armed body holds its bottle 40 mm past its own fingertips.
+      // The shoulder was already read off the rig for exactly this reason and
+      // the length was the half that got left behind.
+      const AL = r.armLen;
       const shX = r.armR.position.x, shY = r.hipY + r.armR.position.y;
       const cz = Math.cos(p.armRz), sz = Math.sin(p.armRz);
       const cx = Math.cos(p.armR), sx = Math.sin(p.armR);
@@ -5154,7 +5178,7 @@ export function createAgents(THREE, scene, world) {
         s.cart.position.set(s.position.x + fx * P.cartD, 0, s.position.z + fz * P.cartD);
         s.cart.rotation.y = s.heading;
       }
-      r.chest.rotation.z = -sw * 0.020 * gait;
+      r.chest.rotation.z = -sw * 0.020 * gait + r.rest.chestZ * r.rest0;
       // A clip owns the arms and the neck. It does NOT own the idle blend, which
       // has to keep decaying underneath it, or a man who folded his arms and
       // then took his phone out would snap back to folded the moment the clip
@@ -5227,8 +5251,11 @@ export function createAgents(THREE, scene, world) {
       const sc = bolting ? 1.25 : 0.8 * P.swing;
       r.armL.rotation.x = -al * amp * sc;
       r.armR.rotation.x = al * amp * sc;
-      r.armL.rotation.z = bolting ? 0.12 : P.splay;
-      r.armR.rotation.z = bolting ? -0.12 : -P.splay;
+      // ROUND 11 — one splay per arm, not one mirrored for both. Same argument
+      // as the toes: the round-10 crowd hung its arms at exactly +-P.splay,
+      // which is a reflection, and a reflected body is a mannequin.
+      r.armL.rotation.z = bolting ? 0.12 : r.rest.splayL;
+      r.armR.rotation.z = bolting ? -0.12 : r.rest.splayR;
     }
     if (s.angry > 0) {
       const w = Math.sin(s.angry * 22);
@@ -5344,7 +5371,7 @@ export function createAgents(THREE, scene, world) {
         r.neck.rotation.y += Math.sin(s.huff * K.annScanHz * Math.PI * 2) * K.annScanAmp;
       }
     }
-    r.chest.rotation.z = -sw * 0.020 * gait + r.leanZ;
+    r.chest.rotation.z = -sw * 0.020 * gait + r.leanZ + r.rest.chestZ * r.rest0;
   }
 
   // =========================================================================

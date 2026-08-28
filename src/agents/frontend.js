@@ -281,14 +281,18 @@ function poseClerk(r, p) {
 function poseQueue(r, p) {
   const shift = Math.sin(p * TAU);
   const look = Math.sin(p * TAU * 0.5 + 1.1);
-  r.hips.rotation.z = shift * 0.045;
+  // ROUND 11 — the shift is ON TOP OF a parked weight side, not centred on
+  // attention. Seven people in a queue all rocking symmetrically about the
+  // midline is the same clone tell the aisle had; the rest angles are rolled
+  // per body in figures.js and are the same ones animateShopper adds.
+  r.hips.rotation.z = shift * 0.045 + r.rest.hipZ;
   r.hips.position.y = r.hipY - Math.abs(shift) * 0.008;
-  r.chest.rotation.z = -shift * 0.030;
+  r.chest.rotation.z = -shift * 0.030 + r.rest.chestZ;
   r.chest.rotation.x = r.stoop + 0.06;
   r.armR.rotation.x = -0.92 + shift * 0.05;
-  r.armR.rotation.z = -0.16;
+  r.armR.rotation.z = -0.16 + r.rest.splayR;
   r.armL.rotation.x = -0.94 - shift * 0.05;
-  r.armL.rotation.z = 0.16;
+  r.armL.rotation.z = 0.16 + r.rest.splayL;
   r.neck.rotation.y = look * 0.40;
   r.neck.rotation.x = 0.06 - Math.max(0, look) * 0.10;
 }

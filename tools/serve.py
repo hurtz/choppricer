@@ -4,7 +4,8 @@
   POST /shot?name=store_r1   body = data:image/png;base64,....
   -> writes shots/store_r1.png, returns the path.
 """
-import base64, os, re, sys
+import base64
+import json, os, re, sys
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -25,6 +26,8 @@ class H(SimpleHTTPRequestHandler):
             return self.do_audio()
         if self.path.startswith("/shot"):
             return self.do_shot()
+        if self.path.startswith("/side"):
+            return self.do_side()
         self.send_error(404)
 
     def do_audio(self):
@@ -67,6 +70,36 @@ class H(SimpleHTTPRequestHandler):
         with open(dest, "wb") as f:
             f.write(raw)
         msg = f"shots/{name}.png {len(raw)//1024}KB".encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain")
+        self.send_header("Content-Length", str(len(msg)))
+        self.end_headers()
+        self.wfile.write(msg)
+
+    def do_side(self):
+        """JSON sidecar sink. POST /side?name=x with a JSON body -> shots/x.json.
+
+        The PNG sink refuses anything not starting with \x89PNG, which is the
+        right gate for images and useless for the people harness: a person-box
+        capture has to write WHERE each body landed in the frame alongside the
+        frame, or the crops have to be chosen by hand and leak 1 reopens on the
+        render side too. Same name discipline as do_shot; the caller picks the
+        extension by naming e.g. "figures_r1_near_a4.boxes".
+        """
+        m = re.search(r"name=([A-Za-z0-9_.-]+)", self.path)
+        name = (m.group(1) if m else "side")[:60]
+        n = int(self.headers.get("Content-Length", 0))
+        if n <= 0 or n > 8_000_000:
+            self.send_error(400, "bad length"); return
+        body = self.rfile.read(n).decode("utf-8", "replace")
+        try:
+            json.loads(body)
+        except Exception as e:
+            self.send_error(400, f"not json: {e}"); return
+        dest = os.path.join(SHOTS, name + ".json")
+        with open(dest, "w") as f:
+            f.write(body)
+        msg = f"shots/{name}.json {len(body)}B".encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/plain")
         self.send_header("Content-Length", str(len(msg)))

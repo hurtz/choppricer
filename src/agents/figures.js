@@ -232,7 +232,14 @@ function loft(THREE, rings, seg = 16, uv) {
     const r = rings[i];
     c.set(r.c == null ? 0xffffff : r.c);
     for (let j = 0; j <= seg; j++) {
-      const a = (j / seg) * Math.PI * 2, k = i * W + j;
+      // ROUND 11 — the ring STARTS AT THE BACK (+PI), which is a no-op on the
+      // geometry (same closed ellipse, same winding, same start-vertex count)
+      // and two things on the texture: u = 0.5 is now the middle of the CHEST,
+      // so the tee print and the button placket in clothAtlas land on the front
+      // of the person instead of between their shoulder blades; and the UV seam
+      // and its shading discontinuity move round to the spine, where nobody is
+      // looking. The cop's cell is a fabric weave, so this is invisible on him.
+      const a = (j / seg) * Math.PI * 2 + Math.PI, k = i * W + j;
       pos[k * 3] = Math.sin(a) * r.rx;
       pos[k * 3 + 1] = r.y;
       pos[k * 3 + 2] = Math.cos(a) * r.rz + (r.cz || 0);
@@ -560,42 +567,234 @@ export const PANTS = [0x2f3a4a, 0x3d3d42, 0x5a4738, 0x1f2733, 0x6b6b70, 0x4a3f52
 const SHOE = [0x33322f, 0x1e1c1a, 0x4a3a2c, 0xbfbdb6, 0x5a2f26];
 
 // ===========================================================================
-// SHOPPER PARTS. Four builds x three hair lengths x two sleeve lengths, all
-// baked ONCE and shared by every shopper — the variety is in which geometry a
-// person points at and what colour their materials are, so fourteen different
-// people cost fourteen sets of materials and no extra geometry at all.
-// The critic's complaint was "two identically-proportioned bodies with rigid
-// box arms, blob hair and no faces", and proportion is the first word in it.
+// ROUND 11 (CHARACTER) — BODIES. WEIGHT, SIZE RANGE, BUILD.
 // ===========================================================================
+// Client: "I would love if we could spend a lot of time making the characters
+// much, much more detailed — their movements, their characteristics, their
+// facial features, the way they move, THEIR SIZES."
+//
+// Rounds 9 and 10 gave this crowd four builds, six hairstyles, an elbow and a
+// hand. Photographed side by side with reference/people/*.jpg the failure is
+// not detail, it is that EVERY ONE OF THEM IS THE SAME ANIMAL. Four builds that
+// differ only by a width multiplier are one build at four sizes; nobody in a
+// real supermarket is a scaled copy of anybody else in it.
+//
+// FIVE THINGS THE PHOTOGRAPHS HAVE THAT ROUND 10 DID NOT, in the order they
+// cost the comparison:
+//
+//   1. A BELLY IS NOT AN OBJECT. Round 9 pasted `shopperBelly` — a sphere —
+//      onto the front of the torso, and at any distance you can see the seam
+//      ring where the two surfaces cross. It reads as a beach ball under a
+//      shirt because that is exactly what it was. The cop round already solved
+//      this and wrote down why: a body is ONE LOFTED SURFACE or it is a stack
+//      of tyres. The shoppers were still a stack of tyres — six ellipsoids,
+//      and you can count them in shots/bodies_r0_2.png.
+//   2. NOBODY HAS SQUARE SHOULDERS. The old torso put a 0.072-tall disc across
+//      the top at shoulderY, so every person in the store was a T. In the
+//      reference photographs the trapezius slope from neck to acromion is 12
+//      to 22 degrees on every single body, steeper on the heavy and the old.
+//   3. SHOULDER-TO-HIP IS A FREE VARIABLE AND IT WAS NAILED SHUT. All four old
+//      builds had sh/hp within 1.24-1.26 of each other. A pear — narrow
+//      shoulders over a wide seat — is one of the commonest builds there is
+//      and this game could not make one. It is now a build, and it is the only
+//      new silhouette here that is unmistakable at 20 px.
+//   4. THE ARMS WERE 70% TOO THICK. A 1.65 m person's upper arm is about 100 mm
+//      across; round 10's deltoid ball was 172 mm. That single number is most
+//      of why these bodies read as action figures rather than as people, and
+//      it also destroyed the WAIST — an arm that fat covers the taper.
+//   5. LEG LENGTH IS NOT A CONSTANT FRACTION OF STATURE. Every body in this
+//      game had its hip at exactly 52.1% of its height. Real adults run 48.5%
+//      to 55.5%, and it changes the whole read of a figure: at the same
+//      stature, long legs and a short trunk is a different person, not a
+//      differently-sized one.
+//
+// GEOMETRY IS STILL SHARED. Six torsos, twelve legs, three heads — baked once
+// at startup, pointed at by twenty-one bodies (14 shoppers + 7 front-end
+// staff). Everything else in the range is PER-INSTANCE: group scales, pivot
+// offsets and rest angles, which cost nothing at all. See rollPerson.
+//
+// THE LEDGER, MEASURED BY WITHIN-RUN TOGGLE (one 1280x720 render of the aisle
+// with all fourteen bodies in frame, crowd visible vs crowd hidden, same
+// camera, same frame — see __BODY.budget in shots/_probe_bodies.js for why the
+// obvious whole-frame instrument is NOT trustworthy here):
+//
+//                        round 10      round 11
+//   crowd draw calls          165           159      -6
+//   crowd triangles        42,624        44,896      +5.3%
+//   meshes on 14 bodies       179           172      -7   (the belly sphere)
+//   shared geometries          34            42      +8   (2 builds, 1 head,
+//                                                          1 hair, 5 bag bakes)
+//   materials                  90            88      -2
+//
+// So the round is triangle-positive and draw-call-negative, which is the trade
+// this file wants: calls are paid on every one of the ten renders a frame does.
+//
+// AND THE SIMULATION IS BYTE-IDENTICAL. bench(n=200, difficulty=1) on both
+// spawn modes, benchAnnounce(400) and benchBird(200) all return the same
+// numbers to the digit before and after — catch 64% / 90%, LR(putback) 1.93,
+// LR(bird | armed) 0.80, hot 0.78. ~20 new draws per person went into
+// rollPerson and moved nothing, which is round 9's claim re-proved rather than
+// re-asserted: rollPerson runs once, at construction, before the first
+// setSeed().
+//
+// WHAT IS STILL WRONG, honestly, for whoever takes the next round:
+//   - hands read as mittens at portrait range. The wedge is right and the
+//     fingers are one box; at 3x that box is what you see.
+//   - a carried basket rides `hips`, so a body that folds its arms leaves the
+//     basket hanging beside a leg that is not holding it. Parenting it to the
+//     arm fixes the fold and breaks every clip that raises that arm.
+//   - the garment has no shoulder seam, no armpit crease and no strap
+//     deformation. The lead's note off the photographs is that clothing HANGS,
+//     and this round only got as far as making it hang off the right shape.
+//   - `plain` bodies (30%) have no cloth map at all and read as flat colour.
+//
+// Half-dimensions, model units, on a 1.65 m frame, garment included. Checked
+// against published anthropometry as fractions of stature S:
+//   biacromial 0.234 S   bideltoid 0.245 S (obese to 0.30)
+//   chest breadth 0.174 S   chest depth 0.135 S (obese 0.20)
+//   waist breadth 0.166 S (obese 0.26)   hip breadth 0.191 S (obese 0.24)
+// Those ratios are the whole point of the table: they are what make `pear` and
+// `heavy` different SHAPES rather than different SIZES.
 const BUILDS = [
-  //          chest  waist  shoulder  belly  thigh  stoop
-  { k: 'slim',  ch: 0.86, wa: 0.80, sh: 0.95, be: 0,    th: 0.88, st: 0.00 },
-  { k: 'reg',   ch: 1.00, wa: 1.00, sh: 1.00, be: 0,    th: 1.00, st: 0.02 },
-  { k: 'stock', ch: 1.16, wa: 1.20, sh: 1.12, be: 0.55, th: 1.16, st: 0.03 },
-  { k: 'heavy', ch: 1.28, wa: 1.42, sh: 1.14, be: 1.00, th: 1.30, st: 0.06 },
+  // k       sh     shD    ch     chD    wa     waD    hp     hpD
+  //         be    beY    hem     th     hw     sw     nk     kyph   st    aw   head
+  { k: 'lean',
+    sh: 0.182, shD: 0.100, ch: 0.144, chD: 0.104, wa: 0.126, waD: 0.096,
+    hp: 0.146, hpD: 0.116,
+    be: 0.00, beY: 0.075, hem: -0.052, th: 0.082, hw: 0.070, sw: 0.142,
+    nk: 0.078, kyph: 0.006, st: -0.010, aw: 0.90, head: 1 },
+  { k: 'slim',
+    sh: 0.193, shD: 0.107, ch: 0.155, chD: 0.113, wa: 0.139, waD: 0.105,
+    hp: 0.157, hpD: 0.123,
+    be: 0.10, beY: 0.070, hem: -0.058, th: 0.090, hw: 0.074, sw: 0.150,
+    nk: 0.068, kyph: 0.008, st: 0.000, aw: 0.92, head: 1 },
+  { k: 'reg',
+    sh: 0.205, shD: 0.117, ch: 0.167, chD: 0.124, wa: 0.156, waD: 0.120,
+    hp: 0.169, hpD: 0.133,
+    be: 0.28, beY: 0.062, hem: -0.064, th: 0.099, hw: 0.078, sw: 0.160,
+    nk: 0.060, kyph: 0.012, st: 0.018, aw: 1.00, head: 0 },
+  // THE PEAR. Shoulders NARROWER than the hips (0.94:1 against reg's 1.19:1),
+  // the mass low and wide, the belly apex down at the trouser line rather than
+  // at the navel. This is the build the old table could not express at any
+  // setting of its four multipliers, and it is the one that changes the
+  // outline most: at monitor scale it is a triangle with the point up, and
+  // every other body in this store is a rectangle or a triangle with the point
+  // down.
+  { k: 'pear',
+    sh: 0.191, shD: 0.111, ch: 0.159, chD: 0.121, wa: 0.165, waD: 0.131,
+    hp: 0.200, hpD: 0.152,
+    be: 0.34, beY: 0.040, hem: -0.070, th: 0.118, hw: 0.086, sw: 0.148,
+    nk: 0.058, kyph: 0.014, st: 0.022, aw: 1.02, head: 0 },
+  { k: 'stock',
+    sh: 0.220, shD: 0.133, ch: 0.190, chD: 0.148, wa: 0.196, waD: 0.158,
+    hp: 0.192, hpD: 0.152,
+    be: 0.62, beY: 0.058, hem: -0.072, th: 0.114, hw: 0.086, sw: 0.172,
+    nk: 0.048, kyph: 0.020, st: 0.030, aw: 1.08, head: 2 },
+  { k: 'heavy',
+    sh: 0.234, shD: 0.150, ch: 0.213, chD: 0.171, wa: 0.228, waD: 0.194,
+    hp: 0.217, hpD: 0.176,
+    be: 1.00, beY: 0.046, hem: -0.084, th: 0.132, hw: 0.094, sw: 0.184,
+    nk: 0.042, kyph: 0.028, st: 0.046, aw: 1.10, head: 2 },
 ];
+
+// ---------------------------------------------------------------------------
+// THE BODY PROFILE. Half-width, half-depth and forward offset at any height up
+// the trunk, blended between four landmarks and then pushed out by the belly.
+//
+// THE BELLY IS PART OF THIS FUNCTION AND NOT A SEPARATE PART. That is the whole
+// fix: it is a Gaussian bump added to the SAME surface, so there is no seam to
+// see, and it pushes FORWARD (cz, and rz) about twice as hard as it pushes
+// SIDEWAYS (rx) — which is what distinguishes a heavy man from a wide one and
+// is the one thing round 9's sphere could not do at all.
+//
+// The apex is LOW (beY 0.04-0.075, i.e. at or below the navel) for the same
+// reason the cop's is: a gut hangs, so the widest point of the profile is near
+// the trouser line and the fabric above it is nearly vertical. An apex at the
+// navel is a barrel.
+const TRUNK = { hipY: -0.005, waistY: 0.150, chestY: 0.320, shY: 0.455 };
+function trunkProfile(b, y) {
+  const T = TRUNK, L = (a, c, t) => a + (c - a) * t;
+  let rx, rz;
+  if (y <= T.hipY) { rx = b.hp; rz = b.hpD; }
+  else if (y <= T.waistY) {
+    const t = (y - T.hipY) / (T.waistY - T.hipY);
+    rx = L(b.hp, b.wa, t); rz = L(b.hpD, b.waD, t);
+  } else if (y <= T.chestY) {
+    const t = (y - T.waistY) / (T.chestY - T.waistY);
+    rx = L(b.wa, b.ch, t); rz = L(b.waD, b.chD, t);
+  } else {
+    const t = Math.min(1, (y - T.chestY) / (T.shY - T.chestY));
+    rx = L(b.ch, b.sh, t); rz = L(b.chD, b.shD, t);
+  }
+  const g = Math.exp(-Math.pow((y - b.beY) / 0.105, 2));
+  // A ROUNDED UPPER BACK, above the armpit only. It is `cz` going NEGATIVE, so
+  // the whole section slides backward while the shoulders stay put, which is
+  // what kyphosis looks like from the side; plus a little depth, because a
+  // rounded back is also a deeper one. On `old` bodies rollPerson stacks a
+  // forward head on top of this and the pair of them is the entire read of age
+  // at a distance where nobody can see a face.
+  const k = Math.max(0, (y - 0.330)) * b.kyph * 7.4;
+  return { rx: rx + b.be * 0.030 * g, rz: rz + b.be * 0.046 * g + k * 0.30,
+           cz: b.be * 0.060 * g - k };
+}
+
+// The garment, as ONE closed surface from hem to collar. Fourteen rings at 16
+// segments is 416 triangles, against the old six-ellipsoid stack's ~840: this
+// is CHEAPER than what it replaces as well as being a body.
+//
+// Ring colours are vertex colours multiplying the shirt dye, and they are the
+// cheapest lighting in the file — a dark ring inside the hem and one under the
+// belly overhang put contact shadow exactly where the reference photographs
+// have it, at zero cost, on a surface that has no other way to get it.
+function torsoRings(b) {
+  const R = [];
+  const add = (y, s, c) => R.push({ y, rx: s.rx, rz: s.rz, cz: s.cz, c });
+  const hemW = Math.max(b.hp, b.wa) * 1.018 + b.be * 0.008;
+  const hemD = Math.max(b.hpD, b.waD) * 1.022 + b.be * 0.010;
+  const hemZ = b.be * 0.030;
+  // The closing disc and the hem lip, at the same height. A doubled ring makes
+  // an EDGE instead of a curve, which is what the bottom of an untucked shirt
+  // is; and the flare (hem wider than the waist above it) is straight off the
+  // photographs, where the hem is the widest part of the lower silhouette on
+  // everybody who is not tucked in.
+  R.push({ y: b.hem, rx: 0.008, rz: 0.008, cz: hemZ, c: 0x6f6f6f });
+  R.push({ y: b.hem, rx: hemW, rz: hemD, cz: hemZ, c: 0x8e8e8e });
+  R.push({ y: b.hem + 0.030, rx: hemW * 0.992, rz: hemD * 0.992, cz: hemZ * 0.94,
+           c: 0xcbcbcb });
+  const YS = [TRUNK.hipY, 0.045, 0.095, TRUNK.waistY, 0.235, TRUNK.chestY, 0.395];
+  for (const y of YS) {
+    // Shade the ring on the UNDERSIDE of the belly overhang, in proportion to
+    // how much overhang there is. One ring only — the cop round learned that
+    // two dark rings read as an apron hem rather than as a shadow.
+    const under = y < b.beY && y > b.beY - 0.075 ? b.be : 0;
+    add(y, trunkProfile(b, y), under > 0.3 ? 0xd0d0d0 : y < 0.10 ? 0xeaeaea : 0xffffff);
+  }
+  // ---- the shoulder, and it SLOPES ---------------------------------------
+  // Acromion at 0.455, neck base at `collarY`. The width falls from `sh` to a
+  // neck's worth over that gap, and how fast is the trapezius slope. `nk` is
+  // how much neck the person has showing: on a heavy or an old body the collar
+  // is HIGH and the head sits straight on the shoulders, and on a lean young
+  // one there are 80 mm of throat between the two.
+  const collarY = 0.545 - b.nk * 0.30;
+  add(TRUNK.shY, trunkProfile(b, TRUNK.shY), 0xffffff);
+  const p1 = trunkProfile(b, TRUNK.shY);
+  const mid = (collarY - TRUNK.shY) * 0.55 + TRUNK.shY;
+  R.push({ y: mid, rx: p1.rx * 0.80, rz: p1.rz * 0.88, cz: p1.cz * 0.9, c: 0xfbfbfb });
+  R.push({ y: collarY - 0.020, rx: p1.rx * 0.44, rz: p1.rz * 0.66, cz: p1.cz * 0.7,
+           c: 0xf2f2f2 });
+  R.push({ y: collarY, rx: 0.066, rz: 0.062, cz: p1.cz * 0.5, c: 0xdcdcdc });
+  return R;
+}
 
 function shopperTorso(THREE, S, b) {
   const P = partList(THREE, S);
-  const w = b.ch, d = b.ch * 0.80, ww = b.wa;
-  // ribcage -> waist as three stacked ellipsoids, so the profile actually has a
-  // waist in it. A capsule cannot; that is why every old figure was an egg.
-  P.ball(0.175 * b.sh, 0.115, 0.135 * b.sh, [0, FIG.shoulderY - 0.005, -0.005], 0xffffff, { seg: 10, rseg: 6 });
-  P.ball(0.168 * w, 0.150, 0.128 * d, [0, 0.355, 0.004], 0xffffff, { seg: 10, rseg: 6 });
-  P.ball(0.163 * ww, 0.150, 0.124 * ww * 0.92, [0, 0.185, 0.006], 0xf2f2f2, { seg: 10, rseg: 6 });
-  P.ball(0.170 * ww, 0.120, 0.132 * ww * 0.92, [0, 0.045, 0.004], 0xe4e4e4, { seg: 10, rseg: 6 });
-  // shoulder line + a slight forward roll to the shoulders
-  P.ball(0.215 * b.sh, 0.072, 0.130 * b.sh, [0, FIG.shoulderY + 0.020, -0.004], 0xfafafa, { seg: 10, rseg: 5 });
-  P.ball(0.115, 0.062, 0.055, [0, FIG.shoulderY + 0.010, -0.088], 0xdedede, { seg: 8, rseg: 5 });
-  // collar band and a hem you can see
-  P.tube(0.070, 0.045, [0, FIG.neckY + 0.010, 0.004], 0xd8d8d8, { seg: 10 });
-  P.ball(0.172 * ww, 0.030, 0.135 * ww * 0.92, [0, -0.005, 0.004], 0xc8c8c8, { seg: 10, rseg: 4 });
-  return mergeParts(THREE, P.L);
-}
-
-function shopperBelly(THREE, S) {
-  const P = partList(THREE, S);
-  P.ball(0.5, 0.5, 0.5, [0, 0, 0], 0xffffff, { seg: 12, rseg: 8 });
+  P.L.push({ g: loft(THREE, torsoRings(b), 16), m: new THREE.Matrix4() });
+  const collarY = 0.545 - b.nk * 0.30;
+  // A collar band, and a shoulder-blade shelf at the back so the upper back is
+  // not a smooth extruded tube. Both merge into the loft's mesh.
+  P.tube(0.068, 0.030, [0, collarY + 0.006, 0.002], 0xd2d2d2, { seg: 12 });
+  P.ball(b.sh * 0.62, 0.070, 0.038, [0, 0.400, -trunkProfile(b, 0.400).rz * 0.72],
+    0xf0f0f0, { seg: 10, rseg: 5 });
   return mergeParts(THREE, P.L);
 }
 
@@ -611,21 +810,56 @@ function copBelly(THREE, S) {
   return mergeParts(THREE, P.L);
 }
 
-// Two heads: a rounder one and a longer one. Both have a jaw, a nose, ears, a
+// THREE heads: round, long, and heavy. All three have a jaw, a nose, ears, a
 // brow and eyes, because those five things are the entire difference between
 // "a person seen from 7 m" and "a ball".
-function shopperHead(THREE, S, long) {
+//
+// ROUND 11 adds the third, and it is a BODY change rather than a face change,
+// which is why it earns its place in a round about bodies: a heavy person has
+// no visible neck, a jaw that is wider than their cheekbones, and a soft
+// under-chin that fills the angle between chin and throat. From the front, at
+// any distance, that is a different HEAD SHAPE — square and low instead of oval
+// — and it is the only facial thing in this file that survives past about 3 m.
+// The `nk` field of BUILDS does the other half: on a heavy body the collar ring
+// is 50 mm higher, so the head sits straight down on the shoulders.
+//
+// k: 0 round, 1 long, 2 heavy.
+function shopperHead(THREE, S, k) {
   const P = partList(THREE, S);
-  const h = FIG.headY, ln = long ? 1.0 : 0.90, wd = long ? 0.94 : 1.03;
-  P.tube(0.042, 0.10, [0, h - 0.155, -0.006], 0xe0e0e0, { seg: 8 });            // neck
+  const h = FIG.headY;
+  const ln = k === 1 ? 1.00 : k === 2 ? 0.90 : 0.90;
+  const wd = k === 1 ? 0.94 : k === 2 ? 1.08 : 1.03;
+  const jw = k === 2 ? 1.10 : 1.0;                 // jaw relative to the skull
+  // The neck. On a heavy body it is 40% thicker and 30 mm shorter, which puts
+  // the jaw almost on the collar.
+  P.tube(k === 2 ? 0.058 : 0.042, k === 2 ? 0.076 : 0.10,
+    [0, h - (k === 2 ? 0.140 : 0.155), -0.006], 0xe0e0e0, { seg: 8 });
   P.ball(0.100 * wd, 0.108 * ln, 0.104, [0, h + 0.010, -0.004], 0xffffff, { seg: 10, rseg: 7 });
-  P.ball(0.089 * wd, 0.070 * ln, 0.093, [0, h - 0.058, 0.008], 0xfbfbfb, { seg: 10, rseg: 6 }); // jaw
-  P.ball(0.060, 0.036, 0.055, [0, h - 0.098, 0.014], 0xf4f4f4, { seg: 8, rseg: 5 });            // chin
+  P.ball(0.089 * wd * jw, 0.070 * ln, 0.093 * jw, [0, h - 0.058, 0.008], 0xfbfbfb, { seg: 10, rseg: 6 }); // jaw
+  P.ball(0.060 * jw, 0.036, 0.055, [0, h - 0.098, 0.014], 0xf4f4f4, { seg: 8, rseg: 5 });       // chin
+  if (k === 2) {
+    // Jowls and the soft under-chin. They change the OUTLINE — the jaw line
+    // stops being a curve and becomes a shelf — but they must stay BEHIND and
+    // BELOW the mouth or they read as a moustache and a beard, which is what
+    // the first cut of this did at z +0.030.
+    P.ball(0.034, 0.030, 0.032, [0.074, h - 0.092, 0.006], 0xf6f6f6, { seg: 6, rseg: 5 });
+    P.ball(0.034, 0.030, 0.032, [-0.074, h - 0.092, 0.006], 0xf6f6f6, { seg: 6, rseg: 5 });
+    P.ball(0.056, 0.028, 0.048, [0, h - 0.128, -0.008], 0xefefef, { seg: 8, rseg: 5 });
+  }
   P.ball(0.028, 0.036, 0.020, [0.099 * wd, h - 0.006, -0.008], 0xf6f6f6, { seg: 6, rseg: 4 });  // ears
   P.ball(0.028, 0.036, 0.020, [-0.099 * wd, h - 0.006, -0.008], 0xf6f6f6, { seg: 6, rseg: 4 });
+  // Cheekbones. Cheap, and they are what stops a face being a smooth egg with
+  // furniture stuck on it at portrait range — but SMALL and set back, because
+  // a ball at the cheek that is proud of the jaw is a mask, not a face.
+  P.ball(0.026, 0.020, 0.020, [0.056 * wd, h + 0.002, 0.052], 0xfcfcfc, { seg: 6, rseg: 4 });
+  P.ball(0.026, 0.020, 0.020, [-0.056 * wd, h + 0.002, 0.052], 0xfcfcfc, { seg: 6, rseg: 4 });
   P.ball(0.021, 0.026, 0.026, [0, h - 0.012, 0.086], 0xffffff, { seg: 6, rseg: 5 });            // nose
   P.box(0.020, 0.026, 0.030, [0, h + 0.020, 0.078], 0xfafafa);                                  // bridge
-  P.box(0.140, 0.017, 0.024, [0, h + 0.049, 0.072], 0xf0f0f0, { r: [-0.10, 0, 0] });            // brow
+  // The brow. Round 10's was 24 mm proud at the same z as the eyes, so from the
+  // front it was a visor with two dark slots under it and every face in the
+  // store was scowling. Half the projection, tucked 8 mm back, and the eyes
+  // come out from under it.
+  P.box(0.132, 0.014, 0.016, [0, h + 0.048, 0.070], 0xf4f4f4, { r: [-0.10, 0, 0] });
   P.ball(0.024, 0.013, 0.011, [0.040, h + 0.026, 0.079], 0x6a5c52, { seg: 6, rseg: 4 });        // eyes
   P.ball(0.024, 0.013, 0.011, [-0.040, h + 0.026, 0.079], 0x6a5c52, { seg: 6, rseg: 4 });
   P.box(0.044, 0.008, 0.012, [0, h - 0.070, 0.078], 0xd8a494);                                  // mouth
@@ -645,10 +879,18 @@ function shopperHair(THREE, S, k) {
   } else if (k === 1) {                            // bob
     cap(0.098, h + 0.024, -0.008);
     P.ball(0.112, 0.078, 0.108, [0, h - 0.030, -0.020], 0xf6f6f6, { seg: 10, rseg: 6 });
-  } else if (k === 2) {                            // long, past the shoulder
+  } else if (k === 2) {
+    // LONG, AND IT COMES FORWARD OVER THE SHOULDER. Round 9's version hung
+    // straight down the back, where it changed nothing you could see from the
+    // front. In every reference photograph with long hair in it, the mass falls
+    // in FRONT of the shoulder and ERASES THE SHOULDER LINE on that side — the
+    // strongest single silhouette edit any hairstyle can make, because it
+    // deletes a landmark instead of adding a bump.
     cap(0.098, h + 0.024, -0.008);
     P.ball(0.108, 0.120, 0.095, [0, h - 0.085, -0.030], 0xf4f4f4, { seg: 10, rseg: 6 });
     P.box(0.150, 0.130, 0.070, [0, h - 0.180, -0.048], 0xeaeaea);
+    P.box(0.062, 0.185, 0.052, [0.082, h - 0.160, 0.026], 0xf2f2f2, { r: [0, 0, -0.06] });
+    P.box(0.062, 0.185, 0.052, [-0.082, h - 0.160, 0.026], 0xf2f2f2, { r: [0, 0, 0.06] });
   } else if (k === 3) {                            // balding: a horseshoe only
     P.ball(0.106, 0.052, 0.110, [0, h - 0.012, -0.014], 0xffffff, { seg: 10, rseg: 5 });
     P.box(0.014, 0.034, 0.026, [0.094, h - 0.004, 0.000], 0xf0f0f0);
@@ -670,6 +912,22 @@ function shopperHair(THREE, S, k) {
     cap(0.092, h + 0.026, -0.010);
     P.ball(0.044, 0.040, 0.044, [0, h + 0.010, -0.104], 0xf8f8f8, { seg: 8, rseg: 5 });
     P.taper(0.052, 0.030, 0.20, [0, h - 0.086, -0.124], 0xf2f2f2, { seg: 8, r: [0.30, 0, 0] });
+  } else if (k === 8) {
+    // ROUND 11 — SWEPT TO ONE SIDE, and it is here for asymmetry rather than
+    // for hair. Every other style in this list is mirror-symmetric, so eight
+    // out of nine heads in this store are the same shape reflected, and the
+    // lead's note off the reference photographs was that NOT ONE PERSON in them
+    // is symmetric. A parting on one side, more volume over it, and the mass
+    // down one shoulder is the cheapest asymmetric silhouette in the file: it
+    // survives at monitor scale because it makes the dark blob on top of the
+    // body lopsided, which no round blob ever is.
+    P.ball(0.104, 0.088, 0.108, [0.008, h + 0.030, -0.008], 0xffffff, { seg: 10, rseg: 6 });
+    // The volume over the parting. It sits BEHIND the hairline: the first cut
+    // put it at z +0.016 with 74 mm of depth, which reaches z 0.090 — and the
+    // nose is at 0.086. Every person who rolled this style had no face at all.
+    P.ball(0.058, 0.050, 0.062, [0.046, h + 0.064, -0.022], 0xfafafa, { seg: 8, rseg: 5 });
+    P.box(0.070, 0.165, 0.058, [-0.086, h - 0.140, 0.012], 0xf0f0f0, { r: [0, 0, 0.10] });
+    P.ball(0.070, 0.086, 0.076, [-0.052, h - 0.056, -0.038], 0xf6f6f6, { seg: 8, rseg: 5 });
   } else {
     // ROUND 9 — TOPKNOT, and the same argument one storey up: it puts 60 mm on
     // the crown, so at monitor scale this person is simply TALLER than the
@@ -704,40 +962,114 @@ function shopperHair(THREE, S, k) {
 // lighter tone of the same trouser dye. At the distance this is read from, that
 // is indistinguishable from a bag that matched by accident, which is also what
 // most of them do.
-function shopperBag(THREE, S, k) {
+// ROUND 11 — FOUR CARRIES, AND EACH ONE IS BAKED FOR BOTH SIDES.
+//
+// Two changes and both come off the reference photographs.
+//
+// FIRST, A BASKET. The lead's note: "carried objects change the silhouette more
+// than the body does ... at 20 px a strap and a bag are more legible than any
+// facial feature will ever be." A basket is the strongest of them, because it
+// is the only one that changes the BODY as well as the outline — 6 kg on one
+// side drops that shoulder, tips the pelvis and leans the trunk away, and that
+// counter-lean is applied per-person in makePerson. It is the clearest "weight
+// and balance" in this round: nothing else in this game has ever had a load in
+// it.
+//
+// SECOND, SIDES. Every carry used to be baked on the +X side, so every person
+// with a tote in this store wore it on the same shoulder. Both sides are baked
+// now — eight geometries of about eighty triangles each, which is nothing — and
+// rollPerson picks. A mirrored bake, not a negative scale: `scale.x = -1`
+// inverts the winding and the front faces get culled.
+//
+// AND IT IS STILL UNGATED. Nothing anywhere asks whether a person is carrying
+// something before letting them play a clip. `concealBag` is played by people
+// with no bag at all, exactly as often. A basket is a reason for a hand to go
+// down and come back up empty, which is the same reason a pocket is.
+function shopperBag(THREE, S, k, side) {
   const P = partList(THREE, S);
+  const d = side < 0 ? -1 : 1;
+  // The hand hangs at hips-local y = shoulderY - armLen = -0.20. Anything held
+  // in it starts BELOW that. Round 9's carrier bag topped out at +0.03, i.e.
+  // 230 mm above the fist that was supposed to be holding it.
+  const HAND = -0.200;
   if (k === 0) {
     // Tote on the shoulder, body hanging at the hip. The strap is the half of
     // it that reads: a diagonal across a light torso is a strong dark line.
-    P.box(0.024, 0.300, 0.022, [0.088, 0.300, 0.020], 0xbdbdbd, { r: [0, 0, 0.30] });
-    P.box(0.024, 0.300, 0.022, [0.150, 0.300, -0.050], 0xa8a8a8, { r: [0, 0, 0.30] });
-    P.box(0.150, 0.230, 0.110, [0.196, 0.116, -0.016], 0xffffff);
-    P.box(0.156, 0.030, 0.116, [0.196, 0.226, -0.016], 0xdadada);      // open mouth
+    P.box(0.024, 0.310, 0.022, [d * 0.086, 0.290, 0.022], 0xbdbdbd, { r: [0, 0, d * 0.30] });
+    P.box(0.024, 0.310, 0.022, [d * 0.150, 0.290, -0.050], 0xa8a8a8, { r: [0, 0, d * 0.30] });
+    P.box(0.150, 0.230, 0.110, [d * 0.196, 0.020, -0.014], 0xffffff);
+    P.box(0.156, 0.028, 0.116, [d * 0.196, 0.132, -0.014], 0xdadada);      // open mouth
   } else if (k === 1) {
     // Crossbody, small, high on the opposite hip. Half the outline change of a
     // tote and it survives being walked past.
-    P.box(0.026, 0.300, 0.022, [-0.060, 0.320, 0.056], 0xb2b2b2, { r: [0, 0, -0.44] });
-    P.box(0.026, 0.300, 0.022, [-0.108, 0.320, -0.070], 0x9e9e9e, { r: [0, 0, -0.44] });
-    P.ball(0.086, 0.070, 0.052, [-0.158, 0.176, 0.028], 0xffffff, { seg: 8, rseg: 5 });
-    P.box(0.150, 0.026, 0.070, [-0.158, 0.226, 0.030], 0xcfcfcf);
-  } else {
+    P.box(0.026, 0.320, 0.022, [d * -0.058, 0.310, 0.058], 0xb2b2b2, { r: [0, 0, d * 0.44] });
+    P.box(0.026, 0.320, 0.022, [d * -0.106, 0.310, -0.070], 0x9e9e9e, { r: [0, 0, d * 0.44] });
+    P.ball(0.086, 0.070, 0.052, [d * -0.150, 0.108, 0.030], 0xffffff, { seg: 8, rseg: 5 });
+    P.box(0.150, 0.026, 0.070, [d * -0.150, 0.158, 0.032], 0xcfcfcf);
+  } else if (k === 2) {
     // A carrier bag in the off hand. No strap, so it hangs BELOW the hem and
     // pushes the light/dark band boundary down on one side only — which is the
-    // cheapest asymmetry in this whole file.
-    P.box(0.150, 0.200, 0.086, [0.212, -0.070, 0.030], 0xffffff);
-    P.box(0.030, 0.070, 0.020, [0.176, 0.048, 0.030], 0xe0e0e0);
-    P.box(0.030, 0.070, 0.020, [0.248, 0.048, 0.030], 0xe0e0e0);
+    // cheapest asymmetry in this whole file. It hangs from the fist now, and
+    // the handles are the loop the fist is actually through.
+    P.box(0.026, 0.062, 0.018, [d * 0.176, HAND - 0.032, 0.032], 0xe0e0e0);
+    P.box(0.026, 0.062, 0.018, [d * 0.234, HAND - 0.032, 0.032], 0xe0e0e0);
+    P.box(0.144, 0.190, 0.084, [d * 0.205, HAND - 0.156, 0.032], 0xffffff);
+    P.box(0.150, 0.026, 0.090, [d * 0.205, HAND - 0.062, 0.032], 0xf4f4f4);
+  } else {
+    // THE BASKET. Long axis fore-and-aft, carried out and a little in front of
+    // the thigh, which is where it has to go to clear a walking leg. A tapered
+    // tub (baskets stack, so they are narrower at the bottom), a rim lip, the
+    // grab handle folded up into the fist, and two blocks of shopping standing
+    // proud of the rim — which is the part that reads, because a basket with
+    // nothing in it is a bucket.
+    // IN AGAINST THE THIGH, not held out in space. A basket rests on the leg —
+    // that is most of why people carry them at all — and pushing it out to
+    // clear the swing of a walking leg made it read as a box floating beside a
+    // person. 40 mm in and 34 mm back, and the leg passes behind it.
+    const cx = d * 0.196, cz = 0.058;
+    P.box(0.028, 0.070, 0.016, [cx, HAND - 0.036, cz], 0xcacaca);              // handle
+    P.box(0.150, 0.018, 0.028, [cx, HAND - 0.070, cz], 0xd6d6d6);
+    P.box(0.208, 0.150, 0.300, [cx, HAND - 0.156, cz], 0xffffff);
+    P.box(0.164, 0.030, 0.250, [cx, HAND - 0.238, cz], 0xf0f0f0);              // tapered base
+    P.box(0.224, 0.020, 0.316, [cx, HAND - 0.080, cz], 0xe4e4e4);              // rim
+    P.box(0.120, 0.090, 0.088, [cx - d * 0.024, HAND - 0.052, cz + 0.070], 0xb8b8b8);
+    P.box(0.130, 0.070, 0.100, [cx + d * 0.020, HAND - 0.062, cz - 0.076], 0xdedede);
   }
   return mergeParts(THREE, P.L);
 }
 
+// ROUND 11 — A LEG WITH A TOP ON IT.
+//
+// The old one started at the hip pivot with a 94 mm radius and tapered
+// immediately, so the two legs were two poles with daylight between them all
+// the way up and there was NO PELVIS in this game: below the torso's hem
+// ellipse you could see the floor between a person's thighs. Shots
+// bodies_r0_0.png through _3.png, every body in all four.
+//
+// A thigh is widest 60-80 mm BELOW the crotch, not at the hip joint, and at
+// that height the two of them touch. So the profile is: a narrower cap at the
+// pivot, the maximum just under it, then the long taper to the knee. With
+// `hw` (the hip pivots) at 82 mm for a regular build and `th` at 93, the two
+// thighs overlap by 100 mm across the midline and the pair reads as one solid
+// mass — which is what a pelvis is. The garment hem now hangs over the top of
+// it, so the overlap is never seen as an intersection.
+//
+// The knee is a real landmark and it was a sphere at a guess: the patella sits
+// FORWARD of the leg axis and the calf sits BEHIND it, and those two offsets
+// are why a leg from the side is an S and not a stick.
 function shopperLeg(THREE, S, b, side) {
   const P = partList(THREE, S);
   const t = b.th;
-  P.taper(0.094 * t, 0.078 * t, 0.40, [side * 0.006, -0.20, 0], 0xffffff, { seg: 8 });
-  P.ball(0.070 * t, 0.060, 0.072, [0, -0.415, 0.004], 0xf6f6f6, { seg: 8, rseg: 5 });
-  P.taper(0.074 * t, 0.058 * t, 0.34, [0, -0.595, 0.002], 0xfafafa, { seg: 8 });
-  P.tube(0.064 * t, 0.040, [0, -0.775, 0.004], 0xe6e6e6, { seg: 8 });         // cuff
+  // `taper(rTop, rBottom, ...)` — top first. Getting that order backwards on
+  // the thigh made every leg in the store WIDEST AT THE KNEE and narrowest at
+  // the crotch, which is precisely the shape that opens a gap between a
+  // person's legs, and it is what the first render of this round showed.
+  P.taper(t * 0.92, t * 1.00, 0.075, [side * 0.004, -0.036, 0.002], 0xffffff, { seg: 8 });
+  P.taper(t * 1.00, t * 0.78, 0.34, [side * 0.006, -0.245, 0.001], 0xffffff, { seg: 8 });
+  P.ball(t * 0.70, 0.058, t * 0.76, [0, -0.418, 0.010], 0xffffff, { seg: 8, rseg: 5 });
+  P.taper(t * 0.76, t * 0.52, 0.30, [0, -0.570, -0.008], 0xffffff, { seg: 8 });
+  P.ball(t * 0.54, 0.078, t * 0.46, [0, -0.535, -0.030], 0xffffff, { seg: 8, rseg: 5 }); // calf
+  P.taper(t * 0.50, t * 0.58, 0.10, [0, -0.760, 0.002], 0xf0f0f0, { seg: 8 });   // cuff
   return mergeParts(THREE, P.L);
 }
 
@@ -747,9 +1079,9 @@ function shopperShoe(THREE, S, kind) {
   const P = partList(THREE, S);
   const y = -0.828;
   P.ball(0.048, 0.032, 0.088, [0, y + 0.006, 0.026], 0xffffff, { seg: 8, rseg: 5 });
-  P.ball(0.042, 0.026, 0.052, [0, y + 0.002, 0.078], 0xf4f4f4, { seg: 8, rseg: 5 });
-  P.box(0.094, 0.018, 0.196, [0, y - 0.022, 0.024], kind ? 0xd8d8d8 : 0x8a8a8a);
-  P.box(0.084, 0.020, 0.056, [0, y - 0.012, -0.046], kind ? 0xe8e8e8 : 0x9a9a9a);
+  P.ball(0.044, 0.026, 0.062, [0, y + 0.002, 0.086], 0xf4f4f4, { seg: 8, rseg: 5 });
+  P.box(0.096, 0.018, 0.228, [0, y - 0.022, 0.032], kind ? 0xd8d8d8 : 0x8a8a8a);
+  P.box(0.088, 0.022, 0.062, [0, y - 0.011, -0.052], kind ? 0xe8e8e8 : 0x9a9a9a);
   if (kind) P.box(0.086, 0.012, 0.040, [0, y + 0.020, 0.020], 0xffffff);       // laces / stripe
   return mergeParts(THREE, P.L);
 }
@@ -867,27 +1199,39 @@ function armBones(side, shoulderY, tipX, tipY, tipZ, scale) {
 // old straight stick put it.
 const SH_ARM = (side) => armBones(side, -0.020, side * 0.008, -0.660, 0.010);
 
+// ROUND 11 — THE ARMS WERE 70% TOO THICK, AND IT WAS COSTING THE WAIST.
+//
+// A 1.65 m person's upper arm is about 100 mm across at the deltoid (arm
+// circumference ~0.32 m) and 55 mm at the wrist. Round 10's deltoid ball was
+// 172 mm across and its short sleeve 162 — a bodybuilder's arm on a shopper,
+// which is most of why these bodies read as action figures. It also did real
+// damage further down: an arm that wide, hanging at a waist 296 mm across,
+// COVERS THE TAPER, so the one place a build is legible from the front was
+// hidden behind two sausages on every body in the store.
+//
+// Every radius below is scaled to measured arm anthropometry and then handed a
+// per-instance thickness multiplier (`aw` in BUILDS, `armThick` in rollPerson)
+// so a heavy body still gets a heavy arm. The HAND is untouched by that
+// scaling — see makePerson — because a hand is a hand.
 function shopperSleeve(THREE, S, long, side) {
   const P = partList(THREE, S);
   const B = SH_ARM(side), U = B.upper, F = B.fore;
-  // ROUND 10 — the deltoid is 4 mm fatter and the wrist 8 mm thinner than round
-  // 9's, which sharpens the taper from 1.77:1 to 2.4:1. A real arm is about
-  // 2.3:1 shoulder to wrist; every game arm that reads as a tube is nearer 1.5.
-  // Free, and it is an outline change.
-  P.ball(0.086, 0.080, 0.083, [0, -0.018, 0], 0xffffff, { seg: 8, rseg: 6 });
+  // The taper from deltoid to wrist is 2.4:1, which round 10 got right and is
+  // kept exactly; only the absolute size has changed.
+  P.ball(0.060, 0.072, 0.060, [0, -0.018, 0], 0xffffff, { seg: 8, rseg: 6 });
   if (long) {
-    P.taper(0.081, 0.062, U.len * 0.98, U.at(0.51), 0xffffff, { seg: 8, r: U.r });
+    P.taper(0.057, 0.045, U.len * 0.98, U.at(0.51), 0xffffff, { seg: 8, r: U.r });
     // THE ELBOW ITSELF. A ball at the joint is what makes a bend read as an
     // elbow rather than as a kink in a pipe — the two tapers meet at an angle
     // and without something round in the corner you can see the seam from
     // across the store. It must not be BIGGER than either segment or it is a
     // knuckle: 0.058 against a 0.062 sleeve is a crease, 0.072 was a knot.
-    P.ball(0.058, 0.060, 0.058, B.el, 0xfbfbfb, { seg: 8, rseg: 5 });
-    P.taper(0.056, 0.040, F.len * 0.62, F.at(0.32), 0xf8f8f8, { seg: 8, r: F.r });
-    P.tube(0.042, 0.030, F.at(0.64), 0xdcdcdc, { seg: 8, r: F.r });   // cuff
+    P.ball(0.042, 0.044, 0.042, B.el, 0xfbfbfb, { seg: 8, rseg: 5 });
+    P.taper(0.041, 0.030, F.len * 0.62, F.at(0.32), 0xf8f8f8, { seg: 8, r: F.r });
+    P.tube(0.031, 0.030, F.at(0.64), 0xdcdcdc, { seg: 8, r: F.r });   // cuff
   } else {
-    P.taper(0.081, 0.068, U.len * 0.56, U.at(0.32), 0xffffff, { seg: 8, r: U.r });
-    P.tube(0.070, 0.022, U.at(0.62), 0xe0e0e0, { seg: 8, r: U.r });   // rolled hem
+    P.taper(0.057, 0.050, U.len * 0.56, U.at(0.32), 0xffffff, { seg: 8, r: U.r });
+    P.tube(0.052, 0.022, U.at(0.62), 0xe0e0e0, { seg: 8, r: U.r });   // rolled hem
   }
   return mergeParts(THREE, P.L);
 }
@@ -916,16 +1260,16 @@ function shopperHand(P, F, side, tint, k, uv) {
   const c = tint || 0xffffff;
   const s = k || 1;
   const X = uv ? { uv } : null;
-  P.ball(0.033 * s, 0.032 * s, 0.033 * s, F.at(0.575), c, { seg: 6, rseg: 5, ...X });    // wrist
+  P.ball(0.031 * s, 0.032 * s, 0.031 * s, F.at(0.575), c, { seg: 6, rseg: 5, ...X });    // wrist
   // The heel of the hand: WIDE and FLAT. A hand is an ellipse in section, not a
   // circle, which is the single thing a tapered tube can never be and is most of
   // why the old box was reached for in the first place.
-  P.ball(0.030 * s, 0.042 * s, 0.044 * s, F.pt(0.720, 0, 0.004), c, { seg: 8, rseg: 6, r: F.r, ...X });
+  P.ball(0.029 * s, 0.044 * s, 0.040 * s, F.pt(0.716, 0, 0.004), c, { seg: 8, rseg: 6, r: F.r, ...X });
   // The fingers. Still a box — at 55 mm a box is the right primitive and round 9
   // was not wrong about that — but 6 mm thinner, 4 mm narrower, tipped forward
   // into a slight curl, and CAPPED, so the outline ends in a radius instead of
   // in a corner. A square end is what the eye calls a box.
-  P.box(0.047 * s, 0.070 * s, 0.034 * s, F.pt(0.858, 0, 0.010), c,
+  P.box(0.043 * s, 0.072 * s, 0.032 * s, F.pt(0.852, 0, 0.010), c,
     { r: [F.r[0] + 0.18, F.r[1], F.r[2]], ...X });
   P.ball(0.024 * s, 0.016 * s, 0.018 * s, F.pt(0.945, 0, 0.020), c, { seg: 6, rseg: 4, r: F.r, ...X });
   // The thumb stands off the side of the hand and points along it, so it is a
@@ -946,9 +1290,9 @@ function shopperForearm(THREE, S, long, side) {
     // short-sleeved arm in the store was a hole with the shelving showing
     // through it. The two meshes have to OVERLAP; they are separate objects and
     // there is nothing to fill a gap between them.
-    P.taper(0.065, 0.058, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
-    P.ball(0.056, 0.058, 0.056, B.el, 0xffffff, { seg: 8, rseg: 5 });   // elbow
-    P.taper(0.055, 0.036, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
+    P.taper(0.048, 0.044, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
+    P.ball(0.041, 0.043, 0.041, B.el, 0xffffff, { seg: 8, rseg: 5 });   // elbow
+    P.taper(0.040, 0.032, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
   }
   shopperHand(P, F, side, 0xffffff);
   return mergeParts(THREE, P.L);
@@ -977,9 +1321,9 @@ function shopperBird(THREE, S, long, side) {
   const P = partList(THREE, S);
   const B = SH_ARM(side), U = B.upper, F = B.fore;
   if (!long) {
-    P.taper(0.065, 0.058, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
-    P.ball(0.056, 0.058, 0.056, B.el, 0xffffff, { seg: 8, rseg: 5 });
-    P.taper(0.055, 0.036, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
+    P.taper(0.048, 0.044, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
+    P.ball(0.041, 0.043, 0.041, B.el, 0xffffff, { seg: 8, rseg: 5 });
+    P.taper(0.040, 0.027, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
   }
   // ROUND 10 — re-baked onto the same bones as the ordinary hand, which is the
   // point of there being bones at all: the swap happens on a live mesh mid-clip
@@ -1848,10 +2192,11 @@ export function buildFigureGeo(THREE) {
     cloth: clothAtlas(THREE),
     // shopper library, indexed by build / style
     torso: BUILDS.map((b) => shopperTorso(THREE, S, b)),
-    belly: shopperBelly(THREE, S),
-    head: [shopperHead(THREE, S, false), shopperHead(THREE, S, true)],
-    hair: [0, 1, 2, 3, 4, 5, 6, 7].map((k) => shopperHair(THREE, S, k)),
-    bag: [0, 1, 2].map((k) => shopperBag(THREE, S, k)),
+    head: [0, 1, 2].map((k) => shopperHead(THREE, S, k)),
+    hair: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => shopperHair(THREE, S, k)),
+    // [kind][side]. Both sides baked; see shopperBag for why a negative scale
+    // is not an option.
+    bag: [0, 1, 2, 3].map((k) => [shopperBag(THREE, S, k, 1), shopperBag(THREE, S, k, -1)]),
     leg: BUILDS.map((b) => [shopperLeg(THREE, S, b, 1), shopperLeg(THREE, S, b, -1)]),
     shoe: [shopperShoe(THREE, S, 0), shopperShoe(THREE, S, 1)],
     sleeve: [[shopperSleeve(THREE, S, false, 1), shopperSleeve(THREE, S, false, -1)],
@@ -1949,7 +2294,12 @@ const IDLE_POOL = [0, 1, 2, 3, 4, 5, 6];
 
 function rollPose(rng, age, build) {
   const { rr, ri, rnd } = rng;
-  const heavy = build >= 2;
+  // ROUND 11 — BUILDS grew from four entries to six, so this index moved.
+  // The old `build >= 2` meant "stock or heavy"; the two heavy builds are now
+  // 4 and 5. Left as >= it was and the pear and the regular build would have
+  // inherited a heavy man's stride tax, which is exactly the class of silent
+  // off-by-one CLAUDE.md keeps a section about.
+  const heavy = build >= 4;
   const old = age === 'old';
   // Two or three idles per person, no repeats. A shuffle would cost more draws
   // than it is worth for a seven-long list; reject-and-retry is fine at n=3.
@@ -1997,13 +2347,62 @@ function rollPose(rng, age, build) {
 // grey hair and a stoop and a longer coat, a slim young one gets a tee and
 // trainers. Height spread is 1.53 m to 1.83 m, which is a real crowd.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ROUND 11 — WHAT VARIES, AND WHY IT VARIES HERE.
+//
+// The round-10 roster was six numbers: build (of four), height, girth, age,
+// stoop and a set of palettes. Two of those six are SIZE and four are colour,
+// so the crowd was one shape at fourteen sizes in fourteen colourways. The
+// fields below are the ones a real crowd differs in, and every one of them is
+// applied as a group scale, a pivot offset or a rest angle in makePerson — no
+// per-person geometry, no per-person bake, nothing the bakery has to know
+// about.
+//
+//   legF        FRACTION OF STATURE AT THE HIP. 0.487-0.548 against round 10's
+//               flat 0.521. This is the one that changes a body most for the
+//               least: at the same height, "long legs, short trunk" and "short
+//               legs, long trunk" are two different people, and the game had
+//               neither because it had only the mean. Stature is renormalised
+//               afterwards so the tape measure still reads what was rolled.
+//   torsoW/D    trunk width and DEPTH, independently. Round 10 scaled x and z
+//               by one number, so nobody could be broad-and-flat or narrow-and-
+//               deep — and a barrel-chested man and a wide-shouldered one are
+//               the same thing under a single girth multiplier.
+//   shoulderW   where the arms hang from, off the build's own `sw`.
+//   armLen/Thk  reach and arm mass. `armLen` goes onto the RIG, not just the
+//               mesh, because animateShopper solves a held prop's position from
+//               it — see the note there.
+//   stanceW     how far apart the feet are. A heavy body stands wide; this is
+//               in the brief in those words, and it costs one pivot offset.
+//   neckDy/Z    how much neck shows, and how far FORWARD the head sits. The
+//               second one is the whole read of age at a distance: an older
+//               body's ear is ahead of its shoulder, and that plus the build's
+//               kyphosis is worth more than any amount of grey hair.
+//   headSize    heads are not a fixed fraction of stature either.
+//
+// ...and the asymmetry set, which is the lead's first note off the reference
+// photographs — "nobody in that photograph is symmetric, not one person":
+//   wSide       which leg the weight is on
+//   contra      how much contrapposto: hip up on the weighted side, opposite
+//               shoulder down. Real, and free: two rest angles.
+//   footFwd     one foot in front of the other, because nobody stands square
+//   toeL/toeR   INDEPENDENT turnout per foot, where round 10 mirrored one value
+//   splayL/R    likewise for the arms, which used to hang at +-P.splay exactly
+//   headTilt    a few degrees of roll on the neck
+//
+// NONE OF IT KNOWS ABOUT GUILT, and cannot: guilt is dealt out fresh at every
+// reset() over the same fourteen indices by code that has never seen a person
+// description, and this function runs once, at construction, before the first
+// setSeed(). Round 9's argument in full is above rollPose and it is unchanged;
+// round 11 adds ~20 draws to it and re-proves the claim the same way, by
+// byte-comparing a bench across the change.
 export function rollPerson(rng) {
   const { rr, ri, pick, rnd } = rng;
-  const bi = ri(0, 3);
+  const bi = ri(0, BUILDS.length - 1);
   const age = rnd() < 0.20 ? 'old' : rnd() < 0.22 ? 'young' : 'adult';
   const tall = age === 'young' ? rr(0.93, 1.04) : rr(0.94, 1.11);
   const long = rnd() < 0.45;
-  let hair = ri(0, 7);
+  let hair = ri(0, 8);
   if (age === 'old' && rnd() < 0.55) hair = 3;
   // CLOTH carries two beiges (0xbfa89b, 0xd9b8a0) that are within a few points
   // of two of the skin tones, and when a person rolls both plus `plain` they
@@ -2069,24 +2468,70 @@ export function rollPerson(rng) {
     stopFor: rr(1.6, 3.6),
     phase: rr(0, 12),
   } : null;
+  const B = BUILDS[bi];
+  const old = age === 'old', young = age === 'young';
+  // AGE IS NOT HEIGHT, and round 10's 0.965 said it was. Real stature loss over
+  // a lifetime is 2-4 cm, i.e. about 1.5%, and the reason an old body looks
+  // shorter is POSTURE — a rounded upper back and a head carried forward take
+  // 30-60 mm off standing height on their own, and they read as age while a
+  // uniform shrink just reads as "small person". So: 0.99 on the tape, and the
+  // difference goes into `neckZ`, `stoop` and the build's kyphosis instead.
+  const heavyB = bi >= 4;
   return {
     build: bi,
-    height: age === 'old' ? tall * 0.965 : tall,
-    girth: rr(0.92, 1.08) * (age === 'old' ? 0.95 : 1),
+    height: tall * (old ? 0.990 : 1),
+    girth: rr(0.94, 1.07),
+    // ---- proportion, all per-instance -------------------------------------
+    legF: rr(0.487, 0.548) + (young ? 0.008 : 0) - (old ? 0.006 : 0),
+    torsoW: rr(0.94, 1.07),
+    torsoD: rr(0.90, 1.12) * (heavyB ? 1.03 : 1),
+    torsoLen: rr(0.96, 1.05),
+    shoulderW: rr(0.93, 1.07) * (young ? 0.97 : 1),
+    armLen: rr(0.95, 1.05),
+    armThick: rr(0.94, 1.06) * B.aw,
+    stanceW: rr(0.88, 1.16) * (heavyB ? 1.10 : 1),
+    neckDy: rr(-0.014, 0.016),
+    // The head carried forward of the shoulders. Old bodies get most of it,
+    // heavy bodies some, everybody a little — because in the photographs
+    // literally nobody's ear is over their acromion.
+    neckZ: rr(0.004, 0.020) + (old ? rr(0.018, 0.040) : 0) + B.kyph * 0.5,
+    headSize: rr(0.905, 1.015) * (young ? 1.03 : 1),
+    // ---- asymmetry --------------------------------------------------------
+    wSide: rnd() < 0.5 ? 1 : -1,
+    contra: rr(0.020, 0.070),
+    footFwd: rr(0.006, 0.046),
+    toeL: rr(-0.10, 0.26),
+    toeR: rr(-0.10, 0.26),
+    // 3 to 8 degrees, not 5 to 16. The first cut at 0.085-0.205 rad put a
+    // gunslinger in the foreground of every crowd shot; what the arms actually
+    // needed was somewhere for the daylight to be, and the lofted waist gives
+    // them that on its own now.
+    splayL: rr(0.052, 0.132) + (heavyB ? 0.055 : 0),
+    splayR: rr(0.052, 0.132) + (heavyB ? 0.055 : 0),
+    headTilt: rr(-0.055, 0.055),
+    // ---- palettes and kit --------------------------------------------------
     skin,
-    hair: age === 'old' ? pick(GREY) : pick(HAIR),
+    hair: old ? pick(GREY) : pick(HAIR),
     shirt,
     pants,
     shoe: pick(SHOE),
-    headLong: rnd() < 0.5,
+    // Head shape follows the BUILD (a heavy body gets the heavy skull), with a
+    // coin-flip between round and long on everybody the build has no opinion
+    // about. `head` in BUILDS is that opinion.
+    headKind: B.head === 2 ? 2 : rnd() < 0.5 ? 1 : 0,
     hairStyle: hair,
     sleeve: long ? 1 : 0,
     shoeKind: rnd() < 0.4 ? 1 : 0,
-    stoop: BUILDS[bi].st + (age === 'old' ? 0.16 : 0),
+    stoop: B.st + (old ? 0.15 : 0),
     plain: rnd() < 0.3,
     age,
-    bag: bagRoll < 0.40 ? { kind: bagRoll < 0.17 ? 0 : bagRoll < 0.30 ? 1 : 2,
-                            color: pick(CLOTH) } : null,
+    // Four carries now, and a side for each. The basket is the one that puts a
+    // LOAD on a body — see makePerson, where it buys a lean.
+    bag: bagRoll < 0.46 ? {
+      kind: bagRoll < 0.14 ? 0 : bagRoll < 0.24 ? 1 : bagRoll < 0.35 ? 2 : 3,
+      side: rnd() < 0.5 ? 1 : -1,
+      color: pick(CLOTH),
+    } : null,
     kid,
     pose: rollPose(rng, age, bi),
   };
@@ -2150,6 +2595,12 @@ export function makeChild(THREE, F, o) {
 // no more calls: the detail is inside merged geometry, and the variety is in
 // which baked geometry a person points at.
 // ---------------------------------------------------------------------------
+// The stature the SKELETON comes out at when every per-person proportion is 1.
+// Sole -> crown, where the crown is the top of the skull ball. Everything below
+// renormalises against this, so `o.height` stays the tape measure no matter how
+// the leg/trunk/head split is rolled.
+const CROWN0 = FIG.hipY + FIG.neckY + FIG.headY + 0.112;
+
 export function makePerson(THREE, F, o) {
   const g = new THREE.Group();
   const b = BUILDS[o.build];
@@ -2162,33 +2613,57 @@ export function makePerson(THREE, F, o) {
   const hairM = new THREE.MeshStandardMaterial({ color: o.hair, roughness: 1.0, vertexColors: true });
   const shoeM = new THREE.MeshStandardMaterial({ color: o.shoe, roughness: 0.62, vertexColors: true });
 
-  const hips = new THREE.Group(); hips.position.y = FIG.hipY; g.add(hips);
+  // ---- THE SPLIT. How much of this person is leg and how much is trunk ----
+  // hipY is where the pelvis sits; everything above it is scaled by `trunkS` so
+  // the two halves add up, and the whole figure is then scaled so the crown
+  // lands at the stature that was rolled. Round 10 had legF pinned at 0.525 for
+  // all twenty-one bodies in the building.
+  const hipY = CROWN0 * o.legF;
+  const legS = hipY / FIG.hipY;
+  const trunkS = ((CROWN0 - hipY) / (CROWN0 - FIG.hipY)) * o.torsoLen;
+  const neckY = FIG.neckY * trunkS + o.neckDy;
+  const shoulderY = FIG.shoulderY * trunkS;
+  const crownM = hipY + neckY + (FIG.headY + 0.112) * o.headSize;
+
+  const hips = new THREE.Group(); hips.position.y = hipY; g.add(hips);
   const chest = new THREE.Group(); hips.add(chest);
 
   const torso = new THREE.Mesh(F.torso[o.build], shirt);
-  torso.scale.set(o.girth, 1, o.girth); torso.castShadow = true; chest.add(torso);
+  // Width and depth are SEPARATE multipliers. One number for both is what made
+  // every round-10 body an ellipse of a fixed aspect ratio.
+  torso.scale.set(o.girth * o.torsoW, trunkS, o.girth * o.torsoD);
+  torso.castShadow = true; chest.add(torso);
 
-  let belly = null;
-  if (b.be > 0) {
-    belly = new THREE.Mesh(F.belly, shirt);
-    belly.position.set(0, 0.185, 0.075 + b.be * 0.045);
-    belly.scale.set(0.40 * b.ch * o.girth, 0.30, 0.30 * b.ch * o.girth);
-    chest.add(belly);
-  }
+  // No belly mesh. It is in the torso loft, on the same surface, which is the
+  // only way an overhang can exist without a seam ring round it — the cop round
+  // wrote this down in 2 lines and the shoppers kept the sphere for two more.
+  const belly = null;
 
-  const neck = new THREE.Group(); neck.position.y = FIG.neckY; chest.add(neck);
-  const head = new THREE.Mesh(F.head[o.headLong ? 1 : 0], skin); neck.add(head);
-  neck.add(new THREE.Mesh(F.hair[o.hairStyle], hairM));
+  const neck = new THREE.Group();
+  // FORWARD of the shoulders, not on top of them. See rollPerson: this is most
+  // of what "old" looks like at a distance, and everybody gets a little.
+  neck.position.set(0, neckY, o.neckZ);
+  neck.rotation.z = o.headTilt;
+  chest.add(neck);
+  const head = new THREE.Mesh(F.head[o.headKind], skin);
+  head.scale.setScalar(o.headSize); neck.add(head);
+  const hairMesh = new THREE.Mesh(F.hair[o.hairStyle], hairM);
+  hairMesh.scale.setScalar(o.headSize); neck.add(hairMesh);
 
-  const limb = (geo, mat, x, y, extra) => {
-    const piv = new THREE.Group(); piv.position.set(x, y, 0);
+  const limb = (geo, mat, x, y, z, sx, sy, extra) => {
+    const piv = new THREE.Group(); piv.position.set(x, y, z);
+    piv.scale.set(sx, sy, sx);
     piv.add(new THREE.Mesh(geo, mat));
     if (extra) piv.add(new THREE.Mesh(extra[0], extra[1]));
     return piv;
   };
-  const hw = 0.098 * b.th * o.girth, sw = 0.190 * b.sh * o.girth;
-  const legL = limb(F.leg[o.build][0], pants, hw, 0, [F.shoe[o.shoeKind], shoeM]);
-  const legR = limb(F.leg[o.build][1], pants, -hw, 0, [F.shoe[o.shoeKind], shoeM]);
+  const hw = b.hw * o.stanceW, sw = b.sw * o.shoulderW;
+  // ONE FOOT IN FRONT OF THE OTHER, and it is the free leg that goes forward.
+  const ff = o.wSide > 0 ? [0, o.footFwd] : [o.footFwd, 0];
+  const legL = limb(F.leg[o.build][0], pants, hw, 0, ff[0], o.girth, legS,
+    [F.shoe[o.shoeKind], shoeM]);
+  const legR = limb(F.leg[o.build][1], pants, -hw, 0, ff[1], o.girth, legS,
+    [F.shoe[o.shoeKind], shoeM]);
   // ROUND 10 — TWO MESHES PER ARM, WHATEVER THE SLEEVE, AND THE HAND IS DRAWN
   // ONCE. Round 9 gave a long-sleeved person THREE arm meshes: the sleeve, the
   // long `fore` bake in SHIRT — which is a wrist, a palm, fingers and a thumb
@@ -2202,10 +2677,10 @@ export function makePerson(THREE, F, o) {
   // bare forearm plus the hand. Long-sleeved people go from 3 arm meshes to 2,
   // which is 2 draw calls per person back on every long-sleeved body in the
   // store, and the arm count is now the same for everybody.
-  const armL = limb(F.sleeve[o.sleeve][0], shirt, sw, FIG.shoulderY,
-    [F.fore[o.sleeve][0], skin]);
-  const armR = limb(F.sleeve[o.sleeve][1], shirt, -sw, FIG.shoulderY,
-    [F.fore[o.sleeve][1], skin]);
+  const armL = limb(F.sleeve[o.sleeve][0], shirt, sw, shoulderY, 0,
+    o.armThick, o.armLen, [F.fore[o.sleeve][0], skin]);
+  const armR = limb(F.sleeve[o.sleeve][1], shirt, -sw, shoulderY, 0,
+    o.armThick, o.armLen, [F.fore[o.sleeve][1], skin]);
   // ROUND 9 — the mesh whose geometry carries the RIGHT HAND, handed back by
   // name so agents.js can swap in the raised-finger bake without counting
   // children.
@@ -2235,15 +2710,43 @@ export function makePerson(THREE, F, o) {
   // is held in a hand at the hip, so it goes on `hips` and swings with the
   // walk. Same geometry list, and the difference is one ternary.
   let bag = null;
+  // THE LOAD. A basket with six kilos of shopping in it is the only thing in
+  // this game that has ever had WEIGHT, and weight is the first item in the
+  // brief. It does three things to a body and all three are rest angles:
+  // the carrying shoulder drops, the trunk leans AWAY from the load to put the
+  // centre of mass back over the feet, and the pelvis shifts under it. A
+  // carrier bag does a third of the same. That is the whole feature and it
+  // costs nothing per frame.
+  let loadLean = 0;
   if (o.bag) {
     const bagM = new THREE.MeshStandardMaterial({
       color: o.bag.color, roughness: 0.88, vertexColors: true,
     });
-    bag = new THREE.Mesh(F.bag[o.bag.kind], bagM);
-    (o.bag.kind === 2 ? hips : chest).add(bag);
+    bag = new THREE.Mesh(F.bag[o.bag.kind][o.bag.side > 0 ? 0 : 1], bagM);
+    // Held in a hand -> rides the hips and swings with the walk. Strapped to
+    // the body -> rides the ribs and counter-rotates. One ternary, as before.
+    (o.bag.kind >= 2 ? hips : chest).add(bag);
+    loadLean = o.bag.kind === 3 ? -o.bag.side * 0.062
+      : o.bag.kind === 2 ? -o.bag.side * 0.024 : 0;
   }
 
-  g.scale.setScalar(o.height);
+  // ---- CONTRAPPOSTO. Nobody in the reference photographs stands square ----
+  // Weight on one leg puts that hip UP and the opposite shoulder DOWN, and the
+  // pair of them is the difference between a person standing and a mannequin
+  // standing. These are REST angles: animateShopper adds them to the gait
+  // channels and fades them out as a body starts to walk, because a walking
+  // body's weight is alternating rather than parked.
+  const rest = {
+    hipZ: o.wSide * o.contra,
+    chestZ: -o.wSide * o.contra * 0.85 + loadLean,
+    toeL: o.toeL, toeR: -o.toeR,
+    splayL: o.splayL, splayR: -o.splayR,
+  };
+
+  // Renormalise the tape measure. Every proportion above moved the crown; this
+  // puts it back at exactly the stature that was rolled, so `height` still
+  // means what the roster prints and the leg/trunk/head split is free.
+  g.scale.setScalar(o.height * (CROWN0 / crownM));
   // The child is BUILT here and PARENTED by agents.js, because where it goes
   // depends on what it is doing: a kid in the cart seat belongs to the cart
   // object, and a kid on foot belongs to the scene with its own ground
@@ -2251,12 +2754,22 @@ export function makePerson(THREE, F, o) {
   const kid = o.kid ? makeChild(THREE, F, o.kid) : null;
   return {
     root: g, hips, chest, torso, belly, neck, head, legL, legR, armL, armR,
-    shirt, pants, hipY: FIG.hipY, stoop: o.stoop, cop: false,
+    shirt, pants, hipY, stoop: o.stoop, cop: false,
+    // ROUND 11 — ON THE RIG, because two things in agents.js used to read them
+    // off the FIG constants and therefore assumed every body in the store was
+    // the same one. `armLen` is the prop solve (a held item is placed from the
+    // shoulder along the arm) and `eyeY` is the camera look-up angle.
+    armLen: FIG.armLen * o.armLen,
+    eyeY: (hipY + neckY + FIG.headY * o.headSize),
+    rest,
     bag, bagKind: o.bag ? o.bag.kind : -1, kid,
     handR, handGeo, birdGeo, birdOn: false,
     // The per-person pose table. animateShopper reads it every frame; nothing
     // else in the game is allowed to write it.
     pose: o.pose, age: o.age,
+    // The description this body was rolled from. Read-only, and it is here so a
+    // probe can print the roster's proportions without re-rolling anything.
+    desc: o,
     // Idle bookkeeping, on the RIG rather than on the shopper, for a reason
     // that matters: `s` is wiped by resetShopper() every trial and the rig is
     // not, so an idle clock parked here cannot be restarted by a state change
@@ -2345,6 +2858,11 @@ export function makeCop(THREE, F) {
     // not afford because the head was still half inside the torso and dropping
     // it any further would have buried it again.
     hipY: FIG.hipY, stoop: 0.19, cop: true,
+    // The three fields round 11 put on a shopper rig, at their neutral values,
+    // so a function that reads them off "a rig" cannot get a different answer
+    // depending on whose rig it was handed.
+    armLen: FIG.armLen, eyeY: FIG.hipY + FIG.neckY + FIG.headY,
+    rest: { hipZ: 0, chestZ: 0, toeL: 0, toeR: 0, splayL: 0, splayR: 0 },
     // Where the arms hang from at rest. animateCop rolls them forward off this
     // as `fatigue` rises, which is the "shoulders round further" note.
     armZ: 0.010,

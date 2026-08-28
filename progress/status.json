@@ -2,7 +2,7 @@
  "pieces": {
   "store": {
    "round": 30,
-   "state": "critiquing",
+   "state": "gap",
    "shots": [
     {
      "round": 0,
@@ -378,6 +378,11 @@
      "round": 30,
      "path": "../shots/r30on_chase_a1.png",
      "t": 1787933888.3338408
+    },
+    {
+     "round": 30,
+     "path": "../shots/_r30_critic_gap_product_ink.png",
+     "t": 1787935306.4308338
     }
    ],
    "gaps": [
@@ -544,12 +549,20 @@
     {
      "round": 29,
      "text": "The floor has no specular response to objects. It mirrors the ceiling and the lights but nothing standing on it: object chroma in the floor beneath it reads 0.02 to 0.10 against store_08 terrazzo at 0.31 and 0.50, and store_11 and store_12 where cases are readable as full-height mirror images. Round 28 had already written the mechanism in its own not-fixed list - the reflected march reads a field that carries no colour."
+    },
+    {
+     "round": 30,
+     "text": "The product wall, not the floor. Every package face is a low-chroma illegible wash, so the only saturated high-contrast marks in a render bay are the injected promo tags - the ROLLBACK tag at roughly x150-320 y430-500 of shots/_r30_blind_off/frame_05.jpg is the most saturated object in a 300x170 region of grocery. A real store inverts that: the packages are the loudest thing in frame and the shelf tags are small pale rectangles. Named frames and regions: _r30_blind_off/frame_01.jpg left bay x60-360 y430-600, and _r30_blind_off/frame_05.jpg left bay x60-360 y300-470. OBSERVATION confidence 0.9 - this was my written first-glance reason on 10 of the 12 render frames, recorded before any measurement, and f_sat separates 6 of 7 photographs from all 7 renders. EXPLANATION confidence 0.5 - I did not open src/store/ by instruction, so the mechanism is a guess: pastel package palettes with low-contrast type, plus mip filtering at aisle distance washing out what contrast survives; a tone-map or exposure choice would fit the same evidence. FALSIFIERS: raise f_sat on product faces into 0.09-0.29 and re-run a blind set - if recall stays 100 percent and first-glance reasons still say procedural labels, the cue is legibility and structure, not chroma, and I named it wrong. Mask the product wall out of both arms and re-run - if recall stays 100 percent the product wall is not decisive. If a fresh critic's first-glance reasons cite the floor more often than the product wall, my ranking is wrong. And floor chroma appeared in ZERO of my 12 first-glance calls: round 30 spent itself on a cue that was not deciding the frames."
+    },
+    {
+     "round": 30,
+     "text": "The product wall carries no saturated ink and the promo tags do, which is the inverse of a real store. Product-face boxes only, identical on-screen scale: render f_sat(C* over 45) 0.039 and 0.021 against photographs at 0.290 and 0.178 - an order of magnitude, separating 6 of 7 photos from all 7 renders."
     }
    ],
-   "updated": 1787933888.333834,
-   "note": "floor mirror: objects now put their own colour in the floor. New src/store/mirror.js is a premultiplied linear colour field for everything that moves, built off tread.js own item list and its own dirty hash - no second scene walk. Diagnosis: light.js field is not premultiplied and its 3,104,010 empty cells hold the floor beige, so a 2.22 m reflection mip returned saturation 8 of 255. Colour tap split from the occlusion tap, round 10 kickplate crush halved because the albedo was charged twice, fresnel F0 0.040 to 0.220 calibrated against store_12 terrazzo where the floor under a dark table sits 54 percent below the open floor beside it. Arms differ only in uniform values, near_a1 and near_a4 byte-identical, 3530 of 3530 outside-mask diffs are floor behind glass. Draw calls 368 equals 368, live frame 8.3 ms.",
-   "gap": "The floor has no specular response to objects. It mirrors the ceiling and the lights but nothing standing on it: object chroma in the floor beneath it reads 0.02 to 0.10 against store_08 terrazzo at 0.31 and 0.50, and store_11 and store_12 where cases are readable as full-height mirror images. Round 28 had already written the mechanism in its own not-fixed list - the reflected march reads a field that carries no colour.",
-   "verdict": "12/12 render-recall on whole frames, control 6/6 and r29 6/6. Twenty-ninth round at ceiling. No tenth leak - one quantization table, one SOF spec, no EXIF or ICC, overlapping byte sizes, null pair byte-identical."
+   "updated": 1787935422.287162,
+   "note": "THE FIRST NON-SATURATING PERCEPT TEST, AND IT WORKED. Pre-registered a three-level criterion in writing before cutting a tile and got exactly it: OFF 4/4 NONE, ON 4/4 SHORT, CATCH 8/10 FULL, 16 of 18 three-way at p 1.7e-6, with ON and PHOTOGRAPH refusing to collapse at Fisher p 0.015. A three-level criterion measures the remaining gap instead of announcing a pass, and it says two things a two-level test cannot - the change is visible AND it is still short of a photograph. ROUND 30'S MOVES-BUT-DOES-NOT-CLOSE IS HONEST, verified against the exact difference mask: floor C* plus 2.89 / 1.30 / 0.72 / 0.53, rms chroma modulation 2.46 to 6.22. BUT THE CLOSURE CLAIM IS UNFALSIFIABLE ANYWAY - eight reference floors span C* 8.61 to 25.69 at sd 5.65 against an effect of 1.36, which is 0.24 sd, and two real store floors sit BELOW the render's OFF value. AND THE FINDING THAT MATTERS MOST: floor chroma appeared in ZERO of its twelve first-glance calls. Rounds 28, 29 and 30 were all floor rounds, all three fixed real defects, and none of them touched what a blind scorer actually calls on. Each round's cue was handed down as the previous critic's NAMED GAP rather than its FIRST-GLANCE REASON, and only one of those predicts the score. It also published eight failed statistics including two that killed its own hypothesis, and found its hand-placed boxes had given the wrong SIGN until a difference mask corrected them.",
+   "gap": "The product wall carries no saturated ink and the promo tags do, which is the inverse of a real store. Product-face boxes only, identical on-screen scale: render f_sat(C* over 45) 0.039 and 0.021 against photographs at 0.290 and 0.178 - an order of magnitude, separating 6 of 7 photos from all 7 renders.",
+   "verdict": "12/12 render-recall, ON 6/6 and OFF 6/6, total 39/39 at p 1.8e-12. Thirtieth round at ceiling, and no leak needed - every render called on content."
   },
   "cctv": {
    "round": 15,
@@ -1215,9 +1228,63 @@
    "updated": 1787666267.989203,
    "note": "THE BEST CATCH: the idles first shipped on the 'else' branch - the one for a body that is NOT browsing. It probed nine stationary shoppers and eight were in 'browse'. In this game a body that has stopped is a body at a shelf, so the entire idle pool was decoration. CHILDREN AS FURNITURE THAT FOLLOWS: not in shoppers, no collider, no nav, no guilt, no RNG draw - which is what let them be added to a tuned sim provably free, and a cart-seat child parents to the cart so it rides an abandoned one for nothing. THE BIRD MEASUREMENT THAT CHANGED THE DESIGN: the first build put it in the rung-4 shrug pool and measured LR 0.26, four times more likely from an innocent - not because the ladder leaked, but because a react clip is only reachable THROUGH the shrug, so it inherited the shrug's ratio to two decimals. Its words: 'it was not adding information, it was making existing information impossible to miss, which for a monitor-wall player is the same thing.' Taken off the compliance roll entirely, LR(bird | armed) = 1.00.",
    "verdict": "PASS. Per-instance gait (stride 0.68-1.18, so cadence spreads ~1.7:1 at a common speed - the field that reads first, because cadence survives distance after shape is gone), seven idles, five cart holds, three browse poses. Four children of fourteen bodies. Bench BYTE-IDENTICAL on every field of all four rows: cut off0 75% med 6.22, camp 31%, always-sprint 50%, lungCheck passing."
+  },
+  "harness": {
+   "round": 1,
+   "state": "passed",
+   "shots": [],
+   "gaps": [],
+   "updated": 1787952060.685815,
+   "note": "People blind set: tools/people_blindset.py + C.snapPeople() + a JSON sidecar sink on the server. Cropping is unavoidable for people (a whole 1280x720 frame of this store is mostly store), so five of the eight leaks in the store harness reopen. Render boxes are projected from agent world positions, so nobody chooses which shopper looks good; photo boxes are annotated by hand and the file says so. Scale is normalised: a 900px photographed person against a 60px render is a test of resolution, not craft."
+  },
+  "figures": {
+   "round": 1,
+   "state": "building",
+   "shots": [
+    {
+     "round": 1,
+     "path": "../shots/figures_r1.png",
+     "t": 1787954092.370202
+    }
+   ],
+   "gaps": [],
+   "updated": 1787954092.370199,
+   "note": "BODIES. Shopper torso is now ONE LOFTED SURFACE (belly in the surface, no pasted sphere, no tyre-stack seams); 6 builds incl. a pear (sh/hp 0.94 vs reg 1.19); arms rebuilt to real anthropometry (deltoid was 172mm across on a 1.65m person, now 100mm); leg taper was INVERTED (widest at the knee) which is what opened the crotch gap; per-instance leg-fraction-of-stature 0.487-0.548, decoupled torso width/depth, arm length/thickness, stance width, neck length + forward-head, head size; contrapposto + independent per-foot toe and per-arm splay (nothing was asymmetric before); basket carry that leans the body. Bench BYTE-IDENTICAL before/after at difficulty=1 n=200 (catch 64/90). LR(putback) 1.93, LR(bird|armed) 0.80/0.78 \u2014 unchanged to the digit. Crowd cost 165->159 draw calls, 42624->44896 tris by within-run toggle."
   }
  },
  "log": [
+  {
+   "t": 1787954092.370202,
+   "piece": "figures",
+   "role": "builder",
+   "round": 1,
+   "state": "building",
+   "text": "BODIES. Shopper torso is now ONE LOFTED SURFACE (belly in the surface, no pasted sphere, no tyre-stack seams); 6 builds incl. a pear (sh/hp 0.94 vs reg 1.19); arms rebuilt to real anthropometry (deltoid was 172mm across on a 1.65m person, now 100mm); leg taper was INVERTED (widest at the knee) which is what opened the crotch gap; per-instance leg-fraction-of-stature 0.487-0.548, decoupled torso width/depth, arm length/thickness, stance width, neck length + forward-head, head size; contrapposto + independent per-foot toe and per-arm splay (nothing was asymmetric before); basket carry that leans the body. Bench BYTE-IDENTICAL before/after at difficulty=1 n=200 (catch 64/90). LR(putback) 1.93, LR(bird|armed) 0.80/0.78 \u2014 unchanged to the digit. Crowd cost 165->159 draw calls, 42624->44896 tris by within-run toggle."
+  },
+  {
+   "t": 1787952060.685817,
+   "piece": "harness",
+   "role": "lead",
+   "round": 1,
+   "state": "passed",
+   "text": "People blind set: tools/people_blindset.py + C.snapPeople() + a JSON sidecar sink on the server. Cropping is unavoidable for people (a whole 1280x720 frame of this store is mostly store), so five of the eight leaks in the store harness reopen. Render boxes are projected from agent world positions, so nobody chooses which shopper looks good; photo boxes are annotated by hand and the file says so. Scale is normalised: a 900px photographed person against a 60px render is a test of resolution, not craft."
+  },
+  {
+   "t": 1787935422.2871711,
+   "piece": "store",
+   "role": "critic",
+   "round": 30,
+   "state": "gap",
+   "text": "The product wall carries no saturated ink and the promo tags do, which is the inverse of a real store. Product-face boxes only, identical on-screen scale: render f_sat(C* over 45) 0.039 and 0.021 against photographs at 0.290 and 0.178 - an order of magnitude, separating 6 of 7 photos from all 7 renders."
+  },
+  {
+   "t": 1787935306.430835,
+   "piece": "store",
+   "role": "critic",
+   "round": 30,
+   "state": "gap",
+   "text": "The product wall, not the floor. Every package face is a low-chroma illegible wash, so the only saturated high-contrast marks in a render bay are the injected promo tags - the ROLLBACK tag at roughly x150-320 y430-500 of shots/_r30_blind_off/frame_05.jpg is the most saturated object in a 300x170 region of grocery. A real store inverts that: the packages are the loudest thing in frame and the shelf tags are small pale rectangles. Named frames and regions: _r30_blind_off/frame_01.jpg left bay x60-360 y430-600, and _r30_blind_off/frame_05.jpg left bay x60-360 y300-470. OBSERVATION confidence 0.9 - this was my written first-glance reason on 10 of the 12 render frames, recorded before any measurement, and f_sat separates 6 of 7 photographs from all 7 renders. EXPLANATION confidence 0.5 - I did not open src/store/ by instruction, so the mechanism is a guess: pastel package palettes with low-contrast type, plus mip filtering at aisle distance washing out what contrast survives; a tone-map or exposure choice would fit the same evidence. FALSIFIERS: raise f_sat on product faces into 0.09-0.29 and re-run a blind set - if recall stays 100 percent and first-glance reasons still say procedural labels, the cue is legibility and structure, not chroma, and I named it wrong. Mask the product wall out of both arms and re-run - if recall stays 100 percent the product wall is not decisive. If a fresh critic's first-glance reasons cite the floor more often than the product wall, my ranking is wrong. And floor chroma appeared in ZERO of my 12 first-glance calls: round 30 spent itself on a cue that was not deciding the frames."
+  },
   {
    "t": 1787933888.333842,
    "piece": "store",
@@ -2145,39 +2212,7 @@
    "round": 16,
    "state": "building",
    "text": "r16 RECORD CORRECTIONS, both accepted. (1) My distant-floor ratio was box-inflated: the critic reproduces 0.358 against my 0.359 only by reproducing my BOX, and with floor-only boxes the same frames read 0.235 / 0.184 / 0.295 because my near box reached over a wooden endcap base and halved its own denominator. Sliding the mid box 120 px in y swings it 0.031 -> 0.242. Eighth metric retired on this project for its measuring region, and the premise was weaker than I assumed: store_05, the down-aisle photograph closest to my own pose, has far-floor fine structure of 0.008 against my 0.022-0.026, i.e. the MORE continuous distant floor, and store_12 is polished terrazzo with essentially no grout in the mid-ground. I did not touch the distant floor this round. (2) My whole-build HEAD -> shipped 0.669 -> 0.845 mirror row is r10 -> r15, NOT r14 -> r15, and since that ratio is computed in L* it silently folds in two rounds of lighting change. The geometry-only ablation is the honest row."
-  },
-  {
-   "t": 1787770559.496693,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "r16 INSTRUMENTS I DISTRUSTED, and all three were mine. (1) My auditor first read 58.73% \u2014 two of its top three rules were false: DIET matched 2,000 CALORIE DIET in the boilerplate and FIBER matched RESPONSIBLY SOURCED FIBER on paper towels. Splitting the marketing bands from the legal block took it to 35.64%, which is the real baseline. (2) Three separate SUBSTRING false positives after that: COLA inside CHO-COLA-TE, SODA inside BAKING SODA, OIL inside ALUMINUM F-OIL. Four of the seven hits surviving the copy fix were these, not the table. Word boundaries everywhere. (3) The paired atlas-build cost STRADDLES ZERO and I am reporting it as such, not as a mean. All 45 rules are proved to fire on a synthetic break and stay silent on four clean facings; run node tools/copyaudit.mjs --selftest."
-  },
-  {
-   "t": 1787770559.370497,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "r16 SIGNAGE. promoDeal(seed) and promoCard(...) now take a department. Pre-fix, measured against HEAD light.js over 200k deals: SAVE $D.CC PER LB fired on 16.07% of ALL deals, FROZEN ONLY on 5.83%, PLUS DEPOSIT on 5.79%, every one ungated. Post-fix: PER LB is 0.00% everywhere and unreachable by construction \u2014 this store has no scale, no butcher, produce or deli counter, and signGaps() says so out loud rather than leaving it to be found. FROZEN ONLY 17.07% in frozen and 0.00% in the other eight; PLUS DEPOSIT 11.39% in soda and 0.00% elsewhere. Not just suppressed, concentrated where it belongs. Gating the grammar was only half: the atlas cells now declare their department too, so store.js hangs a frozen card over the freezer wall and not over cereal. Both halves throw at buildStore. Visible in shots/r16_r16_F1_face_a3.png: SAVE $5.33 ON 2 over SNACKS / CHIPS."
-  },
-  {
-   "t": 1787770543.486848,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "r16 COPYCHECK, THE PART WORTH KNOWING. My first rewrite was ALSO vacuous, in a new way. It enumerated the cross product and skipped conflicting tuples \u2014 the same skip copyFor makes \u2014 so its soundness clause could never fire. I found it by injection: delete the one line in pickBand that accumulates drawn tags, the line the whole mechanism turns on, and it reported ZERO complaints. The second version reads the tags back out of the tables by the printed string instead of trusting copyFor. Same injection now yields 116 named complaints (COLA/N [nocaf + hascaf] CAFFEINE FREE ... CONTAINS 34 MG CAFFEINE PER SERVING), and deleting the SKU-row tag seed yields 108. Both injections in /private/tmp scratch copies, never in the tree."
-  },
-  {
-   "t": 1787770543.38559,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "r16 COPY. Independent lexical auditor, tools/copyaudit.mjs, 45 rules that share nothing with brands.js: 35.64% of facings carried a contradiction, now 0.00% over 500,000 draws. Fixed by splitting 18 classes that held different products (spread -> nutSpread/fruitSpread/tableSyrup, otc -> analgesic/antacid/coughCold/allergy, bodycare -> hairCare/skinCare, bread -> slicedLoaf/bunRoll, and so on), 11 new legal sets so a jar of marinara no longer says DO NOT USE IF THE CAN IS DENTED (8.81% of all facings), form-gated bands, and 11 declared tag-conflict pairs for the couplings that are INSIDE one product \u2014 the soda class is right, drawing its sugar flash independently of its calorie roundel was not. copyCheck() rewritten to test what it is named for: it drives copyFor 3,240 times at load and re-derives each tag from the PRINTED TEXT, plus a 169,188-tuple exhaustive form. It catches 4 seeded contradictions and stays silent on the real table."
   }
  ],
- "updated": 1787933888.333844
+ "updated": 1787954092.370205
 }
