@@ -64,6 +64,31 @@
 // off-camera when it is picked from still gets every edit when it comes back.
 //
 // =============================================================================
+// WHAT `r` MEANS, EXACTLY
+// =============================================================================
+// takeFacing(x, y, z, r) returns the nearest facing whose centre is within `r`
+// metres of the point AND whose printed front is turned toward it. Both halves
+// are load-bearing and the second one is a real narrowing of the question:
+//
+//   * `r` is honoured to the full extent of the store. It was not in the first
+//     version — a silent Math.min against a 0.75 m constant made every larger
+//     radius behave as 0.75 and made `null` mean "nothing in this neighbourhood"
+//     while the contract said "nothing within r". Fixed; see the search.
+//   * A facing on the FAR side of a gondola is never returned, whatever `r` is.
+//     Opposing lips are 0.7 m apart, so a plain radius search reaches through
+//     the fixture and opens a gap in an aisle nobody is standing in.
+//
+// So `null` means: nothing you could actually have reached from there. A caller
+// that wants "is there any shelf near me at all" is asking a different question
+// and should ask it from a point in the aisle facing the run.
+//
+// MEASURED, so a caller can size its reach off numbers instead of a constant:
+// over 8,782 facings the median distance from an aisle-centre body to the
+// nearest facing it is facing is well under a metre, and shipped takes land at
+// 0.06-0.47 m. stockStats().log publishes `rMax` (largest r ever asked for) and
+// `hitMax` (largest distance a take actually landed at) for the live shift.
+//
+// =============================================================================
 // THE GAP MUST NOT BE A GUILT TELL
 // =============================================================================
 // A gap in a shelf is legible on the monitor wall. If a thief's gap looked
@@ -146,7 +171,12 @@ export const STOCK = {
   overHi: 0.13,
 
   cell: 0.30,          // spatial hash cell, metres
-  maxR: 0.75,          // hard cap on the search radius, so the scan is bounded
+  // NO RADIUS CAP. There was one — `maxR: 0.75`, applied with a silent
+  // Math.min inside takeFacing — and it made `r` a lie above 0.75 m while the
+  // published contract said null meant "nothing within r". See the note on the
+  // search itself. The scan is bounded by expanding shells that stop at the
+  // nearest hit, which is what the cap was there to do and does it without
+  // changing the answer.
   maxGaps: 160,        // see (2) above. ~27 s of gap at the shipped reach rate.
   wrongBack: 0.22,     // fraction of put-backs that land wrong
 };
@@ -359,7 +389,11 @@ export function buildStock(THREE, scene, planes) {
   const order = [];                     // handle ids, oldest first
   let head = 0;                         // consumed prefix of `order`
   let seq = 0;
-  const LOG = { taken: 0, put: 0, evicted: 0, miss: 0, wrong: 0 };
+  const LOG = { taken: 0, put: 0, evicted: 0, miss: 0, wrong: 0,
+    // the largest r any caller has asked for, and the largest distance a take
+    // has actually landed at. Published so the movement builder can size its
+    // reach off measurement rather than off a constant in this file.
+    rMax: 0, hitMax: 0 };
   const _c = new THREE.Color();
 
   function evictOldest() {
@@ -422,36 +456,95 @@ export function buildStock(THREE, scene, planes) {
    * @returns null, or { id, at:{x,y,z}, size:[w,h,d], colour, kind, cell, dept }
    */
   function takeFacing(x, y, z, r) {
-    const R = Math.min(Math.max(+r || 0, 0), STOCK.maxR);
-    if (!(R > 0) || !F) { LOG.miss++; return null; }
-    const R2 = R * R;
-    const ix0 = Math.max(0, (((x - R) - x0) * INV) | 0), ix1 = Math.min(NX - 1, (((x + R) - x0) * INV) | 0);
-    const iy0 = Math.max(0, (((y - R) - y0) * INV) | 0), iy1 = Math.min(NY - 1, (((y + R) - y0) * INV) | 0);
-    const iz0 = Math.max(0, (((z - R) - z0) * INV) | 0), iz1 = Math.min(NZ - 1, (((z + R) - z0) * INV) | 0);
-    let best = -1, bd = R2;
-    for (let a = ix0; a <= ix1; a++) {
-      for (let b = iy0; b <= iy1; b++) {
-        const base = a * NY * NZ + b * NZ;
-        for (let c = iz0; c <= iz1; c++) {
-          const s = START[base + c], e = START[base + c + 1];
-          for (let k = s; k < e; k++) {
-            const f = IDX[k];
-            if (!FL[f]) continue;
-            const dx = FX[f] - x, dy = FY[f] - y, dz = FZ[f] - z;
-            const d2 = dx * dx + dy * dy + dz * dz;
-            if (d2 >= bd) continue;
-            // must be reachable from where the hand IS. Gondola runs stand back
-            // to back with 0.7 m between opposing lips, so without this a 0.5 m
-            // reach in aisle 3 takes a facing off aisle 4 straight through the
-            // fixture, and a gap opens in an aisle nobody is standing in.
-            const gr = G[FG[f]];
-            if (-dx * gr.nx - dz * gr.nz < -0.02) continue;
-            bd = d2; best = f;
+    const R = Math.max(+r || 0, 0);
+    if (!(R > 0) || !F || !Number.isFinite(x + y + z + R)) { LOG.miss++; return null; }
+    if (R > LOG.rMax) LOG.rMax = R;
+    let best = -1, bd = R * R;
+
+    // ---- THE SEARCH, AND THE BUG IT REPLACES ------------------------------
+    //
+    // The first version scanned the axis-aligned box of grid cells covering
+    // [p-r, p+r] — which is the right shape — and then opened with
+    //
+    //     const R = Math.min(Math.max(+r || 0, 0), STOCK.maxR);   // maxR = 0.75
+    //
+    // so every `r` above 0.75 m was silently reduced to 0.75. The lead measured
+    // it from the outside and read it, reasonably, as the grid: `takeFacing`
+    // returned null at r = 30 m standing 2 m from a facing, and r = 2, 4, 8, 14
+    // and 25 all returned null from the same point. The mechanism was the clamp,
+    // the effect was that `r` stopped meaning anything past one cell ring, and
+    // the published contract said `null` meant "nothing within r".
+    //
+    // That is the failure this codebase is named after: a documented question
+    // answered confidently and wrongly, with no disagreement anywhere. It is
+    // `bargeDump` byte-identical at 0.40 and 0.85, and it is the reason
+    // CLAUDE.md's rule is one owner per derivation — here the signature said
+    // one thing and line 425 said another.
+    //
+    // `r` is now honoured to the full extent of the store. The clamp is gone
+    // rather than documented, because the reason it existed — bounding the scan
+    // — is better served by the loop below: EXPANDING SHELLS out of the query
+    // cell, stopping as soon as the nearest possible point of the next shell is
+    // further away than the best hit so far. Cost therefore scales with the
+    // distance to the ACTUAL nearest facing, not with `r`. A 0.45 m reach that
+    // hits at 0.06 m visits 27 cells and stops — fewer than the old box scan —
+    // and a 30 m search across empty floor walks the grid once and costs about
+    // a millisecond, which is the honest price of the honest answer.
+    //
+    // SOUNDNESS OF THE STOP. A cell at Chebyshev ring k differs from the query's
+    // own cell by k on at least one axis, so at least (k-1) whole cells lie
+    // between them and nothing in it is closer than (k-1)*CS. When the query is
+    // outside the grid the clamped cell is on the boundary and the true distance
+    // is larger still, so the bound only ever under-estimates. Every candidate
+    // is then tested against the exact squared distance, so the shells are an
+    // ordering, never a filter.
+    const gx = Math.min(NX - 1, Math.max(0, Math.floor((x - x0) * INV)));
+    const gy = Math.min(NY - 1, Math.max(0, Math.floor((y - y0) * INV)));
+    const gz = Math.min(NZ - 1, Math.max(0, Math.floor((z - z0) * INV)));
+    const rings = Math.max(NX, NY, NZ);
+    for (let ring = 0; ring <= rings; ring++) {
+      if (ring) {
+        const lo = (ring - 1) * CS;
+        if (lo * lo >= bd) break;                       // nothing further can win
+      }
+      const a0 = gx - ring, a1 = gx + ring;
+      const b0 = gy - ring, b1 = gy + ring;
+      const c0 = gz - ring, c1 = gz + ring;
+      if (a0 < 0 && b0 < 0 && c0 < 0 && a1 >= NX && b1 >= NY && c1 >= NZ) break;
+      for (let a = Math.max(0, a0); a <= Math.min(NX - 1, a1); a++) {
+        const ea = (a === a0 || a === a1);
+        for (let b = Math.max(0, b0); b <= Math.min(NY - 1, b1); b++) {
+          const eb = ea || b === b0 || b === b1;
+          const base = a * NY * NZ + b * NZ;
+          for (let c = Math.max(0, c0); c <= Math.min(NZ - 1, c1); c++) {
+            // interior cells belong to a shell already walked
+            if (!eb && c !== c0 && c !== c1) { c = Math.max(c, c1 - 1); continue; }
+            const s = START[base + c], e = START[base + c + 1];
+            for (let k = s; k < e; k++) {
+              const f = IDX[k];
+              if (!FL[f]) continue;
+              const dx = FX[f] - x, dy = FY[f] - y, dz = FZ[f] - z;
+              const d2 = dx * dx + dy * dy + dz * dz;
+              if (d2 >= bd) continue;
+              // MUST BE REACHABLE FROM WHERE THE HAND IS, and this is the one
+              // way `null` still means less than "nothing within r": gondola
+              // runs stand back to back with 0.7 m between opposing lips, so
+              // without this a reach in aisle 3 takes a facing off aisle 4
+              // straight through the fixture and a gap opens in an aisle nobody
+              // is standing in. A facing whose printed front is turned away from
+              // the point is never returned, at any r. Said again in the header
+              // and at the contract in store.js, because it is a real narrowing
+              // of the question and the caller has to know it.
+              const gr = G[FG[f]];
+              if (-dx * gr.nx - dz * gr.nz < -0.02) continue;
+              bd = d2; best = f;
+            }
           }
         }
       }
     }
     if (best < 0) { LOG.miss++; return null; }
+    { const d = Math.sqrt(bd); if (d > LOG.hitMax) LOG.hitMax = +d.toFixed(3); }
 
     const f = best;
     const M = MESH[FM[f]];
@@ -494,8 +587,11 @@ export function buildStock(THREE, scene, planes) {
       // the shelf and not a gamma-shifted cousin of it.
       colour: _c.getHex(THREE.SRGBColorSpace),
       kind: M.kind,
-      // extras, additive: the atlas cell so a caller that wants the actual
-      // artwork can have it, and which run it came off
+      // extras, additive: how far the facing was from the point the caller
+      // asked about (so a miss and a long reach are distinguishable without
+      // re-deriving it), the atlas cell for a caller that wants the actual
+      // artwork, and which run it came off
+      d: +Math.sqrt(bd).toFixed(4),
       cell,
       dept: G[FG[f]].dept,
     };

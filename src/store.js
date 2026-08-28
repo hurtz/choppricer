@@ -5732,6 +5732,15 @@ export function buildStore(THREE, scene) {
     //   putFacing(id)          -> bool
     //   facingsTaken()         -> n
     //
+    // `r` IS METRES AND IS HONOURED IN FULL — it was silently clamped to 0.75 m
+    // in the first cut of this, which made `null` mean "nothing nearby" while
+    // this comment said "nothing within r". The one remaining narrowing is
+    // stated rather than hidden: a facing whose printed front is turned AWAY
+    // from the point is never returned, at any `r`, because gondola runs stand
+    // 0.7 m back to back and a plain radius reaches through the fixture into
+    // the next aisle. `null` therefore means "nothing you could have reached
+    // from there", and the handle carries `d`, the distance it was found at.
+    //
     // HANDLES ARE TIED TO THIS BUILD. Each buildStore() gets its own epoch and
     // its own id range, so a handle from a previous store — or one the FIFO has
     // already closed, or one restockShelves() has swept — is simply not in the
