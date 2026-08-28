@@ -96,6 +96,230 @@
 // the report. Nothing below is a mean without its shape attached.
 //
 // ===========================================================================
+// ROUND 12 (MOVEMENT) — THE WALK WAS A WAVEFORM, AND THE SHELF NEVER LOST
+// ANYTHING
+// ===========================================================================
+// Client, in full: "Their movements in general should be VERY BELIEVABLE, and
+// when they pick something up off of the shelf, THEY REALLY SHOULD REMOVE IT
+// FROM THE SHELF."
+//
+// ---- THE ARITHMETIC THAT STARTED IT --------------------------------------
+// Round 11's gait was two sines and one of them was wrong in a way that is
+// provable rather than aesthetic. A rigid leg of length L pivoting at the hip
+// puts its foot at x = L sin(theta); for the foot to be PLANTED that foot has
+// to travel backwards at exactly the body's ground speed while it is down.
+// Differentiating the shipped line at mid-stance:
+//
+//     dx/dt = L * amp * phase_dot = 0.86 * (0.20 v) * (v / 0.88) * 2PI
+//           = 1.228 v^2
+//
+// which equals v at exactly ONE speed: 0.81 m/s. At the shopper's own
+// 1.25 m/s the foot went backwards at 1.92 m/s under a body doing 1.25 — a
+// treadmill, quadratically worse either side, and at a bolting 3.5 m/s the
+// foot was doing 15 m/s. No value of `amp` fixes it, because the error is a
+// function of speed and the constant is not.
+//
+// So the gait is now a CONSTRAINT (src/agents/gait.js). The stance foot is the
+// input: given a step length S and a duty factor D, a foot that lands SD ahead
+// and leaves SD behind travels 2SD while the hip travels v*D*T = 2SD. Equal by
+// construction, at every speed. The leg angle is asin() of that, the vertical
+// bob is L(1 - cos theta) — the controlled fall, free, at an amplitude nobody
+// had to pick — and `stride`, `amp` and `bounce` survive as trims on a real
+// quantity instead of being three independent ideas of the same one.
+//
+// ---- FIVE BUGS, AND FOUR OF THEM WERE FOUND BY AN INSTRUMENT ---------------
+// gaitCheck() re-derives the planted foot from scratch and fails loudly. It
+// passed while the rig was still visibly wrong FOUR SEPARATE TIMES, which is
+// the lesson: a check on the solve is not a check on the rig.
+//
+//   1. THE CHECK ITSELF had a sign error and reported the SUM of the hip
+//      advance and the foot excursion — 1,589 mm at a walk, exactly twice the
+//      step, which is how it announced itself.
+//   2. THE LEG ANGLES WERE SCALED BY `gait` (speed/1.4 = 0.786 at a walk) to
+//      fade the solve out at rest. The plant is an EQUALITY between the leg
+//      angle and the ground travel, so scaling one side broke it: 142 mm of
+//      measured stance-foot drift per step, under a passing check. Fading the
+//      STEP instead keeps the equality — and every other input has to fade
+//      with it, which is bug 5.
+//   3. THE FOOT PIVOTED ON ITS ANKLE. At toe-off the sole plantarflexes
+//      0.52 rad and about the ankle that swings the heel, 83 mm behind the
+//      joint, through the floor: the probe read the lowest point of a walking
+//      shoe 74 mm BELOW the tiles on every body, every stride. A real foot
+//      rolls on whichever contact point is down, which is one min() over the
+//      two sole corners. The pitch is also authored against the GROUND and
+//      converted to an ankle angle by subtracting the shank lean; writing it
+//      straight onto the shoe makes a peg leg.
+//   4. THE SOLE PIN READ THE HIP HEIGHT ONE FRAME LATE. It took the floor from
+//      `hips.position.y`, which is written thirty lines further down, and at
+//      the stance handover — where the drop moves 46 mm in three frames as the
+//      carrying leg changes — that stale value put the heel 43 mm through the
+//      tiles on exactly the frame of heel strike. Everywhere else it was
+//      within 6 mm, so it read as a transient rather than as an ordering bug.
+//      It reads `_G.drop` now: one owner, no phase.
+//   5. STANCE FLEXION AND KNEE LIFT DID NOT FADE WITH THE GAIT. `phase` keeps
+//      ticking on a stopped body, so a standing body still cycles through
+//      stance and swing — and it sat 47 mm low forever while slowly picking
+//      each foot up off the floor. That low sit then MASKED bug 6.
+//   6. (NOT MINE, AND IT HAS SHIPPED IN EVERY BUILD OF THIS GAME.) Four of
+//      round 9's seven idles and one browse style lower `hips.position.y` by
+//      14-55 mm to put weight on a hip or lean on a cart bar, and nothing
+//      lowered the LEGS with them. Probed across all fourteen bodies, a
+//      standing crowd stood 30 to 62 mm UNDERGROUND. Invisible in a still,
+//      because the floor draws over it. With a knee available it is four lines.
+//
+// ---- WHAT THE RIG MEASURES NOW, and the instrument is __PLANT in
+// ---- shots/_probe_move_plant.js, which measures the SHOE and not the solve --
+//                                     round 11        round 12
+//   solve slip, all speeds/builds     83-710 mm        0.0 mm  (gaitCheck)
+//   live stance-foot skate, foot-flat      —          11-36 mm
+//   sole below the tiles, walking          —          -28..+28 mm
+//   sole below the tiles, STANDING     -30..-62 mm     -41..+48, |median| 11
+//   hip bob                             ~30 mm flat    26-48 mm, off the stride
+//   swing-foot clearance                    0 mm      39-136 mm, off the build
+//
+// The third instrument mattered as much as the numbers. Measuring foot skate is
+// harder than it looks and three of my instruments were wrong before this one:
+// the shoe's BBOX CENTRE reports 66 mm, but a correctly planted foot does move
+// its centre forward as it rolls heel to toe — that is rolling. The LOWEST
+// CORNER reports 254 mm, because the lowest corner changes identity at
+// mid-stance and the heel and toe are 230 mm apart. What is unambiguous is
+// FOOT-FLAT: while the sole is parallel to the floor nothing on the shoe is
+// rotating, so the bbox centre is a material point, and if the foot skates it
+// skates there.
+//
+// ---- AND THE OTHER FOUR THINGS THE BRIEF ASKED FOR ------------------------
+//   STARTING       0 -> 1.17 m/s in 0.42 s, measured, against 0.12 s before.
+//                  thiefAccel is untouched — it is the chase's constant and
+//                  the pursuit bot dead-reckons the thief with it — so this is
+//                  a ceiling on the TARGET.
+//   STOPPING       1.17 -> 0 in 0.25 s, and the trunk keeps going: the body's
+//                  own acceleration drives `chest.position.z`, a channel
+//                  nothing else in the file has ever written, so it composes
+//                  with every pose for free.
+//   TURNING        `heading` still flips in one frame and every consumer of it
+//                  is untouched; the BODY is drawn at `visYaw`, which chases it
+//                  at 5.6 rad/s. Measured on a 180: the sim heading inverts on
+//                  frame 1 and the body takes 0.67 s. The head leads by 0.62 of
+//                  the remaining error, and the yaw rate banks the trunk.
+//   STANDING STILL A body at a shelf now stands SQUARE TO THE FIXTURE at arm's
+//                  reach, and reaches at it on a clock. See below.
+//
+// ---- THE SHELF, AND THE ONE PLACE A GUILT TELL COULD HAVE ENTERED ----------
+// The lead's finding, measured on the live build, was worth more than the
+// wiring: only 2 of 14 bodies were ever within 1.4 m of a takeable facing,
+// because wanderTarget picked `aisleX +- 1.15 m` and that is the middle of the
+// lane. A reach animation would have been reaching at nothing, and a crowd on
+// one line is why the render read as a lineup. It now stands 1.05-1.38 m off
+// the centre — the nav's own free edge is 1.46 m in six aisles and 1.02 m in
+// the narrow one, and the retry finds whichever it is — AND IT TAKES THE SAME
+// NUMBER OF DRAWS OFF rnd() AS BEFORE, which this file's header explains at
+// length is not a style point.
+//
+// THE TAKE HAS EXACTLY ONE CALL SITE and it is not the concealment. takeAt() is
+// called from the grasp frame of the browse reach, which is scheduled off the
+// RIG's idle clock — a clock no state transition can restart, round 9's
+// argument, reused because it is the strongest available. A thief conceals an
+// item he is ALREADY CARRYING, picked up two aisles ago looking like everybody
+// else. The rejected build wired takeFacing into every clip that shows a prop;
+// that leaks, because the clips author different arm angles at the frame `vis`
+// turns on, so the three steals would take from a different HEIGHT than the
+// seven decoys and only thieves play the steals.
+//
+// Measured with benchTake(28, secs 75), cop parked, difficulty 1, two posts:
+//
+//                          takes/min   putBack%   grab height   grab dist
+//   innocent, cop at desk     0.925      49.0%       1.344 m      0.397 m
+//   ARMED,    cop at desk     0.109      66.7%       1.665 m      0.461 m
+//   innocent, cop on door     0.984      46.6%       1.347 m      0.388 m
+//   ARMED,    cop on door     0.150      57.1%       1.541 m      0.428 m
+//
+//   LR(take rate)   0.118 desk / 0.152 door        <-- THE ROUND'S KNOWN LEAK
+//   LR(put-back)    1.36 / 1.23      (n=3 and n=7 guilty takes; noise)
+//   LR(grab height) 1.24 / 1.14      (same, noise)
+//
+// ---- AND I AM NOT GOING TO PRETEND THAT FIRST NUMBER IS 1.00 --------------
+// A body that was armed this shift opens a gap about a SEVENTH as often as one
+// that was not, and that is a real, measurable thing a player could learn.
+// Three things about it, in order of how much they matter:
+//
+//   IT IS STRUCTURAL AND IT PREDATES THIS ROUND. Decomposed: an armed body is
+//   in the building 29.5 s against an innocent's 66.2 s (2.2x), and the rest is
+//   state mix — his timeline is walk -> conceal -> drift -> door, so he is
+//   simply not standing at a shelf browsing for most of the time he is here.
+//   Round 11's thief did fewer browse POSES for exactly the same reason; what
+//   this round did was make that difference legible by attaching a hole in a
+//   shelf to it.
+//
+//   IT POINTS THE WRONG WAY TO CONVICT ANYBODY. The direction is "a body that
+//   takes things off shelves is probably innocent". A gap cannot implicate; the
+//   most it can do is exclude, and it excludes weakly — at 0.15 the ratio is
+//   about as informative as the shrug (0.34), which has been published and
+//   accepted since round 7.
+//
+//   THE FIELD SATURATES. The store's FIFO caps open gaps at 160 and both cells
+//   above hit 159-160 inside 75 s, so the shelving as a whole reads "shopped"
+//   and attributing any particular hole to any particular body needs the player
+//   to have watched that body continuously — which is the scarce resource the
+//   whole desk phase is about.
+//
+// THE FIX I DID NOT SHIP, and the reason. Requiring one completed reach before
+// any body may start a steal clip would equalise the rate outright, is
+// guilt-blind in form (`reachN >= 1`, a counter that has never seen guilt), and
+// is three lines. It also moves `concealT`, which moves the bolt, which moves
+// the chase and every likelihood ratio in this file. That is a tuning round,
+// not a change to slip in at the end of an animation one. Handing it to the
+// lead with the measurement rather than shipping it untested.
+//
+// ---- NO REGRESSION, and the instrument had to be fixed before the numbers
+// ---- could be believed ---------------------------------------------------
+// bench(n=200, difficulty=1) — passed explicitly, per CLAUDE.md:
+//
+//   round 11, seed 1234, clean page load          64.0%
+//   round 12, seed 1234, shipped                  63.5%      -0.5
+//   round 12, seed 1234, reach ablated            64.5%
+//
+// and three consecutive identical calls now return 63.5 / 63.5 / 63.5.
+//
+// THEY DID NOT AT FIRST, and this is the part worth reading. The same build at
+// the same seed with the same difficulty measured 64.5 / 66.5 / 64.5 / 64.0
+// across four consecutive calls, and a paired ramp ablation measured a
+// beautifully consistent -3.5 points on three separate seeds — a number I very
+// nearly reported as a real cost of the start ramp. It was not. `reachT` lives
+// on the rig, no state transition restarts it, and unlike round 9's `idleT` —
+// which only ever chose a POSE — it decides when a body starts a CLIP, which
+// changes s.timer, which changes when he walks, which changes where the crowd
+// is, which changes a chase. Ablating the reach entirely gave 64.5 three times
+// and identified it. It is now re-phased at reset() off the RNG STATE AT ENTRY,
+// captured before the guilt draw, so trial k is trial k whenever it is run and
+// the phase has no guilt term in it. With that fixed the ramp's cost is inside
+// the +-0.5 the bench can resolve at n=200.
+//
+//   LR(put-back)       1.93 -> 2.04     (cold heed 63.2 -> 65.8, clean 32.8 -> 32.3)
+//   LR(bird | armed)   0.80 -> 0.82,  hot 0.78 -> 0.85
+//   complaints from announcing            0, both populations, unchanged
+//
+// The put-back ratio moved 0.11 and I could not pin it on the reach: ablating
+// the reach entirely leaves it at 2.04. What is left that can move it is the
+// shelf-side browse target, which changes how long a body takes to get where it
+// is going and therefore how much of `concealT` has run when the PA lands. It
+// is the same size as the round-7-to-round-8 drift (1.95 -> 1.98) and smaller
+// than the 1.95 -> 2.33 a single misplaced rnd() draw caused in round 8, but it
+// is a real move and I am not going to call it noise: it is a timeline change
+// with a plausible mechanism, published rather than buried.
+//
+// ---- BUDGET ---------------------------------------------------------------
+// No new mesh, no new material, no new texture and no new draw call. The knee
+// is a scale on a mesh that already existed; the ankle roll is a rotation on
+// the shoe that already existed; the prop is the `held` mesh round 5 added,
+// pointed at a colour and a size the store handed over. Per body per frame the
+// gait adds one solveGait (2 asin, 4 cos, ~40 flops), two footPose calls
+// (4 trig each) and one takeFacing per reach — the store measures that at
+// 1.00 us a take, and at the shipped rate the whole store does about 9 a minute.
+// ZERO new draws off rnd(): the reach schedules itself, picks its tail and
+// picks its shelf height off hash2(body, reach number), which is why the bench
+// above is comparable to round 11's at all.
+//
+// ===========================================================================
 // ROUND 9, SECOND PASS — THE DRINK WAS WORTH NOTHING AND THE DRINK WAS NOT THE
 // PROBLEM. TWO OF THE THREE CAUSES WERE IN THE INSTRUMENT.
 // ===========================================================================
@@ -1079,7 +1303,18 @@ import {
 // louder than the six innocent behaviours it has to hide inside. Read the
 // header there: it is the answer to the CCTV builder's own finding that a
 // legible picture had become a PROOF.
-import { GESTURES, BY_ID, pickGesture, applyGesture } from './agents/decoy.js';
+import {
+  GESTURES, BY_ID, pickGesture, applyGesture, REACH_KEEP, REACH_PUT,
+} from './agents/decoy.js';
+// ROUND 12 — THE WALK, AS A CONSTRAINT. The old gait was two sines whose foot
+// was planted at exactly one speed (0.81 m/s) and skated at every other one;
+// the arithmetic is in gait.js's header and gaitCheck() re-derives it rather
+// than quoting it. Everything about a step — the leg angles, the vertical bob,
+// the knee substitute, the ankle roll, the pelvic list and the sway — now falls
+// out of one number, the step length, instead of being six dials.
+import {
+  solveGait, stepLength, dutyOf, attachFeet, footPose, footRest, gaitCheck,
+} from './agents/gait.js';
 // ROUND 9 — WHERE THE CAMERAS ACTUALLY HANG, so a man can flip off the one that
 // is watching him rather than a yaw somebody guessed.
 //
@@ -2000,6 +2235,116 @@ const K = {
   get thiefReactD()   { return K.thiefReact * dlerp(K.rampReact, 1); },
   get thiefAdrenD()   { return K.thiefAdren * dlerp(K.rampAdren, 1); },
   get tellMul()       { return dlerp(K.rampTell, 1); },
+
+  // =========================================================================
+  // ROUND 12 — MOVEMENT. Every one of these is read `t(name, fallback)` so
+  // config.js wins the moment the lead promotes it; there is no override block
+  // in this round and there is nothing here that reads a bare literal.
+  // =========================================================================
+  // ---- the walk -----------------------------------------------------------
+  // The knee substitute's depth, as a fraction of leg length, at the peak of
+  // the swing. 0.075 lifts the toe 64 mm on an average body — enough to clear
+  // the 62 mm the compass gait sinks the hip by, with margin. Below ~0.055 the
+  // foot grazes; above ~0.11 the leg visibly telescopes at portrait range.
+  get gaitLift()      { return t('gaitLift', 0.075); },
+  get gaitLiftHeavy() { return t('gaitLiftHeavy', 0.62); },  // x gaitLift
+  // Stance knee flexion, as a fraction of leg length, at mid-stance. The raw
+  // compass gait bobs 102 mm on this crowd's longest strider, which is twice
+  // life; 0.055 lowers the mid-stance peak by 47 mm and brings the whole
+  // excursion to 45-60 mm, which is what a walk measures. A heavy walk flexes
+  // LESS — it is stiffer and rolls more — which shows up as a deeper bob, and
+  // that is correct rather than a bug.
+  get gaitFlex()      { return t('gaitFlex', 0.055); },
+  get gaitFlexHeavy() { return t('gaitFlexHeavy', 0.70); },  // x gaitFlex
+  // Lateral sway of the pelvis over the loaded foot, metres, at a normal walk.
+  // The single biggest "weight" cue in the file and the one the brief names:
+  // a heavy body has to get its mass over each foot and a lean one does not.
+  get swayLean()      { return t('swayLean', 0.016); },
+  get swayHeavy()     { return t('swayHeavy', 0.052); },
+  // Pelvic list — the unloaded hip drops. Radians.
+  get listLean()      { return t('listLean', 0.045); },
+  get listHeavy()     { return t('listHeavy', 0.105); },
+  // ---- starting and stopping ---------------------------------------------
+  // Nobody goes from nothing to a walking pace in seven frames. thiefAccel is
+  // 10.5 m/s^2 and is NOT touched — it is the chase's constant and the bot
+  // predicts the thief with it. This is a ceiling on the TARGET instead, so a
+  // body eases into its cruise over ~0.45 s and costs ~0.11 m of ground once
+  // per start. Excluded from `bolt`, `react` and `shove`, which are the three
+  // states the chase is measured in.
+  get startRamp()     { return t('startRamp', 2.9); },  // m/s per second of target
+  get stopRamp()      { return t('stopRamp', 4.2); },   // ...and coming down
+  // How much the trunk leads a start and lags a stop. Radians per m/s^2 of the
+  // body's own acceleration, smoothed. This is the brief's "the trunk keeps
+  // moving after the feet stop", and it is signed so it does both from one line.
+  get leanAccel()     { return t('leanAccel', 0.055); },
+  get leanMax()       { return t('leanMax', 0.34); },
+  // ---- turning ------------------------------------------------------------
+  // Nobody rotates on the spot like a turret. `s.heading` stays the true
+  // velocity bearing — the sim, the cart, the exits and the bot all read it —
+  // and the BODY yaw chases it at a bounded rate. The head gets there first.
+  get turnRate()      { return t('turnRate', 5.6); },   // rad/s of body yaw
+  get turnLead()      { return t('turnLead', 0.62); },  // x the error, onto the neck
+  get turnBank()      { return t('turnBank', 0.10); },  // s per rad/s, into the lean
+  // ---- browsing at the shelf ---------------------------------------------
+  // WHERE A SHOPPER STANDS. The old wanderTarget picked aisleX +- 1.15 m at
+  // random, which is the aisle CENTRE LINE, and the lead measured the
+  // consequence: only 2 of 14 bodies were within 1.4 m of a takeable facing at
+  // any moment, and the crowd read as a police lineup. Real shoppers close to
+  // arm's reach of the fixture and stand parallel to it. 1.05-1.38 m off the
+  // centre puts a body against the shelf face in every aisle in this store —
+  // measured, the nav's own free edge is 1.46 m in six aisles and 1.02 m in the
+  // narrow one, and the retry below finds whichever it is.
+  get shelfNear()     { return t('shelfNear', 1.05); },
+  get shelfFar()      { return t('shelfFar', 1.38); },
+  get shelfOdds()     { return t('shelfOdds', 0.82); }, // P(browse at a shelf face)
+  // ---- the reach ----------------------------------------------------------
+  // Seconds between reaches for a body that is standing at a shelf. Runs on the
+  // rig's idle clock, which no state transition can restart — the same
+  // anti-oracle construction round 9 used for the idle pool, and for the same
+  // reason: a reach clock that reset on entry to `browse` would tick from zero
+  // every time a thief balked.
+  // Measured, not chosen: a free-running clock only fires while the body
+  // happens to be standing at a shelf, and that duty cycle is 10.3% of body-
+  // frames in this store (30.6% browsing x 81.5% parked at a face x 84% not
+  // already mid-clip). At 4.5-11 s that came out at one take per body every
+  // 75 s, which is a store nobody is shopping in. 2.2-6.0 puts it at roughly
+  // one every 20 s per body, i.e. a take somewhere in the building every 1.5 s.
+  // The clock is still never restarted by anything; only its rate changed.
+  get reachLo()       { return t('reachLo', 2.2); },
+  get reachHi()       { return t('reachHi', 6.0); },
+  get reachDur()      { return t('reachDur', 3.10); },  // s, the whole sequence
+  // The radius handed to world.takeFacing. Measured on the shipped store: the
+  // search is grid-local and anything past about one 0.30 m cell ring buys
+  // nothing, so this is deliberately small and a miss means "no shelf in front
+  // of me", which at this radius is true.
+  // Sized off the live store rather than chosen. With the body parked at the
+  // nav's own free edge and the arm extended, the facing it is reaching at
+  // measures 0.42-0.69 m from the solved hand across every aisle probed; the
+  // next thing beyond that is 1.31 m away, which is a body standing opposite a
+  // gondola break and SHOULD miss. 0.75 sits in that gap with margin at both
+  // ends. (The store's search honours `r` properly as of r12; an earlier clamp
+  // at 0.75 made every larger radius a lie, which cost the lead a probe.)
+  get grabR()         { return t('grabR', 0.75); },
+  // Extra reach past the fingertip, for the item the hand closes ON. It is
+  // SMALL on purpose: placeProp puts the visible prop at exactly `armLen`, so
+  // anything here is a distance between where the box is drawn and where the
+  // shelf was asked for one. At 0.30 the query point sat 300 mm inside the
+  // fixture, past the front rank, and the search — which will not return a
+  // facing you are behind — came back null in aisles where the body was
+  // plainly standing at stock. That is round 5's floating-box bug wearing a
+  // different hat: two owners for one position. 0.10 is a fist's depth.
+  get grabOut()       { return t('grabOut', 0.10); },
+  // P(the thing goes back on the shelf) at the end of a browse reach. NOT a
+  // guilt read — see takeAt(). A shopper who picks a box up, reads it and puts
+  // it back is the commonest event in a supermarket and it is most of what the
+  // gap field is made of.
+  // Measured consequence, not a preference: at 0.62 a 2.5-minute shift ended
+  // with 4 open gaps, i.e. a store where nothing had been bought. Most reaches
+  // in a supermarket end in the trolley, and the ones that do are what makes a
+  // bay look shopped an hour into a shift. Guilt-blind either way — it is one
+  // constant, hashed the same for every body, and it is not the put-back
+  // LR(putback) measures (that one is the PA answer, and it is untouched).
+  get reachPut()      { return t('reachPut', 0.45); },
 };
 
 // ---------------------------------------------------------------------------
@@ -2131,6 +2476,18 @@ function paceCheck() {
 // the camera instead of into it.
 const FWD_SIGN = -1;
 
+// ROUND 12 — module scratch. One object each, reused by every body every frame,
+// because 25 bodies x 60 Hz is 1,500 allocations a second for nothing.
+//   _G  what gait.js solves into
+//   _P  a pose object shaped like applyGesture's output, so a body CARRYING an
+//       item can place it through the same placeProp() a clip does
+const _G = {
+  thR: 0, thL: 0, drop: 0, kneeR: 1, kneeL: 1, ankR: 0, ankL: 0,
+  list: 0, pelvisY: 0, sway: 0, stanceR: true, stanceL: false, clearR: 0, clearL: 0,
+  flexR: 0, flexL: 0,
+};
+const ONE3 = [1, 1, 1];
+const _P = { armR: 0, armRz: 0, off: [0, 0, 0], item: ONE3 };
 const BODY_R = 0.42;          // agent collision radius
 const CART_R = 0.34;
 // ROUND 10 — A CHILD'S. Deliberately much smaller than BODY_R, and not for
@@ -2160,11 +2517,31 @@ const lerp = (a, b, t) => a + (b - a) * t;
 // Deterministic RNG so bench() is repeatable.
 let _seed = 0x9e3779b9;
 function setSeed(s) { _seed = (s >>> 0) || 1; }
+// READ-ONLY, and it consumes nothing. Round 12 needs a per-trial constant that
+// is the same every time a trial is run and is not a draw off the stream — see
+// the reach re-phase in reset(), and this file's header on what taking one
+// extra draw costs.
+function currentSeed() { return _seed >>> 0; }
 function rnd() {
   _seed |= 0; _seed = (_seed + 0x6d2b79f5) | 0;
   let t = Math.imul(_seed ^ (_seed >>> 15), 1 | _seed);
   t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
   return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+// ROUND 12 — a deterministic 0..1 off two integers, and the reason it exists is
+// the seeded stream rather than tidiness. rnd() is SHARED: every draw taken from
+// it shifts every subsequent decision in the building, and this file's header
+// records that costing a measured 5 points of compliance and moving a published
+// likelihood ratio from 1.95 to 2.33 in a change that touched no probability at
+// all. The reach schedules itself off (body id, reach number) instead, so a
+// whole new behaviour on every body in the store takes ZERO draws and the bench
+// can be compared like for like. Same mix as store.js's, kept local.
+function hash2(a, b) {
+  let h = ((a | 0) ^ 0x9e3779b9) >>> 0;
+  h = Math.imul(h ^ (h >>> 16), 0x85ebca6b) >>> 0;
+  h = (h ^ (b | 0)) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 0xc2b2ae35) >>> 0;
+  return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
 }
 const rr = (a, b) => a + rnd() * (b - a);
 const ri = (a, b) => Math.floor(rr(a, b + 1));
@@ -2904,6 +3281,7 @@ export function createAgents(THREE, scene, world) {
   // temporal dead zone is a boot-time crash, not a lint warning.
   let annCool = 0;
   let grabGate = null;    // bench-only: the identity model, see bench({ident})
+  let shiftN = 0;         // ROUND 12 — re-phases the reach clocks; see reset()
 
   function makeShopper() {
     // rollPerson() rolls a BUILD, an AGE and a silhouette, not just four
@@ -2992,6 +3370,34 @@ export function createAgents(THREE, scene, world) {
       // (round 8's huff, third shout onward). A function of annN and proximity;
       // never of guilt. See afterPA().
       huff: 0, huffKind: 'lost', paBolt: false,
+      // ROUND 12 — MOVEMENT. None of these is ever read against `s.guilty`; see
+      // takeAt() and the ledger over benchTake().
+      //   visYaw   the yaw the BODY is drawn at. `heading` stays the true
+      //            velocity bearing that the sim, the cart, the exit field and
+      //            the pursuit bot all read; this chases it at a bounded rate
+      //            so nobody rotates on the spot. `faceYaw`, when set, is a
+      //            heading the body wants while it is standing still — at a
+      //            shelf that is square-on to the fixture.
+      visYaw: 0, faceYaw: null, yawRate: 0,
+      //   gas      the eased speed target, so a start is a start and not a
+      //            teleport. `leanA` is the smoothed body acceleration the
+      //            trunk leans on.
+      gas: 0, leanA: 0,
+      //   shelfSide  which way the shelf is from where he is standing, -1/+1/0
+      //   facing     a live handle from world.takeFacing, or null. He is
+      //              holding an actual box that an actual shelf no longer has.
+      //   reachT     seconds until the next browse reach. Runs on the RIG's
+      //              idle clock, not on this object, for the anti-oracle reason
+      //              round 9 wrote down; see the note in animateShopper.
+      //   reachU     0..1 through the reach sequence, or -1 when not reaching.
+      shelfSide: 0, facing: null, reachU: -1, reachTook: false, reachKeep: false,
+      grabHand: V(0, 0, 0), itemSize: null, grabT: 0, cartYaw: 0, leanA: 0, reachEl: 0,
+      lastAlong: 0, turnErr: 0,
+      // Pure counters for benchTake. They are written by takeAt/putBack and
+      // read by nothing in the simulation — the instrument has to be able to
+      // say what the reach rate IS per population, because that is the one
+      // property the store's own header says it cannot enforce for me.
+      tookN: 0, putN: 0, takeYSum: 0, takeDSum: 0,
     };
     shoppers.push(s);
     return s;
@@ -3129,6 +3535,18 @@ export function createAgents(THREE, scene, world) {
     s.annClip = null; s.huff = 0; s.huffKind = 'lost'; s.paBolt = false;
     s.shopT = rr(K.shopLo, K.shopHi);
     s.held.scale.set(1, 1, 1);
+    // ROUND 12. `visYaw` snaps rather than easing — a body that has just been
+    // teleported across the store has no turn to make, and a rate-limited yaw
+    // would have it pirouette on the frame it respawns. The facing handle is
+    // DROPPED, not restored: the store's FIFO ages every open gap on one clock
+    // whoever opened it, which is the property that keeps a thief's gap and a
+    // browser's gap indistinguishable, and putting mine back here would make
+    // this file a second owner of that policy. The store builder's note says so
+    // in those words.
+    s.visYaw = s.heading; s.cartYaw = s.heading; s.faceYaw = null;
+    s.yawRate = 0; s.turnErr = 0; s.leanA = 0; s.lastAlong = 0; s.shelfSide = 0;
+    s.grabT = 0; s.reachTook = false; s.gas = 0; s.reachEl = 0;
+    stow(s);
     // ROUND 9 — the child teleports with its parent. Without this a body that
     // is respawned across the store leaves its kid standing in the old aisle
     // and the follow spring walks it there at a dead sprint, through the
@@ -3140,10 +3558,50 @@ export function createAgents(THREE, scene, world) {
   }
 
   function reset() {
+    // BEFORE ANY DRAW. See the reach re-phase below.
+    const seed0 = currentSeed();
     while (shoppers.length < K.shopperCount) makeShopper();
     const guiltyIdx = new Set();
     while (guiltyIdx.size < Math.min(K.thiefCount, shoppers.length)) guiltyIdx.add(ri(0, shoppers.length - 1));
     shoppers.forEach((s, i) => resetShopper(s, guiltyIdx.has(i)));
+    // ---- ROUND 12: THE REACH CLOCK IS RE-PHASED HERE AND NOWHERE ELSE ------
+    // It has to be, and finding out why cost a set of benches. `reachT` lives
+    // on the RIG and no state transition restarts it — that is the anti-oracle
+    // property and it is not negotiable. But unlike round 9's `idleT`, which
+    // only ever chose a POSE, this clock decides when a body starts a clip, and
+    // a clip changes `s.timer`, which changes when he walks, which changes
+    // where the crowd is, which changes a chase. Left free-running across
+    // reset(), THE BENCH STOPPED BEING REPRODUCIBLE: the same build at the same
+    // seed with the same difficulty measured 62.5% as the first bench of a page
+    // load and 65.0% as the fourth, because the fourteen reach clocks were at
+    // different phases. That is the exact failure mode CLAUDE.md's `bench()`
+    // section is about, arriving through a new door.
+    //
+    // AND RE-PHASING HERE CANNOT LEAK, for the reason round 9's argument
+    // already establishes one line up: reset() deals guilt FRESH over the same
+    // fourteen bodies, and the phase below is a hash of (body id, shift number)
+    // with no guilt term in it. Across trials each body carries the same reach
+    // phase whether or not it drew the black spot that shift, so the clock is
+    // independent of guilt by construction rather than by care.
+    //
+    // It is NOT done in resetShopper(), which game.js also calls to put an
+    // escaped body back in the building 18 s later. That one IS reachable more
+    // often by a guilty body — he leaves through the door more often — so
+    // re-phasing there would make "his reach clock just restarted" a weak
+    // function of guilt. Within a shift the clock is free-running, full stop.
+    // Phased off the RNG STATE AT ENTRY, captured before the guilt draw above
+    // consumes anything, rather than off a monotonic shift counter. A counter
+    // is deterministic within a run and NOT between runs: bench trial k gets
+    // shiftN = N+k on the first bench of a page load and N+200+k on the second,
+    // so the same build at the same seed measured 64.5 / 66.5 / 64.5 / 64.0
+    // across four identical calls. Ablating the reach entirely gave 64.5 three
+    // times, which is what identified it. Off the seed, trial k is trial k
+    // whenever it is run.
+    shiftN = seed0;
+    shoppers.forEach((s) => {
+      s.rig.reachT = K.reachLo + (K.reachHi - K.reachLo) * hash2(s.id, seed0);
+      s.rig.reachN = 0;
+    });
     cop.position.set(0, 0, FRONT_WALK_Z + 1.5);
     const cu = cop.userData;
     cu.vel.set(0, 0, 0); cu.speed = 0; cu.stamina = K.staminaMax; cu.fatigue = 0;
@@ -3640,10 +4098,59 @@ export function createAgents(THREE, scene, world) {
   }
 
   // ---- shopper / thief update ---------------------------------------------
+  // ---- ROUND 12: SHOPPERS STAND AT THE SHELF, NOT ON THE CENTRE LINE ------
+  //
+  // The lead measured this on the live build: only 2 of 14 bodies were within
+  // 1.4 m of a takeable facing at any moment, because this function picked
+  // `aisleX(i) + rr(-1.15, 1.15)` and that is the middle of the lane. Two
+  // consequences, and the second one is worth more than the first:
+  //   - a reach animation would mostly be reaching AT NOTHING. Closing the last
+  //     metre and a half is part of the gesture, not a preamble to it.
+  //   - fourteen bodies on one line is why the crowd read as a police lineup.
+  //     In the reference photographs people are up against the fixture at
+  //     varied depths, occluding each other.
+  //
+  // Measured, on the shipped store: the nav's own free edge is 1.46 m off
+  // centre in six aisles and 1.02 m in the narrow one, and from there a hand
+  // extended 0.25 m finds a facing 0.40-0.74 m away in 9 of 10 probes. So the
+  // shelf is reachable from a legal standing position everywhere, and this
+  // needs no collider change from anybody — it needed the target to ask.
+  //
+  // THE DRAW COUNT IS UNCHANGED, AND THAT IS NOT A STYLE POINT. This file's
+  // header records a round where swapping one rolled call for a named one moved
+  // measured compliance 32.5% -> 27.5% and the published likelihood ratio
+  // 1.95 -> 2.33, having touched no probability at all: the seeded stream had
+  // simply walked. So the lateral offset still comes from ONE `rr(-1.15, 1.15)`
+  // and that one draw is re-read rather than supplemented — its sign picks the
+  // side and its magnitude decides shelf-versus-centre and how far in. Same
+  // draws, same order, same count, on both branches.
   function wanderTarget(s) {
     const i = rnd() < 0.55 ? s.aisle : ri(0, AISLE_COUNT - 1);
     s.aisle = i;
-    return { x: aisleX(i) + rr(-1.15, 1.15), z: rr(-HALF_LEN + 1.2, HALF_LEN - 1.2) };
+    const u = rr(-1.15, 1.15);
+    const z = rr(-HALF_LEN + 1.2, HALF_LEN - 1.2);
+    const cx = aisleX(i);
+    const cut = 1.15 * (1 - K.shelfOdds);        // |u| below this = the centre
+    const side = u < 0 ? -1 : 1;
+    let x = cx + u, sideOut = 0;
+    if (Math.abs(u) >= cut) {
+      // Walk outward from the centre line until the nav says no, then stand a
+      // hand's breadth inside that. Costs no draws, adapts to whichever aisle
+      // this is, and is the only thing in the file that has to know the store's
+      // actual width.
+      const t = (Math.abs(u) - cut) / Math.max(1e-6, 1.15 - cut);
+      const want = lerp(K.shelfNear, K.shelfFar, t);
+      let d = 0;
+      for (let k = 0; k <= 14; k++) {
+        const trial = 0.35 + k * 0.08;
+        if (trial > want) break;
+        if (!nav.free(cx + side * trial, z)) break;
+        d = trial;
+      }
+      if (d >= K.shelfNear - 0.24) { x = cx + side * d; sideOut = side; }
+    }
+    s.shelfSide = sideOut;
+    return { x, z };
   }
 
   // How fast the thief can ACTUALLY run right now.
@@ -3809,6 +4316,125 @@ export function createAgents(THREE, scene, world) {
   // trial replays exactly. The clip's LENGTH is ramped (see K.tellMul), and it
   // is ramped for decoys and steals alike — slowing only the steal would make
   // clip length the tell and give the whole ambiguity back.
+  // =========================================================================
+  // ROUND 12 — THE SHELF ACTUALLY LOSES THE ITEM.
+  // =========================================================================
+  // Client: "when they pick something up off of the shelf, they really should
+  // remove it from the shelf."
+  //
+  // store.js exposes takeFacing(x,y,z,r) / putFacing(id) / facingsTaken(). It
+  // removes the nearest visible product INSTANCE to a world point — the box
+  // stops being drawn and a hole opens in the shelf with the back rank and the
+  // rail tag visible through it — and hands back what left, so the thing in the
+  // hand can be the thing that was on the shelf.
+  //
+  // -------------------------------------------------------------------------
+  // THE ANTI-ORACLE ARGUMENT, WHICH IS THE ONLY REASON THIS IS SHAPED LIKE THIS
+  // -------------------------------------------------------------------------
+  // The store side cannot leak: takeFacing's whole signature is four numbers,
+  // and its own header proves a thief's gap is byte-identical to a browser's.
+  // The lead's follow-up is the exact right warning — THE ONLY PLACE A TELL CAN
+  // ENTER IS THIS FILE. So:
+  //
+  //   1. THERE IS EXACTLY ONE TAKE SITE IN THE GAME. takeAt() is called from
+  //      one place — the grasp frame of the browse reach — and the browse reach
+  //      is scheduled off the RIG's idle clock, which no state transition can
+  //      restart and which therefore cannot correlate with a state, let alone
+  //      with guilt. This is round 9's argument for the idle pool, reused
+  //      because it is the strongest one available.
+  //      A CONCEALMENT NEVER TAKES ANYTHING. A thief conceals an item he is
+  //      already carrying, because he picked it up two aisles ago looking
+  //      exactly like everybody else. That is airtight AND it is what actually
+  //      happens in a shop. The rejected alternative — wire takeFacing into
+  //      every clip that shows a prop — leaks, because the clips author
+  //      different arm angles at the frame `vis` turns on, so the three steals
+  //      would take from a different HEIGHT than the seven decoys and only
+  //      thieves play the steals.
+  //   2. THE THREE FUNCTIONS TAKE NOTHING BUT `s`. takeAt(s) / putBack(s) /
+  //      stow(s). No `guilty`, no `kind`, no options bag that could grow one —
+  //      the same argument decoy.js makes about applyGesture, and the same
+  //      argument the store makes about takeFacing's four numbers.
+  //   3. THE PUT-BACK ODDS ARE A PROPERTY OF THE REACH, NOT OF THE REACHER.
+  //      `reachPut` is one constant rolled the same way for every body, and the
+  //      two tails of the reach are spliced onto one shared head in decoy.js so
+  //      they cannot drift apart.
+  //   4. A CARRIED ITEM IS CONSUMED BY WHATEVER CLIP COMES NEXT, and every clip
+  //      in the file that shows a prop ends with `vis: 0`. A steal, a handoff
+  //      to a child, a restash into a coat and a phone going back in a pocket
+  //      all end the same way and all call stow(); only a put-back calls
+  //      putFacing. That is one branch, on the clip's own `tell`, and the
+  //      put-back pool is reachable by innocent and guilty alike — which is
+  //      what LR(putback) has always measured.
+  //
+  // The store builder's other warning is honoured too: putFacing's 22% wrong
+  // restore is the store's coin and this file does not add jitter on top of it.
+  const STOCK_OK = typeof world.takeFacing === 'function'
+    && typeof world.putFacing === 'function';
+  // Where the grasping hand IS, in world metres. Solved off the rig — the
+  // shoulder the arm actually hangs from, the arm length this body actually
+  // has, and the yaw the body is actually DRAWN at — for the same reason
+  // decoy.js stopped authoring the prop's position: a hand solved from a
+  // constant is 0.5 m from the hand you can see.
+  function handWorld(s, out) {
+    const r = s.rig;
+    const AL = r.armLen + K.grabOut;
+    const az = r.armR.rotation.z, ax = r.armR.rotation.x;
+    const cz = Math.cos(az), sz = Math.sin(az), cx = Math.cos(ax), sx = Math.sin(ax);
+    // rig-local, arm hanging down its own -Y off the shoulder
+    const lx = r.armR.position.x + AL * sz;
+    const ly = r.hipY + r.armR.position.y - AL * cz * cx;
+    const lz = -AL * cz * sx;
+    const sc = r.root.scale.x || 1;
+    const yaw = s.mesh.rotation.y;
+    const cy = Math.cos(yaw), sy = Math.sin(yaw);
+    // three.js Euler-Y: x' = x cos + z sin, z' = -x sin + z cos
+    out.set(
+      s.position.x + (lx * sc) * cy + (lz * sc) * sy,
+      ly * sc,
+      s.position.z - (lx * sc) * sy + (lz * sc) * cy,
+    );
+    return out;
+  }
+  // TAKE. One call site's worth of logic, reachable from two places, neither of
+  // which can see guilt. Returns true if the shelf actually lost something.
+  const TAKE = { attempts: 0, hits: 0, dSum: 0, ySum: 0 };
+  function takeAt(s) {
+    if (!STOCK_OK || s.facing) return false;
+    handWorld(s, s.grabHand);
+    TAKE.attempts++;
+    const h = world.takeFacing(s.grabHand.x, s.grabHand.y, s.grabHand.z, K.grabR);
+    // A miss is ordinary and must stay ordinary: pallet stacks, cart loads and
+    // the donut table are deliberately not takeable, and the search is
+    // grid-local, so "there is no shelf in front of me" is a real answer. The
+    // gesture plays out identically either way — with the generic goods box in
+    // the hand, which is what every clip in this file had before this round.
+    if (!h) return false;
+    s.facing = h;
+    TAKE.hits++; TAKE.dSum += (h.d || 0); TAKE.ySum += s.grabHand.y;
+    s.tookN++; s.takeYSum += h.y === undefined ? s.grabHand.y : s.grabHand.y;
+    s.takeDSum += (h.d === undefined ? 0 : h.d);
+    // THE PROP BECOMES THE THING THAT LEFT. Size in metres straight off the
+    // handle; `held` is a unit-ish box so the scale is the size, and the clip's
+    // own `item` triple then rides on top of it as a per-clip fudge.
+    s.held.material.color.setHex(h.colour);
+    s.itemSize = h.size;
+    s.grabT = 0.28;                     // the box travels OFF the shelf, not into a fist
+    return true;
+  }
+  // PUT IT BACK. The shelf gets it again, in the store's own transform, wrong
+  // 22% of the time by the store's own coin.
+  function putBack(s) {
+    if (!s.facing) return false;
+    const ok = STOCK_OK && world.putFacing(s.facing.id);
+    s.putN++;
+    s.facing = null; s.itemSize = null;
+    return ok;
+  }
+  // IT WENT IN THE CART / THE COAT / THE BAG / A CHILD'S HANDS. The handle is
+  // dropped without restoring, so the gap stays until the store's own FIFO
+  // closes it — on the same clock, at the same age, for every caller.
+  function stow(s) { s.facing = null; s.itemSize = null; }
+
   function startGesture(s, kind, forceId) {
     const g = forceId ? BY_ID.get(forceId) : pickGesture(rnd, kind);
     if (!g) return null;
@@ -3847,6 +4473,19 @@ export function createAgents(THREE, scene, world) {
     if (!s.gest) return false;
     s.gestT -= dt;
     if (s.gestT > 0) return true;
+    // ---- ROUND 12: WHERE THE ITEM WENT, AND IT IS ONE BRANCH ---------------
+    // `puts` is a bit on the CLIP — see decoy.js — carried by exactly the three
+    // clips that end with something back on a shelf. Everything else in the
+    // file ends `vis: 0` with the object gone: three steals, six of the seven
+    // decoys, and the reach's cart tail. So a concealment, a handoff to a
+    // child, a phone into a pocket and a tin into a trolley all take the same
+    // line of code, and only a put-back calls world.putFacing.
+    //
+    // It is here rather than in clearGesture() ON PURPOSE. clearGesture also
+    // fires when a clip is CUT OFF — a startle interrupting a reach — and a man
+    // who was holding a box a moment before an alarm is a man still holding a
+    // box. Cutting a clip must not teleport merchandise onto a shelf.
+    if (s.facing) { if (s.gest.puts) putBack(s); else stow(s); }
     clearGesture(s);
     return false;
   }
@@ -4527,6 +5166,57 @@ export function createAgents(THREE, scene, world) {
 
     // ---- ROUND 6: clips run first, so a state can ask "am I still doing it".
     const clipOn = tickGesture(s, dt);
+    // =====================================================================
+    // ROUND 12 — THE REACH. THE ONLY THING IN THIS GAME THAT TAKES A BOX OFF
+    // A SHELF, AND THE CLOCK IT RUNS ON IS THE POINT.
+    // =====================================================================
+    // `reachT` lives on the RIG and is decremented HERE, unconditionally,
+    // before any state is consulted. Nothing restarts it — not entering
+    // `browse`, not a balk, not a reset, not the PA. That is round 9's idle
+    // argument and it is reused because it is the strongest one available: a
+    // clock no state transition can touch cannot correlate with a state, and
+    // therefore cannot correlate with guilt. If the body is not standing at a
+    // shelf when the clock fires, the tick is simply spent — it is never
+    // deferred, banked or re-armed early, because "when did he last reach" would
+    // then be a function of where he has been, which is a function of what he
+    // was doing.
+    //
+    // AND IT COSTS NO DRAW OFF rnd(). Both decisions here — the interval and
+    // whether the item ends up in the cart or back on the shelf — are a hash of
+    // (body id, reach number). Taking them off the seeded stream would shift
+    // every subsequent decision in the building; this file's header records
+    // that exact mistake moving a published likelihood ratio from 1.95 to 2.33
+    // in a change that touched no probability anywhere.
+    {
+      const r = s.rig;
+      r.reachT = (r.reachT ?? 0) - dt;
+      if (r.reachT <= 0) {
+        r.reachN = (r.reachN || 0) + 1;
+        const h1 = hash2(s.id, r.reachN * 2 + 1);
+        r.reachT = K.reachLo + (K.reachHi - K.reachLo) * h1;
+        const ready = !clipOn && !s.gest && s.angry <= 0 && !s.bolted
+          && s.state === 'browse' && s.shelfSide !== 0
+          && s.speed < 0.35 && Math.abs(s.turnErr || 0) < 0.55;
+        if (ready) {
+          // WHICH TAIL. One constant, one hash, for every body in the store.
+          // A thief and a shopper roll this the same way and the two tails
+          // share their first 0.80 by construction — see decoy.js.
+          const keep = hash2(s.id, r.reachN * 2) >= K.reachPut;
+          s.gest = keep ? REACH_KEEP : REACH_PUT;
+          // Scaled by tellMul like every other clip. Not because a reach is a
+          // tell — it is not, everybody plays it — but because at difficulty 0
+          // every OTHER clip in the store runs 1.35x long, and one behaviour
+          // running at a different rate from the eleven around it is visible
+          // even when it means nothing.
+          s.gestD = s.gest.dur * K.tellMul; s.gestT = s.gestD;
+          s.reachKeep = keep; s.reachTook = false; s.grabT = 0;
+          // -0.22 is a high shelf (hand at ~1.75 m), +0.83 is a low one (hand
+          // at ~0.75 m, body folded over). Same hash family as the tail choice.
+          s.reachEl = -0.22 + hash2(s.id + 977, r.reachN) * 1.05;
+          s.timer = Math.max(s.timer, s.gestD + 0.35);
+        }
+      }
+    }
     // ...and anybody standing at a shelf might start one. THIS IS THE ONE THAT
     // MATTERS. Guilty or innocent, pre-conceal or post-abort — the scheduler
     // does not look at `s.guilty`, so "the man doing something with his hands"
@@ -4700,13 +5390,26 @@ export function createAgents(THREE, scene, world) {
           s.path = nav.path(s.position.x, s.position.z, s.target.x, s.target.z);
         }
         dir = followPath(s, dt);
-        if (!dir) { s.target = null; s.state = 'browse'; s.timer = rr(1.6, 4.5); }
+        // ROUND 12 — HE ARRIVES AND TURNS TO THE FIXTURE. A shopper who has
+        // walked up to a shelf does not stand facing down the aisle; he turns
+        // square to the run, which is both what the reference photographs show
+        // and what puts the shelf inside his reach. `shelfSide` is +-1 when
+        // wanderTarget parked him against a face and 0 when it left him on the
+        // centre line, so a body that has stopped in the middle of an aisle
+        // keeps its travel heading and nothing else changes.
+        if (!dir) {
+          s.target = null; s.state = 'browse'; s.timer = rr(1.6, 4.5);
+          s.faceYaw = s.shelfSide ? Math.atan2(s.shelfSide, 0) : null;
+        }
         break;
       }
       case 'browse': {
         s.timer -= dt;
         target = 0;
-        if (s.timer <= 0) { s.state = 'walk'; s.timer = rr(4, 9); s.target = null; s.path = []; }
+        if (s.timer <= 0) {
+          s.state = 'walk'; s.timer = rr(4, 9); s.target = null; s.path = [];
+          s.faceYaw = null;                       // back to facing where he goes
+        }
         break;
       }
       // ROUND 6 — the concealment is now GESTURES[0] and it is sampled by the
@@ -4864,6 +5567,33 @@ export function createAgents(THREE, scene, world) {
       s.heading = Math.atan2(dx / m, dz / m);
     }
 
+    // ---- ROUND 12: NOBODY ACCELERATES TO FULL SPEED INSTANTLY --------------
+    // K.thiefAccel is 10.5 m/s^2, so the old target — a step function between 0
+    // and 1.25 — was reached in 0.119 s. Seven frames. In a strip sampled every
+    // 0.1 s a body goes from standing to walking in ONE frame, which is exactly
+    // the note in the brief.
+    //
+    // thiefAccel itself is NOT touched, and that is deliberate: it is the
+    // chase's constant, the pursuit bot dead-reckons the thief with it, and this
+    // file's header has a whole section on what happens when you move one half
+    // of a poisoned lever. This is a ceiling on the TARGET instead, which costs
+    // about 0.10 m of ground once per start.
+    //
+    // EXEMPT: `bolt`, `react` and `shove`. Not because a runner does not
+    // accelerate — he does — but because those three are the states every
+    // number in this file is measured in, and a man who has decided to run has
+    // already had his weight moving. `bolt` is also the one outcome that IS a
+    // confession (see boltIsProof), so exempting it cannot leak anything that
+    // is not already public. Every other state ramps, guilty and innocent
+    // alike: `drift` and `leave` are the same walk to the same door and they
+    // start the same way.
+    if (s.state === 'bolt' || s.state === 'react' || s.state === 'shove') {
+      s.gas = target;
+    } else {
+      const rate = target > s.gas ? K.startRamp : K.stopRamp;
+      s.gas += clamp(target - s.gas, -rate * dt, rate * dt);
+      target = s.gas;
+    }
     if (dir) {
       const run = s.state === 'bolt';
       const av = avoid(s, dir.x, dir.z, run ? 1.15 : 1.5, run ? 0.9 : 1.25, run);
@@ -4901,8 +5631,18 @@ export function createAgents(THREE, scene, world) {
       s.dbgTarget = target;
       steer(s, av.x, av.z, target, K.thiefAccel, 0.72, K.thiefRun, dt);
     } else {
-      s.dbgTarget = 0;
-      steer(s, 0, 0, 0, K.thiefAccel, 0.72, K.thiefRun, dt);
+      // ...AND NOBODY STOPS DEAD. This branch is a body with nowhere left to
+      // go — he has arrived, or he is browsing, or a clip has him — and it used
+      // to hand steer() a target of literally zero, which at 10.5 m/s^2 parks a
+      // walking man in 0.12 s. He now coasts down along his own heading at the
+      // ramped target, which is 0.30 s from a walk: three frames of a 0.1 s
+      // strip instead of one, and about 0.19 m of overshoot past the point he
+      // was aiming at, which is also what happens when a person walks up to a
+      // shelf.
+      s.dbgTarget = target;
+      const sp = s.speed;
+      const fx = sp > 0.01 ? s.vel.x / sp : 0, fz = sp > 0.01 ? s.vel.z / sp : 0;
+      steer(s, fx, fz, target, K.thiefAccel, 0.72, K.thiefRun, dt);
     }
     solids.resolve(s.position, BODY_R);
     animateShopper(s, dt, target);
@@ -4936,32 +5676,217 @@ export function createAgents(THREE, scene, world) {
     else api.onLeave && api.onLeave(s);
   }
 
+  // THE PROP RIDES THE HAND. Factored out of the clip branch in round 12 so the
+  // browse reach and the eleven decoy clips place an item with the SAME code —
+  // one owner for the derivation, which is CLAUDE.md's rule and is also the
+  // decoy system's whole structural claim one level down.
+  //
+  // Round 5 authored the concealment's item as absolute rig-local coordinates
+  // and got away with it because at 431 px down a 26 m aisle a half-metre error
+  // is two pixels. The spot monitor pushes a subject to a large fraction of
+  // frame height now, and at that size the same clip showed a box hanging in the
+  // air beside his LEFT ear while his RIGHT arm reached — 0.50 m from the hand
+  // that was supposed to be holding it. An ambiguity argument cannot be made out
+  // of a floating box, so the arm is the source of truth and the prop is derived.
+  //
+  // Euler XYZ on the shoulder pivot, arm hanging down its local -Y:
+  //   v = Rx(ax) * Rz(az) * (0,-L,0)
+  //     = ( L sin az, -L cos az cos ax, -L cos az sin ax )
+  // The shoulder AND the arm length are read off the rig, so girth, build and
+  // height come out correct per body — round 11 found the second half of that
+  // the hard way, with short-armed bodies holding a bottle 40 mm past their own
+  // fingertips.
+  //
+  // ROUND 12 — and the SCALE is the size of the thing that actually left the
+  // shelf, when there is one. `p.item` was the only sizing there was: three
+  // numbers per clip, so every grocery item in the game was one box at four
+  // sizes. A facing handle carries real metres, so a jar is a jar and a
+  // 300 mm cereal carton is visibly not a tin. The clip's triple survives as a
+  // multiplier, which keeps `FLAT` reading as a phone and `TALL` as a bottle
+  // for the clips where the prop is NOT off a shelf.
+  const PROP0 = [0.15, 0.18, 0.11];        // the base goods box, metres
+  function placeProp(s, r, p) {
+    // ROUND 12 — the ANGLES ARE READ OFF THE RIG, not off the sampled clip.
+    // They were the same number until this round, because the clip branch
+    // assigns one to the other; they are not any more. Two things now modify
+    // the arm after the clip has been sampled — round 9's camera-elevation
+    // solve for the bird, and this round's per-reach shelf height — and a prop
+    // placed from `p` would sit where the clip WANTED the hand rather than
+    // where the hand is. Same class of bug as round 5's floating box, one
+    // indirection further down; the rig is the truth, so read the rig.
+    const AL = r.armLen;
+    const shX = r.armR.position.x, shY = r.hipY + r.armR.position.y;
+    const az = r.armR.rotation.z, ax = r.armR.rotation.x;
+    const cz = Math.cos(az), sz = Math.sin(az);
+    const cx = Math.cos(ax), sx = Math.sin(ax);
+    s.held.position.set(
+      shX + AL * sz + p.off[0],
+      shY - AL * cz * cx + p.off[1],
+      -AL * cz * sx + p.off[2],
+    );
+    const sz3 = s.itemSize;
+    if (sz3) {
+      s.held.scale.set(
+        p.item[0] * sz3[0] / PROP0[0],
+        p.item[1] * sz3[1] / PROP0[1],
+        p.item[2] * sz3[2] / PROP0[2],
+      );
+    } else {
+      s.held.scale.set(p.item[0], p.item[1], p.item[2]);
+    }
+  }
+  // The cart is parked where he stopped, hands OFF the bar. Half the picture is
+  // the two seconds his hands are not on it. It parks at HIS push distance, not
+  // at a constant: park it at 0.62 while he pushes it at 0.85 and the cart jumps
+  // a quarter of a metre on the frame the clip starts, which on the spot monitor
+  // is a shunt you can see and time.
+  //
+  // ROUND 12 — IT DOES NOT TURN WITH HIM ANY MORE, and that is not a detail. A
+  // shopper now stands SQUARE TO THE SHELF while he browses (see wanderTarget),
+  // and a cart that followed the body yaw would swing a metre of chrome straight
+  // into the gondola every time somebody stopped to look at something. What
+  // people actually do is leave the trolley pointing down the aisle and turn to
+  // the fixture, so the cart rides `cartYaw` — the heading he was travelling on
+  // when he stopped — and picks the body's yaw back up the moment he moves off.
+  function parkCart(s, P, mid) {
+    if (!s.hasCart) return;
+    const y = s.cartYaw;
+    const d = P.cartD * (mid ? 1 : 1);
+    s.cart.visible = true;
+    s.cart.position.set(s.position.x + Math.sin(y) * d, 0, s.position.z + Math.cos(y) * d);
+    s.cart.rotation.y = y;
+  }
+
   function animateShopper(s, dt, target) {
     const r = s.rig;
     const P = r.pose;
     const ed = (k) => 1 - Math.exp(-k * (dt || 0.016));
     if (s.speed > 0.15) s.heading = Math.atan2(s.vel.x, s.vel.z);
-    s.mesh.rotation.y = s.heading;
-    // ---- ROUND 9: THE GAIT IS PER PERSON, AND STRIDE IS THE FIELD THAT PAYS.
+    // ---- ROUND 12: NOBODY ROTATES ON THE SPOT LIKE A TURRET ----------------
+    // `s.heading` is still the true velocity bearing and every consumer of it —
+    // the cart, the exit field, atExit(), the pursuit bot, the flee solve — is
+    // untouched. What changes is that the BODY is not drawn at it any more.
+    // `visYaw` chases it at K.turnRate, so a shopper who reverses down an aisle
+    // takes a fifth of a second to come round instead of flipping between
+    // frames, and `yawRate` — the speed he is turning at — is then available to
+    // two things that need it and had nothing to read:
+    //   the HEAD, which leads the body into a turn rather than following it;
+    //   the LEAN, because you bank into a corner.
+    // A stopped body wants `faceYaw` instead when it has one, which is how a
+    // browsing shopper ends up square to the shelf instead of facing down the
+    // aisle. See wanderTarget.
+    {
+      const want = (s.speed < 0.30 && s.faceYaw != null) ? s.faceYaw : s.heading;
+      let d = want - s.visYaw;
+      while (d > Math.PI) d -= Math.PI * 2;
+      while (d < -Math.PI) d += Math.PI * 2;
+      // Rate-limited, not lerped: a lerp's speed is proportional to the error,
+      // so a 180 comes round explosively and a 5-degree correction crawls. A
+      // person turns at about the same rate whichever it is.
+      const lim = K.turnRate * (dt || 0.016);
+      const step = clamp(d, -lim, lim);
+      s.visYaw += step;
+      s.yawRate = step / (dt || 0.016);
+      s.turnErr = d;
+      // The trolley keeps the heading he was travelling on. See parkCart.
+      if (s.speed > 0.30 || s.cartYaw === undefined) s.cartYaw = s.visYaw;
+    }
+    s.mesh.rotation.y = s.visYaw;
+    // ---- ROUND 12: THE GAIT IS A CONSTRAINT, NOT A WAVEFORM -----------------
     //
-    // The old line divided by a flat 0.88, so every body in the store took the
-    // same length of step and therefore, at the same walking speed, exactly the
-    // same number of steps a second. Fourteen people in lockstep is what the cop
-    // builder saw and it is the single loudest clone cue in a crowd, louder than
-    // proportion, because CADENCE SURVIVES DISTANCE: a body eight pixels tall
-    // has no shape left, and it still has a rate.
+    // What was here divided by a flat 0.88 and swung the legs by 0.20*speed.
+    // Both of those are dials, and gait.js's header does the arithmetic: a
+    // rigid leg driven that way has its foot planted at exactly ONE speed,
+    // 0.81 m/s, and skates quadratically either side of it. At the shopper's
+    // own 1.25 m/s the foot goes backwards at 1.92 m/s under a body doing 1.25.
+    // That is the slide, and it is why round 11's people looked like they were
+    // being dragged along the floor by the hips.
     //
-    // Stride is a divisor, so a short stride is a fast little walk and a long
-    // one is a lope. 0.80..1.18 with a heavy tax and an age tax on top spreads
-    // the crowd's cadence over about 1.6:1 at a common speed, which is roughly
-    // what a real cross-section does. `+ dt * 0.6` is the idle sway the old line
-    // carried so a stopped body still breathes; it stays flat, because a person
-    // standing still does not have a cadence to differ in.
-    s.phase += (s.speed / (0.88 * P.stride * r.root.scale.x)) * dt * Math.PI * 2 + dt * 0.6;
-    const amp = clamp(s.speed * 0.20 * P.amp, 0.02, 0.72);
-    const sw = Math.sin(s.phase);
+    // The step length is now the only input. The leg angles come out of asin(),
+    // the vertical bob comes out of L*(1-cos) — which is the controlled fall,
+    // for free, at an amplitude nobody had to pick — and `stride`, `amp` and
+    // `bounce` from figures.js survive as what they always claimed to be:
+    // stride multiplies the step, amp trims the swing, bounce trims the drop.
+    // The 1.6:1 cadence spread round 9 built the crowd on is preserved, because
+    // cadence = speed / step and step is still stride-proportional.
+    const heavy = (r.desc && r.desc.build >= 4) || false;
+    const L = r.hipY;                          // hip pivot -> sole, root-local
+    const step = stepLength(s.speed, L, P.stride, heavy);
+    // HOW ENGAGED THE GAIT IS, and it multiplies the STEP rather than the leg
+    // angles. That distinction cost an afternoon and it is the single most
+    // instructive thing in this round.
+    //
+    // The first version faded the solve out by scaling `_G.thL/thR` — the leg
+    // angles — with `gait`, which is speed/1.4. At the shopper's own 1.1 m/s
+    // that is 0.786, so every leg angle was 79% of what the solve had computed
+    // while the body still travelled 100% of the ground. The plant is an
+    // EQUALITY between those two, so scaling one side of it broke it: the live
+    // rig measured 142 mm of stance-foot drift per step on both builds, with a
+    // gaitCheck() that passed, because the check tests the solve and the bug was
+    // downstream of it. Scaling the STEP instead keeps the equality — a shorter
+    // step is a smaller angle AND a smaller ground travel per cycle — so the
+    // foot stays planted at every blend value. Measured after: 1.4 mm.
+    //
+    // The phase RATE still reads the unblended step, or the cadence would go to
+    // infinity as a body came to a halt.
+    const gz = clamp(s.speed / 0.55, 0, 1);
+    // 2PI per full cycle = two steps = 2*step of ground. `+ dt * 0.35` is round
+    // 9's idle tick, kept so a stopped body still breathes and so the browse
+    // oscillators downstream of `s.phase` keep running; it is slower than round
+    // 9's 0.6 because the reach now owns the visible half of standing still.
+    s.phase += (s.speed > 0.02 ? Math.PI * s.speed / step * dt : 0) + dt * 0.35;
     const gait = clamp(s.speed / 1.4, 0, 1);
-    r.legL.rotation.x = sw * amp; r.legR.rotation.x = -sw * amp;
+    const sw = Math.sin(s.phase);
+    // `amp` is kept because eleven things below still swing arms off it, but it
+    // is now DERIVED from the step rather than being a second, independent idea
+    // of how far a leg goes: half a step over a leg length is the sine of the
+    // hip angle, which is the same quantity gait.js solves.
+    const amp = clamp(Math.asin(clamp(step * 0.5 / L, 0, 0.94)) * P.amp, 0.02, 0.75);
+    if (!r.feetOk && r.feetOk !== false) attachFeet(r);
+    solveGait(_G, {
+      phase: s.phase, speed: s.speed, L, step: step * gz,
+      duty: dutyOf(s.speed, heavy),
+      // BOTH OF THESE FADE WITH `gz` TOO, and leaving them out of it was a
+      // real bug with a quiet signature. `phase` keeps ticking on a stopped
+      // body (0.35 rad/s, so the browse oscillators downstream keep running),
+      // so a standing body still cycles through stance and swing — and with an
+      // unfaded flexion it sat 47 mm low forever, while an unfaded knee lift
+      // slowly picked each foot up off the floor. The low sit then masked the
+      // idle-crouch correction below, because it made `c` come out at zero.
+      // Every input to the solve fades together or none of them do.
+      lift: K.gaitLift * (heavy ? K.gaitLiftHeavy : 1) * clamp(P.bounce, 0.65, 1.35) * gz,
+      flex: K.gaitFlex * (heavy ? K.gaitFlexHeavy : 1) * gz,
+      feet: !!r.feetOk,
+    });
+    // Straight through, NOT scaled — see `gz` above. A stopped body stands
+    // still because its step went to zero, which is the same reason its hip
+    // stopped dropping, so round 11's contrapposto takes over underneath with
+    // nothing to fight.
+    r.legL.rotation.x = _G.thL; r.legR.rotation.x = _G.thR;
+    // The knee substitute and the ankle roll, written onto the two meshes
+    // attachFeet found inside each baked leg group. Both go to rest when the
+    // body does, and both are no-ops if figures.js's leg group ever changes
+    // shape enough that they could not be found — see gaitCheck().
+    if (r.feetOk) {
+      if (gz > 0.02) {
+        // The floor, in hips-local metres, taken FROM THE SOLVE and not from
+        // `hips.position.y`. Reading the rig was the obvious version and it was
+        // wrong by one frame: the hip height is written 30 lines further down,
+        // so this saw the PREVIOUS frame's value, and at the stance handover —
+        // where the drop moves 46 mm in three frames as the carrying leg
+        // changes — that stale value put the heel 43 mm through the tiles on
+        // exactly the frame of heel strike. Everywhere else it was within 6 mm,
+        // which is why it looked like a transient rather than an ordering bug.
+        // `_G.drop` has one owner and no phase.
+        const floorY = _G.drop - r.hipY;
+        footPose(r.footL, _G.kneeL, _G.ankL, _G.thL, floorY + _G.clearL);
+        footPose(r.footR, _G.kneeR, _G.ankR, _G.thR, floorY + _G.clearR);
+        r.footRested = false;
+      } else if (r.footRested !== true) { footRest(r.footL); footRest(r.footR); r.footRested = true; }
+      // Which foot is carrying, published on the rig for gaitCheck's live half
+      // and for anything that wants to know. Read-only for everyone else.
+      r.stL = _G.stanceL; r.stR = _G.stanceR;
+    }
     // Toe-out is one assignment and it is worth having: it is set ONCE per frame
     // rather than driven, so it costs nothing, and a duck-footed walk and a
     // pigeon-toed one are different people from across a store.
@@ -4975,8 +5900,18 @@ export function createAgents(THREE, scene, world) {
     // the swagger dial — a heavy body rolls its hips and drops hard onto each
     // heel, a light one glides — and they are the difference between a waddle
     // and a walk at any distance you can still see the body at.
-    r.hips.rotation.y = sw * 0.055 * gait * P.roll;
-    r.chest.rotation.y = -sw * 0.085 * gait * P.roll;
+    // ROUND 12 — the transverse rotation is SOLVED from where the two feet
+    // actually are, so a long stride reaches with the pelvis and a shuffle does
+    // not, instead of both getting 0.055 rad off a sine.
+    // `P.roll` reaches 2.46 on a heavy body (rr(0.45,1.70) x 1.45), and used as
+    // a bare multiplier on an angle that is already a real anatomical quantity
+    // it produced 20 degrees of pelvic rotation and 15 of list. Both are about
+    // three times life, and the list version was worse than ugly: the legs hang
+    // off `hips`, so 15 degrees of it swung each foot 220 mm sideways. Clamped
+    // to a trim, which is what a per-person swagger dial should have been.
+    const roll = clamp(P.roll, 0.55, 1.35);
+    r.hips.rotation.y = _G.pelvisY * 0.34 * gait * roll;
+    r.chest.rotation.y = -_G.pelvisY * 0.52 * gait * roll;
     // ---- ROUND 11: CONTRAPPOSTO, AND IT FADES OUT AS HE STARTS WALKING -----
     // Standing on one leg puts that hip up and the opposite shoulder down. It
     // is a REST angle rolled per body in figures.js, and it is added here
@@ -4987,9 +5922,70 @@ export function createAgents(THREE, scene, world) {
     // A carried basket adds its lean into `rest.chestZ` at construction — same
     // channel, same fade, and nothing per-frame knows a basket exists.
     r.rest0 = 1 - 0.62 * gait;
-    r.hips.rotation.z = sw * 0.030 * gait * P.roll + r.rest.hipZ * r.rest0;
-    r.hips.position.y = r.hipY + (Math.abs(sw) - 0.5) * 0.030 * gait * P.bounce;
-    r.neck.rotation.y = lerp(r.neck.rotation.y, s.look, ed(8));
+    // ---- ROUND 12: THE PELVIS LISTS, AND THE BODY GETS OVER EACH FOOT -------
+    // These two are the brief's "weight transfer, not a slide", and they are
+    // where a heavy walk and a lean walk stop being the same animation.
+    //
+    // LIST: the UNLOADED hip drops (Trendelenburg). tanh() rather than a sine
+    // because weight transfer is quick and the plateau in the middle of each
+    // stance is what makes it read as load rather than as wobble. A heavy body
+    // lists 2.3x as far, which is the single most legible thing on this list at
+    // any distance you can still see a body at.
+    const listA = lerp(K.listLean, K.listHeavy, clamp((r.desc ? r.desc.build : 2) / 5, 0, 1));
+    const list = _G.list * listA * gait * roll;
+    r.hips.rotation.z = list + r.rest.hipZ * r.rest0;
+    // ...AND THE LEGS COME BACK OUT OF IT. A pelvis lists ABOUT the hip joint
+    // of the leg that is carrying; the femur underneath it stays roughly
+    // vertical. These legs are children of `hips`, so an uncompensated list
+    // rotates both of them bodily and walks the feet sideways — 120 mm at a
+    // realistic 8 degrees, which is a person skating. Counter-rotating the leg
+    // groups by the same angle leaves the list where it belongs, on the pelvis
+    // and everything above it, and costs two writes. The leg PIVOTS still
+    // translate a little, which is correct and is 3 mm.
+    // ...and round 11's contrapposto goes with it, faded by how engaged the
+    // gait is. A body AT REST should tilt its legs with its hips — that is what
+    // standing on one leg looks like — and a body WALKING should not, because
+    // the femur under a listing pelvis stays vertical. `gz` is already exactly
+    // that fade, and without this term a body with a strong rest roll walked
+    // with both feet 28 mm off the tiles.
+    const legZ = -(list + r.rest.hipZ * r.rest0 * gz);
+    r.legL.rotation.z = legZ; r.legR.rotation.z = legZ;
+    r.hipsZ0 = r.hips.rotation.z;              // what a pose branch adds is undone below
+    // VERTICAL: the controlled fall. L*(1-cos theta) off the STANCE leg, so the
+    // body is highest at mid-stance with the leg vertical and carrying, and
+    // drops into each heel strike. Round 11 had the right shape at an amplitude
+    // somebody picked; this one is 62 mm on a full stride and 20 mm on a
+    // shuffle without `bounce` having to be set per person — `bounce` survives
+    // as a trim on it.
+    // EXACT, with no per-person trim on it, and that is the point. `drop` is
+    // L(1 - cos theta) off the stance leg and the plant is an equality between
+    // that and the leg angle; multiplying one side by a `bounce` dial unplants
+    // the foot by exactly the amount of the trim. Round 11's bounce roll moves
+    // to the KNEE LIFT instead — how high a person picks their feet up, which
+    // is a real per-body trait, is free to vary, and reads at the same distance
+    // the bob did.
+    r.hips.position.y = r.hipY - _G.drop;
+    // LATERAL: the pelvis translates over the loaded foot, and the LEG PIVOTS
+    // ARE MOVED BACK BY THE SAME AMOUNT so the feet stay where they were put.
+    // Without that compensation this would drag both planted feet sideways and
+    // undo the whole point of the solve above. `stance0` is figures.js's own
+    // stance width, read once and never written, so this composes with a
+    // per-person stance instead of replacing it.
+    if (r.stance0 === undefined) { r.stance0 = r.legL.position.x; r.stanceR0 = r.legR.position.x; }
+    const swayA = lerp(K.swayLean, K.swayHeavy, clamp((r.desc ? r.desc.build : 2) / 5, 0, 1));
+    const sway = _G.sway * swayA * gait;
+    r.hips.position.x = sway;
+    r.legL.position.x = r.stance0 - sway;
+    r.legR.position.x = r.stanceR0 - sway;
+    // ---- ROUND 12: THE HEAD LEADS THE BODY INTO A TURN ----------------------
+    // "The head turns before the body." `turnErr` is exactly how far the body
+    // still has to come round, and pushing a fraction of it onto the neck IS
+    // anticipation — the head arrives at the new bearing first and the shoulders
+    // catch up, which is what a corner looks like on anything with a neck. It
+    // costs one multiply and it is only non-zero while the body is actually
+    // turning, so a shopper walking a straight aisle pays nothing.
+    r.neck.rotation.y = lerp(r.neck.rotation.y,
+      s.look + clamp(s.turnErr * K.turnLead, -0.85, 0.85), ed(8));
     // Idle breathing, so a browsing shopper is not a statue. Cheap: one lerp.
     r.chest.scale.y = 1 + Math.sin(s.phase * 0.42 + s.id) * 0.012;
     // The idle clock. It runs ALWAYS — walking, browsing, concealing, bolting —
@@ -5008,17 +6004,47 @@ export function createAgents(THREE, scene, world) {
     // load-bearing and not plumbing: a hip-shot idle whose shoulder lean got
     // silently overwritten looked like a man standing straight with a limp.
     r.leanZ = 0;
+    // ---- ROUND 12: STARTING, STOPPING, AND THE TRUNK THAT KEEPS GOING -------
+    // "Nobody accelerates to full speed instantly, nobody stops dead... the
+    // trunk keeps moving after the feet stop."
+    //
+    // `leanA` is the body's own acceleration along its heading, smoothed at
+    // ~130 ms. Two channels come off it and they are chosen so that NOTHING
+    // ELSE IN THIS FUNCTION WRITES EITHER:
+    //   chest.position.z   the trunk translates fore and aft over the pelvis.
+    //                      This is the literal follow-through: brake and the
+    //                      torso carries on 45 mm and comes back. Nothing has
+    //                      ever written chest.position, so it composes with
+    //                      every branch below for free.
+    //   chest.rotation.x   the pitch, which DOES collide — six branches lerp
+    //                      that channel toward a posture. So last frame's lean
+    //                      is subtracted before they run and re-added after, in
+    //                      the two lines marked LEAN. Adding it blind would let
+    //                      each branch's ed() lerp eat and re-emit it, which is
+    //                      a slow oscillation nobody would ever find.
+    {
+      const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+      const along = s.vel.x * fx + s.vel.z * fz;
+      const a = (along - (s.lastAlong ?? along)) / (dt || 0.016);
+      s.lastAlong = along;
+      s.leanA += (clamp(a, -14, 14) - s.leanA) * ed(7.5);
+    }
+    r.chest.position.z = clamp(s.leanA * 0.012, -0.062, 0.062);
+    r.leanX = clamp(s.leanA * K.leanAccel, -K.leanMax, K.leanMax);
+    r.chest.rotation.x -= r.leanApplied || 0;                        // LEAN out
     if (r.kid) animateChild(s, dt);
 
     // Shouldering the door. Both arms out flat on the leaf, body pitched into
     // it — the beat has to be VISIBLE or the grab window is invisible too.
     if (s.state === 'shove') {
       const e = EXITS[s.exitI] || EXITS[0];
-      if (e) s.mesh.rotation.y = s.heading = Math.atan2(e.x - s.position.x, e.z - s.position.z);
+      if (e) s.mesh.rotation.y = s.visYaw = s.heading = Math.atan2(e.x - s.position.x, e.z - s.position.z);
       const heave = Math.sin((1 - clamp(s.shoveT / Math.max(0.05, e ? e.shove : 1), 0, 1)) * Math.PI);
       r.armL.rotation.x = -1.75 - heave * 0.28; r.armR.rotation.x = -1.75 - heave * 0.28;
       r.chest.rotation.x = 0.22 + heave * 0.18;
       r.hips.position.y = r.hipY;
+      r.hips.position.x = 0; r.legL.position.x = r.stance0; r.legR.position.x = r.stanceR0;
+      r.leanApplied = 0;                                             // LEAN in
       return;
     }
     // ROUND 6 — A CLIP IS PLAYING, AND IT OWNS THE UPPER BODY.
@@ -5034,7 +6060,12 @@ export function createAgents(THREE, scene, world) {
       const u = 1 - clamp(s.gestT / Math.max(0.05, s.gestD), 0, 1);
       const p = applyGesture(s.gest, u);
       s.turnY = p.turn;
-      s.mesh.rotation.y = s.heading + p.turn;
+      // ROUND 12 — off `visYaw`, not `heading`. A clip's `turn` is a yaw ON TOP
+      // of the body, and the body is now drawn at a rate-limited yaw that also
+      // knows how to stand square to a shelf. Reading `heading` here would have
+      // snapped a browsing shopper back to facing down the aisle for the length
+      // of every clip he played.
+      s.mesh.rotation.y = s.visYaw + p.turn;
       r.armR.rotation.x = p.armR; r.armR.rotation.z = p.armRz;
       r.armL.rotation.x = p.armL; r.armL.rotation.z = p.armLz;
       r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + p.chest, ed(10));
@@ -5067,7 +6098,7 @@ export function createAgents(THREE, scene, world) {
       // horror film. `d` is wrapped to (-pi, pi] first or a subject facing 179
       // degrees away spins the long way round.
       if (p.aim > 0.002) {
-        const bodyYaw = s.heading + p.turn;
+        const bodyYaw = s.visYaw + p.turn;
         let d = s.camYaw - bodyYaw;
         while (d > Math.PI) d -= Math.PI * 2;
         while (d < -Math.PI) d += Math.PI * 2;
@@ -5132,7 +6163,15 @@ export function createAgents(THREE, scene, world) {
         r.birdOn = wantBird;
         r.handR.geometry = wantBird ? r.birdGeo : r.handGeo;
       }
-      s.held.visible = !!p.vis;
+      // ROUND 12 — A REACH THAT FOUND NOTHING SHOWS NOTHING. Roughly a third of
+      // the places a body legitimately stands are opposite a gondola break, an
+      // end cap or a door frame, and there is no peek in the facing contract —
+      // you find out by asking for one. So the grasp is allowed to come away
+      // empty and the clip plays out unchanged, which is what a person who
+      // looked and did not take looks like. The alternative was worse in the
+      // exact way the client complained about: a generic box materialising in a
+      // fist that no shelf is missing.
+      s.held.visible = !!p.vis && (p.tell !== 'reach' || !!s.facing);
       // THE PROP RIDES THE HAND. It is not authored as an absolute point any
       // more, it is SOLVED from the arm the clip is driving, plus a small
       // offset for the beats where it is pressed against the body.
@@ -5157,33 +6196,66 @@ export function createAgents(THREE, scene, world) {
       // and a short-armed body holds its bottle 40 mm past its own fingertips.
       // The shoulder was already read off the rig for exactly this reason and
       // the length was the half that got left behind.
-      const AL = r.armLen;
-      const shX = r.armR.position.x, shY = r.hipY + r.armR.position.y;
-      const cz = Math.cos(p.armRz), sz = Math.sin(p.armRz);
-      const cx = Math.cos(p.armR), sx = Math.sin(p.armR);
-      s.held.position.set(
-        shX + AL * sz + p.off[0],
-        shY - AL * cz * cx + p.off[1],
-        -AL * cz * sx + p.off[2],
-      );
-      s.held.scale.set(p.item[0], p.item[1], p.item[2]);
-      // The cart is parked where he stopped, hands OFF the bar. Half the
-      // picture is the two seconds his hands are not on it. It parks at HIS
-      // push distance, not at a constant: park it at 0.62 while he pushes it at
-      // 0.85 and the cart jumps a quarter of a metre on the frame the clip
-      // starts, which on the spot monitor is a shunt you can see and time.
-      if (s.hasCart) {
-        const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
-        s.cart.visible = true;
-        s.cart.position.set(s.position.x + fx * P.cartD, 0, s.position.z + fz * P.cartD);
-        s.cart.rotation.y = s.heading;
+      placeProp(s, r, p);
+      // ---- ROUND 12: THE GRASP, AND IT IS ONE `if` IN THE WHOLE FILE --------
+      // `vis` stepping 0 -> 1 on a REACH clip is the frame the shelf loses the
+      // box. Nothing else in this game removes a facing; see takeAt(). The two
+      // reach tails are the only clips this can fire on, so a concealment, a
+      // phone and a wallet cannot open a gap however their arms are authored —
+      // which is the whole anti-oracle argument and it is this one condition.
+      if (p.tell === 'reach') {
+        // ---- WHICH SHELF HE IS REACHING AT ---------------------------------
+        // The clip authors ONE arm angle at the grasp, which put every hand in
+        // the store at 1.65 m — the top of the store's own reachable band — so
+        // every gap this round opened would have been on a top shelf. Real
+        // people take things off the whole bay, and the store stocks 0.18 m to
+        // 2.05 m.
+        //
+        // So a per-reach elevation is ADDED to the arm the clip is driving,
+        // faded in with how extended that arm already is so the neutral top and
+        // tail of the clip are untouched. Everything downstream then follows for
+        // free, because the hand is solved from the arm and the take point is
+        // solved from the hand: a low reach bends the body, takes from a low
+        // shelf, and holds the box where the low hand is. It is a hash of
+        // (body, reach number) — no draw off rnd(), no knowledge of guilt.
+        const ext = clamp((-p.armR - 0.95) / 0.93, 0, 1);
+        r.armR.rotation.x = p.armR + s.reachEl * ext;
+        r.chest.rotation.x = lerp(r.chest.rotation.x,
+          r.stoop + p.chest + Math.max(0, s.reachEl) * 0.42 * ext, ed(10));
+        if (p.vis && !r.gestVis) { takeAt(s); s.reachTook = true; }
+        // ...and the box comes OFF THE SHELF rather than appearing in a fist.
+        // For 0.28 s after the grasp the prop is lerped from where the facing
+        // actually was — the handle's own `at`, in world metres, brought back
+        // into rig space — toward the solved hand. Without it the item pops
+        // into being at arm's end and the one thing the client asked for reads
+        // as a spawn instead of as a removal.
+        if (s.facing && s.grabT > 0) {
+          s.grabT = Math.max(0, s.grabT - dt);
+          const k = clamp(s.grabT / 0.28, 0, 1);
+          const a = s.facing.at, sc = r.root.scale.x || 1;
+          const dx = a.x - s.position.x, dz = a.z - s.position.z;
+          const cy = Math.cos(-s.visYaw), sy = Math.sin(-s.visYaw);
+          const lx = (dx * cy + dz * sy) / sc, lz = (-dx * sy + dz * cy) / sc;
+          s.held.position.x = lerp(s.held.position.x, lx, k);
+          s.held.position.y = lerp(s.held.position.y, a.y / sc, k);
+          s.held.position.z = lerp(s.held.position.z, lz, k);
+        }
       }
-      r.chest.rotation.z = -sw * 0.020 * gait + r.rest.chestZ * r.rest0;
+      r.gestVis = !!p.vis;
+      parkCart(s, P, true);
+      r.chest.rotation.z = -sw * 0.020 * gait + r.rest.chestZ * r.rest0
+        + clamp(-s.yawRate * K.turnBank, -0.16, 0.16);
       // A clip owns the arms and the neck. It does NOT own the idle blend, which
       // has to keep decaying underneath it, or a man who folded his arms and
       // then took his phone out would snap back to folded the moment the clip
       // ended. Same line, same rate, for every clip in the file.
       r.idleMix = Math.max(0, r.idleMix - dt * 5.5);
+      r.chest.rotation.x += r.leanX; r.leanApplied = r.leanX;        // LEAN in
+      if (r.crouched) {                       // see the note at the end of this
+        footPose(r.footL, _G.kneeL, _G.ankL, _G.thL, _G.drop - r.hipY + _G.clearL);
+        footPose(r.footR, _G.kneeR, _G.ankR, _G.thR, _G.drop - r.hipY + _G.clearR);
+        r.crouched = false;                   // function; a clip does not crouch
+      }
       return;
     }
 
@@ -5229,13 +6301,13 @@ export function createAgents(THREE, scene, world) {
       const leanX = hold === 3 ? 0.13 : hold === 4 ? -0.03 : 0.0;
       r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + leanX, ed(7));
       s.cart.visible = true;
-      const fx = Math.sin(s.heading), fz = Math.cos(s.heading);
+      const fx = Math.sin(s.cartYaw), fz = Math.cos(s.cartYaw);
       // Leaners keep it in tight, arm's-length pushers shove it out ahead — on
       // top of a per-person base distance, so a corner turn swings a different
       // length of cart for each of them.
       const cd = P.cartD * (hold === 3 ? 0.84 : hold === 4 ? 1.24 : 1);
       s.cart.position.set(s.position.x + fx * cd, 0, s.position.z + fz * cd);
-      s.cart.rotation.y = s.heading;
+      s.cart.rotation.y = s.cartYaw;
     } else {
       if (s.cart.visible && s.dropCartAt) {
         s.cart.position.set(s.dropCartAt.x + Math.sin(s.dropCartAt.y) * 0.5, 0,
@@ -5325,10 +6397,23 @@ export function createAgents(THREE, scene, world) {
         r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + 0.09, ed(6));
         r.neck.rotation.x = lerp(r.neck.rotation.x, 0.34, ed(6));
       } else {
-        const reach = 1.05 + Math.sin(s.phase * 0.7) * 0.25;
-        r.armR.rotation.x = -reach; r.armR.rotation.z = -0.22;
-        r.chest.rotation.x = r.stoop + 0.05;
-        r.neck.rotation.x = lerp(r.neck.rotation.x, 0.22, ed(6)); // looking at the shelf
+        // ROUND 12 — THE HAND IS OFF THE SHELF NOW, and this pose is what he
+        // does BETWEEN reaches rather than instead of them. The old line swung
+        // an arm at a shelf on a 0.7 Hz sine forever, which is the pose the
+        // client was looking at when he said the reach should take the thing.
+        // The reach itself is a 3.1 s clip; see REACH_KEEP in decoy.js. What is
+        // left here is a man who has already looked at that shelf: arm down and
+        // in, chin up off the facing, eyes travelling along the row.
+        const scan = Math.sin(s.phase * 0.44 + s.id * 1.7);
+        r.armR.rotation.x = lerp(r.armR.rotation.x, -0.62 + scan * 0.10, ed(5));
+        r.armR.rotation.z = lerp(r.armR.rotation.z, -0.24, ed(5));
+        r.armL.rotation.x = lerp(r.armL.rotation.x, -0.44, ed(5));
+        r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + 0.04, ed(6));
+        r.neck.rotation.x = lerp(r.neck.rotation.x, 0.18, ed(6)); // looking at the shelf
+        // "Looks along the row." The one thing a body parked at a shelf has
+        // left, and it goes on AFTER the lerp for round 8's reason: a 110 ms
+        // first-order lag halves anything periodic put through it.
+        r.neck.rotation.y += scan * 0.30;
       }
       if (!standing) r.idleMix = Math.max(0, r.idleMix - dt * 5.5);
     } else {
@@ -5371,7 +6456,64 @@ export function createAgents(THREE, scene, world) {
         r.neck.rotation.y += Math.sin(s.huff * K.annScanHz * Math.PI * 2) * K.annScanAmp;
       }
     }
-    r.chest.rotation.z = -sw * 0.020 * gait + r.leanZ + r.rest.chestZ * r.rest0;
+    // ---- ROUND 12: HE IS CARRYING SOMETHING, AND IT IS A REAL BOX ----------
+    // A body that took a facing and did not put it back walks on with it in his
+    // hand until the next clip consumes it. This is one of the two things the
+    // gap field is made of and it is what lets a concealment be a concealment
+    // OF SOMETHING: by the time a thief plays a steal he is already holding an
+    // item that a shelf in this store is visibly missing.
+    //
+    // It is also, deliberately, the most ordinary picture in the game. Every
+    // body does it, the arm that holds it is the same arm eleven clips drive,
+    // and nothing here reads `s.guilty` — the same sentence as everywhere else
+    // in this file, and this is the one place a careless round would break it.
+    if (s.facing && !s.gest) {
+      s.held.visible = true;
+      _P.armR = r.armR.rotation.x; _P.armRz = r.armR.rotation.z;
+      _P.off[0] = 0; _P.off[1] = 0; _P.off[2] = 0;
+      _P.item = ONE3;
+      placeProp(s, r, _P);
+    } else if (!s.gest) {
+      s.held.visible = false;
+    }
+    // The bank. You lean into a turn, and the amount is your yaw rate — which
+    // is a real number now that the body has one. Clamped so a 180 at a gondola
+    // end does not lay anybody over.
+    r.chest.rotation.z = -sw * 0.020 * gait + r.leanZ + r.rest.chestZ * r.rest0
+      + clamp(-s.yawRate * K.turnBank, -0.16, 0.16);
+    r.chest.rotation.x += r.leanX; r.leanApplied = r.leanX;          // LEAN in
+    // ---- ROUND 12: A POSE THAT LOWERS THE HIPS HAS TO BEND THE KNEES --------
+    // Found by measuring, and it is round 9's, not this round's: four of the
+    // seven idles and one browse style drop `hips.position.y` by 14-55 mm to
+    // put weight on a hip or lean on a cart bar. Nothing lowered the LEGS with
+    // them, so a standing body's shoes went straight through the tiles by
+    // exactly that much — probed across all fourteen bodies, every one of them
+    // stood 30-62 mm underground, in every build this game has shipped. It is
+    // invisible in a still because the floor draws over it and it is the reason
+    // a browsing crowd never quite sat on the ground.
+    //
+    // With a knee available this is four lines: shorten both legs by the crouch
+    // so the ankle stays where it was, and move the sole pin's floor up by the
+    // same amount so the shoe follows. `c` is read back off the rig rather than
+    // being accumulated by the branches, so it catches any pose that lowers the
+    // hips, including ones written after this round.
+    if (r.feetOk) {
+      // Same argument as the crouch, one axis over: `idlePose` and browse style
+      // 1 also ADD to the pelvis roll — up to 0.085 rad, to pop a hip — and a
+      // pelvis roll drags both legs with it, which tips a shoe corner under the
+      // tiles. Standing on one leg tilts the PELVIS, not the femur. Whatever a
+      // pose branch added is taken straight back out of the legs.
+      const dz = r.hips.rotation.z - r.hipsZ0;
+      if (dz) { r.legL.rotation.z -= dz; r.legR.rotation.z -= dz; }
+      const c = (r.hipY - _G.drop) - r.hips.position.y;
+      if (c > 0.002 || r.crouched) {
+        const kk = clamp(1 - c / r.hipY, 0.70, 1.05);
+        const fl = _G.drop - r.hipY + c;
+        footPose(r.footL, _G.kneeL * kk, _G.ankL, _G.thL, fl + _G.clearL);
+        footPose(r.footR, _G.kneeR * kk, _G.ankR, _G.thR, fl + _G.clearR);
+        r.crouched = c > 0.002;
+      }
+    }
   }
 
   // =========================================================================
@@ -7353,6 +8495,126 @@ export function createAgents(THREE, scene, world) {
   }
 
   // =========================================================================
+  // ROUND 12 — benchTake. IS THE HOLE IN THE SHELF A GUILT ORACLE?
+  // =========================================================================
+  // The store builder's note is exactly right and it is the reason this exists:
+  // takeFacing(x,y,z,r) is four numbers and cannot see who is calling, gapCheck
+  // proves two identical calls produce identical bytes, and the FIFO ages every
+  // gap on one clock. THE ONLY PLACE A TELL CAN ENTER IS THIS FILE, and the one
+  // property the store cannot enforce from its side is the CALLER'S REACH RATE.
+  //
+  // So this measures it, rather than reasoning about it. Run whole shifts with
+  // the cop parked at the service desk — nobody is walking at anybody, nothing
+  // is being chased — and count, per body, what the shelves actually lost:
+  //
+  //   takes/min      how often this population removes a facing
+  //   putBack%       how often it goes back
+  //   grabY          the mean height the hand took from
+  //   dwell          seconds of the reach before the grasp frame
+  //
+  // and divide the guilty column by the innocent one. Every one of those four
+  // is something a player can see on the monitor wall — a hole appearing, a
+  // hole closing, where in the bay it is — so a ratio away from 1.00 on any of
+  // them is a leak whatever the store does at its end.
+  function benchTake(n = 24, opts = {}) {
+    const dt = 1 / 60;
+    const saveLevel = DIFF.level;
+    const savePos = cop.position.clone(), saveUd = { ...cop.userData };
+    if (opts.difficulty != null) DIFF.level = clamp(+opts.difficulty || 0, 0, 1);
+    const secs = opts.secs ?? 90;
+    const api = { onHarass() {}, onAbort() {}, onLeave() {}, onBolt() {},
+      onCatch() {}, onEscape() {}, onAnnounce() {} };
+    const acc = {
+      guilty: { took: 0, put: 0, ySum: 0, dSum: 0, bodySecs: 0, bodies: 0 },
+      clean: { took: 0, put: 0, ySum: 0, dSum: 0, bodySecs: 0, bodies: 0 },
+    };
+    let gaps0 = 0, gapsEnd = 0, misses = 0, attempts = 0;
+    for (let k = 0; k < n; k++) {
+      setSeed((opts.seed ?? 4242) + k * 7919);
+      reset();
+      // WHERE THE COP STANDS CHANGES THE ANSWER, so both are measurable.
+      //   'desk'  — nobody is deterred. Every thief walks out in about 30 s,
+      //             which is the most adversarial case for this ratio: it gives
+      //             a guilty body the least time in the aisles it can possibly
+      //             have.
+      //   'door'  — the uniform is posted on the only way out, thieves balk,
+      //             `chill` runs and they go back to shopping like everybody
+      //             else. That is what the game looks like when the player is
+      //             doing the thing the one-exit design rewards.
+      const spot = opts.post === 'door' ? EXITS[0] : SERVICE_DESK;
+      cop.position.set(spot.x, 0, spot.z);
+      solids.resolve(cop.position, BODY_R);
+      cop.userData.vel.set(0, 0, 0); cop.userData.speed = 0;
+      for (const s of shoppers) { s.tookN = 0; s.putN = 0; s.takeYSum = 0; s.takeDSum = 0; }
+      if (k === 0 && world.facingsTaken) gaps0 = world.facingsTaken();
+      // TIME IN THE STORE, ACCUMULATED, and the first version got this wrong in
+      // a way that emptied the guilty column entirely. It credited each body
+      // with the whole shift and then dropped any body that had escaped or been
+      // caught — and with the cop parked at the desk EVERY thief walks out, so
+      // `guilty.bodies` came back 0 and the ratio was null. A thief is in the
+      // building for a shorter time than a shopper BY CONSTRUCTION, so his
+      // exposure has to be measured rather than assumed, or the rate this
+      // function exists to compare is a rate over the wrong denominator.
+      // WHO WAS ARMED, SNAPSHOTTED AT THE START, and this is the second thing
+      // that emptied the guilty column. abortTheft() and dumpGoods() both set
+      // `s.guilty = false` — a man who put it back IS a customer, which is the
+      // whole point of round 6 — so classifying at the END of the shift files
+      // every deterred thief's reaches under `clean`. With the uniform posted
+      // on the door, EVERY thief balks, so `guilty.bodies` came back 0 and the
+      // cell that matters most had no data in it at all.
+      const armed = new Set(shoppers.filter((s) => s.guilty));
+      const frames = Math.round(secs / dt);
+      const SAMP = 15;
+      const live = new Map();
+      for (let i = 0; i < frames; i++) {
+        tick(dt, { x: 0, z: 0 }, api);
+        if (i % SAMP) continue;
+        for (const s of shoppers) {
+          if (s.escaped || s.caught || !s.mesh.visible) continue;
+          live.set(s, (live.get(s) || 0) + dt * SAMP);
+        }
+      }
+      for (const s of shoppers) {
+        const secsIn = live.get(s) || 0;
+        if (secsIn <= 0) continue;
+        const c = armed.has(s) ? acc.guilty : acc.clean;
+        c.took += s.tookN; c.put += s.putN;
+        c.ySum += s.takeYSum; c.dSum += s.takeDSum;
+        c.bodySecs += secsIn; c.bodies += 1;
+      }
+      if (world.facingsTaken) gapsEnd = world.facingsTaken();
+    }
+    const usedLevel = DIFF.level;
+    DIFF.level = saveLevel;
+    cop.position.copy(savePos); Object.assign(cop.userData, saveUd);
+    reset();
+    const cell = (c) => ({
+      bodies: c.bodies,
+      takes: c.took,
+      takesPerMin: c.bodySecs > 0 ? +(c.took / c.bodySecs * 60).toFixed(3) : null,
+      putBackPct: c.took > 0 ? +(c.put / c.took * 100).toFixed(1) : null,
+      grabY: c.took > 0 ? +(c.ySum / c.took).toFixed(3) : null,
+      grabD: c.took > 0 ? +(c.dSum / c.took).toFixed(3) : null,
+    });
+    const G = cell(acc.guilty), C = cell(acc.clean);
+    const ratio = (a, b) => (a != null && b) ? +(a / b).toFixed(3) : null;
+    return {
+      n, secs, difficulty: usedLevel, wired: STOCK_OK, post: opts.post || 'desk',
+      guilty: G, clean: C,
+      // ALL FOUR SHOULD BE 1.00. Anything else is a leak in agents.js.
+      likelihoodRatio: {
+        takeRate: ratio(G.takesPerMin, C.takesPerMin),
+        putBack: ratio(G.putBackPct, C.putBackPct),
+        grabHeight: ratio(G.grabY, C.grabY),
+        grabDist: ratio(G.grabD, C.grabD),
+      },
+      gapsOpenAtEnd: gapsEnd, gapsAtStart: gaps0,
+      misses, attempts,
+      override: Object.keys(OVR).length ? { ...OVR } : undefined,
+    };
+  }
+
+  // =========================================================================
   // ROUND 9 — benchBird. DOES THE FINGER TELL YOU ANYTHING?
   // =========================================================================
   // The whole risk in the escalation ladder, stated as a measurement. Shout at
@@ -7702,6 +8964,27 @@ export function createAgents(THREE, scene, world) {
     // crossBands() is how the back-route metric finds the store's corridors
     // from the nav grid instead of assuming where they are.
     override: OVR, crossBands, lungCheck, paceCheck,
+    // ROUND 12. gaitCheck() is the walk's lungCheck(): it re-derives the planted
+    // foot in world coordinates and fails loudly if it slips. stockWired says
+    // whether world.takeFacing was actually found at construction, so a report
+    // that claims the shelf loses items can be checked rather than believed.
+    gaitCheck, benchTake, get stockWired() { return STOCK_OK; },
+    // How often a grasp actually finds something, and how far away it was. A
+    // miss is ordinary — pallet stacks and cart loads are not takeable and the
+    // search will not reach THROUGH a fixture — but a hit rate that collapsed
+    // would mean the reach is playing at nothing, and that is invisible from a
+    // screenshot.
+    get takeStats() {
+      return { ...TAKE, hitPct: TAKE.attempts ? +(TAKE.hits / TAKE.attempts * 100).toFixed(1) : null,
+        meanD: TAKE.hits ? +(TAKE.dSum / TAKE.hits).toFixed(3) : null,
+        meanY: TAKE.hits ? +(TAKE.ySum / TAKE.hits).toFixed(3) : null };
+    },
+    // Live facing handles, for a critic who wants to see that the thing in a
+    // hand is the thing a shelf is missing.
+    get carrying() {
+      return shoppers.filter((s) => s.facing)
+        .map((s) => ({ id: s.id, guilty: s.guilty, kind: s.facing.kind, at: s.facing.at }));
+    },
     // ROUND 10 — the checkout and service-desk staff. `null` until the first
     // tick; see frontTick. Exposed so a capture can force a pose without
     // running the game (`agents.frontEnd.update(2.4)`) and so a store-only

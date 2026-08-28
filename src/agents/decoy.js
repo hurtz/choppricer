@@ -84,6 +84,15 @@
 // is observable the man is running and the length is moot.)
 // ---------------------------------------------------------------------------
 
+// ROUND 12 — `puts` is the ONE bit that says "this clip ends with the item back
+// on a shelf". Three clips carry it: round 6's `putback`, round 8's `putbackPA`
+// and round 12's `reachPut`. agents.js branches on it once, in tickGesture, and
+// that single branch is the entire difference between world.putFacing() being
+// called and the gap staying open. It is a property of the CLIP, never of the
+// body playing it, which is why an innocent putting a tin back and a deterred
+// thief putting a bottle back leave the shelf in the same state — the thing
+// LR(putback) has measured since round 7.
+//
 // Neutral. Anything a clip does not mention returns to this.
 //
 // THERE IS NO ABSOLUTE POSITION CHANNEL, and that is deliberate. A clip drives
@@ -224,7 +233,7 @@ export const GESTURES = [
   // which is the whole feedback loop of the one-exit design in one gesture.
   // =========================================================================
   {
-    id: 'putback', tell: 'putback', dur: 1.60, item: BOX,
+    id: 'putback', tell: 'putback', dur: 1.60, item: BOX, puts: 1,
     keys: [
       kf(0.00, { vis: 0, armR: -1.45, armRz: 0.92, off: [0.0, 0.0, -0.24], look: 0.55 }),
       kf(0.16, { vis: 1, armR: -1.62, armRz: 0.10, look: -0.40 }),
@@ -373,7 +382,7 @@ export const GESTURES = [
   // guard still gets round 6's putback, unchanged, because nobody said anything
   // to him.
   {
-    id: 'putbackPA', tell: 'putbackPA', dur: 2.65, item: BOX,
+    id: 'putbackPA', tell: 'putbackPA', dur: 2.65, item: BOX, puts: 1,
     keys: [
       ...heard(2.65),
       kf(0.72 / 2.65, { armR: -0.92, armL: -0.93, neck: -0.40, look: 0.20, turn: -0.12 }),
@@ -756,6 +765,96 @@ export const GESTURES = [
     ],
   },
 ];
+
+// ===========================================================================
+// ROUND 12 — THE REACH. THE ONLY THING IN THIS GAME THAT TAKES A BOX OFF A
+// SHELF, AND IT IS DELIBERATELY NOT IN THE TABLE ABOVE.
+// ===========================================================================
+// Client: "when they pick something up off of the shelf, they really should
+// remove it from the shelf."
+//
+// WHY IT IS NOT A GESTURE. `GESTURES` is a POOL and its statistics are load
+// bearing: pickGesture is a modulo over seven decoys and round 6's entire
+// distribution was measured on that seven. Round 8's note above says the same
+// thing about the startle. So these two live outside the array, are never
+// rolled, are only ever named by agents.js, cost no draw off the seeded stream,
+// and cannot change any number that has ever been published about the decoys.
+// They are sampled by the SAME applyGesture, which is the half that matters.
+//
+// WHY IT IS THE ONLY TAKE SITE IN THE GAME, which is an anti-oracle decision
+// and not an animation one. The obvious build wires world.takeFacing into every
+// clip that shows a prop, so a concealment removes the box it conceals. That
+// leaks, and subtly: the clips differ in the arm angle they author at the frame
+// `vis` turns on, so they would take from different HEIGHTS, and only thieves
+// play the three steals. Instead there is exactly one function in agents.js
+// that removes a facing and exactly one thing that calls it — this clip, fired
+// off the rig's idle clock for every body in the building. A thief conceals an
+// item he is ALREADY HOLDING because he picked it up two aisles ago looking
+// like everybody else, which is both airtight and what actually happens in a
+// shop. See takeAt() in agents.js.
+//
+// THE SEQUENCE, which is the brief's, beat for beat:
+//   0.00-0.14  SETTLE      he has stopped. Hands come off the bar.
+//   0.14-0.26  LOOK        head turns along the row and pitches to the shelf.
+//                          The head leads; the body has not moved yet.
+//   0.26-0.42  LEAN + EXTEND  from the HIP, not the shoulder. chest pitches in,
+//                          the arm goes up to the facing, the off arm comes out
+//                          for balance.
+//   0.42-0.50  GRASP       the hold. `vis` steps on at 0.46 and THAT is the
+//                          frame the shelf loses the box.
+//   0.50-0.62  WITHDRAW    back off the shelf, item comes to the chest.
+//   0.62-0.80  INSPECT     he looks at the thing. Head down, item turned.
+//   0.80-1.00  DISPOSE     the two tails below.
+// The first 0.80 is ONE array, spliced into both tails the way heard() is
+// spliced into the four PA answers, so the two cannot drift apart.
+const reachHead = [
+  kf(0.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
+  kf(0.14, { vis: 0, armR: -0.86, armRz: -0.22, armL: -0.88, armLz: 0.22, neck: 0.06, look: -0.34 }),
+  kf(0.26, { vis: 0, armR: -1.10, armRz: -0.30, armL: -0.78, armLz: 0.30, neck: 0.20, look: 0.16, chest: 0.05 }),
+  kf(0.36, { vis: 0, armR: -1.62, armRz: -0.34, armL: -0.66, armLz: 0.34, neck: 0.24, look: 0.06, chest: 0.15 }),
+  kf(0.42, { vis: 0, armR: -1.86, armRz: -0.26, armL: -0.60, armLz: 0.36, neck: 0.26, chest: 0.19 }),
+  // THE GRASP. `vis` steps — decoy.js's own rule, and it is why the take is a
+  // frame and not a fade: a 15 fps camera sees a box that is there and then is
+  // not, never a box at 40% opacity.
+  kf(0.46, { vis: 1, armR: -1.88, armRz: -0.24, armL: -0.60, armLz: 0.36, neck: 0.26, chest: 0.19 }),
+  kf(0.50, { vis: 1, armR: -1.86, armRz: -0.22, armL: -0.62, armLz: 0.34, neck: 0.24, chest: 0.18 }),
+  kf(0.62, { vis: 1, armR: -1.70, armRz: 0.02, armL: -0.80, armLz: 0.24, neck: 0.30, chest: 0.10 }),
+  kf(0.72, { vis: 1, armR: -1.62, armRz: 0.16, armL: -1.10, armLz: 0.10, neck: 0.44, chest: 0.06, look: -0.20 }),
+  kf(0.80, { vis: 1, armR: -1.58, armRz: 0.20, armL: -1.14, armLz: 0.08, neck: 0.46, chest: 0.05, look: 0.14 }),
+];
+// IT GOES IN THE CART. Down and across, out of frame at the hip, hands back on
+// the bar. Frame for frame this is `handoff`'s tail, which is the point: an
+// innocent putting a tin in his trolley and a man handing something down to a
+// child below the camera line are one picture, and so is a coat pocket.
+export const REACH_KEEP = {
+  id: 'reachKeep', tell: 'reach', dur: 3.10, item: [1, 1, 1],
+  keys: [
+    ...reachHead,
+    kf(0.88, { vis: 1, armR: -1.16, armRz: 0.36, armL: -1.00, neck: 0.42, chest: 0.14 }),
+    kf(0.93, { vis: 0, armR: -1.02, armRz: 0.32, armL: -0.98, neck: 0.34, chest: 0.10 }),
+    kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
+  ],
+};
+// IT GOES BACK ON THE SHELF. He decided against it. This is the commonest thing
+// anybody does in a supermarket and it is ALSO, unchanged, what a deterred
+// thief does — `putback` in the table above ends on the same three keys. That
+// overlap is not an accident and must not be tidied away: it is why a box going
+// back onto a shelf is a READ and not a confession, and it is the number this
+// round is judged on. See LR(putback) in agents.js.
+export const REACH_PUT = {
+  id: 'reachPut', tell: 'reach', dur: 3.10, item: [1, 1, 1], puts: 1,
+  keys: [
+    ...reachHead,
+    kf(0.86, { vis: 1, armR: -1.76, armRz: -0.22, armL: -0.78, armLz: 0.26, neck: 0.28, chest: 0.16 }),
+    kf(0.92, { vis: 1, armR: -1.84, armRz: -0.30, armL: -0.70, armLz: 0.30, neck: 0.24, chest: 0.18 }),
+    kf(0.95, { vis: 0, armR: -1.72, armRz: -0.34, armL: -0.76, armLz: 0.28, neck: 0.22, chest: 0.14 }),
+    kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
+  ],
+};
+// The frame the shelf loses it, in clip-normalised time. agents.js watches
+// `vis` rather than this number — one owner for the derivation — but a critic
+// driving a strip wants to know where to look.
+export const REACH_GRASP_U = 0.46;
 
 export const BY_ID = new Map(GESTURES.map((g) => [g.id, g]));
 const OF = (tell) => GESTURES.filter((g) => g.tell === tell);

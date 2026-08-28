@@ -250,6 +250,40 @@ export const TUNING = {
   gassedRecover: 1.00,   // WINDED is all-or-nothing
   regenHold: 0.00,       // regen granted while the sprint key is still down
  bargeSlow: 0.22, bargeWindFrac: 0.48, bargeDump: 0.85,
+
+  // --- Round 12: the gait, and why none of these were picked by eye ---
+  // Round 11's walk was two sines, and it was provably wrong rather than merely
+  // ugly. A rigid leg pivoting at the hip puts its foot at L*sin(theta); for the
+  // foot to be PLANTED it has to travel backwards at exactly ground speed.
+  // Differentiating the shipped line gives dx/dt = 1.228*v^2, which equals v at
+  // exactly one speed — 0.81 m/s. At the shopper's own 1.25 m/s the foot went
+  // backwards at 1.92 m/s under a body doing 1.25. That is the slide, and no
+  // value of amp fixes it. gait.js inverts the solve: step length is the input,
+  // the stance foot is planted by construction at every speed, and the vertical
+  // bob falls out as L(1-cos theta) — the controlled fall, free, at an amplitude
+  // nobody chose. Solve slip went 83-710 mm to 0.0 mm.
+  //
+  // WARNING carried from that round: gaitCheck() passed while the rig was
+  // visibly wrong FOUR separate times. A check on the solve is not a check on
+  // the rig. Anything touching these wants shots/_probe_move_plant.js too.
+  gaitLift: 0.075, gaitLiftHeavy: 0.62,   // swing clearance, and how a heavy body scales it
+  gaitFlex: 0.055, gaitFlexHeavy: 0.70,   // knee flex through stance
+  swayLean: 0.016, swayHeavy: 0.052,      // lateral sway; a heavy walk is not a slow thin one
+  listLean: 0.045, listHeavy: 0.105,      // list onto the loaded side
+  startRamp: 2.9,  stopRamp: 4.2,         // 0 -> 1.17 m/s in 0.42 s, was 0.12 s
+  leanAccel: 0.055, leanMax: 0.34,        // trunk carries on after the feet stop
+  turnRate: 5.6,   turnLead: 0.62,        // heading still flips in one frame; visYaw takes 0.67 s
+  turnBank: 0.10,                         // on a 180, head leading
+
+  // --- Round 12: the reach, and getting bodies off the centre line ---
+  // wanderTarget picked the aisle centre, so only 2 of 14 bodies were ever near
+  // a facing. Now 12 of 14, standing square to the fixture. grabOut was 0.30,
+  // which put the query point 300 mm past the visible hand and INSIDE the
+  // fixture — round 5's floating-box bug in a new hat. grabR is sized off the
+  // measured 0.42-0.69 m lip range, not chosen.
+  shelfNear: 1.05, shelfFar: 1.38, shelfOdds: 0.82,
+  reachLo: 2.2, reachHi: 6.0, reachDur: 3.10,
+  grabR: 0.75, grabOut: 0.10, reachPut: 0.45,
 };
 
 // CHANNEL LINEUP — what the channels ARE. Ids, labels, and which aisle each covers.
