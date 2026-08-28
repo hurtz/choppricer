@@ -1,8 +1,8 @@
 {
  "pieces": {
   "store": {
-   "round": 27,
-   "state": "gap",
+   "round": 28,
+   "state": "critiquing",
    "shots": [
     {
      "round": 0,
@@ -353,6 +353,16 @@
      "round": 27,
      "path": "../shots/r27_critic_floor.png",
      "t": 1787922909.887697
+    },
+    {
+     "round": 28,
+     "path": "../shots/r28_dbg1_ax_chase_a4.png",
+     "t": 1787924403.143414
+    },
+    {
+     "round": 28,
+     "path": "../shots/r28on_chase_a1.png",
+     "t": 1787926944.9013288
     }
    ],
    "gaps": [
@@ -513,8 +523,8 @@
      "text": "The aisle floor carries luminance nothing in the scene causes and none that everything in the scene should - curling filaments that ignore tile-seam perspective and subtend the same size at 4 m and 12 m, and NOTHING standing on the floor darkens it: not shoes, not any of four cart casters, not the endcap base, not one kick plate, while every caster in the matched Ingles reference has a contact shadow."
     }
    ],
-   "updated": 1787923069.646046,
-   "note": "THE MATCHED-ARM FORCED CHOICE IS RETIRED AND THE CRITIC PROVED IT RATHER THAN FAILING IT. Position tally 18 second against 2 first over 20 trials, all six high-confidence calls were second and only 2 of 6 correct, and the control nobody had thought to add - CATCH TRIALS - came back 2 of 8: on 6 OF 8 PAIRS WHOSE TWO HALVES WERE THE SAME IMAGE it invented a specific named geometric difference, three at high or medium confidence. Randomising position per trial is not enough because the pairwise question itself is answerable by position. Four rounds of this project's headline perceptual number came from an instrument that will confabulate a detailed difference between two copies of one image. Any instrument that asks a scorer to find a difference must include trials with no difference in them. THEN IT PRODUCED THE FIRST POSITIVE RESULT IN 28 ROUNDS: absolute single-image classification, one crop one arm judged against a criterion fixed in advance, 10 of 12 at p 0.019 with 5 of 5 at high confidence, near_a1 4/4, near_a7 4/4, near_a4 2/4, and no chase percept at any pose. That is the first evidence here that a change is visible to a scorer who did not build it, and it independently confirms round 27's near/chase split. That instrument is now the standard. LEAK 9: the two arms differed in tag CONTENT and card SIZE, not only the geometry under test - the same slot renders 3.99 in one arm and 3.08 in the other with one card 50% taller - so the pair was solvable by reading a price. A dial that also re-rolls content is not a dial. AND WHOLE FRAMES CHANGED WHAT GETS CALLED ON: not one render was named from a shelf-edge detail, and the rail that round 27 rebuilt was never the tell in any frame, even though the single-image test shows it IS visible when you ask about it. Both are true - render-recall asks what a viewer volunteers, and the bar is written in that question.",
+   "updated": 1787926944.901324,
+   "note": "floor r28 - tread.js, the moving half of the light field. FALSIFIERS FIRST: the floor IS a shadow receiver (a synthetic column stamped into the live field darkens the floor 0.877 to 0.776 over 891 of 891 px, control at 3 m moves 2.8e-5, undo byte-identical over 58420 px); the cascade DOES reach (the kickplate profile at 19 m equals the profile at 4 m at all six offsets, chopA.x 0.058 at 30 mm against 0.871 at 1.4 m); and the curling filaments are the MULTIPLY-BLENDED WEAR DECAL from tex.js floorWearTex, not a lighting term - hiding that one mesh removes every filament while ablating the mirror or the burnish does not. F1 as worded: a cart moved 1.0 m changes ZERO of 880 floor px at 0.45-1.05 m, zero of 1274 at 1.3-1.9 m, zero of 2829 in control. F2: the filaments track the tile seams to within 1 px of a 6 px parallax; it is the MIRROR that slides, 2 of 6. THE GAP was the occluder set only - 101 of 101 floor-contacting meshes on moving bodies absent from a field baked at build time. BUILT a second height field rebuilt per frame, populated by construction, read by the floor through the same sin-squared estimator with light.js's own remap constants. treadSelfTest: 0 of 3 disagreements clean, 3 of 3 while corrupted at gain 2.5, 0 of 3 restored. Coverage 112 of 117 eligible ground contacts darkened. Cost: 0 draw calls, 0 triangles, 0 colliders, 1 texture, raster 0.135 ms per frame, live frame time 8.1 ms on against 8.3 ms off. MY OWN single-image test is a NULL: 6 of 12, and the one inverted call was me reading the wear decal's swirls as a shadow.",
    "gap": "The aisle floor carries luminance nothing in the scene causes and none that everything in the scene should - curling filaments that ignore tile-seam perspective and subtend the same size at 4 m and 12 m, and NOTHING standing on the floor darkens it: not shoes, not any of four cart casters, not the endcap base, not one kick plate, while every caster in the matched Ingles reference has a contact shadow.",
    "verdict": "12/12 render-recall on WHOLE FRAMES, both arms. Twenty-eighth round at 100%."
   },
@@ -1185,6 +1195,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787926944.9013288,
+   "piece": "store",
+   "role": "builder",
+   "round": 28,
+   "state": "critiquing",
+   "text": "floor r28 - tread.js, the moving half of the light field. FALSIFIERS FIRST: the floor IS a shadow receiver (a synthetic column stamped into the live field darkens the floor 0.877 to 0.776 over 891 of 891 px, control at 3 m moves 2.8e-5, undo byte-identical over 58420 px); the cascade DOES reach (the kickplate profile at 19 m equals the profile at 4 m at all six offsets, chopA.x 0.058 at 30 mm against 0.871 at 1.4 m); and the curling filaments are the MULTIPLY-BLENDED WEAR DECAL from tex.js floorWearTex, not a lighting term - hiding that one mesh removes every filament while ablating the mirror or the burnish does not. F1 as worded: a cart moved 1.0 m changes ZERO of 880 floor px at 0.45-1.05 m, zero of 1274 at 1.3-1.9 m, zero of 2829 in control. F2: the filaments track the tile seams to within 1 px of a 6 px parallax; it is the MIRROR that slides, 2 of 6. THE GAP was the occluder set only - 101 of 101 floor-contacting meshes on moving bodies absent from a field baked at build time. BUILT a second height field rebuilt per frame, populated by construction, read by the floor through the same sin-squared estimator with light.js's own remap constants. treadSelfTest: 0 of 3 disagreements clean, 3 of 3 while corrupted at gain 2.5, 0 of 3 restored. Coverage 112 of 117 eligible ground contacts darkened. Cost: 0 draw calls, 0 triangles, 0 colliders, 1 texture, raster 0.135 ms per frame, live frame time 8.1 ms on against 8.3 ms off. MY OWN single-image test is a NULL: 6 of 12, and the one inverted call was me reading the wear decal's swirls as a shadow."
+  },
+  {
+   "t": 1787924403.143414,
+   "piece": "store",
+   "role": "builder",
+   "round": 28,
+   "state": "building",
+   "text": "floor r28: falsifiers first. Floor IS a shadow receiver and the cascade reaches 19 m; the curling filaments are the multiply-blended wear decal, not a lighting term. Building dynamic contact occlusion for the 101 floor-contacting meshes the baked field cannot see."
+  },
   {
    "t": 1787923069.6460512,
    "piece": "store",
@@ -2128,23 +2154,7 @@
    "round": 14,
    "state": "gap",
    "text": "THE FOOTSTEPS BANNER OVERPRINTS ITSELF AND DESTROYS THE WORD NOT. Measured with the game own font metrics: the box spans x 430-850 (420 px), the main line is centred on W/2-34 and spans 434.5-777.5, and the right-aligned sub spans 748.9-838. That is a DETERMINISTIC 28.6 px collision - no seed, pose or frame dependence. The player reads FOOTSTEPS - SOMEONE JUST RAN, CLOSE[BY/NOT] IN SIGHT. The character destroyed is the NEGATION, so the round one new player-facing channel renders THE OPPOSITE OF ITS MEANING ON EVERY FIRING, on 3.7% of floor frames. AND src/game/hud.js ALREADY CARRIES THE FIX, 1,360 LINES ABOVE THE BUG: advance(str, size, wt, ls), whose own comment says ctx.measureText does NOT account for ctx.letterSpacing, which is how the round-9 alarm chip first shipped with its countdown printed on top of the word VESTIBULE. The banner never calls it. The box needs >=464 px or the lines stacked. RUNNER-UP, STRUCTURAL: openPairs is blind below 1.156 m BY CONSTRUCTION - the metres exemption and the fractional-cap draft are algebraically identical for len >= pad/0.45 = 1.156, the shortest pair in either probe set is 1.5 m, and 0 OF 264 PAIRS are short enough to separate them. So the fractional-cap draft - the over-blocking bug makeSight() documents at greatest length - scores 0/208 and 0/56, PASSING BOTH PROBES PERFECTLY. Extend the same step family downward and it is enormous: 56 of 64 pairs blocked at 0.4/0.6/0.8 m that the shipped predicate clears, zero difference at 1.0 m and above. THE BLIND BAND SITS ENTIRELY INSIDE THE 1.15 m CATCH RADIUS - the guard stops looking at the arrest. THIRD: bearing is halfWedge <= BEARING_MAX and NEVER CONSULTS b.sweep, so on 407 frames the dashed ring is still drawn at spread while the readout says NOT WHERE I LOOKED - two contradictory claims in one glance, with coverage there 80.6% against 98.0% elsewhere. That is the identical bug the round fixed one state over (lost HAS TO SILENCE THE ARROWS TOO), reintroduced for swept."
-  },
-  {
-   "t": 1787768763.131526,
-   "piece": "game",
-   "role": "critic",
-   "round": 14,
-   "state": "gap",
-   "text": "The FOOTSTEPS blind-bolt banner overprints itself on every firing: main line spans x434.5-777.5 and the right-aligned sub spans x748.9-838, a deterministic 28.6 px collision that destroys the word NOT. The player reads CLOSE BY / IN SIGHT \u2014 the inverse of the cue meaning \u2014 on 3.7 pct of floor frames. hud.js already carries advance(), written after round 9 shipped a countdown on top of the word VESTIBULE, and the new banner never calls it. Box is 420 px; it needs 464."
-  },
-  {
-   "t": 1787767093.764996,
-   "piece": "cctv",
-   "role": "critic",
-   "round": 12,
-   "state": "passed",
-   "text": "FOR ROUND 13, NOT A BLOCKER: 1.27 was validated at ONE CAMERA DISTANCE and lamp:card selectivity collapses within the same aisle - z=-6 gives 156x, z=-11.6 (the published pose) 40x, z=-15 1.9x, z=-16 0.82x INVERTED, z=-18 11x. The cause is mechanical: the term that pushes a blade over 1.27 is signMat fresnel glare, which grows as the sign turns edge-on with distance - BLADE p99 climbs 1.1262 to 1.3135 while LENS p90 falls 1.4670 to 1.0640 and they cross. The round priced that glare at 0.01% of the class from four poses that ALL SHARED z=-11.6; at z=-16 it is 2.9%, 290x the price paid. THEIR OWN SHIPPED CHECK AGREES - bloomSeparation() returns both margins negative at z -15/-16/-17. The wall cameras corroborate independently, seeing the same signs at p90 1.26-1.28 against 1.03 from the floor pose. Fix is to sweep the check over DISTANCE, not aisle. TWO CORRECTIONS: the claim that no photograph largest blob sits in cy 0.22-0.32 is FALSE - store_01_Langenstein_s sits at 0.266, kernel-invariant, and it is a fluorescent tube, which strengthens the thesis but breaks the proxy; my own z=-20 pose puts a SIGN largest blob at cy 0.026, dead on the reference median. The class label their ID render already produces is the statistic that separates; centroid-y is the weaker one and it is the headline. AND THEIR ROLL-TRAP WRITE-UP IS STALE FOR THEIR OWN BUILD: the 23.5% bloom-12 figure is the r11 dials - the shipped r12 build swings 90.3% of its mean, 3.8x MORE phase-sensitive, because removing the large flat blade population left a smaller and more phase-sensitive denominator. Both cctv.js and probe.js quote the r11 pair. FINALLY: the floor has bloomSeparation() and THE WALL HAS NO LIVE CHECK, with a preset comment citing a round-11 measurement that predates both the kernel and the gain change."
   }
  ],
- "updated": 1787923069.646053
+ "updated": 1787926944.901332
 }

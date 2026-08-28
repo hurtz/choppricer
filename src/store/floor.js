@@ -40,6 +40,18 @@
 
 import { makeRng, rr } from './kit.js';
 import { FIELD_GLSL } from './light.js';
+import { makeTread, TREAD_GLSL } from './tread.js';
+
+// ---------------------------------------------------------------------------
+// ROUND 28 — THE ONE-PAGE-LOAD DIAL. Same shape as ./intrusions.js's
+// `?noIntrude` and ./light.js's `?flatcav`, deliberately: a control flag that
+// only one file knows about is a control flag the next round cannot use.
+// `?notread` is a byte-exact ablation of the moving occluder field and of
+// nothing else — it sets one strength uniform to zero and touches no geometry,
+// no texture, no RNG and no content.
+const TREAD_OFF = (() => {
+  try { return /[?&]notread(&|=|$)/i.test(location.search || ''); } catch { return false; }
+})();
 
 // ---------------------------------------------------------------------------
 // GONDOLA WALL LOOKUP. u = X across the store, v = height 0 -> WALL_TOP.
@@ -565,7 +577,54 @@ export function reflectiveFloor(THREE, opts) {
     // endcap you can see and one that measures 2% against the ceiling.
     uFldGain: { value: 3.05 },
   };
+
+  // -------------------------------------------------------------------------
+  // ROUND 28 — THE MOVING HALF OF THE FIELD. See ./tread.js for why it exists
+  // and for the three falsifiers that decided its shape. In one line: light.js's
+  // field is stamped by construction at BUILD time, so 101 of the 101 meshes
+  // that touch this floor and belong to a body that walks are not in it, and a
+  // cart moved one metre changes zero floor pixels.
+  const tread = makeTread(THREE, {
+    minX, minZ: opts.minZ, spanX, spanZ: opts.spanZ,
+  });
+  if (TREAD_OFF) tread.uniforms.uTreadCfg.value.z = 0;
+  Object.assign(U, tread.uniforms);
   mat.userData.chop = U;
+  mat.userData.chopTread = tread;
+
+  // THE LIGHT FIELD, READ OFF THE TEXTURE THE GPU IS BOUND TO rather than off
+  // the Float32 array it was baked from. The two differ — alpha is quantised to
+  // 8 bits over FIELD_H — and the question this answers is "does light.js
+  // already occlude here", which is a question about what the shader sees.
+  // Published artefact, one direction, no import: ../store.js hangs the field
+  // on the scene and this reads it.
+  let staticTop = null;
+  function makeStaticTop(scene) {
+    const f = scene && scene.userData && scene.userData.chopField;
+    if (!f || !f.uniforms || !f.uniforms.uFld.value) return null;
+    const img = f.uniforms.uFld.value.image;
+    if (!img || !img.data) return null;
+    const data = img.data, N = img.width;
+    const map = f.uniforms.uFldMap.value, H = f.uniforms.uFldCfg.value.x;
+    return (x, z) => {
+      const u = (x - map.y) * map.x, v = (z - map.w) * map.z;
+      if (u < 0 || v < 0 || u >= 1 || v >= 1) return 0;
+      const i = Math.min(N - 1, (u * N) | 0), j = Math.min(N - 1, (v * N) | 0);
+      return (data[(j * N + i) * 4 + 3] / 255) * H;
+    };
+  }
+  // DRIVEN OFF THE MATERIAL, NOT OFF A CALLER. ../store.js and ../main.js are
+  // lead-owned and neither has to learn this file exists: three calls
+  // material.onBeforeRender for every draw of every object using this material
+  // (WebGLRenderer.renderBufferDirect), which is exactly once per render of the
+  // floor. tick() does its own dirty check, so ../cctv.js's nine extra renders
+  // per frame cost one FNV over 101 translations and nothing else.
+  mat.onBeforeRender = (renderer, scene) => {
+    if (!scene) return;                    // the shadow pass passes null
+    if (!staticTop) staticTop = makeStaticTop(scene);
+    if (!staticTop) return;                // field not baked yet: no occluders
+    tread.tick(scene, staticTop);
+  };
 
   mat.onBeforeCompile = (sh) => {
     Object.assign(sh.uniforms, U);
@@ -582,7 +641,7 @@ uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain, uPropOn, uFl
 uniform float uSeamAlb;
 uniform vec2 uBlurA, uBlurB, uBlurMax, uFade, uFldRefl;
 uniform sampler2D uBurn;
-` + FIELD_GLSL + CHOP_SCENE_GLSL + `
+` + FIELD_GLSL + TREAD_GLSL + CHOP_SCENE_GLSL + `
 `)
       .replace('#include <opaque_fragment>', `#include <opaque_fragment>
 {
@@ -833,9 +892,42 @@ uniform sampler2D uBurn;
     gl_FragColor.rgb = mix( gl_FragColor.rgb, refl, clamp( fres * gloss, 0.0, 1.0 ) );
   }
 }
-`);
+`)
+      // ROUND 28 — WHAT IS STANDING HERE RIGHT NOW. See ./tread.js.
+      //
+      // ANCHORED AT <colorspace_fragment>, AND THE ANCHOR IS THE MEASUREMENT.
+      // This is the same trap light.js's patchAO documents one include earlier,
+      // and it cost this round an afternoon, so here is the number.
+      //
+      // The first version put this multiply at the end of the block above, i.e.
+      // inside <opaque_fragment>. light.js's AO_FRAG runs AFTER that, at
+      // <tonemapping_fragment>, and it does not only multiply — it ADDS the
+      // lamp diffuse, the lamp specular, the floor bounce, the aisle bounce and
+      // the daylight on top. Every one of those additions landed on top of my
+      // shadow at full strength, so a term that should have taken the floor to
+      // 0.685 of open took it to 0.924. Measured against the identical box
+      // stamped into light.js's own field, which reads 0.676: the shadow was
+      // arriving at 38% of its own size and nothing said so.
+      //
+      // <colorspace_fragment> is after AO_FRAG, after tonemapping, and before
+      // the sRGB encode — so this stays a multiply in LINEAR light, which is
+      // what an occlusion term is. Fog is deliberately still downstream: fog is
+      // in front of the surface, not on it.
+      //
+      // It is also outside the ny gate above, because a floor fragment seen
+      // edge-on takes no mirror and is still in shadow. Round 10 found the
+      // mirrored kickplate FILLING IN the contact skirt it was supposed to
+      // deepen; an occlusion term that only runs where the reflection runs
+      // repeats that fault one field along.
+      //
+      // treadSelfTest() is what keeps this honest: it compares this term with
+      // chopAO's on one identical box, so an anchor that drifts back under the
+      // additive terms shows up as a disagreement rather than as a slightly
+      // paler floor.
+      .replace('#include <colorspace_fragment>',
+        '\tgl_FragColor.rgb *= chopTread( vChopW );\n#include <colorspace_fragment>');
   };
-  mat.customProgramCacheKey = () => 'chopFloorR7';
+  mat.customProgramCacheKey = () => 'chopFloorR28';
   return mat;
 }
 
