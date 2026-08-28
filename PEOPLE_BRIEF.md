@@ -18,6 +18,33 @@ frame, and they are what the whole game asks the player to read.
 `reference/people/*.jpg` — real photographs of people shopping. Same method as the
 store: crops of a render placed beside crops of a photograph, normalised to identical
 size and encoding, judged blind by a critic with no knowledge of which is which.
+The harness is `tools/people_blindset.py`; read its header before trusting a score
+out of it, because cropping reopens five of the eight leaks the store harness
+catalogued and it says which are closed and which are merely declared.
+
+**The set is small, and every photograph in it was looked at by a human first.**
+Automated category harvesting produced a Ryanair 737, two black-and-white 1955
+Amsterdam street scenes and a half-resolution duplicate before anyone opened them;
+those sit in `_rejected/` with a note. Searching on phrasings that name both a
+person and a store interior does better than any category will. Two consequences
+that matter more than the inconvenience:
+
+- **Nothing joins the bar unlooked-at.** A reference set nobody has opened is worse
+  than no reference set, because it launders a bad comparison through a real-looking
+  score. A critic scoring our shoppers against an airliner learns nothing and
+  reports a number anyway.
+- **The blind harness is built but not yet seeded, deliberately.**
+  `tools/people_blindset.py` needs `reference/people/boxes.json` — a hand
+  annotation of where the people are in each photograph — and at eight
+  photographs a blind score would be a number with nothing behind it. The
+  informative pass at this n is a critic looking at the photographs and naming
+  what a real shopper does that ours does not. Seed the harness when the set is
+  large enough to survive being asked for a percentage.
+- **n is small enough to constrain what may be claimed.** The set answers "what does
+  a real shopper do that ours does not", which is the question these rounds are for.
+  It does not support a population statistic. If a report wants to say "N% of real
+  shoppers do X", it does not have the denominator — say what was seen, in how many
+  photographs, and let the observation carry itself.
 
 Two things that bar does NOT cover, so they get their own tests:
 - **Movement** cannot be judged in a still. It is judged from a strip of frames at a

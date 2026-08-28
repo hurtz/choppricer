@@ -173,11 +173,16 @@ def main():
                quality=QUALITY, subsampling=2, optimize=False)
         key[name] = {'class': cls, 'src': src}
 
-    with open(os.path.join(outdir, '_KEY.json'), 'w') as f:
+    # The key goes OUTSIDE outdir, as a sibling. Writing it inside and telling
+    # the operator to move it is the same class of mistake as leak 2: it works
+    # until once it doesn't, and the failure is silent and total -- a critic who
+    # lists the directory has scored 100% before looking at a single tile.
+    # Nothing in outdir is anything but a tile.
+    keypath = os.path.abspath(outdir.rstrip('/\\')) + '_KEY.json'
+    with open(keypath, 'w') as f:
         json.dump({'arm': arm, 'scale': scale, 'size': size, 'key': key}, f, indent=1)
     print(f'{len(items)} tiles at {size[0]}x{size[1]} ({scale}) -> {outdir}')
-    print('_KEY.json is the answer key. Do NOT give the critic this directory '
-          'listing with it in place -- move it out first.')
+    print(f'answer key -> {keypath}  (deliberately NOT inside the set)')
 
 
 main()

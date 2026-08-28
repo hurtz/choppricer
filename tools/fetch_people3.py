@@ -45,12 +45,15 @@ def cdn(base):
     """commons path scheme: /commons/<h[0]>/<h[0:2]>/<Underscored_name>"""
     u = base.replace(' ', '_')
     h = hashlib.md5(u.encode('utf8')).hexdigest()
-    # NOT /thumb/. Arbitrary thumb widths return 400 "Use thumbnail sizes
-    # listed on ..."; the original is served without that gate. Files run large
-    # (2-6 MB) and that is fine for a dozen reference photographs held outside
-    # the game.
-    return (f'https://upload.wikimedia.org/wikipedia/commons/'
-            f'{h[0]}/{h[0:2]}/{urllib.parse.quote(u)}')
+    # A LISTED thumbnail width. Three paths were tried and rejected: the
+    # Commons API 429s this host through a 16 s backoff; Special:FilePath
+    # returns an explicit robot-policy 429; and the ORIGINAL returns "Too many
+    # requests ... or instead use thumbnail images in sizes listed on
+    # <https://w.wiki/GHai>". 1024 is on that list, it is what they ask for,
+    # and it is more than enough resolution for a reference photograph.
+    q = urllib.parse.quote(u)
+    return (f'https://upload.wikimedia.org/wikipedia/commons/thumb/'
+            f'{h[0]}/{h[0:2]}/{q}/1024px-{q}')
 
 def main():
     os.makedirs(OUT, exist_ok=True)
