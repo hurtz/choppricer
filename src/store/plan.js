@@ -98,6 +98,56 @@ export const NONFOOD = new Set(
   DEPT_ORDER.filter((d) => !SKUS.some((r) => r[1] === d && skuFood(r[0]))),
 );
 
+// ---------------------------------------------------------------------------
+// ROUND 12 (people) — MERCHANDISING CLASS, and why the food line was never the
+// right cut.
+//
+// Round 5's rule is a BINARY: food may borrow a stray facing from food, non-food
+// from non-food. It stopped a carton of crackers appearing on the cleaning
+// shelf and it has held for seven rounds. It also lets `soda` — the department
+// that stocks the GRAB & GO cooler at the checkout — borrow from `frozen` and
+// from `bakery`, and the shipped store put these five in the pool the cooler
+// draws its box facings from:
+//
+//     COLA · SPARKLING WATER · FRUIT PUNCH · LEMON ICED TEA · DIET COLA   (own)
+//     CARAMEL POPCORN · INSTANT OATMEAL · PEPPERONI PIZZA · WAFFLES ·
+//     ALL PURPOSE FLOUR                                                (strays)
+//
+// Half the pool, in a chilled drinks case, behind glass, on the one fixture in
+// this building a player ever stands 600 mm from. The bottle pool is 4 own and
+// two cells of KIRBY'S SOY SAUCE. Every one of those passes the food test.
+//
+// So the cut is what a fixture MERCHANDISES, not whether it is edible. Five
+// classes, and the lending table is deliberately nearly diagonal:
+//
+//   dry      ambient grocery — freely interchangeable, and real. A box of
+//            crackers on the pasta shelf is a Tuesday.
+//   drink    lends to nobody. There is no ambient product that belongs in a
+//            drinks case, which is the whole finding.
+//   chilled  same.
+//   home     paper / laundry / cleaning
+//   body     HBA / baby / vitamins / pet
+//
+// home and body lend to each other because in a discount grocer they are
+// adjacent aisles that genuinely bleed into one another, and because they are
+// exactly NONFOOD — so round 5's property is preserved by construction rather
+// than by coincidence. cellsOfClass is a strict subset of cellsOfSide for every
+// department; products.js asserts it at module load.
+export const DEPT_CLASS = {
+  bakery: 'dry', canned: 'dry', pasta: 'dry', snacks: 'dry', breakfast: 'dry',
+  soda: 'drink',
+  frozen: 'chilled',
+  paper: 'home',
+  health: 'body',
+};
+const LENDS = {
+  dry: ['dry'],
+  drink: ['drink'],
+  chilled: ['chilled'],
+  home: ['home', 'body'],
+  body: ['body', 'home'],
+};
+
 // --- atlas grid descriptors (pack.js bakes these, store.js reads them) ------
 // ROUND 3 sized the CELLS (25-33% larger than round 2, because at 3x zoom on a
 // package a metre from camera the round-2 cells ran out of texels below the
@@ -255,21 +305,60 @@ function lanesFor(atlas, form, n, baked) {
   // correctly it is baked.
   const eligible = DEPT_ORDER.map((d, i) => (shelves(d, atlas) ? i : -1)).filter((i) => i >= 0);
   const L = DEPT_ORDER.length;
-  const cnt = DEPT_ORDER.map((d) => (shelves(d, atlas) ? MIN_PER_DEPT : 0));
+  // ---- ROUND 12 (people) — THE LANE CANNOT BE WIDER THAN THE SHELF ---------
+  //
+  // r17 replaced a random draw with a coverage deal because "widening a pipe
+  // that draws with replacement buys you sqrt of what you paid for". It fixed
+  // the draw and left the ALLOCATION able to make the same mistake one level
+  // up: a lane wider than the department's own distinct-SKU count spends the
+  // surplus on duplicates. Measured on the shipped plan, 11 of 120 cells:
+  //
+  //     pasta/bottle   5 cells, 1 distinct SKU   -> SOY SAUCE x5
+  //     canned/carton  3 cells, 1 distinct       -> BEEF BROTH x3
+  //     canned/pouch   3 cells, 1 distinct       -> CHUNK LIGHT TUNA x3
+  //     health/bottle  5 cells, 4 distinct       -> COUGH SYRUP x2
+  //     paper/can, frozen/can                    -> one repeat each
+  //
+  // Those are not "a second brand for the same product", which is what the
+  // round-robin note below is defending — the deal hands them the SAME SKU row,
+  // so they are the same noun, the same motif and the same copy pool. Capping
+  // each lane at its distinct count frees them for departments that still have
+  // unbaked products, and that is what pays for the tightened stray pools
+  // above: soda's bottle lane goes 4 -> 6 and gets SPRING WATER and APPLE
+  // JUICE, having just lost two cells of KIRBY'S SOY SAUCE.
+  //
+  // Measured over the whole plan: duplicate cells 11 -> 3, distinct nouns
+  // 99 -> 104, motif coverage unchanged at 81 of 81.
+  const cap = DEPT_ORDER.map((d) => (shelves(d, atlas)
+    ? new Set(poolOf(d, form).map((r) => r[0])).size : 0));
+  const cnt = DEPT_ORDER.map((d, i) => (shelves(d, atlas)
+    ? Math.min(MIN_PER_DEPT, cap[i]) : 0));
   const need = DEPT_ORDER.map((d) => (shelves(d, atlas) && hasOwn(d, form)
     ? Math.max(0, new Set(poolOf(d, form).map((r) => MOTIF[r[0]])
       .filter((m) => m && !baked.has(m))).size - MIN_PER_DEPT)
     : 0));
-  let rem = n - MIN_PER_DEPT * eligible.length;
+  let rem = n - cnt.reduce((a, b) => a + b, 0);
   let rr2 = 0;
   while (rem-- > 0) {
     let bi = -1;
-    for (let i = 0; i < L; i++) if (need[i] > 0 && (bi < 0 || need[i] > need[bi])) bi = i;
+    for (let i = 0; i < L; i++) {
+      if (need[i] > 0 && cnt[i] < cap[i] && (bi < 0 || need[i] > need[bi])) bi = i;
+    }
     // Once every department's motifs are spoken for, spare cells go round-robin
     // rather than piling onto lane 0. Leftovers are not waste — a second cell
     // for a product is a second BRAND, a second layout archetype and a second
     // copy draw, which is the variety half of the round.
-    if (bi < 0) { bi = eligible[rr2 % eligible.length]; rr2++; } else need[bi]--;
+    if (bi < 0) {
+      // ...but skip a lane that is already at its distinct count, and RELAX
+      // rather than deadlock if every lane is. n is fixed and the atlas has to
+      // be full: a plan that returned fewer than n lanes would leave cells
+      // holding whatever the previous atlas left in them.
+      for (let k = 0; k < eligible.length; k++) {
+        const c = eligible[(rr2 + k) % eligible.length];
+        if (cnt[c] < cap[c]) { bi = c; rr2 += k + 1; break; }
+      }
+      if (bi < 0) { bi = eligible[rr2 % eligible.length]; rr2++; }
+    } else need[bi]--;
     cnt[bi]++;
   }
   // Interleave, so neighbouring cells in the atlas are different departments.
@@ -332,6 +421,15 @@ export function cellsOfDept(atlas, deptKey) {
 export function cellsOfSide(atlas, deptKey) {
   const nf = NONFOOD.has(deptKey);
   return PLAN[atlas].filter((c) => NONFOOD.has(c.dept) === nf).map((c) => c.i);
+}
+// Cells a department may borrow a STRAY from. See DEPT_CLASS above: this
+// replaces cellsOfSide as products.js's stray source and is a strict subset of
+// it. A class that lends only to itself returns its own cells, so a department
+// alone in its class gets no strays at all — which for `soda` and `frozen` is
+// the correct answer and is why the deal below stopped handing out duplicates.
+export function cellsOfClass(atlas, deptKey) {
+  const lend = LENDS[DEPT_CLASS[deptKey]] || [DEPT_CLASS[deptKey]];
+  return PLAN[atlas].filter((c) => lend.includes(DEPT_CLASS[c.dept])).map((c) => c.i);
 }
 
 // --- what the plan promises -------------------------------------------------

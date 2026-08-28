@@ -11,8 +11,13 @@ import {
 } from './store/kit.js';
 import * as LT from './store/light.js';
 import {
-  DEPTS, FROZEN, fillShelf, fillBackRow, aspectCheck, clampAspect,
+  DEPTS, FROZEN, fillShelf, fillBackRow, aspectCheck, clampAspect, facePlanes,
 } from './store/products.js';
+// ROUND 12 (people) — the facing ledger. "When they pick something up off of
+// the shelf, they really should remove it from the shelf." See
+// ./store/shelfstock.js for why it walks the finished scene rather than hooking
+// Batch.push, and for the three things that stop a gap becoming a guilt tell.
+import { buildStock } from './store/shelfstock.js';
 import * as TX from './store/tex.js';
 import * as PK from './store/pack.js';
 import * as FL from './store/floor.js';
@@ -5517,6 +5522,35 @@ export function buildStore(THREE, scene) {
   }
 
   // =========================================================================
+  // THE FACING LEDGER. ROUND 12 (people).
+  // =========================================================================
+  // Built LAST, and that is load-bearing rather than tidy: it indexes the
+  // instance buffers the GPU is holding, so every flushPkg() has to have run and
+  // every geometry has to be the clone Batch actually shipped. It is the same
+  // stage chopShelfCheck() reads at and for the same reason — baked is not
+  // placed, and authored is not drawn.
+  //
+  // The planes come from products.js's registry rather than being re-derived
+  // here. r23 lost a round to exactly that: it recovered the shelf plane as a
+  // quantile of the instances it was censusing, kept back rank 1, and reported
+  // the rank pitch as a facing-to-facing stagger.
+  const STOCK = buildStock(THREE, scene, facePlanes());
+  scene.userData.chopStock = STOCK;
+  {
+    const s = STOCK.stockStats();
+    // An empty ledger is the failure this could plausibly have: one wrong
+    // predicate on aCell, or planes arriving empty, and takeFacing() returns
+    // null forever while nothing anywhere complains. It would look exactly like
+    // "agents.js has not wired it up yet".
+    if (!s.facings) {
+      throw new Error('store.js facing ledger: 0 takeable facings from '
+        + s.instances + ' instances across ' + s.meshes + ' package meshes ('
+        + s.planes + ' planes) — takeFacing() would be a permanent no-op');
+    }
+    scene.userData.chopStockStats = s;
+  }
+
+  // =========================================================================
   // FRONT_END — THE ANCHOR TABLE. ROUND 17.
   // =========================================================================
   // agents.js builds the people; this file builds the place. The contract
@@ -5688,5 +5722,26 @@ export function buildStore(THREE, scene) {
   scene.userData.chopFrontEnd = FRONT_END;
   scene.userData.chopTills = tills;
 
-  return { colliders, powerupSpots, frontEnd: FRONT_END, tills };
+  return {
+    colliders, powerupSpots, frontEnd: FRONT_END, tills,
+    // ---- THE FACING CONTRACT, r12. Defined by the lead so agents.js and this
+    // file could be built in parallel; the three named methods are exactly the
+    // shape that was specified and the rest is instrument surface.
+    //
+    //   takeFacing(x, y, z, r) -> null | { id, at, size, colour, kind }
+    //   putFacing(id)          -> bool
+    //   facingsTaken()         -> n
+    //
+    // HANDLES ARE TIED TO THIS BUILD. Each buildStore() gets its own epoch and
+    // its own id range, so a handle from a previous store — or one the FIFO has
+    // already closed, or one restockShelves() has swept — is simply not in the
+    // map and putFacing() returns false. Nothing throws, nothing is restored
+    // twice, and a caller holding a stale handle finds out by being told no.
+    takeFacing: STOCK.takeFacing,
+    putFacing: STOCK.putFacing,
+    facingsTaken: STOCK.facingsTaken,
+    restockShelves: STOCK.restockShelves,
+    stock: STOCK,
+    stockEpoch: STOCK.epoch,
+  };
 }

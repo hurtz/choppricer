@@ -17,7 +17,10 @@ import { rr, ri, pick, makeRng } from './kit.js';
 // ROUND 17 — the one owner of "what is in atlas cell i". See plan.js's header:
 // the cell->department convention used to be written down in three files and
 // had already gone wrong for FROZEN.
-import { cellsOfDept, cellsOfSide, planDeptCheck, planFamilyCheck } from './plan.js';
+import {
+  cellsOfDept, cellsOfSide, cellsOfClass, planDeptCheck, planFamilyCheck,
+  DEPT_FAMILIES, ATLAS_KIND,
+} from './plan.js';
 // ROUND 23 — the side face. facet.js owns the clearance derivation (which used
 // to be two expressions here, one of them wrong on every Z-axis run) and the
 // alternating depth step that gives adjacent facings something to be a side
@@ -429,13 +432,32 @@ export const FROZEN = {
 // atlas needed an edit in this file at all. Both now come from plan.js, which
 // deals the cells and knows which department and which side of the food line
 // each one landed on. `total` is gone; there is nothing here to keep in sync.
+// ROUND 12 (people) — the stray source is now the MERCHANDISING CLASS and not
+// the food line. See DEPT_CLASS in plan.js for the measurement that forced it;
+// the short version is that half the pool the GRAB & GO cooler drew its box
+// facings from was popcorn, oatmeal, pizza, waffles and flour, and every one of
+// those passed the food test. The assertion below proves the new rule is a
+// strict TIGHTENING and not a different rule that happens to be smaller.
 const strayList = (atlas, key, n) => {
-  const side = cellsOfSide(atlas, key).filter((c) => !cellsOfDept(atlas, key).includes(c));
+  const side = cellsOfClass(atlas, key).filter((c) => !cellsOfDept(atlas, key).includes(c));
   const out = [];
   // deterministic, evenly spaced through the eligible list rather than random:
   // a department's stray set should be stable across reloads so a shelf that
   // looked right in a screenshot looks the same in the next one.
-  for (let k = 0; k < n && side.length; k++) out.push(side[(k * 7 + 3) % side.length]);
+  //
+  // ROUND 12 (people) — IT WAS NOT EVENLY SPACED AND HAD NOT BEEN SINCE ROUND
+  // 5. The expression was `side[(k * 7 + 3) % side.length]`, and a stride of 7
+  // walking a list whose length shares a factor with 7 visits ONE index, n
+  // times. health's carton class pool is exactly 7 candidates long, so the
+  // health aisle's five stray carton cells were five copies of DISHWASHER PACS.
+  // It was invisible while the pools were 20-40 cells wide and appeared the
+  // moment the class rule made them small — a latent bug that a tightening
+  // exposes rather than causes, which is the third one of those in this file.
+  //
+  // Spacing by k*len/n has no stride and therefore no bad length: it is the
+  // thing the comment above always claimed.
+  const L = side.length;
+  for (let k = 0; k < n && L; k++) out.push(side[Math.floor((k + 0.5) * L / n) % L]);
   return out;
 };
 const poolFor = (atlas, key, strays) => [...cellsOfDept(atlas, key), ...strayList(atlas, key, strays)];
@@ -463,6 +485,37 @@ const poolFor = (atlas, key, strays) => [...cellsOfDept(atlas, key), ...strayLis
     fam[d.key] = [...new Set([...(d.kinds || []), ...(d.soft || [])].map((k) => k.t))];
   }
   bad.push(...planFamilyCheck(fam));
+
+  // ---- ROUND 12 (people) — TWO PROPERTIES OF THE STRAY RULE ---------------
+  //
+  // 1. IT IS A TIGHTENING. Round 5's food-line rule is seven rounds old and has
+  //    been right the whole time; the class rule is meant to be strictly inside
+  //    it, not beside it. If a class ever lends across the food line — one
+  //    careless edit to LENDS — a carton of crackers reappears on the cleaning
+  //    shelf and nothing else in this codebase would notice.
+  //
+  // 2. NO SHELVED FAMILY MAY HAVE AN EMPTY POOL. dealCell falls back to
+  //    `dept.cells.box` when a family's pool is empty, and a CARTON cell index
+  //    used against the pouch grid is out of range: cell 40 of a 6x5 atlas.
+  //    That fallback has never fired, and tightening the strays is exactly the
+  //    kind of change that would make it fire — soda's bag pool and frozen's
+  //    bottle pool are now empty, and both are safe only because neither
+  //    department shelves that family. This asserts the "only because".
+  const ATL = { box: 'carton', bag: 'pouch', can: 'can', bottle: 'bottle' };
+  for (const d of [...DEPTS, FROZEN]) {
+    for (const [famKey, atlas] of Object.entries(ATL)) {
+      const cls = new Set(cellsOfClass(atlas, d.key));
+      for (const c of cls) {
+        if (!cellsOfSide(atlas, d.key).includes(c)) {
+          bad.push(d.key + '/' + atlas + ' stray cell ' + c + ' crosses the food line');
+        }
+      }
+      const shelved = (DEPT_FAMILIES[d.key] || []).includes(ATLAS_KIND[atlas]);
+      if (shelved && !d.cells[famKey].length) {
+        bad.push(d.key + ' shelves ' + famKey + ' and has an EMPTY cell pool');
+      }
+    }
+  }
   if (bad.length) throw new Error('products.js/plan.js department drift: ' + bad.join(' | '));
 }
 
@@ -1152,7 +1205,41 @@ export function fillBackRow(B, rng0, dept, opts) {
     const h = Math.max(0.06, Math.min(headroom - 0.02, rr(rng, headroom * 0.5, headroom * 0.97)));
     const pd = Math.min(depth, rr(rng, 0.10, 0.19));
     const hsl = slot && rng() < 0.72 ? slot.hsl : pick(rng, dept.colors);
-    const cell = slot && rng() < 0.72 ? slot.cell : pick(rng, dept.cells.box);
+    // ---- ROUND 12 (people) — A CELL INDEX IS ONLY MEANINGFUL IN ITS OWN
+    //      ATLAS, AND THIS LINE HAS BEEN CROSSING THEM SINCE ROUND 20.
+    //
+    // Every unit in a back row is drawn as a CARTON — the push below is
+    // `B.box.push` and always has been. `slot.cell` is dealt by dealCell(dept,
+    // slot.fam), so on a slot whose family is a bottle or a can it is an index
+    // into the BOTTLE or CAN atlas, and handing it to the carton batch prints
+    // whatever carton happens to sit at that index. Soda's six bottle cells
+    // {1,4,7,10,13,16} came out of the carton atlas as
+    //
+    //   BEEF BROTH · COLA · PAIN RELIEVER · THIN SPAGHETTI · INSTANT OATMEAL
+    //   · FISH STICKS
+    //
+    // — five of six from the wrong department and one of them across the food
+    // line, which is the exact defect round 5 exists to prevent, arriving by a
+    // route round 5 could not see. Found in the GRAB & GO cooler while auditing
+    // the stray pools: one box of spaghetti standing behind the drinks.
+    //
+    // It is worth more than it looks. This function fills the rank you see
+    // THROUGH the gaps, and as of this round the player makes gaps deliberately
+    // and then looks straight at them.
+    //
+    // THE FIX CONSUMES THE IDENTICAL RNG STREAM. `rng() < 0.72` is drawn either
+    // way and `pick` runs on exactly the branch it ran on before; the family
+    // test is applied to the VALUE, not to whether a draw happens. So drawSig()
+    // is unchanged and nothing downstream of this function re-rolls — which is
+    // the whole reason r20's child-stream note exists. The replacement is a
+    // carton cell from the same department keyed by slot index, so a slot's
+    // whole back row is one design: the thing the comment above already claims,
+    // now true for bottle and can slots as well as box ones.
+    const keep = rng() < 0.72;
+    const cell = slot && keep
+      ? (slot.fam === 'box' ? slot.cell
+        : dept.cells.box[slot.i % dept.cells.box.length])
+      : pick(rng, dept.cells.box);
     const n = ri(rng, 1, 4);
     // ---- ROUND 23 — THE BACK RANK WAS A LITERAL PLANE ---------------------
     // `back = pd / 2 + 0.008` put every box in a rank's front face EXACTLY 8 mm
@@ -1456,7 +1543,13 @@ export function fillShelf(B, rng0, dept, opts) {
         const sp = q === 0 ? sA + rr(rng, 0.01, 0.06)
           : (q === 1 ? sB - rr(rng, 0.03, 0.10) : sA + rng() * bw);
         const tipped = rng() < 0.38;
-        place(sk, pick(rng, dept.cells[sk.t] || dept.cells.box), sw, sd, sp,
+        // `dept.cells[sk.t] || dept.cells.box` never fired its fallback: an
+        // empty pool is `[]`, which is truthy, so it picked from nothing and
+        // handed `undefined` to Batch, which stores `(undefined|0) = 0` — cell
+        // zero of the atlas, silently. Same shape as the back-row leak above.
+        // The pool cannot be empty for a family this department shelves; the
+        // module-load assertion at the head of this file is what says so.
+        place(sk, pick(rng, dept.cells[sk.t].length ? dept.cells[sk.t] : dept.cells.box), sw, sd, sp,
           deckY + (stepAt ? stepAt(sp) : 0) + (tipped ? sw * 0.5 : sh / 2),
           Math.min(Math.max(0, depth - sd - 0.02), rr(rng, 0.06, 0.19)),
           baseRy + rr(rng, -0.5, 0.5), tipped ? Math.PI / 2 : rr(rng, -0.12, 0.12),

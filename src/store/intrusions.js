@@ -649,6 +649,29 @@ export function makeIntrusions(ctx) {
   // AND MOST OF THEM ARE HALF EMPTY. That is not decoration. The clearest
   // single object in the reference crop is a row of BARE hooks with nothing on
   // them, and a full strip is the rarer state in a real store.
+  // ROUND 12 (people) — WHICH POUCH DESIGN AN INTRUSION WEARS.
+  //
+  // Both bag pushes in this file used `(rng() * 8) | 0`. That is a FIFTH copy of
+  // the atlas-size convention plan.js was written to abolish — "there is no
+  // longer any arithmetic anywhere that turns a department index into a cell
+  // index" — and it was wrong twice over. Cells 0-7 of the pouch atlas are one
+  // per department in lane order, so every clip strip and every stray bag in the
+  // building wore a UNIFORMLY RANDOM DEPARTMENT'S artwork: BABY WIPES and FABRIC
+  // SOFTENER hanging on the bakery run, in the front rank, in the aisle volume,
+  // which is the class of object this file exists to put closest to the camera.
+  // It also meant only 8 of the atlas's 30 pouch designs were ever reachable
+  // from here.
+  //
+  // One draw either way, so drawSig() and every downstream rng are untouched.
+  // The fallback keeps the old expression and fires for `soda` alone — the one
+  // department with no pouch pool, because it shelves no bag. A snack bag
+  // clipped to the drinks run is not a leak; a clip strip IS cross-merchandising
+  // and that is what it is for.
+  const bagCell = (dept) => {
+    const p = dept && dept.cells && dept.cells.bag;
+    return (p && p.length) ? p[(rng() * p.length) | 0] : ((rng() * 8) | 0);
+  };
+
   function clipStrip(o) {
     const { lip, dir, top, z, B, dept, col, deckY, V } = o;
     // ROUND 26 — THE OUT DISTANCE IS NOW A CONSTRUCTION GUARANTEE, not a taste
@@ -711,7 +734,7 @@ export function makeIntrusions(ctx) {
       B.bag.push(out + dir * rr(rng, 0.046, 0.068), hy - 0.034,
         z + rr(rng, -0.008, 0.008),
         rr(rng, -0.07, 0.07), (dir > 0 ? Math.PI / 2 : -Math.PI / 2) + rr(rng, -0.16, 0.16),
-        0, rr(rng, 0.062, 0.086), rr(rng, 0.052, 0.070), 0.020, col, (rng() * 8) | 0);
+        0, rr(rng, 0.062, 0.086), rr(rng, 0.052, 0.070), 0.020, col, bagCell(dept));
     }
     L.clipStrip++;
     reach(outD + 0.068 + 0.035);
@@ -900,7 +923,7 @@ export function makeIntrusions(ctx) {
       const seat = y + halfY;
       if (seat > py) { L.straySeated++; L.straySeatMax = Math.max(L.straySeatMax, seat - py); py = seat; }
     }
-    B.bag.push(lip + dir * ov, py, z, ex, ey, ez, sx, sy, sz, col, (rng() * 8) | 0);
+    B.bag.push(lip + dir * ov, py, z, ex, ey, ez, sx, sy, sz, col, bagCell(dept));
     L.stray++;
     reach(ov + halfX);
   }

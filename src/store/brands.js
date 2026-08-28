@@ -269,7 +269,17 @@ export const SKUS = [
   ['FISH STICKS',           'frozen', 'frozenMeal',   'C'],
   ['PEPPERONI PIZZA',       'frozen', 'frozenMeal',   'C'],
   ['WAFFLES',               'frozen', 'frozenMeal',   'C'],
+  // ROUND 12 (people). The frozen case is the only fixture in the store that
+  // shelves a `can`-family package (K.bigTub) out of a department with ONE 'N'
+  // SKU. That was invisible while frozen could borrow strays across the food
+  // line — the tubs were varied by being wrong, a can of sweet peas standing in
+  // a freezer — and it becomes a single repeated design the moment the stray
+  // pool is cut to the merchandising class. Two more tubs, same product class
+  // and same motif as the one that was there, so the deal can fill three cells
+  // with three brands of the thing that is actually in a freezer.
   ['VANILLA ICE CREAM',     'frozen', 'iceCream',     'N'],
+  ['CHOCOLATE ICE CREAM',   'frozen', 'iceCream',     'N'],
+  ['ORANGE SHERBET',        'frozen', 'iceCream',     'N'],
   ['FUDGE BARS',            'frozen', 'novelty',      'C'],
 ];
 

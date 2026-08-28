@@ -1956,6 +1956,7 @@ export const MOTIF = {
   'CORN ON THE COB': 'cornCob', 'MIXED BERRIES': 'berries', 'FRENCH FRIES': 'fries',
   'CHICKEN TENDERS': 'nuggets', 'FISH STICKS': 'fishStick', 'PEPPERONI PIZZA': 'pizzaSlice',
   WAFFLES: 'pancakes', 'VANILLA ICE CREAM': 'iceCream', 'FUDGE BARS': 'iceBar',
+  'CHOCOLATE ICE CREAM': 'iceCream', 'ORANGE SHERBET': 'iceCream',
 };
 
 // Which product classes carry a character on the pack in a real store, and how
