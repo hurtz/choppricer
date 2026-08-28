@@ -41,6 +41,7 @@
 import { makeRng, rr } from './kit.js';
 import { FIELD_GLSL } from './light.js';
 import { makeTread, TREAD_GLSL } from './tread.js';
+import { makeMirror, MIRROR_GLSL, MIR_BAND } from './mirror.js';
 
 // ---------------------------------------------------------------------------
 // ROUND 28 — THE ONE-PAGE-LOAD DIAL. Same shape as ./intrusions.js's
@@ -51,6 +52,37 @@ import { makeTread, TREAD_GLSL } from './tread.js';
 // no texture, no RNG and no content.
 const TREAD_OFF = (() => {
   try { return /[?&]notread(&|=|$)/i.test(location.search || ''); } catch { return false; }
+})();
+
+// ---------------------------------------------------------------------------
+// ROUND 30 — `?flatmirror`, AND THE CONTROL IS A SET OF UNIFORM VALUES RATHER
+// THAN A SECOND CODE PATH.
+//
+// Every change this round makes to the mirror is a NUMBER the shader already
+// reads. The control arm is those numbers set to round 29's, which means the
+// two arms run the identical instruction stream on identical geometry and
+// differ in nothing a probe cannot print. That is deliberate: leak 9 was "a
+// dial that also re-rolled content is not a dial", and the cheapest way to be
+// sure a dial re-rolls nothing is for it not to touch anything but uniforms.
+//
+// R29 — what the shipped round-29 build computed, term by term:
+//   lift    (0.12, 1.15)   round 10's kickplate ramp on the reflected radiance
+//   colFoot (0.06, 0.16)   the colour tap read at the OCCLUSION footprint
+//   smear    0.0           no along-aisle displacement of the colour tap
+//   rag     (2.2, 1.5, 0.72, 0.58)   the per-cell brightness hash, z then x
+//   moving   0.0           nothing that walks is in the mirror at all
+export const R29 = {
+  lift: [0.12, 1.15],
+  colFoot: [0.06, 0.16],
+  smear: 0.0,
+  rag: [2.2, 1.5, 0.72, 0.58],
+  moving: 0.0,
+  sat: 1.0,               // the identity of chopMirSat
+  f0: [0.040, 0.860],     // 0.040 + 0.820 * pow(1-ny,5) written as a pair
+  vb: 0.0,                // one tap, no vertical smear
+};
+const MIRROR_FLAT = (() => {
+  try { return /[?&]flatmirror(&|=|$)/i.test(location.search || ''); } catch { return false; }
 })();
 
 // ---------------------------------------------------------------------------
@@ -571,6 +603,117 @@ export function reflectiveFloor(THREE, opts) {
     //      soft the top edge of a reflected object is
     uPropOn: { value: 0.0 },
     uFldRefl: { value: new THREE.Vector2(2.60, 0.30) },
+    // ROUND 30 — THE FIVE NUMBERS THAT DECIDE WHETHER AN OBJECT IS IN THE
+    // FLOOR. Every one of them is measured; see the block above the march.
+    //
+    // uMirLift — the reflected radiance of a vertical surface at height y.
+    //   Round 10 set this to 0.12 + 1.15 * smoothstep(0.02, 0.90, y), i.e. the
+    //   bottom 200 mm of everything in the store reflects at an eighth of room
+    //   light, and justified it as "a kickplate at L20 against a top facing at
+    //   L150". That ratio is a RATIO OF PRODUCTS: dark rubber under bright
+    //   packaging is mostly a difference in ALBEDO, and the albedo is already
+    //   in the field's own RGB — the low band at a gondola foot is stamped with
+    //   the kickplate's colour and reads it. Round 10 charged the kickplate's
+    //   darkness twice, once in the pigment and once here, and the half that
+    //   was double-counted is the half a real floor shows most of: the 200 mm
+    //   of a free-standing barrel, endcap or shopper immediately above the
+    //   contact line, which is not a recessed toe space and is not shadowed
+    //   like one. The remaining honest term is ILLUMINANCE — a vertical face
+    //   under a 4 m strip really does dim toward the floor — and that is a
+    //   factor of about 2.4 over the first metre, not 10.
+    //   The contact skirt round 10 was defending is now enforced downstream and
+    //   by a term that knows where the occluder is: light.js's chopAO at
+    //   <tonemapping_fragment> and tread's multiply at <colorspace_fragment>
+    //   both scale this reflection AFTER it is composited.
+    uMirLift: { value: new THREE.Vector2(0.42, 0.72) },
+    // uMirCol — .xy the COLOUR tap's footprint (metres, a + b*t); .z the
+    //   along-aisle smear; .w unused.
+    //   THE COLOUR TAP IS NOT THE OCCLUSION TAP AND THIS IS THE ROUND'S
+    //   MECHANISM. light.js's field is not premultiplied and its 3,104,010
+    //   empty cells hold (189,179,160) — the floor's own beige, not black. Ask
+    //   it for a colour through a 2.22 m footprint, which is what the occlusion
+    //   lobe is at the far end of a chase pose, and it answers (181,183,174):
+    //   saturation 8 of 255, off a store whose occupied cells average 38 and
+    //   whose displays reach 251. "How much of my lobe is blocked" is a
+    //   lobe-width question. "What colour is the thing blocking it" is not, and
+    //   reading them at one footprint is what made the mirror achromatic.
+    //   0.045/m against the occlusion's 0.16/m holds the colour footprint at
+    //   0.66 m where the occlusion is at 2.22 m. The real fix belongs in
+    //   light.js — see the contract request in the round report.
+    uMirCol: { value: new THREE.Vector4(0.06, 0.045, 0.55, 0.0) },
+    // uMirRag — the ragged vertical streak, .xy the lattice in cycles/m (z, x),
+    //   .zw base and span. Round 8 wrote the intent — "a ragged red column two
+    //   or three times its own width in Z" — and implemented it as a hash on a
+    //   0.45 x 0.67 m FLOOR-space lattice, which is a checkerboard: it mottles
+    //   a reflection and cannot stretch one. A burnisher runs the length of the
+    //   aisle, so the cell has to be long in z and short in x, which is the
+    //   opposite of what was there.
+    uMirRag: { value: new THREE.Vector4(0.34, 1.70, 0.80, 0.40) },
+    // uMirSat — THE SATURATION BOTH LOOKUPS HAVE ALREADY HAD TAKEN OUT OF THEM,
+    // PUT BACK, AROUND THEIR OWN LUMA. 1.0 is the identity and is round 29.
+    //
+    // The two things this floor mirrors are stored desaturated, each for its own
+    // reason, and neither reason survives inspection:
+    //
+    //  * wallLUT() above multiplies every department colour by 0.42 in HSL, on
+    //    the argument that "a reflection off a matte floor is a dim,
+    //    desaturated ghost, never the product colour itself" (round 5). The DIM
+    //    is right and it is already charged, twice: fresnel times gloss, which
+    //    measures 0.043 mean and 0.51 max over the visible floor. Desaturating
+    //    the source as well charges the same dimming a third time, in the one
+    //    channel this round is about.
+    //  * chopFldCol reads light.js's field, which is NOT premultiplied and
+    //    whose 3,104,010 empty cells hold the floor's own beige — so every mip
+    //    the reflection lobe asks for is a colour mixed toward that beige by an
+    //    amount nobody records. Measured on the live artefact at the only
+    //    sample down aisle 1 that hits anything: (181,183,174), saturation 8 of
+    //    255, through a 2.22 m footprint.
+    //
+    // Both are a mix toward a near-neutral, so the inverse of both is a push
+    // away from luma. That is what this is: exact for the first, a
+    // single-constant approximation of the second, and it cannot invent a hue
+    // that is not already there because a grey stays grey at any k.
+    // Calibrated against the references' own floors — see the round report.
+    // 1 / 0.42 = 2.38 would be the exact inverse of the HSL multiplier wallLUT()
+    // applies. It is not what shipped: at 2.38 the mid-field floor beside a run
+    // reads as separate magenta and green patches, because the LUT bands every
+    // shelf in its own department colour and the inverse restores all of that
+    // contrast at once. The references' floors are warm and low-variance
+    // (mean CIELAB chroma 18.90 over the fourteen, and in the yellow-red
+    // quadrant), so this is deliberately short of the full inverse.
+    uMirSat: { value: 1.80 },
+    // uMirVB — the vertical smear of the gondola lookup, in v units of a
+    // 2.55 m wall, i.e. 0.10 is 255 mm of shelf height averaged either way.
+    // See the note at the tap. 0 is round 29.
+    uMirVB: { value: 0.10 },
+    // uMirF0 — the fresnel pair, .x at normal incidence and .y at grazing.
+    // Round 4 typed 0.040 / 0.820 as "sealed VCT: F0 about 0.04", which is the
+    // textbook figure for a bare dielectric and is why the near half of this
+    // floor is matte to everything. What the references actually do, measured
+    // rather than assumed, on reference/store_12's polished terrazzo, linear
+    // luminance, three boxes:
+    //     dark wood produce table              Y 0.1310
+    //     floor directly under it              Y 0.1691
+    //     open floor either side of it     Y 0.3883 / 0.3534
+    // i.e. the floor beneath a dark object sits at 54% BELOW the open floor
+    // beside it and within 29% of the object itself: (open - under) /
+    // (open - object) = 0.85. That figure is reflection AND the object's own
+    // occlusion together, so it is an upper bound on the mirror alone — but the
+    // render's near field answers 0.04 to the same question, and no split of
+    // 0.85 into two terms leaves 0.04 for one of them.
+    // These are a CALIBRATION against that measurement, not a derivation: the
+    // same admission ../store/floor.js's own uGF0 makes one function down, where
+    // 0.04 was replaced by 0.34 because a reach-in door is a coated assembly and
+    // not a single air/glass interface.
+    uMirF0: { value: new THREE.Vector2(0.220, 0.900) },
+    // uMirDbg — WHAT THE MIRROR IS ACTUALLY CARRYING, written straight to the
+    // framebuffer so a probe reads the shader's own intermediates instead of
+    // inferring them from a difference of two composites. Two rounds have now
+    // been wrong about a term by reasoning at the wrong pipeline stage; this is
+    // cheap and it removes the guesswork. 0 = off (one uniform compare, no
+    // branch taken), 1 pocc, 2 pcol, 3 lit, 4 hitY / 2.6, 5 fres*gloss,
+    // 6 refl, 7 the moving flag.
+    uMirDbg: { value: 0.0 },
     // Illuminance on a vertical sales-floor surface, in the same linear units
     // uLightCol is in. The lamp is 3.30; a matte facing under it returns a
     // couple of tenths of that, and it is the difference between a reflected
@@ -589,8 +732,28 @@ export function reflectiveFloor(THREE, opts) {
   });
   if (TREAD_OFF) tread.uniforms.uTreadCfg.value.z = 0;
   Object.assign(U, tread.uniforms);
+
+  // ROUND 30 — THE COLOUR OF THE MOVING HALF. ./mirror.js, over the same
+  // footprint, rebuilt off TREAD'S OWN item list and TREAD'S OWN worldOf(): no
+  // second scene walk, no second collection rule, and by construction no way
+  // for the two to disagree about which objects move or where they are.
+  const mirror = makeMirror(THREE, {
+    minX, minZ: opts.minZ, spanX, spanZ: opts.spanZ,
+  });
+  Object.assign(U, mirror.uniforms);
+  if (MIRROR_FLAT) {
+    U.uMirLift.value.fromArray(R29.lift);
+    U.uMirCol.value.set(R29.colFoot[0], R29.colFoot[1], R29.smear, 0);
+    U.uMirRag.value.fromArray(R29.rag);
+    U.uMirCfg.value.w = R29.moving;
+    U.uMirSat.value = R29.sat;
+    U.uMirF0.value.fromArray(R29.f0);
+    U.uMirVB.value = R29.vb;
+  }
   mat.userData.chop = U;
   mat.userData.chopTread = tread;
+  mat.userData.chopMirror = mirror;
+  mat.userData.chopR29 = R29;
 
   // THE LIGHT FIELD, READ OFF THE TEXTURE THE GPU IS BOUND TO rather than off
   // the Float32 array it was baked from. The two differ — alpha is quantised to
@@ -623,7 +786,12 @@ export function reflectiveFloor(THREE, opts) {
     if (!scene) return;                    // the shadow pass passes null
     if (!staticTop) staticTop = makeStaticTop(scene);
     if (!staticTop) return;                // field not baked yet: no occluders
-    tread.tick(scene, staticTop);
+    // ONE DIRTY CHECK, TREAD'S. tick() returns true iff its FNV over the
+    // occluders' world translations changed, i.e. iff something moved. A second
+    // hash over the same 353 translations that could disagree with the first is
+    // the exact shape of bug this project's brief spends a page on.
+    const moved = tread.tick(scene, staticTop);
+    mirror.sync(tread, moved);
   };
 
   mat.onBeforeCompile = (sh) => {
@@ -638,13 +806,33 @@ export function reflectiveFloor(THREE, opts) {
       .replace('#include <common>', `#include <common>
 varying vec3 vChopW;
 uniform float uGloss, uTile, uTileVar, uTileTilt, uSeam, uWallGain, uPropOn, uFldGain;
-uniform float uSeamAlb;
-uniform vec2 uBlurA, uBlurB, uBlurMax, uFade, uFldRefl;
+uniform float uSeamAlb, uMirDbg, uMirSat, uMirVB;
+// Saturation about a colour's own luma. k = 1 is the identity, so the round-29
+// control arm runs this function and gets its input back unchanged.
+vec3 chopMirSat( vec3 c, float k ) {
+  return mix( vec3( dot( c, vec3( 0.2126, 0.7152, 0.0722 ) ) ), c, k );
+}
+uniform vec2 uBlurA, uBlurB, uBlurMax, uFade, uFldRefl, uMirLift, uMirF0;
+uniform vec4 uMirCol, uMirRag;
 uniform sampler2D uBurn;
-` + FIELD_GLSL + TREAD_GLSL + CHOP_SCENE_GLSL + `
+vec4 chopDbgV = vec4( 0.0 );
+` + FIELD_GLSL + TREAD_GLSL + MIRROR_GLSL + CHOP_SCENE_GLSL + `
 `)
       .replace('#include <opaque_fragment>', `#include <opaque_fragment>
 {
+  // ASSIGNED HERE, NOT AT ITS DECLARATION, AND THE DIFFERENCE COST AN HOUR.
+  // "vec4 chopDbgV = vec4( 0.0 );" at global scope is legal GLSL and this
+  // driver does not honour it: with the debug channel switched OFF, large
+  // regions of the floor came back pure white in the shape of the ny gate,
+  // in BOTH arms, because .a was reading garbage above 0.5 and .rgb was
+  // reading garbage above 1.0. An instrument that is only supposed to be live
+  // when a uniform says so has to be dead by ASSIGNMENT, not by initialiser —
+  // and the write below is guarded by the uniform as well, so the branch
+  // cannot be reached at all in a shipped frame.
+  chopDbgV = vec4( 0.0 );
+  if ( uMirDbg > 0.5 ) chopDbgV.a = 1.0;   // every floor fragment, so a probe's
+                                           // denominator is the floor and not
+                                           // "the floor where something hit"
   vec3 Pw = vChopW;
   vec3 Vd = Pw - cameraPosition;
   float camD = length( Vd );
@@ -757,7 +945,7 @@ uniform sampler2D uBurn;
     // through the reflection all the way to the vanishing point, which is what
     // reference/store_05 shows. Letting it hit 1.0 blew the mid-field out into
     // stage lighting.
-    float fres = 0.040 + 0.820 * pow( 1.0 - ny, 5.0 );
+    float fres = uMirF0.x + ( uMirF0.y - uMirF0.x ) * pow( 1.0 - ny, 5.0 );
     // wax is not uniform; a burnished floor is glossier where the machine ran
     float gloss = uGloss * ( 0.62 + 0.66 * burn );
     // NEAR still gates the per-tile WAX variation and the cup, which are
@@ -809,8 +997,8 @@ uniform sampler2D uBurn;
     float tTop = ( uShelfH - Pw.y ) / R.y;
     float tFld = ( uFldRefl.x - Pw.y ) / R.y;
     float occ = 0.0, hitT = tTop;
-    float pocc = 0.0, hitY = 0.0;
-    vec3 pcol = vec3( 0.0 );
+    float pocc = 0.0, hitY = 0.0, pT = 0.0, pMov = 0.0;
+    vec3 pQ = Pw;
     for ( int i = 0; i < 7; i ++ ) {
       float t = tTop * ( float( i ) + 0.5 ) / 7.0;
       vec3 Q = Pw + R * t;
@@ -828,21 +1016,49 @@ uniform sampler2D uBurn;
         // the further out the sample is — the same reason the ceiling tap has
         // a growing footprint, applied to the geometry instead of the lamps
         float lod = log2( max( 1.0, ( 0.06 + t * 0.16 ) * uFldCfg.y ) );
-        vec4 hit = chopFldHit( Q, lod, uFldRefl.y + t * 0.05 );
-        // ROUND 9 — the colour at the ray's OWN HEIGHT, not the column
-        // average. Same fix as the glass and the same reason: a floor mirroring
-        // an endcap should show its dark kick low and its promo header high,
-        // and one averaged colour per column cannot.
-        if ( hit.a > pocc ) { pocc = hit.a; pcol = chopFldCol( Q.xz, Q.y, lod ); hitY = Q.y; }
+        float soft = uFldRefl.y + t * 0.05;
+        vec4 hit = chopFldHit( Q, lod, soft );
+        // ROUND 30 — AND THE HALF OF THE ROOM THAT WALKS. ./tread.js owns the
+        // height of everything light.js's build-time bake cannot see; it is the
+        // same question asked of a second sampler, at the same sample, with the
+        // same softness. Its 101 shoppers, casters and baskets have had a
+        // contact shadow since round 28 and no mirror image at all.
+        float mh = chopTreadTop( Q.xz, log2( max( 1.0, ( 0.06 + t * 0.16 ) * uTreadCfg.y ) ) );
+        float mo = ( 1.0 - smoothstep( mh - soft, mh + soft * 0.55, Q.y ) )
+                 * step( 0.05, mh ) * uMirCfg.w;
+        // ROUND 30 — ONE COLOUR FETCH, AND IT IS OUTSIDE THE LOOP. Round 9's
+        // rule (the colour at the ray's OWN HEIGHT, not the column average) is
+        // kept exactly; what changes is that only the WINNING sample is read.
+        // The old form called chopFldCol on every sample that beat the running
+        // maximum — up to twelve two-tap colour fetches down one ray — and paid
+        // for eleven of them to be overwritten. That is what buys the moving
+        // field's extra height tap.
+        if ( hit.a > pocc ) { pocc = hit.a; pQ = Q; pT = t; hitY = Q.y; pMov = 0.0; }
+        if ( mo > pocc ) { pocc = mo; pQ = Q; pT = t; hitY = Q.y; pMov = 1.0; }
       }
     }
     if ( occ > 0.004 ) {
       vec3 Q = Pw + R * hitT;
       // v runs 0 at the floor to 1 at the top rail; the LUT is drawn that way
       // up and CanvasTexture's flipY already puts row 0 at v = 1.
-      vec2 wuv = vec2( ( Q.x - uWallMap.y ) * uWallMap.x,
-                       clamp( Q.y / uWallTop, 0.0, 1.0 ) );
-      vec3 w = texture2D( uWall, wuv ).rgb * uWallGain;
+      float wu = ( Q.x - uWallMap.y ) * uWallMap.x;
+      float wv = clamp( Q.y / uWallTop, 0.0, 1.0 );
+      // ROUND 30 — THE SMEAR THE HEADER PROMISES AND THE CODE NEVER DID.
+      // wallLUT()'s own first paragraph: "What a burnished floor shows of a
+      // shelf run is not the shelf: it is a VERTICALLY smeared average of it.
+      // So this is authored blurred on purpose." The blur it then authors is
+      //     for ( i = -3..3 ) bg.drawImage( c, i * 3, 0 )
+      // which is seven taps along X and none along Y. Every shelf band's own
+      // department colour therefore survives at full contrast in the one axis
+      // the comment says it should not, and the floor beside a run comes back
+      // as a stack of separate coloured stripes instead of one band. Three taps
+      // here rather than a rebake, so the control arm is still a uniform value:
+      // uMirVB = 0 is round 29 exactly.
+      vec3 w = chopMirSat( (
+          texture2D( uWall, vec2( wu, clamp( wv - uMirVB, 0.0, 1.0 ) ) ).rgb
+        + texture2D( uWall, vec2( wu, wv ) ).rgb
+        + texture2D( uWall, vec2( wu, clamp( wv + uMirVB, 0.0, 1.0 ) ) ).rgb
+        ) * ( 1.0 / 3.0 ), uMirSat ) * uWallGain;
       // the END of a run is a wood panel under a red promo header, not shelf
       w = mix( w, chopCapCol( Q.y ), chopEnd( Q.z ) * 0.85 );
       // vertical streaking: the reflection of a shelf on a buffed floor is a
@@ -868,7 +1084,37 @@ uniform sampler2D uBurn;
       // the light falling on it — and in a supermarket that light is a
       // continuous strip four metres straight up, so a facing's top is over a
       // stop brighter than its kick. uFldGain is that illuminance.
-      float pn = chopHash( vec2( floor( Pw.z * 2.2 ), floor( Pw.x * 1.5 ) ) );
+      // ROUND 30 — THE CELL IS LONG DOWN THE AISLE. Round 8's own words for
+      // what this term is for: "a ragged red column two or three times its own
+      // width in Z". A hash on a 0.45 x 0.67 m lattice in FLOOR space cannot
+      // do that — it is a checkerboard, and a checkerboard mottles a reflection
+      // instead of stretching it. uMirRag.xy is the lattice in cycles per metre
+      // (z first, then x, the order the old call used), and at 0.34 / 1.70 the
+      // cell is 2.94 m along the aisle by 0.59 m across it.
+      float pn = chopHash( vec2( floor( Pw.z * uMirRag.x ), floor( Pw.x * uMirRag.y ) ) );
+      // ROUND 30 — AND THE COLOUR IS FETCHED HERE, ONCE, AT A FOOTPRINT THAT IS
+      // NOT THE OCCLUSION'S. See uMirCol's note in the uniform bag for the
+      // measurement; in one line, asking a field whose empty cells hold the
+      // floor's own beige for a colour through a 2.22 m mip returns beige.
+      // The along-aisle displacement is the burnisher's lobe, which is several
+      // times longer than it is wide, applied where a lobe belongs: on the tap.
+      float smear = ( burn - 0.5 ) * uMirCol.z * ( 0.35 + pT );
+      float lodC = log2( max( 1.0, ( uMirCol.x + pT * uMirCol.y ) * uFldCfg.y ) );
+      vec3 pcol;
+      if ( pMov > 0.5 ) {
+        // the moving half: ./mirror.js, premultiplied, so this mip is a
+        // coverage-weighted average of the colours actually standing there —
+        // and the coverage comes back in .a and scales the occlusion, because
+        // an object that fills a fifth of the lobe puts a fifth of the lobe's
+        // radiance into the floor at its OWN colour. See chopMirColF's note.
+        vec4 mc = chopMirColF( pQ.xz + vec2( 0.0, smear ), pQ.y,
+                               log2( max( 1.0, ( uMirCol.x + pT * uMirCol.y ) * uMirCfg.x ) ) );
+        pcol = mc.rgb;
+        pocc *= mc.a;
+      } else {
+        // ...and the beige the mip mixed into it, taken back out. See uMirSat.
+        pcol = chopMirSat( chopFldCol( pQ.xz + vec2( 0.0, smear ), pQ.y, lodC ), uMirSat );
+      }
       // ROUND 10 — 0.74..1.36 -> 0.12..1.27, i.e. 0.9 stops of vertical range
       // to 3.4. THE MIRROR DID NOT SHADE WHAT IT REFLECTED.
       //
@@ -885,9 +1131,26 @@ uniform sampler2D uBurn;
       // is not reaching this fixture class" on the largest occluder in the set.
       // 0.12 at the line to 1.27 by 900 mm is 3.4 stops, which is what a
       // kickplate at L20 against a top facing at L150 actually measures.
-      vec3 lit = pcol * uFldGain * ( 0.12 + 1.15 * smoothstep( 0.02, 0.90, hitY ) );
-      refl = mix( refl, lit * ( 0.72 + 0.58 * pn ), clamp( pocc * 1.45, 0.0, 1.0 ) );
+      // ROUND 30 — ...AND HALF OF THOSE 3.4 STOPS ARE ALREADY IN pcol. The
+      // paragraph above is right about the illuminance and wrong about the
+      // size, because L20 against L150 is mostly a difference in PIGMENT and
+      // the pigment is in the field: the low band at a gondola foot is stamped
+      // with the kickplate's own dark colour and this term multiplied it by
+      // 0.12 on top. What is left once the albedo is not charged twice is the
+      // vertical illuminance falloff under a 4 m strip, and round 10's own
+      // defence of the crush — the mirror filling in the contact skirt — is now
+      // held by two terms that know where the occluder is and run AFTER this
+      // one: light.js's chopAO at <tonemapping_fragment> and tread's multiply
+      // at <colorspace_fragment>. uMirLift, so it is a number a probe can read.
+      vec3 lit = pcol * uFldGain * ( uMirLift.x + uMirLift.y * smoothstep( 0.02, 0.90, hitY ) );
+      refl = mix( refl, lit * ( uMirRag.z + uMirRag.w * pn ), clamp( pocc * 1.45, 0.0, 1.0 ) );
       gloss *= 1.0 - 0.12 * pocc;
+      chopDbgV = vec4( uMirDbg < 1.5 ? vec3( pocc )
+        : uMirDbg < 2.5 ? pcol
+        : uMirDbg < 3.5 ? lit
+        : uMirDbg < 4.5 ? vec3( hitY / 2.6 )
+        : uMirDbg < 5.5 ? vec3( clamp( fres * gloss, 0.0, 1.0 ) )
+        : uMirDbg < 6.5 ? refl : vec3( pMov ), 1.0 );
     }
     gl_FragColor.rgb = mix( gl_FragColor.rgb, refl, clamp( fres * gloss, 0.0, 1.0 ) );
   }
@@ -925,9 +1188,20 @@ uniform sampler2D uBurn;
       // additive terms shows up as a disagreement rather than as a slightly
       // paler floor.
       .replace('#include <colorspace_fragment>',
-        '\tgl_FragColor.rgb *= chopTread( vChopW );\n#include <colorspace_fragment>');
+        '\tgl_FragColor.rgb *= chopTread( vChopW );\n'
+        // ROUND 30 — AND THE DEBUG CHANNEL IS WRITTEN HERE, NOT WHERE IT IS
+        // COMPUTED, FOR THE REASON THE PARAGRAPH ABOVE IS ABOUT. Its first
+        // version assigned gl_FragColor inside <opaque_fragment>; light.js's
+        // AO_FRAG then ADDED the lamp diffuse, the lamp specular, the floor
+        // bounce and the daylight on top of it, so every channel came back
+        // reading roughly the lit floor and the probe learned nothing. An
+        // instrument is subject to the same stage error as the term it
+        // measures. Still upstream of the sRGB encode, so what lands in the
+        // framebuffer is the linear value encoded once.
+        + '\tif ( uMirDbg > 0.5 && chopDbgV.a > 0.5 ) gl_FragColor.rgb = chopDbgV.rgb;\n'
+        + '#include <colorspace_fragment>');
   };
-  mat.customProgramCacheKey = () => 'chopFloorR28';
+  mat.customProgramCacheKey = () => 'chopFloorR30';
   return mat;
 }
 

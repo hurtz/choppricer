@@ -1,7 +1,7 @@
 {
  "pieces": {
   "store": {
-   "round": 29,
+   "round": 30,
    "state": "critiquing",
    "shots": [
     {
@@ -368,6 +368,16 @@
      "round": 29,
      "path": "../shots/r29_wear_chase_a4.png",
      "t": 1787929360.2760162
+    },
+    {
+     "round": 29,
+     "path": "../shots/r29_critic_floor_specular.png",
+     "t": 1787930600.4296908
+    },
+    {
+     "round": 30,
+     "path": "../shots/r30on_chase_a1.png",
+     "t": 1787933888.3338408
     }
    ],
    "gaps": [
@@ -526,12 +536,20 @@
     {
      "round": 27,
      "text": "The aisle floor carries luminance nothing in the scene causes and none that everything in the scene should - curling filaments that ignore tile-seam perspective and subtend the same size at 4 m and 12 m, and NOTHING standing on the floor darkens it: not shoes, not any of four cart casters, not the endcap base, not one kick plate, while every caster in the matched Ingles reference has a contact shadow."
+    },
+    {
+     "round": 29,
+     "text": "The floor has no specular response. Every real store floor in reference/ mirrors the room; the game floor is purely diffuse and nothing standing on it is ever reflected in it. Frames and regions. RENDER chase_a6 frame_00, the saturated red BUY 2 GET 1 barrel at x 812-878 with floor at y 525-585, takes 0.04 of the barrel's own chroma offset; chase_a1 frame_04 red endcap at x 686-716 takes 0.10; chase_a4 frame_13 red barrel takes 0.02 and the cart and both shoppers throw no reflection at all. Against PHOTO store_08 where terrazzo takes 0.31 of the Jelly Belly orange and 0.50 of the Lay's blue, and store_12 and store_11 where the produce case and the bakery case are readable as full-height mirror images in the floor. Round 28 added real contact occlusion and round 29 removed the fake marks, so what is now under every object is a correct short contact shadow and nothing else, where a real polished floor answers with a reflection as tall as the object. OBSERVATION confidence HIGH: visible without any statistic, reproduces across store_07, store_08, store_11 and store_12, and the one catch tile I scored 4 of 5 rather than 5 was store_05 Ingles, the flattest and least reflective real floor in the set. EXPLANATION confidence MODERATE: I believe the floor material is diffuse-only with no environment or screen-space reflection term, but I did not read the source and both statistics I built to prove it failed. FALSIFIERS. One, add a reflection term and re-run an absolute single-image test with catch trials; if floor render-recall stays at ceiling the cue is not the floor and the next round should leave the floor alone. Two, if a scorer calls clean-floor tiles RENDER just as fast with the reflection present, the mechanism is the metronomic grout lattice instead. Three, if hue transfer measured with machine-placed rather than hand-placed boxes over ten-plus cases per class does not separate, the explanation is wrong even though the observation stands."
+    },
+    {
+     "round": 29,
+     "text": "The floor has no specular response to objects. It mirrors the ceiling and the lights but nothing standing on it: object chroma in the floor beneath it reads 0.02 to 0.10 against store_08 terrazzo at 0.31 and 0.50, and store_11 and store_12 where cases are readable as full-height mirror images. Round 28 had already written the mechanism in its own not-fixed list - the reflected march reads a field that carries no colour."
     }
    ],
-   "updated": 1787929371.804288,
-   "note": "handoff. Acceptance: absolute single-image classification with an occlusion-exact floor mask and PHOTOGRAPH CATCH TRIALS. Run 1, 20 tiles: RENDER 12 of 16, p = 0.0384; CATCH 4 of 4; FAR band 8 of 8; NEAR band 4 of 8. All 8 windows carried a non-zero arm difference (armMAD 0.99 to 6.81 of 255) so all 16 render tiles could carry a percept - against 8 of round 28's 12. Scope: near_a1 and near_a4 hold ZERO visible floor pixels, independently reproduced, so this reaches 4 of 6 poses. Arms proven to differ only in the change: one page load, one scene graph, one texture object swapped; 617,555 of 617,626 differing pixels lie inside the floor mask and the other 71 are one 22x13 cluster of plus-or-minus 1 of 255 where the 4mm-high wear plane covers the bottom sliver of one object; near_a1 and near_a4 are byte-identical between arms. Run 1's NEAR misses were 3 of 4 ON tiles called FLOATING on the scorer's own change; the scuff geometry was constrained in response and a labelled memory-contaminated NEAR re-run reads 6 of 8. Both of its misses are ONE window, chase_a6 NEAR, inverted in both arms and in both runs - a non-zero arm difference is necessary but not sufficient, the difference has to be in the feature the criterion names. Retired: the image-space compact-dark-mark census counts GROUT, not wear.",
-   "gap": "The aisle floor carries luminance nothing in the scene causes and none that everything in the scene should - curling filaments that ignore tile-seam perspective and subtend the same size at 4 m and 12 m, and NOTHING standing on the floor darkens it: not shoes, not any of four cart casters, not the endcap base, not one kick plate, while every caster in the matched Ingles reference has a contact shadow.",
-   "verdict": "12/12 render-recall on WHOLE FRAMES, both arms. Twenty-eighth round at 100%."
+   "updated": 1787933888.333834,
+   "note": "floor mirror: objects now put their own colour in the floor. New src/store/mirror.js is a premultiplied linear colour field for everything that moves, built off tread.js own item list and its own dirty hash - no second scene walk. Diagnosis: light.js field is not premultiplied and its 3,104,010 empty cells hold the floor beige, so a 2.22 m reflection mip returned saturation 8 of 255. Colour tap split from the occlusion tap, round 10 kickplate crush halved because the albedo was charged twice, fresnel F0 0.040 to 0.220 calibrated against store_12 terrazzo where the floor under a dark table sits 54 percent below the open floor beside it. Arms differ only in uniform values, near_a1 and near_a4 byte-identical, 3530 of 3530 outside-mask diffs are floor behind glass. Draw calls 368 equals 368, live frame 8.3 ms.",
+   "gap": "The floor has no specular response to objects. It mirrors the ceiling and the lights but nothing standing on it: object chroma in the floor beneath it reads 0.02 to 0.10 against store_08 terrazzo at 0.31 and 0.50, and store_11 and store_12 where cases are readable as full-height mirror images. Round 28 had already written the mechanism in its own not-fixed list - the reflected march reads a field that carries no colour.",
+   "verdict": "12/12 render-recall on whole frames, control 6/6 and r29 6/6. Twenty-ninth round at ceiling. No tenth leak - one quantization table, one SOF spec, no EXIF or ICC, overlapping byte sizes, null pair byte-identical."
   },
   "cctv": {
    "round": 15,
@@ -1200,6 +1218,30 @@
   }
  },
  "log": [
+  {
+   "t": 1787933888.333842,
+   "piece": "store",
+   "role": "builder",
+   "round": 30,
+   "state": "critiquing",
+   "text": "floor mirror: objects now put their own colour in the floor. New src/store/mirror.js is a premultiplied linear colour field for everything that moves, built off tread.js own item list and its own dirty hash - no second scene walk. Diagnosis: light.js field is not premultiplied and its 3,104,010 empty cells hold the floor beige, so a 2.22 m reflection mip returned saturation 8 of 255. Colour tap split from the occlusion tap, round 10 kickplate crush halved because the albedo was charged twice, fresnel F0 0.040 to 0.220 calibrated against store_12 terrazzo where the floor under a dark table sits 54 percent below the open floor beside it. Arms differ only in uniform values, near_a1 and near_a4 byte-identical, 3530 of 3530 outside-mask diffs are floor behind glass. Draw calls 368 equals 368, live frame 8.3 ms."
+  },
+  {
+   "t": 1787930724.5068212,
+   "piece": "store",
+   "role": "critic",
+   "round": 29,
+   "state": "gap",
+   "text": "The floor has no specular response to objects. It mirrors the ceiling and the lights but nothing standing on it: object chroma in the floor beneath it reads 0.02 to 0.10 against store_08 terrazzo at 0.31 and 0.50, and store_11 and store_12 where cases are readable as full-height mirror images. Round 28 had already written the mechanism in its own not-fixed list - the reflected march reads a field that carries no colour."
+  },
+  {
+   "t": 1787930600.4296918,
+   "piece": "store",
+   "role": "critic",
+   "round": 29,
+   "state": "gap",
+   "text": "The floor has no specular response. Every real store floor in reference/ mirrors the room; the game floor is purely diffuse and nothing standing on it is ever reflected in it. Frames and regions. RENDER chase_a6 frame_00, the saturated red BUY 2 GET 1 barrel at x 812-878 with floor at y 525-585, takes 0.04 of the barrel's own chroma offset; chase_a1 frame_04 red endcap at x 686-716 takes 0.10; chase_a4 frame_13 red barrel takes 0.02 and the cart and both shoppers throw no reflection at all. Against PHOTO store_08 where terrazzo takes 0.31 of the Jelly Belly orange and 0.50 of the Lay's blue, and store_12 and store_11 where the produce case and the bakery case are readable as full-height mirror images in the floor. Round 28 added real contact occlusion and round 29 removed the fake marks, so what is now under every object is a correct short contact shadow and nothing else, where a real polished floor answers with a reflection as tall as the object. OBSERVATION confidence HIGH: visible without any statistic, reproduces across store_07, store_08, store_11 and store_12, and the one catch tile I scored 4 of 5 rather than 5 was store_05 Ingles, the flattest and least reflective real floor in the set. EXPLANATION confidence MODERATE: I believe the floor material is diffuse-only with no environment or screen-space reflection term, but I did not read the source and both statistics I built to prove it failed. FALSIFIERS. One, add a reflection term and re-run an absolute single-image test with catch trials; if floor render-recall stays at ceiling the cue is not the floor and the next round should leave the floor alone. Two, if a scorer calls clean-floor tiles RENDER just as fast with the reflection present, the mechanism is the metronomic grout lattice instead. Three, if hue transfer measured with machine-placed rather than hand-placed boxes over ten-plus cases per class does not separate, the explanation is wrong even though the observation stands."
+  },
   {
    "t": 1787929371.804289,
    "piece": "store",
@@ -2135,31 +2177,7 @@
    "round": 16,
    "state": "building",
    "text": "r16 COPY. Independent lexical auditor, tools/copyaudit.mjs, 45 rules that share nothing with brands.js: 35.64% of facings carried a contradiction, now 0.00% over 500,000 draws. Fixed by splitting 18 classes that held different products (spread -> nutSpread/fruitSpread/tableSyrup, otc -> analgesic/antacid/coughCold/allergy, bodycare -> hairCare/skinCare, bread -> slicedLoaf/bunRoll, and so on), 11 new legal sets so a jar of marinara no longer says DO NOT USE IF THE CAN IS DENTED (8.81% of all facings), form-gated bands, and 11 declared tag-conflict pairs for the couplings that are INSIDE one product \u2014 the soda class is right, drawing its sugar flash independently of its calorie roundel was not. copyCheck() rewritten to test what it is named for: it drives copyFor 3,240 times at load and re-derives each tag from the PRINTED TEXT, plus a 169,188-tuple exhaustive form. It catches 4 seeded contradictions and stays silent on the real table."
-  },
-  {
-   "t": 1787770526.527394,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "r16 DEPICTION. The cue was semantic: no facing carried a depicted real-world object. New src/store/depict.js \u2014 82 motif drawings, one assigned per SKU (140/140, depictCheck throws on a miss), dispatched by product noun. A can of peaches draws peach halves with the pit hollow, spaghetti draws strands round a fork, toothpaste draws the ribbon on the brush, baby wipes draw a human face. Five mascot marks (bird/bear/chef/rabbit/baby) on the 14 classes that carry one in a real store. pack.js foodPhoto() and heroPanel() retired: they drew the same 26 random ellipses on flour, tuna and kettle chips because their only product input was a hue band, and wrote r=200 so the food took 78% of the carton brand colour. The bottle atlas carried NO picture at all and now does. Evidence: shots/r16_motifs_final.png (all 82 through a shader-accurate decode), shots/r16_facings.png (a dozen facings at a COMPUTED chase range of 84 px across a 0.20 m facing = 1.75 m from a 52 deg fov camera at 1280x720, plus 4x)."
-  },
-  {
-   "t": 1787770100.212485,
-   "piece": "game",
-   "role": "builder",
-   "round": 15,
-   "state": "building",
-   "text": "banner fixed and measured: main 413->756, sub 778->867, 22px gap, box 482px (was 420 with a 28.6px overprint eating the word NOT). openPairs extended below pad/0.45: cap45 draft now caught 252/592, all in step 0.4/0.6/0.8"
-  },
-  {
-   "t": 1787769658.161817,
-   "piece": "cctv",
-   "role": "builder",
-   "round": 13,
-   "state": "critiquing",
-   "text": "REPLACED THE ABSOLUTE THRESHOLD WITH A LOCAL-GRADIENT SELECTOR, AFTER SHOWING NO SCALAR THRESHOLD EXISTS. FIRST, WHAT THE PLAYER CAMERA CAN ACTUALLY REACH, measured off the rig: chaseCam is height 2.36, dist 5.55, look 1.55, fov 57, and driving the cop down aisle 3 the camera z runs from -18.9 (it CLAMPS there against the front wall) up to +9.45, continuously. THE INVERTED STRETCH IS WHERE THE PLAYER STANDS WHEN THEY STEP ONTO THE FLOOR - they walk through it every time - and the four poses 1.27 was chosen from sat 4.4 m past it. THE STRONGER FINDING: at z = -17, -16, -15 and -2 the interval [printed p99, lens p90] is EMPTY. No scalar threshold separates, INCLUDING A PER-POSE OPTIMAL ONE. bloomSeparation() now returns separable directly. THE FIX IS AN OPERATOR CHANGE, NOT A CONSTANT: the threshold was doing two jobs - choosing what haloes, and stopping a flat surface from MULTIPLYING ITSELF - and only the second eats a numeral. A source flat over the 5.2 px kernel has every tap equal to its centre so the kernel degenerates to the identity; shaders.js 3b now subtracts what the centre would contribute to its own neighbourhood, so on a flat source h == hc BIT-FOR-BIT and the term is EXACTLY ZERO AT ANY BRIGHTNESS. A glare can fake amplitude; it cannot fake a gradient it does not have. Zero extra texture fetches, still 12. RIGHT RATHER THAN MERELY EFFECTIVE, ON THREE COUNTS: the injection the critic predicted (bladeSigns x1.20) flips the r12 largest blob to BLADE n1194 cy 0.319 and leaves r13 at LENS cy 0.010; flatGain() reads the flat lift at +0.00182 against a grain floor of 0.00661 where r12 read +0.01531; and sign-class blown falls at 15 OF 15 poses. THE THRESHOLD STAYS 1.27 AND ITS OWN PROBE IS WHY: it expected it could come down, and at 1.15 numeral() reads glyphArea 1.306 / IoU 0.766, the round-11 defect. The local kernel protects a flat PANEL, not the GLYPH - the floor under bloomThr is the numeral own flat white at 1.2383, not the sign. THE HONEST HALF: the largest blob is STILL a BLADE at z -17/-16/-2 on both kernels, because at those poses the troffers are DIMMER in the raw buffer (p90 1.02-1.08) than the printed numeral (1.2383), and the camera cannot frame ceiling nearer than 18.3 m - so NO LUMINANCE-DOMAIN SELECTOR OF ANY SHAPE CAN SEPARATE THEM. Two named ways out, neither in this file: store.js lamp emissive, or an emitter mask channel. THE WALL LIVE CHECK BUILT: probe.wallSeparation() reads LENS 0 on eight feeds and 13 TEXELS ON CH09 - a correction, since a lensN === 0 assertion would have fired - with BLADE clearing 61.6-88.2% on CH02/03/04/06/07. WALL AND SPOT SHIP bloomLocal: 0 DELIBERATELY: the flat multiply is what makes CH09 front-door daylight blow, and switching it off costs that feed 2.2257 -> 0.0799, 28x. Uncomfortable finding stated in the file: daylight tops out at 1.0287 RAW, DIMMER than the printed card, so the wanted artefact was being produced by the bug - what makes it safe there is SIZE (a blade is 16-198 raw texels), not brightness. THREE CORRECTIONS: the roll trap swings 92.7% (r12) / 100.3% (r13), not the 23.5% both files quoted, 4x understated; centroid-y verified and retired (store_01_Langenstein_s largest blob at cy 0.2661/0.2663/0.2663 across three kernels, and cropping it shows a bare fluorescent tube); and RESTORED TO ITS DRAWN SHAPE WAS UNDERSTATED - with the macroblocker ablated the numeral reads EXACTLY 1.000 on r12 and r13 at all four poses against a validated positive control, so the 0.988-1.023 spread and the critic ~4% residual are both the codec. NO REGRESSION: round-12 published row reproduces to 0.002 on blown% and to the third decimal on centroid-y; r13 has largest blob LENS at 4/4, sign share down at all four, lamp share up at three, all inside the band. Cost stated: whole-frame blown falls 2-12% again and aisle 1 at 0.274 is only 0.031 above the band minimum - the pose to watch."
   }
  ],
- "updated": 1787929371.8042922
+ "updated": 1787933888.333844
 }

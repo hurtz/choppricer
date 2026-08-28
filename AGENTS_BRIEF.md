@@ -4199,3 +4199,357 @@ reporting noise.**
 
 Cost: draw calls **391 = 391**, triangles identical, textures 66 = 66, programs 79 = 79; bake
 34-41 ms -> 78-109 ms, one-time at load.
+
+## A CRITIC INVALIDATED THE PREVIOUS ROUND'S POSITIVE RESULT USING THAT ROUND'S OWN NUMBERS
+
+Round 29 reported **12 of 16, p = 0.0384, catch 4 of 4** and it was written up here — and in the
+lead's report to the user — as the strongest result of the run. **It does not survive.** Round
+29's critic took it apart with figures round 29 had itself recorded:
+
+**1. The near/far split was confounded with how much floor was in the tile.** Round 29's FAR
+windows are **20-25% floor** (`floorfrac` 0.2029-0.2469 against a 0.15 selector threshold) while
+its NEAR windows are **99-100%**. So FAR 8/8 against NEAR 4/8 is not a distance result: **the near
+band was hard because it is the only band that actually shows floor.**
+
+**2. And the criterion saturates.** It labels **the fixed ON arm NONE and a real photograph NONE —
+the same answer.** An instrument that returns the same label for your fix and for a photograph
+**cannot see the gap that decides the bar.** Once the fake pools were gone, its near score went to
+chance, and **chance there is the instrument going blind, not a pass.**
+
+**THIS IS THE MOST IMPORTANT METHODOLOGICAL ENTRY IN THIS FILE.** The absolute single-image test
+replaced the matched-arm forced choice because that one confabulated. But a single-image criterion
+can fail the opposite way: **by being satisfiable.** Round 29 asked "is there an unattached dark
+pool?", fixed the pools, and the question stopped discriminating anything.
+
+**Before running an acceptance test, state what your criterion returns for three inputs: the OFF
+arm, the ON arm, and a real photograph. If ON and the photograph get the same answer, the test is
+finished before it starts.**
+
+The critic's own criterion is the model: it deliberately **did not mention smudges or shadows** and
+instead named **surface microstructure and lattice metronomy** — properties a photograph and a
+render differ on regardless of what the round changed. It scored **26 of 26, p = 1.5e-8, with ON
+9/9 AND OFF 9/9 both called RENDER at mean confidence 5.0/5, and catch 8/8.**
+
+**What does survive from round 29:** the fix is real, the arm difference sits exactly on visible
+floor, the OFF arm does carry obvious unattached arcs, and its correction of the white-strokes
+claim is right. **The 211 pools were a genuine defect and they are genuinely gone. It just was not
+what the bar turns on.**
+
+## No tenth leak — and this is what checking for one looks like
+
+All 25 frames verified to share **one quantization-table hash, one SOF spec (4:2:0), no EXIF, no
+ICC, no comment segment, identical dimensions, and byte sizes overlapping across classes**; and the
+**null pair `near_a1`/`near_a4` confirmed byte-identical between arms, zero differing pixels.** The
+whole-frame harness holds.
+
+## THE CUE: THE FLOOR MIRRORS THE CEILING AND NOT THE STORE
+
+Object chroma appearing in the floor beneath the object:
+
+    red barrel  frame_00   0.04 of its own chroma offset
+    endcap      frame_04   0.10
+    barrel      frame_13   0.02
+    store_08 terrazzo      0.31 and 0.50
+    store_11 / store_12    cases readable as FULL-HEIGHT MIRROR IMAGES
+
+**And round 28 had already written the mechanism down in its own "what I did not fix":** *"A
+shopper standing on a burnished floor still has no mirror image; the floor's reflected march reads
+light.js's field and my field carries no colour."* The mirror is real — round 28 measured it moving
+2 px against a 6-7 px seam parallax, correct for a virtual source 2.9 m below the floor. **It
+reflects the lights. It does not reflect the store.**
+
+Observation **high**; explanation **moderate**, and stated as such because the critic did not read
+the source. **Both statistics it built to prove it FAILED and it published both:** vertical mirror
+correlation with an alignment scan **overfits and does not separate** (photo +0.421 against render
++0.412), and within-image paired hue transfer is **unstable to hand box placement and blind to
+low-chroma objects** (gated out 2 of 5 photograph cases, one of them wrong-signed).
+
+**An observation that survives its own failed instruments is stronger than one propped up by a
+statistic**, and this is the second time a critic here has been right by eye while its numbers
+refused to cooperate.
+
+## ROUND 30 — THE MIRROR DID HAVE A COLOUR TERM ALL ALONG, AND IT WAS READING BEIGE
+
+Round 28's confession ("the floor's reflected march reads light.js's field and my field carries
+no colour") is true of `tread.js` and **false of the mirror as a whole.** `floor.js` has marched
+light.js's Field for colour since round 8. Ablated on the live artefact, inside an
+occlusion-exact floor mask:
+
+    term ablated      frac of floor px      mean |delta| /255     mean chroma shift
+    lamps                 0.21-0.32              7.6-10.7               0.56-0.86
+    ceiling surface       0.44-0.55               5.0-6.6               0.53-0.75
+    gondola wall LUT      0.09-0.22               2.0-5.0               0.48-0.91
+    static objects        0.38-0.55              6.6-21.1               1.16-2.88
+    the whole mirror      0.93-0.99              7.6-15.0               1.02-1.74
+
+So the objects ARE in it. **What they are not in is any hue.** Removing the entire object term
+moves the floor's chroma by p50 0.02-0.08, p99 5.9-9.3, max 12.5-16.4 — and QUADRUPLING its gain
+(uFldGain 3.05 -> 12.2) moves the max from 13.4 to 14.6 and no further. A term that saturates
+under a 4x gain is not weak. It is achromatic.
+
+## THE MECHANISM: A MIP OF A FIELD WHOSE EMPTY CELLS HOLD THE FLOOR'S OWN BEIGE
+
+`light.js`'s Field stores colour in RGB and height in A, **not premultiplied**, and — counted on
+the live texture — **3,104,010 of its empty cells carry (189, 179, 160)**, the floor's colour, not
+black. Harmless at the base mip. The mirror does not read the base mip: the reflection lobe widens
+along the ray, so `lod = log2((0.06 + t*0.16) * 48.4 texels/m)`. Marched down aisle 1 in JS off the
+same texture data, the only sample on that ray that hits anything reads through a **2.22 m
+footprint** and returns **(181, 183, 174) — saturation 8 of 255**, off a store whose occupied cells
+average 38 and whose displays reach 251.
+
+**"How much of my lobe is blocked" is a lobe-width question. "What colour is the thing blocking
+it" is not.** Reading both at one footprint is what made the mirror grey.
+
+## AND ROUND 10 CHARGED THE KICKPLATE'S DARKNESS TWICE
+
+`lit = pcol * uFldGain * (0.12 + 1.15 * smoothstep(0.02, 0.90, hitY))`. Round 10 justified the
+0.12 floor as "a kickplate at L20 against a top facing at L150" — but that ratio is mostly a
+difference in **pigment**, and the pigment is already in `pcol`: the field's low band at a gondola
+foot is stamped with the kickplate's own dark colour. The half that was double-charged is the half
+a floor shows most of: the 200 mm above the contact line of a free-standing barrel, endcap or
+shopper, which is not a recessed toe space. Round 10's defence of the crush — the mirror filling
+in the contact skirt — is now held by two terms that know where the occluder is and run AFTER it:
+chopAO at `<tonemapping_fragment>` and tread's multiply at `<colorspace_fragment>`.
+
+## `src/store/mirror.js` — PREMULTIPLIED, IN LINEAR, AND WHY IT IS NOT IN tread.js
+
+The moving half genuinely had no colour. tread.js knows where 353-445 movers are standing every
+frame and is R8. The new field is 256^2 (186 x 148 mm/texel, matched to a lobe whose vertical
+softness starts at 300 mm), two bands split at light.js's own 1.00/1.70, **rgb premultiplied by
+coverage in LINEAR bytes** so a mip is a coverage-weighted average and an empty neighbourhood
+dilutes the ALPHA rather than the hue. Linear rather than sRGB because glGenerateMipmap on an sRGB
+texture averages encoded values on most drivers, and a premultiplied field must unpremultiply
+against an alpha averaged in its own space.
+
+**It does not walk the scene.** `sync()` reads tread's OWN `items` and tread's OWN `worldOf()`,
+and rebuilds only when tread's own FNV says something moved. One owner for "which objects move and
+where"; this file owns only "what colour are they". No second collection rule, no second hash.
+
+## THREE BUGS THE INSTRUMENTS CAUGHT, ALL WORTH KEEPING
+
+**1. An uninitialised GLSL global is not zero, and it cost an hour.** The debug channel was
+`vec4 chopDbgV = vec4( 0.0 );` at global scope — legal GLSL, not honoured by this driver. With the
+channel switched OFF, large regions of the floor came back **pure white in the shape of the `ny`
+gate, in BOTH arms**, because `.a` read garbage above 0.5 and `.rgb` read garbage above 1.0. An
+instrument that is only live when a uniform says so has to be dead **by assignment**, not by
+initialiser — and the consumer is now guarded by the uniform as well.
+
+**2. Unpremultiplying without returning the coverage is half a fix and the half that blows up.**
+light.js's field gets coverage for free and by accident: not premultiplying means a mip of a
+shopper alone in a 2 m footprint returns mostly beige, so the reflection is weak because the COLOUR
+was diluted. Premultiplying removes that dilution correctly and therefore removes the only thing
+scaling the term down. Measured: a 0.7 m body four metres in front of the chase_a4 camera took
+58,000 floor pixels to white and held them there **whatever colour it was painted**. The split is
+now explicit — coverage scales the occlusion, unpremultiplied rgb is the colour — and neither
+question is allowed to answer the other.
+
+**3. A 2D readback context WITH alpha reports a blown-out floor that is not there.** `getImageData`
+returns unpremultiplied bytes, so a framebuffer pixel at low alpha reads back (255,255,255)
+whatever its colour. Two separate "the composite is white" conclusions came from that before the
+probe was switched to `{ alpha: false }`. **The saved PNGs were fine the whole time.**
+
+## THE SELF-TEST'S FIRST VERSION RETURNED ZERO, AND ZERO WAS THE RIGHT ANSWER
+
+`mirrorSelfTest()` stamped a saturated primary into the colour field alone and moved **0 of 174,166
+floor pixels** at three positions. That is the design working: tread owns "is anything standing
+here", this file owns "what colour", so a colour with no height is a colour nobody looks at. It now
+stamps both. Its control is **a grey of the same luminance, not an absent object** — stamping an
+object where there was none also switches on round 28's contact shadow, and the first version
+scored 58,372 "moved" pixels for one 0.7 m body, which is a third of the visible floor and is the
+SHADOW being counted. Shipped result: **3 of 3 pass, chroma max 15.7 / 16.4 / 22.1 against a 6.0
+threshold that is round 29's own whole-floor p99, restore byte-identical over all three.**
+
+## THE REFERENCES' FLOORS, MEASURED TWO WAYS, ONE RULE FOR BOTH CLASSES
+
+`tools/r30_floorchroma.py`. Bottom 30% of a 1280x720 frame, sized the way `wholeframe_blindset.py`
+sizes (resize to width, centre-crop, never letterbox), both classes through q88 4:2:0 because
+chroma is the subject and 4:2:0 is a chroma operation. Region is **geometric, never
+content-selected**. Mean CIELAB chroma:
+
+    REFERENCE n=14   mean 18.90   min 14.96 (store_04)   max 25.21 (store_06)   p25 17.02  p75 20.35
+    RENDER r29       11.49 - 13.36        RENDER r30      11.63 - 13.90
+
+**Every one of the fourteen is above every render pose. The round moves it and does not close it,**
+and the reason is that in the near band the statistic is mostly the floor's own PIGMENT — which
+lives in tex.js's floor map, not here.
+
+And the calibration that decided the fresnel, on `reference/store_12`'s polished terrazzo, linear
+luminance, three boxes (hand-placed, and named as calibration rather than as a scored instrument):
+
+    dark wood produce table            Y 0.1310
+    floor directly under it            Y 0.1691
+    open floor either side          Y 0.3883 / 0.3534
+    (open - under) / (open - object) = 0.85
+
+That figure is reflection AND occlusion together, so it is an upper bound on the mirror alone. The
+render's near field answered **0.04** to the same question — `fres = 0.040 + 0.820*pow(1-ny,5)`,
+the textbook bare-dielectric F0 — and no split of 0.85 into two terms leaves 0.04 for one of them.
+F0 0.040 -> 0.220 is that admission, the same one `uGF0` makes one function down in the same file
+where 0.04 became 0.34 because a reach-in door is a coated assembly.
+
+## TWO INSTRUMENTS BUILT AND REPORTED AS NOT DISCRIMINATING
+
+Both are in `tools/r30_colecho.py` and both are honest failures, recorded so nobody rebuilds them:
+
+* **Column chroma echo.** For a mirror in a horizontal plane and a camera with no roll, a point and
+  its mirror image land in *exactly* the same image column — so the cosine between the upper band's
+  and the lower band's centred chroma fields across column bins needs no alignment scan and no box.
+  It works, and it **does not separate the classes**: REFERENCE spans -0.56 to +0.80 (store_05
+  -0.51, store_04 +0.83) and the renders sit inside it at 0.20-0.42. ON - OFF was +0.005.
+* **Effective reflectance slope**, the OLS slope of the lower band's linear luminance on the upper
+  band's across the same bins. REFERENCE -0.334 to +2.542, renders -0.12 to +1.49. Same verdict.
+
+**A statistic that is geometrically exact can still have a reference population too wide to be a
+bar.** Report the reference spread before you report your own number.
+
+## THE ARMS ARE UNIFORM VALUES, NOT A SECOND CODE PATH
+
+Every change is a number the shader already reads, so the control arm runs the identical
+instruction stream on identical geometry: `uMirLift`, `uMirCol`, `uMirRag`, `uMirSat`, `uMirF0`,
+`uMirVB`, `uMirCfg.w`. `?flatmirror` sets them to round 29's. That is leak 9's lesson applied at
+the cheapest possible point — a dial that touches nothing but uniforms cannot re-roll content.
+
+    pose        floor px    diff px    in mask   outside   max|d|   dC p90   dC p99   dC max
+    near_a1            0          0          0         0        0        -        -        -
+    near_a4            0          0          0         0        0        -        -        -
+    near_a7      141,944    142,411    141,786       625       97     9.59    24.82    48.33
+    chase_a1     174,921    173,876    170,996     2,880       47     6.80    14.36    26.51
+    chase_a4     175,699    173,870    173,844        26       75     5.75    12.23    22.64
+    chase_a6     162,186    160,993    159,695     1,298       53     5.41    11.59    24.91
+
+**The null pair holds: `near_a1` and `near_a4` are byte-identical between arms by md5.** And every
+one of the 4,829 differing pixels outside the occlusion-exact floor mask is explained: rendering a
+second mask with every transparent and blended mesh hidden puts **3,530 of 3,530 of them on floor
+that is behind glass** — 2,481 in chase_a1, 808 in chase_a6, 230 in near_a7, 11 in chase_a4,
+**0 unexplained.**
+
+## COST
+Draw calls **368 = 368**, triangles identical, programs **79 = 79** between arms; +2 textures
+(256^2 RGBA8 each). CPU raster **0.2-0.5 ms** per rebuild, 512 KB upload, and it rebuilds only when
+tread's own hash changes (853 rebuilds against 212 skipped over one session). Live frame median
+**8.3 ms**, which is round 29's own figure. Per-fragment the march **removed** up to twelve in-loop
+`chopFldCol` calls (two fetches each) and added twelve `chopTreadTop` (one each) plus one two-fetch
+colour read on the winning sample only — worst case a net saving.
+
+## WHAT THIS ROUND DID NOT FIX
+* **The mirror image is not elongated the way a real one is.** store_12's dark produce tables put
+  solid dark columns in the floor running a full table-height toward the camera. Ours puts a soft
+  patch. `uMirCol.z` displaces the colour tap along the aisle but the lobe is still isotropic in
+  `textureLod`; a real anisotropic smear needs more than one tap.
+* **The floor's own pigment is out of band and it is not this file's.** 11.6-13.9 against a
+  reference floor at 14.96-25.21, and in the near band that number is mostly `tex.js`'s floor map.
+* **`uMirSat` is short of its own exact inverse on purpose.** 1/0.42 = 2.38 restores all of
+  wallLUT's per-band department contrast at once and the mid-field reads as separate magenta and
+  green patches. Shipped at 1.80. The right fix is in the LUT's authoring, not in a gain.
+* **The near poses still cannot pay.** `near_a1` and `near_a4` have zero visible floor. The whole
+  round lands on three chase poses and `near_a7`.
+
+## CONTRACT REQUEST r30 -> light.js OWNER, enumerated from source
+`FIELD_GLSL`'s `uFld` / `uFldHi` store colour NOT premultiplied by coverage, and `Field`'s empty
+cells are filled with the floor colour rather than zero. Every consumer that reads them at a mip —
+`chopFldCol` from this floor's mirror, from `freezerGlass`'s trace, and `chopBounce` — therefore
+gets a colour mixed toward that beige by an amount nobody records. Premultiplying at the bake
+(`rgb *= coverage`, `a = coverage`) and dividing at `chopFldCol` would make every one of those
+lookups correct under filtering, at the cost of one divide. `src/store/mirror.js` is a worked
+example of the same field built that way.
+
+## THE CRITERION, STATED BEFORE ANYTHING IS SCORED, AND WHAT IT RETURNS FOR ALL THREE
+
+Round 29's criterion labelled the fixed render NONE and a real photograph NONE — the same label —
+so it could not see the gap that decides the bar. This one is written to give **three different
+answers**, and the third is the one that says the round is not finished:
+
+> **Look only at the floor. Does it carry a vertically elongated image of the things standing on
+> it — a column of an object's own colour or darkness that begins at its contact line and runs
+> toward the viewer, and that changes from one part of the frame to the next according to what is
+> standing there? Or is the floor's colour the same everywhere the light is the same, with only
+> the ceiling's lamps in it?**
+
+Direction-agnostic, names a surface property and not a fix, and mentions neither smudges nor
+shadows nor the price rail.
+
+    OFF arm      NONE. The floor carries lamp smears and nothing else. Ablating the whole object
+                 term moves its chroma by p50 0.02-0.08, and the floor beside a shelf run is the
+                 same beige as the floor in the middle of the aisle.
+    ON arm       PRESENT BUT SHORT. Coloured bands appear beside the runs and under a standing
+                 body; ON - OFF is dC p90 5.4-9.6, p99 11.6-24.8, max 22.6-48.3 inside the floor
+                 mask. The image is a patch, not a column: it does not run a full object-height
+                 toward the viewer.
+    PHOTOGRAPH   PRESENT AND FULL. store_12's produce tables put solid dark columns in the floor
+                 running a full table-height at the camera; the floor under one sits 54% below the
+                 open floor beside it and within 29% of the table itself.
+
+**If a scorer cannot separate ON from PHOTOGRAPH on this criterion, the criterion is wrong, not the
+build** — the elongation gap above is measured and is the round's own stated miss.
+
+## "THE FIELD CARRIES NO COLOUR" WAS TRUE OF ONE FILE AND FALSE OF THE SYSTEM
+
+Round 28 wrote, in its own not-fixed list, *"the floor's reflected march reads light.js's field and
+my field carries no colour."* This brief repeated it and the round-30 dispatch was written around
+it. **It is true of `tread.js` and false of the mirror as a whole** — `floor.js` has marched the
+Field **for colour since round 8.** Ablation inside an occlusion-exact floor mask:
+
+    term ablated        frac of floor px   mean |d|/255   mean dC
+    lamps                  0.21-0.32          7.6-10.7      0.56-0.86
+    ceiling surface        0.44-0.55           5.0-6.6      0.53-0.75
+    gondola wall LUT       0.09-0.22           2.0-5.0      0.48-0.91
+    static objects         0.38-0.55          6.6-21.1      1.16-2.88
+
+**The objects were in the reflection. They were in no HUE.** Third time a round has been dispatched
+against a mechanism that was wrong in the source and right in the observation — and the second time
+the wrong half came from a previous round's own honest self-report rather than from a critic.
+
+## THE MECHANISM: AN UNPREMULTIPLIED FIELD WHOSE EMPTY CELLS HOLD THE FLOOR'S OWN BEIGE
+
+`light.js`'s Field is **not premultiplied**, and **3,104,010 of its empty cells hold
+(189,179,160) — the floor's own beige.** The mirror lobe reads a **mip**, so down aisle 1 the only
+hit arrives through a **2.22 m footprint** and returns **saturation 8/255**, off a store whose
+*occupied* cells average **38**. The empty cells are not neutral; they are a bath of floor colour
+that the mip averages the store into.
+
+**Proof it is saturation and not weakness: quadrupling `uFldGain` 3.05 -> 12.2 moved max dC
+13.4 -> 14.6 and stopped.** A gain that does nothing is the signature of a term that is being
+averaged away upstream, not one that is too small. Round 10's `hitY` crush also **charged the
+kickplate's darkness twice**, once in `pcol` and once in the ramp.
+
+Fresnel calibrated off `reference/store_12`: dark table Y 0.1310, floor under it 0.1691, open floor
+0.3883/0.3534, so **(open-under)/(open-object) = 0.85. The render answered 0.04.**
+
+## THE CRITERION DECLARED ITS THREE ANSWERS BEFORE SCORING
+
+Round 29 died because its criterion returned the same label for the fixed render and for a
+photograph. Round 30 states, in advance:
+
+    OFF arm      = none
+    ON arm       = present but short
+    PHOTOGRAPH   = present and full
+
+**Three distinct answers, so it cannot saturate** — and the middle one is an admission built into
+the instrument. **Declare the three answers before you cut a tile. If two of them collapse, the
+test is finished before it starts.**
+
+Its headline is published **as short of the target**: floor-band chroma, references n=14 **mean
+18.90, range 14.96-25.21**; render **r29 11.49-13.36 -> r30 11.63-13.90**. *"Moves, does not
+close"*, with the near band attributed mostly to a floor map in a file it does not own.
+
+## THREE BUGS FOUND BY THE INSTRUMENTS, ALL OF WHICH LOOK LIKE A RESULT
+
+- **An uninitialised GLSL global is not zero.** The debug channel **blew the floor white in BOTH
+  arms with the channel off.**
+- **Unpremultiply without returning coverage blows up.** One 0.7 m body took **58,000 pixels to
+  white whatever colour it was painted** — a bug that is invisible to a colour check because it is
+  colour-independent.
+- **A 2D readback context with alpha reports a blown floor that is not there.** Two wrong
+  conclusions were drawn before `{alpha:false}`.
+
+**All three produce a confident, plausible, wrong measurement rather than an error.** Round 30 also
+built two instruments and **published both as non-discriminating** — column chroma echo and
+effective-reflectance slope, reference spread too wide.
+
+Cost: draw calls **368 = 368**, triangles identical, programs 79 = 79, +2 textures, raster
+0.2-0.5 ms, live frame **8.3 ms** — and **the new march REMOVED up to 12 in-loop colour fetches.**
+Arms differ in uniform values only; `near_a1`/`near_a4` byte-identical by md5; **3,530 of 3,530
+outside-mask differences explained as floor behind glass, 0 unexplained.**
+
+**Standing:** the mirror image is **a patch, not a column** — real elongation needs more than one
+texture tap.
