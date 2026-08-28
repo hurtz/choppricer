@@ -4011,3 +4011,191 @@ remembered."* Round 21 then reported that **open floor is exactly zero on all fi
 occupancy volume. **Whether that is the design or the bug is the first thing round 28 has to
 answer** — and it is a question about whether the floor reads the field at all, not about what to
 build.
+
+## THE FIELD IS STAMPED AT BUILD TIME, SO NOTHING THAT WALKS IS IN IT
+
+**101 of 101 meshes that touch the floor and belong to a body that moves are absent from
+`light.js`'s occupancy field** — 42 shopper feet, 56 cart casters, 3 on the thief, the cop's two.
+The one that reads a non-zero column does so only because it is parked inside a gondola's own
+padded stamp. **Translating a shopping cart 1.0 m changed ZERO of 880 floor pixels** in the band
+in front of it, zero of 1,274 further out, zero of 2,829 in a control.
+
+Round 8's field is populated *by construction* through `Batch.push` and `solid()` — **at build
+time.** That is exactly right for shelving and exactly wrong for anyone in the store. **"By
+construction" answers WHO is covered, not WHEN.**
+
+## Three alternatives, all tested before a line was written, all settled
+
+- **"The floor is not a shadow receiver" — FALSE.** Stamping a synthetic 0.30 x 1.00 m column into
+  the live field where a cart stands darkens the band 0.45-1.05 m in front of it by **0.103 mean
+  linear luma, 0.877 -> 0.776, 891 of 891 pixels, max 0.347**, while a control band 3.0-3.6 m away
+  moves **2.8e-5**. Undo byte-identical over 58,420 px.
+- **"The cascade does not reach 12 m" — FALSE.** `chopA.x` outward from a kickplate at five camera
+  distances: **the profile at 19 m is the profile at 4 m.** So **round 27's critic's "every kick
+  plate" was wrong** — a kickplate already takes the floor to **6% of its open-aisle visibility, at
+  every range tested.**
+- **"The swirl is a separate decal cue" — TRUE, and it is the whole of observation (a).** Hiding
+  the multiply-blended wear plane removes **every filament**; `uGloss` 0 and a flat `uBurn` leave
+  them untouched; and the floor rendered as `vec3(chopA.x)` still shows them. **They are in no
+  lighting term.**
+
+**F2 answered, and it changes the diagnosis:** two cameras 0.5 m apart, best normalised
+cross-correlation over a 5-13 m floor band — **the filaments track the tile seams to within 1 px of
+a 6-7 px parallax, while the mirror moves 2 px less**, which is correct for a virtual source 2.9 m
+below the floor. **So "baked" survives — baked into a DECAL, not a lighting term — and the
+single-mechanism explanation is falsified: (a) and (b) have different causes.**
+
+## THE ANCHOR: a correct multiply, applied one stage too early, arrives at 38% of itself
+
+Applying the tread multiply inside `<opaque_fragment>` puts it **under `AO_FRAG`'s additive lamp,
+bounce, aisle and daylight terms.** The shadow arrived at **38% of its own size and nothing
+reported it** — 0.924 where `light.js`'s own field gives 0.676 for the identical box. Correct
+anchor: **`<colorspace_fragment>`**, after AO_FRAG, after tonemapping, before the sRGB encode.
+
+**A shading term can be right in every constant and wrong in its stage.** The round found it only
+by driving its own estimator against `light.js`'s on the same synthetic box.
+
+Its other documented mistake, because it also looks right: **admitting only meshes that TOUCH the
+floor threw away every shopper's torso and every cart basket — the parts that actually block the
+ceiling.**
+
+## THE ROUND IS A NULL, AND THE REASON IS THE NEXT ROUND
+
+Its own absolute single-image test: **6 of 12, p = 0.61.** (Its first attempt scored 7 of 12 and
+**was published as a defect, not a result** — the window selector cast the floor plane per pixel
+with no visibility test, so **five of six windows contained no floor at all.** "That number
+measures the selector.") **Two of the six corrected windows carry zero pixel difference between
+arms, so only 8 tiles could carry a percept; on those, 4 of 8.**
+
+**And the tile it got backwards is the finding.** It called the ON arm "no shadow, HIGH" and the
+OFF arm "shadow". At 3x, ON has an unmistakable dark contact pool under a shoe and four casters
+and OFF has none:
+
+> **"I had been drawn to the wear decal's grey swirls lower in the crop and read THOSE as the
+> shadow. The floor is already covered in shadow-shaped grey smudges that nothing casts, so a real
+> contact shadow has nothing to be contrasted against."**
+
+**Observation (a) is actively concealing observation (b).** Fixing a defect can be invisible
+because an older defect occupies its channel. **Check what else is already shaped like the thing
+you are adding.**
+
+## Scope, and two poses that no floor change can ever reach
+Measured with an occlusion-exact floor mask (the floor mesh painted flat magenta for one throwaway
+render): **`near_a1` and `near_a4` contain ZERO visible floor samples.** `chase_a1` is 32.5% near
+an occluder, `near_a7` 4.9%, `chase_a4` 1.9%, `chase_a6` 0.6%. **This is a chase-pose change** —
+and the first round in a while that can pay at range.
+
+Depth against named references: `store_06` floor under a wire display rack runs **0.13-0.44 of
+open floor**, `store_09` at a barrel foot **0.73 at the contact line**; the render's changed pixels
+sit at median 0.21-0.50, p05 0.083-0.100. Same band, floored where `light.js`'s own term floors.
+
+Cost: draw calls **377 = 377**, triangles identical, **0 meshes added**, one 1024x1024 R8 texture,
+CPU raster 0.135 ms, isolated GPU **+0.476 ms**, live frame **8.1 ms on against 8.3 off — below
+the noise floor.** Arms proven identical by an FNV over 625 meshes / 73,074 instances / 1,179,929
+words: `c98a6dbe` on, off, and on again.
+
+## QUEUED: 210 arcs that are stroked white into a multiply layer and do nothing
+
+`floorWearTex()` in `src/store/tex.js`. **420 buffer swirls** at 46.6 mm per canvas pixel — 37-121
+mm strokes on 1.86-12.1 m radii sweeping up to 10.9 m of arc — **and half of them are
+`rgba(255,255,255,0.26)` into a multiply layer, where white is the identity.** Pure cost, zero
+pixels. Plus **skid arcs** that cluster into a 3 m scribble exactly where the aisle meets the
+mid-store walkway — **9.7 m from the chase_a4 camera, which is precisely where round 27's critic
+drew its box.**
+
+## 211 CONTACT-SHADOW-SHAPED POOLS ON THE OPEN FLOOR, AT THE EXACT MAGNITUDE OF A REAL ONE
+
+Measured **artefact against artefact** — the pre-r29 `floorWearTex()` lifted verbatim out of
+`git show HEAD:` and re-baked from the store's own plan, so nothing rests on a quoted number:
+
+    local dip   r28 decal   r29 decal
+    0.030          239          35
+    0.045          281          22
+    0.070          337           2
+    0.110          211           0     <- r28's own contact shadow, 0.877 -> 0.776
+
+Attribution before the fix: **skid 94-117, heel 22-59, patch 8-17, swirl 3-12.** One loop made half
+of them.
+
+**The whole diagnosis is dimensional, and it is the cleanest in this file.** At N=1024 over
+47.7 x 38.0 m the canvas is **46.58 mm/px across and 37.11 mm down**:
+
+- skid arcs at 0.9-3.4 px were **42-158 mm of rubber**; a cart caster tread is **25-32 mm**
+- heel "marks" were **0.14-1.40 m arcs**; a real heel drag is **12-30 x 60-350 mm**
+- 26 ellipses **0.37-2.50 m** across, uniform random, **no traffic term and no fixture mask** —
+  the source comment called one "a mat shadow"
+- **every arc used `rw/spanX*N` on BOTH axes**, so a 0.9 m cart turn baked as a **0.90 x 0.72 m
+  world ellipse**
+
+**Convert your texture-space constants into world millimetres before you believe them.** Nothing
+here was a tuning error; every one was a unit error hiding behind a plausible-looking pixel value.
+
+The replacement constrains shape rather than darkness: **1,500 rubber dashes at 13-29 mm wide with
+length/width >= 3.4, so a scuff CANNOT be a compact mark whatever its value**; 120 buffer passes
+striating along the runs instead of 420 random 1.9-12.1 m circles; casters at 26-49 mm; the 26
+ellipses cut; and every ink term now clipped to the fixture mask, where only two of them were.
+
+## THE 210 WHITE ARCS: round 28 was HALF right, and the lead passed on the wrong half
+
+Round 28 reported them as doing "nothing at all", and this brief and the round-29 dispatch repeated
+it. **White is the identity of the BLEND — but these are source-over strokes into the CANVAS,
+before the texture ever reaches the blend.** Ablated on the live artefact: **20,369 px (47.95%)
+landed on canvas already at 255 and were genuinely dead; 22,110 px (52.05%) lightened the floor by
+mean 0.0124, max 0.1216.**
+
+The real fault was upstream: **the traffic field pinned the whole lane centre at exactly 1.0**,
+which also clamped away **the burnish term's entire +0.085.** A `DULL_OPEN` pedestal gives them
+somewhere to work — **113,733 px lightened, 5.1x.**
+
+**"It does nothing" is a claim about a pipeline stage, and it needs the stage named.** Twice now
+this project has been wrong about a term by reasoning at the wrong stage — this, and round 28's
+multiply anchored under the additive lamp terms, arriving at 38% of itself.
+
+## THE SECOND STATISTICALLY SIGNIFICANT RESULT, AND IT CAME WITH CATCH TRIALS
+
+    RENDER   12 of 16   p = 0.0384
+    CATCH     4 of 4    (real photograph floors)
+    FAR       8 of 8
+    NEAR      4 of 8
+    difference-carrying tiles: 16 of 16   (round 28 managed 8 of 12)
+
+**And the round refused to claim its own NEAR number.** Three of the four NEAR misses were **ON
+tiles called as the defect — the scorer finding the defect inside its own fix** — and the scuff
+geometry constraint was added *because* of that, so run 1's NEAR figure is a pre-fix number and no
+improvement is claimed from it. A labelled re-run on the shipped build gives **6 of 8**.
+
+**Both remaining misses are ONE window** — chase_a6 NEAR, inverted in both arms in both runs, at
+the second-highest arm difference in the set. **A non-zero arm difference is necessary but not
+sufficient: it has to be in the feature the criterion names.**
+
+## AN INSTRUMENT RETIRED FOR COUNTING THE GROUT
+
+An image-space compact-dark-mark census appeared to say the new scuffs were **worse** — 79 marks
+against 56. Overlaying it showed **it was counting the grout network**, which fragments differently
+when the wear layer is lighter. Retired; the texture-space census is the valid instrument, and the
+scuff change rests on **dimensional analysis rather than on that number.**
+
+## A SELF-TEST WHOSE ONE SHAPE REPRODUCES BOTH OF THE PREVIOUS ROUND'S NUMBERS
+
+`wearSelfTest()` stamps 24 ellipses with **a linear radial falloff from 34.7% to 0, whose area-mean
+is 0.347/3 = 0.1157** — reproducing round 28's max (0.347) *and* its mean (0.110) **with a single
+shape**. Result: **0 pools before, 21 of 24 caught, 0 after, restore byte-identical over 4,194,304
+bytes**, repeatable.
+
+**A first version stamped a flat 11.5% and caught 2 of 24 — it sits exactly on the threshold — and
+that was recorded rather than quietly retuned.** Both guards report rather than throw, so controls
+stay loadable.
+
+## Arms differ only in the change, with a built-in null pair
+One page load, one scene graph, **one texture object swapped on `material.map`.** Of **617,476
+differing pixels across six poses, 617,131 lie inside the occlusion-exact floor mask**; 345
+(0.056%) fall outside, 274 of those vanish under a 1-px dilation, and the remaining 71 are one
+22x13 cluster **every pixel of which is magnitude 1/255**, where the 4 mm-high wear plane covers
+the bottom sliver of one object.
+
+**`near_a1` and `near_a4` are byte-identical between arms** — zero visible floor pixels, so they
+are a **null pair built into the set. An instrument that ever calls those two differently is
+reporting noise.**
+
+Cost: draw calls **391 = 391**, triangles identical, textures 66 = 66, programs 79 = 79; bake
+34-41 ms -> 78-109 ms, one-time at load.

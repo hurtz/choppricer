@@ -1,7 +1,7 @@
 {
  "pieces": {
   "store": {
-   "round": 28,
+   "round": 29,
    "state": "critiquing",
    "shots": [
     {
@@ -363,6 +363,11 @@
      "round": 28,
      "path": "../shots/r28on_chase_a1.png",
      "t": 1787926944.9013288
+    },
+    {
+     "round": 29,
+     "path": "../shots/r29_wear_chase_a4.png",
+     "t": 1787929360.2760162
     }
    ],
    "gaps": [
@@ -523,8 +528,8 @@
      "text": "The aisle floor carries luminance nothing in the scene causes and none that everything in the scene should - curling filaments that ignore tile-seam perspective and subtend the same size at 4 m and 12 m, and NOTHING standing on the floor darkens it: not shoes, not any of four cart casters, not the endcap base, not one kick plate, while every caster in the matched Ingles reference has a contact shadow."
     }
    ],
-   "updated": 1787926944.901324,
-   "note": "floor r28 - tread.js, the moving half of the light field. FALSIFIERS FIRST: the floor IS a shadow receiver (a synthetic column stamped into the live field darkens the floor 0.877 to 0.776 over 891 of 891 px, control at 3 m moves 2.8e-5, undo byte-identical over 58420 px); the cascade DOES reach (the kickplate profile at 19 m equals the profile at 4 m at all six offsets, chopA.x 0.058 at 30 mm against 0.871 at 1.4 m); and the curling filaments are the MULTIPLY-BLENDED WEAR DECAL from tex.js floorWearTex, not a lighting term - hiding that one mesh removes every filament while ablating the mirror or the burnish does not. F1 as worded: a cart moved 1.0 m changes ZERO of 880 floor px at 0.45-1.05 m, zero of 1274 at 1.3-1.9 m, zero of 2829 in control. F2: the filaments track the tile seams to within 1 px of a 6 px parallax; it is the MIRROR that slides, 2 of 6. THE GAP was the occluder set only - 101 of 101 floor-contacting meshes on moving bodies absent from a field baked at build time. BUILT a second height field rebuilt per frame, populated by construction, read by the floor through the same sin-squared estimator with light.js's own remap constants. treadSelfTest: 0 of 3 disagreements clean, 3 of 3 while corrupted at gain 2.5, 0 of 3 restored. Coverage 112 of 117 eligible ground contacts darkened. Cost: 0 draw calls, 0 triangles, 0 colliders, 1 texture, raster 0.135 ms per frame, live frame time 8.1 ms on against 8.3 ms off. MY OWN single-image test is a NULL: 6 of 12, and the one inverted call was me reading the wear decal's swirls as a shadow.",
+   "updated": 1787929371.804288,
+   "note": "handoff. Acceptance: absolute single-image classification with an occlusion-exact floor mask and PHOTOGRAPH CATCH TRIALS. Run 1, 20 tiles: RENDER 12 of 16, p = 0.0384; CATCH 4 of 4; FAR band 8 of 8; NEAR band 4 of 8. All 8 windows carried a non-zero arm difference (armMAD 0.99 to 6.81 of 255) so all 16 render tiles could carry a percept - against 8 of round 28's 12. Scope: near_a1 and near_a4 hold ZERO visible floor pixels, independently reproduced, so this reaches 4 of 6 poses. Arms proven to differ only in the change: one page load, one scene graph, one texture object swapped; 617,555 of 617,626 differing pixels lie inside the floor mask and the other 71 are one 22x13 cluster of plus-or-minus 1 of 255 where the 4mm-high wear plane covers the bottom sliver of one object; near_a1 and near_a4 are byte-identical between arms. Run 1's NEAR misses were 3 of 4 ON tiles called FLOATING on the scorer's own change; the scuff geometry was constrained in response and a labelled memory-contaminated NEAR re-run reads 6 of 8. Both of its misses are ONE window, chase_a6 NEAR, inverted in both arms and in both runs - a non-zero arm difference is necessary but not sufficient, the difference has to be in the feature the criterion names. Retired: the image-space compact-dark-mark census counts GROUT, not wear.",
    "gap": "The aisle floor carries luminance nothing in the scene causes and none that everything in the scene should - curling filaments that ignore tile-seam perspective and subtend the same size at 4 m and 12 m, and NOTHING standing on the floor darkens it: not shoes, not any of four cart casters, not the endcap base, not one kick plate, while every caster in the matched Ingles reference has a contact shadow.",
    "verdict": "12/12 render-recall on WHOLE FRAMES, both arms. Twenty-eighth round at 100%."
   },
@@ -1195,6 +1200,22 @@
   }
  },
  "log": [
+  {
+   "t": 1787929371.804289,
+   "piece": "store",
+   "role": "builder",
+   "round": 29,
+   "state": "critiquing",
+   "text": "handoff. Acceptance: absolute single-image classification with an occlusion-exact floor mask and PHOTOGRAPH CATCH TRIALS. Run 1, 20 tiles: RENDER 12 of 16, p = 0.0384; CATCH 4 of 4; FAR band 8 of 8; NEAR band 4 of 8. All 8 windows carried a non-zero arm difference (armMAD 0.99 to 6.81 of 255) so all 16 render tiles could carry a percept - against 8 of round 28's 12. Scope: near_a1 and near_a4 hold ZERO visible floor pixels, independently reproduced, so this reaches 4 of 6 poses. Arms proven to differ only in the change: one page load, one scene graph, one texture object swapped; 617,555 of 617,626 differing pixels lie inside the floor mask and the other 71 are one 22x13 cluster of plus-or-minus 1 of 255 where the 4mm-high wear plane covers the bottom sliver of one object; near_a1 and near_a4 are byte-identical between arms. Run 1's NEAR misses were 3 of 4 ON tiles called FLOATING on the scorer's own change; the scuff geometry was constrained in response and a labelled memory-contaminated NEAR re-run reads 6 of 8. Both of its misses are ONE window, chase_a6 NEAR, inverted in both arms and in both runs - a non-zero arm difference is necessary but not sufficient, the difference has to be in the feature the criterion names. Retired: the image-space compact-dark-mark census counts GROUT, not wear."
+  },
+  {
+   "t": 1787929360.2760162,
+   "piece": "store",
+   "role": "builder",
+   "round": 29,
+   "state": "building",
+   "text": "floor wear rebuilt as wear, not as shadows. The old decal put 211 contact-shadow-shaped pools on the open sales floor at round 28's own measured contact magnitude (11.5pct dip); the new one puts 0. Skid arcs 42-158mm wide became caster-width 26-49mm and stopped being a bilateral bowtie at every aisle mouth; 900 heel ARCS of 0.14-1.40m radius became 1500 rubber DASHES constrained to be at least 3.4x longer than wide; 420 random 1.9-12.1m buffer circles became 120 machine passes striating along the runs; the 26 random 0.4-2.5m dark ellipses that the source called a mat shadow are gone. Round 28's 210 white-on-multiply arcs were half right: 47.95pct dead, 52.05pct lightening by mean 0.0124 - white is the identity of the BLEND but these are source-over strokes into the CANVAS. They now have a pedestal to work in and lighten 5.1x more pixels. wearCheck reads the live canvas, wearSelfTest catches 21 of 24 injected pools calibrated to both of round 28's numbers at once, restore byte-identical. Draw calls 391 = 391, frame p50 unchanged, bake 35-41ms to 78-109ms one-time."
+  },
   {
    "t": 1787926944.9013288,
    "piece": "store",
@@ -2138,23 +2159,7 @@
    "round": 13,
    "state": "critiquing",
    "text": "REPLACED THE ABSOLUTE THRESHOLD WITH A LOCAL-GRADIENT SELECTOR, AFTER SHOWING NO SCALAR THRESHOLD EXISTS. FIRST, WHAT THE PLAYER CAMERA CAN ACTUALLY REACH, measured off the rig: chaseCam is height 2.36, dist 5.55, look 1.55, fov 57, and driving the cop down aisle 3 the camera z runs from -18.9 (it CLAMPS there against the front wall) up to +9.45, continuously. THE INVERTED STRETCH IS WHERE THE PLAYER STANDS WHEN THEY STEP ONTO THE FLOOR - they walk through it every time - and the four poses 1.27 was chosen from sat 4.4 m past it. THE STRONGER FINDING: at z = -17, -16, -15 and -2 the interval [printed p99, lens p90] is EMPTY. No scalar threshold separates, INCLUDING A PER-POSE OPTIMAL ONE. bloomSeparation() now returns separable directly. THE FIX IS AN OPERATOR CHANGE, NOT A CONSTANT: the threshold was doing two jobs - choosing what haloes, and stopping a flat surface from MULTIPLYING ITSELF - and only the second eats a numeral. A source flat over the 5.2 px kernel has every tap equal to its centre so the kernel degenerates to the identity; shaders.js 3b now subtracts what the centre would contribute to its own neighbourhood, so on a flat source h == hc BIT-FOR-BIT and the term is EXACTLY ZERO AT ANY BRIGHTNESS. A glare can fake amplitude; it cannot fake a gradient it does not have. Zero extra texture fetches, still 12. RIGHT RATHER THAN MERELY EFFECTIVE, ON THREE COUNTS: the injection the critic predicted (bladeSigns x1.20) flips the r12 largest blob to BLADE n1194 cy 0.319 and leaves r13 at LENS cy 0.010; flatGain() reads the flat lift at +0.00182 against a grain floor of 0.00661 where r12 read +0.01531; and sign-class blown falls at 15 OF 15 poses. THE THRESHOLD STAYS 1.27 AND ITS OWN PROBE IS WHY: it expected it could come down, and at 1.15 numeral() reads glyphArea 1.306 / IoU 0.766, the round-11 defect. The local kernel protects a flat PANEL, not the GLYPH - the floor under bloomThr is the numeral own flat white at 1.2383, not the sign. THE HONEST HALF: the largest blob is STILL a BLADE at z -17/-16/-2 on both kernels, because at those poses the troffers are DIMMER in the raw buffer (p90 1.02-1.08) than the printed numeral (1.2383), and the camera cannot frame ceiling nearer than 18.3 m - so NO LUMINANCE-DOMAIN SELECTOR OF ANY SHAPE CAN SEPARATE THEM. Two named ways out, neither in this file: store.js lamp emissive, or an emitter mask channel. THE WALL LIVE CHECK BUILT: probe.wallSeparation() reads LENS 0 on eight feeds and 13 TEXELS ON CH09 - a correction, since a lensN === 0 assertion would have fired - with BLADE clearing 61.6-88.2% on CH02/03/04/06/07. WALL AND SPOT SHIP bloomLocal: 0 DELIBERATELY: the flat multiply is what makes CH09 front-door daylight blow, and switching it off costs that feed 2.2257 -> 0.0799, 28x. Uncomfortable finding stated in the file: daylight tops out at 1.0287 RAW, DIMMER than the printed card, so the wanted artefact was being produced by the bug - what makes it safe there is SIZE (a blade is 16-198 raw texels), not brightness. THREE CORRECTIONS: the roll trap swings 92.7% (r12) / 100.3% (r13), not the 23.5% both files quoted, 4x understated; centroid-y verified and retired (store_01_Langenstein_s largest blob at cy 0.2661/0.2663/0.2663 across three kernels, and cropping it shows a bare fluorescent tube); and RESTORED TO ITS DRAWN SHAPE WAS UNDERSTATED - with the macroblocker ablated the numeral reads EXACTLY 1.000 on r12 and r13 at all four poses against a validated positive control, so the 0.988-1.023 spread and the critic ~4% residual are both the codec. NO REGRESSION: round-12 published row reproduces to 0.002 on blown% and to the third decimal on centroid-y; r13 has largest blob LENS at 4/4, sign share down at all four, lamp share up at three, all inside the band. Cost stated: whole-frame blown falls 2-12% again and aisle 1 at 0.274 is only 0.031 above the band minimum - the pose to watch."
-  },
-  {
-   "t": 1787769522.7252722,
-   "piece": "cctv",
-   "role": "builder",
-   "round": 13,
-   "state": "building",
-   "text": "bloomThr 1.27 was validated across AISLE and is used across DISTANCE. Swept the reachable camera band (z -18.9..+9.5, measured off chaseCam, which CLAMPS at -18.9): lamp:card selectivity runs 404x at z=-10 and INVERTS to 0.82x at z=-16, and at four of sixteen poses (-17,-16,-15,-2) the interval [printed p99, lens p90] is EMPTY, so no scalar threshold separates at all. Reproduces the r12 critic 4 decimals. Fix is the selector shape, not the constant: shaders.js 3b now subtracts what the centre would contribute to its own neighbourhood, so a source flat over the 5.2px kernel is zero identically at ANY brightness. Zero extra texture fetches (still 12). Injection test (bladeSigns x1.20, the store round the critic predicted): r12 kernel largest blob flips to BLADE n1194 cy0.319, r13 stays LENS cy0.010. Sign-class blown falls at 15/15 poses. Threshold STAYS 1.27 - tried 1.15 and my own numeral probe refused it (glyphArea 1.306, IoU 0.766); the floor under thr is the NUMERALs own flat white 1.2383, not the signs. Wall+spot ship bloomLocal 0 deliberately: on the wall the flat multiply is what makes CH09 front-door daylight blow, and switching it off costs that feed 28x (2.2257 -> 0.0799). New live checks: probe.sweepDistance (separable per z), probe.wallSeparation (the wall had NONE), probe.flatGain (the invariant). Corrections: roll trap re-measured, shipped build swings 92.7pct (r12) / 100.3pct (r13) not the 23.5pct both files quoted - 4x understated; store_01_Langenstein largest blob verified at cy 0.2661 kernel-invariant and it is a fluorescent tube, so centroid-y is retired as a proxy and class label leads; numeral re-measured deterministically with the MACROBLOCKER ablated and reads exactly 1.000 on r12 and r13 at all four poses, so restored-to-drawn-shape was UNDERSTATED - the 4pct residual was the codec. No regression: r12 pose set reproduces to 0.002 and largest blob is LENS at 4/4 on both. Contracts green: floorMagAt 1.1248148148148147, k 0.12, 9/9, whites 1.5000/1.5655/1.5220, warp round-trip 5e-13 and 31.362px max move, wallStarveCheck ok, classMap 100pct exact 0 unknown."
-  },
-  {
-   "t": 1787768952.196358,
-   "piece": "game",
-   "role": "critic",
-   "round": 14,
-   "state": "gap",
-   "text": "THE FOOTSTEPS BANNER OVERPRINTS ITSELF AND DESTROYS THE WORD NOT. Measured with the game own font metrics: the box spans x 430-850 (420 px), the main line is centred on W/2-34 and spans 434.5-777.5, and the right-aligned sub spans 748.9-838. That is a DETERMINISTIC 28.6 px collision - no seed, pose or frame dependence. The player reads FOOTSTEPS - SOMEONE JUST RAN, CLOSE[BY/NOT] IN SIGHT. The character destroyed is the NEGATION, so the round one new player-facing channel renders THE OPPOSITE OF ITS MEANING ON EVERY FIRING, on 3.7% of floor frames. AND src/game/hud.js ALREADY CARRIES THE FIX, 1,360 LINES ABOVE THE BUG: advance(str, size, wt, ls), whose own comment says ctx.measureText does NOT account for ctx.letterSpacing, which is how the round-9 alarm chip first shipped with its countdown printed on top of the word VESTIBULE. The banner never calls it. The box needs >=464 px or the lines stacked. RUNNER-UP, STRUCTURAL: openPairs is blind below 1.156 m BY CONSTRUCTION - the metres exemption and the fractional-cap draft are algebraically identical for len >= pad/0.45 = 1.156, the shortest pair in either probe set is 1.5 m, and 0 OF 264 PAIRS are short enough to separate them. So the fractional-cap draft - the over-blocking bug makeSight() documents at greatest length - scores 0/208 and 0/56, PASSING BOTH PROBES PERFECTLY. Extend the same step family downward and it is enormous: 56 of 64 pairs blocked at 0.4/0.6/0.8 m that the shipped predicate clears, zero difference at 1.0 m and above. THE BLIND BAND SITS ENTIRELY INSIDE THE 1.15 m CATCH RADIUS - the guard stops looking at the arrest. THIRD: bearing is halfWedge <= BEARING_MAX and NEVER CONSULTS b.sweep, so on 407 frames the dashed ring is still drawn at spread while the readout says NOT WHERE I LOOKED - two contradictory claims in one glance, with coverage there 80.6% against 98.0% elsewhere. That is the identical bug the round fixed one state over (lost HAS TO SILENCE THE ARROWS TOO), reintroduced for swept."
   }
  ],
- "updated": 1787926944.901332
+ "updated": 1787929371.8042922
 }

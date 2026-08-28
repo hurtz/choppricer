@@ -65642,9 +65642,135 @@ function smearTex(THREE) {
 }
 
 // ---------------------------------------------------------------------------
+// WEAR_DBG — THE ABLATION HARNESS FOR THE LAYER BELOW. ROUND 29.
+//
+// Every claim in round 29's report about "what the wear layer contributes" is a
+// per-term number, and a per-term number needs a way to remove one term without
+// disturbing the others. The obvious implementation — wrap each block in an
+// `if` — is LEAK 9 ("a dial that also re-rolls content is not a dial"): the
+// terms share one `rng` stream, so skipping a loop shifts every draw after it
+// and the ablation measures the re-roll as well as the term.
+//
+// So a skipped term still runs, still consumes exactly the same random numbers
+// in exactly the same order, and only its ink goes to a throwaway context. The
+// RNG stream is byte-identical whatever is skipped. Verified: with `skip` set
+// to every term at once, the surviving canvas is the bare field, and the sum of
+// the six single-term deltas accounts for the whole layer.
+//
+// `plan` is stashed so a probe can rebuild the texture from the store's own
+// traffic plan without store.js having to hand it over. Read-only for probes.
+const WEAR_DBG = { skip: null, plan: null, terms: ['field', 'buff', 'scuff', 'skid'] };
+
+// ---------------------------------------------------------------------------
 // FLOOR WEAR — one non-repeating multiply layer stretched over the whole sales
-// floor: black scuffing concentrated in the traffic lanes, cart-wheel arcs,
-// heel marks, patched tiles and the dull halo where the buffer never reaches.
+// floor: traffic dulling in the lane margins, the buffer's own pass marks, and
+// black rubber scuffing at the size black rubber scuffing actually is.
+//
+// ===========================================================================
+// ROUND 29 — THE OLD WEAR WAS HIDING THE NEW CONTACT SHADOWS.
+//
+// Round 28 gave everything that moves a real contact shadow. It then scored its
+// own single-image test at 6 of 12, p = 0.61, A NULL — and worked out why by
+// getting one tile backwards:
+//
+//   "On window 5 I called the ON arm 'no shadow' and the OFF arm 'shadow'.
+//    Zoomed 3x, the ON arm has an unmistakable dark contact pool under a shoe
+//    and four casters and the OFF arm has none — I had been drawn to the wear
+//    decal's grey swirls lower in the crop and read THOSE as the shadow. The
+//    floor is already covered in shadow-shaped grey smudges that nothing casts,
+//    so a real contact shadow has nothing to be contrasted against."
+//
+// MEASURED, on the live canvas, before anything was changed. A blob census over
+// the open sales floor (local background = 48 px box blur ≈ 2.2 m; a mark
+// counts when it dips that far below its own surroundings; compact = aspect
+// under 3, longest side 0.25–1.6 m, area over 0.05 m²):
+//
+//     dip 0.030   174 compact marks   skid 94  scuff 59  swirl 5  patch 8
+//     dip 0.045   195                 skid 104 scuff 52  swirl 10 patch 14
+//     dip 0.070   238                 skid 117 scuff 52  swirl 12 patch 14
+//     dip 0.110   162                 skid 113 scuff 22  swirl  3 patch 17
+//
+// The bottom row is the one that matters: round 28's synthetic contact shadow
+// darkened the floor by 0.101 of 0.877, an 11.5% dip. AT THAT MAGNITUDE THIS
+// TEXTURE CARRIED 162 CONTACT-SHADOW-SHAPED POOLS THAT NOTHING CASTS, and 113
+// of them came from one loop.
+//
+// WHY, IN MILLIMETRES. N = 1024 over spanX 47.7 m and spanZ 38.0 m is 46.58 mm
+// per canvas pixel across and 37.11 mm down. So the old authoring drew:
+//   * skid arcs   lineWidth 0.9–3.4 px = 42–158 mm of rubber. A shopping-cart
+//     caster tread is 25–32 mm. The mark was five times too wide, 5–11 of them
+//     per corner over 8 lanes x 3 cross-aisles x 4 corners, and they piled into
+//     a 3 m scribble at each aisle mouth.
+//   * heel marks  radius 3–30 px = 0.14–1.40 m arcs at 33–130 mm stroke. A heel
+//     drag is 12–30 mm wide and 60–350 mm long.
+//   * 26 ellipses 0.37–2.50 m across, uniformly at random, no traffic term and
+//     no fixture mask — the comment called one of them "a mat shadow". There is
+//     no mat. That is the defect written down in its own source.
+//
+// AND THE ARCS WERE NOT ROUND. Radius was set as rw/spanX*N and used for both
+// canvas axes, so every "0.9 m" cart-turn arc was a world ELLIPSE 0.90 m across
+// and 0.72 m deep. Fixed here with ctx.ellipse and the two scales.
+//
+// WHAT REPLACES IT, from what the machines and the shoes actually leave:
+//   1. the traffic field, unchanged in derivation and re-budgeted in amplitude
+//      so that the broadest dulling on the floor is under a contact shadow;
+//   2. THE BUFFER DRIVES PASSES. A scrubber runs the length of an aisle and
+//      back, overlapping by half a pad, so its mark is a long, nearly straight,
+//      gently wobbling striation ALONG the lane — not a 12 m circle struck at a
+//      random point, which is what 420 "buffer swirls" were. Half the hairlines
+//      are polish and half are dull, and they run the full depth of the store;
+//   3. rubber scuffs at 26–47 mm wide and 60–340 mm long, oriented along
+//      whichever run owns the point, rejection-sampled on the traffic field;
+//   4. caster skids at the turn corners, at 26–49 mm — the width of a caster.
+//
+// NOTHING POOLS. There is no term in this function whose shape is a compact
+// dark blob any more, which is the whole point: after this round the only thing
+// on the floor shaped like a dark pool under a caster is a dark pool under a
+// caster. See wearCheck() below for the assertion that keeps it that way.
+//
+// AND THE 210 WHITE ARCS: ROUND 28'S CLAIM IS HALF RIGHT AND THE HALF MATTERS.
+// It read "stroked rgba(255,255,255,0.26) into a multiply layer, where white is
+// the identity — they do nothing at all". White is the identity of the BLEND,
+// but these are strokes into the CANVAS, composited source-over before the
+// texture ever reaches the blend, and source-over white onto a non-white canvas
+// pixel LIGHTENS it. Ablated on the live artefact: footprint 42,479 px, of
+// which 20,369 (47.95%) landed on canvas already at 255 and were genuinely
+// dead, and 22,110 (52.05%) lightened the floor by mean 0.0124, max 0.1216.
+// So: half of them were free, not all of them. The real fault is that they had
+// nowhere to work — the traffic field pinned the whole lane centre at exactly
+// 1.0, which is why the burnish term's +0.085 was also entirely clamped away.
+// The fix is a pedestal: open floor now sits at DULL_OPEN below identity so a
+// polish stroke has somewhere to go, and the lane centre is the only place on
+// the floor that reaches 1.0. A multiply decal cannot brighten past the floor's
+// own shading; the polished floor has to BE the reference. Measured after:
+// 113,733 px lightened by the polish half against 22,110 before, 5.1x.
+//
+// WHAT THIS ROUND DOES NOT FIX, written here because the next round will find it
+//   * THE CASTER SKIDS AT THE MID-STORE CROSS-AISLE ARE THE LAST CURVED THING ON
+//     THIS FLOOR. They are hairlines now and they sit where carts actually turn,
+//     but at chase_a4 they are still the one feature at 9.7 m that curls, and it
+//     is the feature the round-27 critic drew a box around. If a critic calls
+//     them again the answer is not thinner: it is FEWER CORNERS. A real store
+//     does not skid all 96 of its lane-by-cross-aisle corners equally.
+//   * THERE IS NO ENTRANCE TRACKING AT ALL, AND THAT IS A DELIBERATE HOLE. Wet
+//     weather tracked in from a door is one of the most recognisable real
+//     supermarket floor features and it IS a pool — but a causally located one,
+//     which is the distinction this whole round is built on. It was cut rather
+//     than built because a pool is exactly what the round removed and shipping
+//     one back in the same round would have made the census unreadable. It
+//     belongs at the door funnels, under 4%, elongated along the entry path.
+//   * THE GROUT IS NOT MINE. "The distant floor is one continuous mottle where
+//     store_03/07/12 resolve grout" is half answered: the mottle amplitude is
+//     down (p01 0.782 -> 0.902) and the grout resolution is unchanged, because
+//     the grid comes from floorTex and the tile map, not from this layer.
+//   * NO PHOTOGRAPH-SIDE STATISTIC WAS BUILT. The amplitude budget here is
+//     dimensional analysis — a caster tread is 25-32 mm, a heel scuff 12-30 mm,
+//     the canvas is 46.58 x 37.11 mm per pixel — plus round 28's contact-shadow
+//     magnitude. Measuring wear amplitude in a photograph needs either an
+//     image-space statistic on a receding surface, which this project retired
+//     after six reproductions of its failure, or a rectifying homography nobody
+//     has built. Stated rather than faked.
+// ===========================================================================
 function floorWearTex(THREE, plan) {
   // TRAFFIC WEAR IS A PROCESS. ROUND 9.
   //
@@ -65683,6 +65809,15 @@ function floorWearTex(THREE, plan) {
   const [c, g] = cv(N, N);
   const rng = makeRng(0x5CFF);
   const { minX, minZ, spanX, spanZ, lanes, cross, blocks, doors } = plan;
+  WEAR_DBG.plan = plan;
+  // see WEAR_DBG. Each ink term draws into its OWN transparent layer and every
+  // layer is drawn whatever `skip` says, so an ablation cannot re-roll the
+  // shared rng stream (leak 9). Skipping means "do not composite", not "do not
+  // draw". The layers also give every term the fixture mask for free, which
+  // only the field and the heel marks used to get.
+  const skipped = (t) => !!(WEAR_DBG.skip && WEAR_DBG.skip.has(t));
+  const layer = () => { const [lc, lg] = cv(N, N); return { c: lc, g: lg }; };
+  const LB = layer(), LS = layer(), LK = layer();
   // world -> canvas. The wear plane is a PlaneGeometry rotated -90 about X, so
   // its v runs from the front of the store to the back, and CanvasTexture's
   // flipY cancels that: canvas row 0 is z = minZ.
@@ -65734,85 +65869,443 @@ function floorWearTex(THREE, plan) {
     }
   }
 
-  // --- 3. burnish in the middle, grime at the margins ----------------------
+  // --- 3. the field, as a DULLING -----------------------------------------
+  // Same derivation as round 9, three changes:
+  //
+  // (a) IT IS NOW A DULLING, not a two-sided lightening. The old form wrote
+  //     v = 1 + burnish*0.085 - ... , and burnish reaches 1 across the whole
+  //     middle of every lane, so the +0.085 was clamped away at 255 on 33.2% of
+  //     the canvas and the entire lane centre sat at exactly 1.0. That is why
+  //     47.95% of the polish strokes were dead: they were painting white onto
+  //     white. Identity is now the POLISHED floor and everything else is some
+  //     amount of dull, which is also what a multiply layer can physically say.
+  //
+  // (b) GRIME 0.185 -> 0.072. The old margin term darkened the floor by 18.5%,
+  //     against the 11.5% of round 28's measured contact shadow. The dirtiest
+  //     broad band on the floor was 1.6x a shadow. It is now 0.63x one.
+  //
+  // (c) THE NOISE WAS A PLAID. `sin(i*0.271 + j*0.113)*0.5 + sin(i*0.041 -
+  //     j*0.087)*0.5` has periods of 23 px and 153 px — 1.07 m and 7.13 m — so
+  //     the grime carried a regular diagonal beat at roughly one metre, on a
+  //     floor whose whole job is to not look tiled. Replaced with three wrapped
+  //     value-noise lattices at 6.8 m / 2.5 m / 1.1 m.
+  const DULL_OPEN = 0.020;    // how far below identity un-burnished floor sits.
+                              // This is the polish strokes' entire headroom, so
+                              // it is not decoration: at 0 they cannot exist.
+  const GRIME = 0.072;        // peak margin dulling. Was 0.185.
+  const GRIME_N = 0.34;       // noise depth on the grime
+  const DUST = 0.040;         // never-walked film. Was 0.055.
+  const NOISE = (() => {
+    const mk = (n, seed) => {
+      const a = new Float32Array(n * n), r2 = makeRng(seed);
+      for (let k = 0; k < n * n; k++) a[k] = r2();
+      return { a, n };
+    };
+    const oct = [mk(7, 0x2711), mk(19, 0x51A3), mk(43, 0x7C0D)];
+    const smp = ({ a, n }, x, y) => {
+      const x0 = Math.floor(x), y0 = Math.floor(y), fx = x - x0, fy = y - y0;
+      const u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+      const i0 = ((x0 % n) + n) % n, i1 = (i0 + 1) % n;
+      const j0 = ((y0 % n) + n) % n, j1 = (j0 + 1) % n;
+      return (a[j0 * n + i0] * (1 - u) + a[j0 * n + i1] * u) * (1 - v)
+        + (a[j1 * n + i0] * (1 - u) + a[j1 * n + i1] * u) * v;
+    };
+    return (i, j) => {
+      const x = i / N, y = j / N;
+      return (smp(oct[0], x * 7, y * 7) * 0.54
+        + smp(oct[1], x * 19, y * 19) * 0.30
+        + smp(oct[2], x * 43, y * 43) * 0.16) * 2 - 1;      // -1 .. 1
+    };
+  })();
   const im = g.createImageData(N, N), D = im.data;
   for (let k = 0; k < N * N; k++) {
     const t = T[k];
-    // a cheap value hash so the two effects are not perfectly smooth fields
     const i = k & (N - 1), j = k >> 10;
-    const n = (Math.sin(i * 0.271 + j * 0.113) * 0.5 + Math.sin(i * 0.041 - j * 0.087) * 0.5);
-    const burnish = Math.max(0, (t - 0.52) / 0.48);          // 0 .. 1
+    const n = NOISE(i, j);
+    const burn = Math.min(1, Math.max(0, (t - 0.52) / 0.48));  // 0 .. 1
     const margin = Math.max(0, 1 - Math.abs(t - 0.42) / 0.42); // peaks at t=0.42
-    const dead = Math.max(0, 0.18 - t) / 0.18;               // never-walked corners
-    let v = 1
-      + burnish * burnish * 0.085 * (0.7 + 0.3 * n)          // polished lighter
-      - margin * 0.185 * (0.72 + 0.28 * n)                   // rubber and grit
-      - dead * 0.055;                                        // dust film
+    const dead = Math.max(0, 0.18 - t) / 0.18;                 // never walked
+    const dull = DULL_OPEN * (1 - burn * burn)                 // buffed clean
+      + margin * GRIME * (1 + GRIME_N * n)                     // rubber and grit
+      + dead * DUST;                                           // dust film
+    const v = 1 - dull;
     // a warm bias on the grime: it is shoe rubber and cardboard dust, not soot
-    const r = Math.max(0, Math.min(1, v + margin * 0.020));
+    const r = Math.max(0, Math.min(1, v + margin * 0.016));
     const gg = Math.max(0, Math.min(1, v));
-    const b = Math.max(0, Math.min(1, v - margin * 0.028 - dead * 0.012));
+    const b = Math.max(0, Math.min(1, v - margin * 0.022 - dead * 0.010));
     const o = k * 4;
     D[o] = r * 255; D[o + 1] = gg * 255; D[o + 2] = b * 255; D[o + 3] = 255;
   }
-  g.putImageData(im, 0, 0);
+  if (skipped('field')) { g.fillStyle = '#fff'; g.fillRect(0, 0, N, N); }
+  else g.putImageData(im, 0, 0);
+  // the fixture mask as a stencil, so every ink term below is clipped to floor
+  // a cart could actually reach. Same rounding as `open` above, by construction.
+  const [maskC, maskG] = cv(N, N);
+  maskG.fillStyle = '#fff'; maskG.fillRect(0, 0, N, N);
+  for (const b of blocks) {
+    const i0 = Math.floor(px(b[0])), i1 = Math.ceil(px(b[2]));
+    const j0 = Math.floor(py(b[1])), j1 = Math.ceil(py(b[3]));
+    maskG.clearRect(i0, j0, i1 - i0, j1 - j0);
+  }
 
-  // --- 4. skid arcs, only where a cart actually turns ----------------------
-  // A shopping cart turns on about a 900 mm radius and its rear wheels do not
-  // steer, so the mark it leaves coming out of an aisle is an ARC struck from
-  // the inside corner of the turn — not a random scribble somewhere in the
-  // lane, which is what round 8 drew 1500 of.
+  // --- 4. THE BUFFER, AS PASSES -------------------------------------------
+  // A floor machine does not describe circles at random points. It drives the
+  // length of an aisle, turns, and comes back overlapping the last pass by
+  // about half a pad, and it does that down every aisle and across every cross-
+  // aisle. So the mark it leaves is a LONG striation along the run, carrying a
+  // slow lateral wander from the operator and a short one from the pad's own
+  // rotation — never a 12 m arc, and never anything compact.
+  //
+  // Half the hairlines are POLISH (white, lightening the field toward identity)
+  // and half are DULL. The polish half is the round-28 white-arc problem solved
+  // rather than deleted: they now have DULL_OPEN of headroom to work in, and
+  // they are clipped to floor a machine can reach.
+  const BUFF_PITCH = 0.40;                  // m between passes (pad ~0.7 m)
+  const BUFF_HAIR = 3;                      // striations per pass
+  const BUFF_STEP = 0.25;                   // m between polyline vertices
+  const BUFF_W = [0.60, 1.15];              // px  = 28-54 mm
+  const BUFF_AD = [0.030, 0.075];           // dull striation alpha
+  const BUFF_AL = [0.34, 0.72];             // polish striation alpha
+  const BUFF_LAT = 0.16;                    // m  hairline scatter within a pass
+  const BUFF_WOB = 0.055, BUFF_LAM = 6.40;  // m  operator wander, and its period
+  const BUFF_SCA = 0.030, BUFF_SLAM = 0.62; // m  pad scallop, and its period
+  const BUFF_SPREAD = 1.25;                 // pass band, in lane sigmas
+  const EDGE = 0.55;                        // m  kept off the walls
+  const zA = minZ + EDGE, zB = minZ + spanZ - EDGE;
+  const xA = minX + EDGE, xB = minX + spanX - EDGE;
+  // A REGULAR PITCH IS THE PLAID AGAIN. The first version stepped `off` by
+  // exactly BUFF_PITCH and ran every pass wall to wall, which put a corduroy of
+  // evenly spaced lines inside a hard-edged rectangle down each aisle — the same
+  // class of tell as the 1.07 m sine beat this round just took out of the grime.
+  // So the pass CENTRE carries its own jitter, the alpha tapers to nothing at
+  // the edge of the band, the hairline count varies, and each pass starts and
+  // stops somewhere different.
+  const BUFF_JIT = 0.45;                    // pass-centre jitter, in pitches
+  const BUFF_END = 2.20;                    // m of random shortening per end
+  function striate(alongZ, base, half) {
+    for (let off = -half; off <= half + 1e-6; off += BUFF_PITCH) {
+      const ph = rng() * 6.283, ph2 = rng() * 6.283;
+      const ctr = off + rr(rng, -BUFF_PITCH * BUFF_JIT, BUFF_PITCH * BUFF_JIT);
+      const taper = Math.max(0, 1 - Math.abs(ctr) / (half + BUFF_PITCH));
+      const hairs = 2 + ((rng() * 3) | 0);   // 2..4
+      const e0 = rr(rng, 0, BUFF_END), e1 = rr(rng, 0, BUFF_END);
+      for (let h = 0; h < hairs; h++) {
+        const light = rng() < 0.5;
+        const lat = ctr + rr(rng, -BUFF_LAT, BUFF_LAT);
+        const a = taper * (light ? rr(rng, BUFF_AL[0], BUFF_AL[1])
+          : rr(rng, BUFF_AD[0], BUFF_AD[1]));
+        LB.g.strokeStyle = light
+          ? `rgba(255,255,255,${a})`
+          : `rgba(${ri(rng, 96, 150)},${ri(rng, 92, 144)},${ri(rng, 86, 136)},${a})`;
+        LB.g.lineWidth = rr(rng, BUFF_W[0], BUFF_W[1]);
+        LB.g.beginPath();
+        const s0 = (alongZ ? zA : xA) + e0, s1 = (alongZ ? zB : xB) - e1;
+        for (let s = s0, first = true; s <= s1; s += BUFF_STEP, first = false) {
+          const d = base + lat
+            + BUFF_WOB * Math.sin(s * 6.283 / BUFF_LAM + ph)
+            + BUFF_SCA * Math.sin(s * 6.283 / BUFF_SLAM + ph2);
+          const cx = alongZ ? px(d) : px(s), cy = alongZ ? py(s) : py(d);
+          if (first) LB.g.moveTo(cx, cy); else LB.g.lineTo(cx, cy);
+        }
+        LB.g.stroke();
+      }
+    }
+  }
+  for (const L of lanes) striate(true, L.x, (L.w || LSIG) * BUFF_SPREAD);
+  for (const C of cross) striate(false, C.z, (C.w || CSIG) * BUFF_SPREAD);
+
+  // --- 5. rubber scuffs, at the size rubber scuffs are ---------------------
+  // A heel or sole drag is 12-30 mm wide and 60-350 mm long. At 46.58 mm per
+  // canvas pixel across and 37.11 mm down that is a sub-pixel line 1.3-9 px
+  // long — a speck, never a pool. The old term drew 0.14-1.40 m ARCS at up to
+  // 130 mm of stroke and put 22-59 contact-shadow-shaped marks on the floor.
+  // Direction is taken from whichever run owns the point, because a scuff is
+  // left by something moving along the aisle, with a 12% cross-grain minority
+  // for the people who step sideways out of a lane.
+  //
+  // AND THE FIRST VERSION OF THIS TERM FAILED ITS OWN ACCEPTANCE TEST. At
+  // 26-47 mm wide, 60-340 mm long and alpha to 0.50 the single-image run went
+  // 8 of 8 on the FAR band and 4 of 8 on the NEAR band — chance — and the
+  // pattern of the misses names the cause: three of the four near misses were
+  // ON tiles called FLOATING, on the scorer's own change. An image-space census
+  // of compact dark marks inside the visible-floor mask agreed: at the four
+  // NEAR windows the new arm carried 79/20/20/25 against the old arm's
+  // 56/22/15/22. The LARGEST pool had collapsed (7,614 px -> 707 at near_a7,
+  // an order of magnitude) and the COUNT of small ones had not.
+  //
+  // A 60 mm dash 47 mm wide has an aspect ratio of 1.3. That is a pool. So the
+  // constraint is now geometric rather than tonal, and it is a property no
+  // draw can violate: SCUFF_LEN[0] / (SCUFF_W[1] * 46.58 mm) = 0.10 / 0.029 =
+  // 3.4, so EVERY scuff is at least three times longer than it is wide and
+  // cannot be a compact mark whatever its darkness. Width also drops to the
+  // real one — a heel or sole edge is 12-30 mm, not 26-47 — and canvas
+  // antialiasing renders a 0.3 px stroke as the partial coverage it physically
+  // is rather than rounding it up to a pixel.
+  const SCUFF_N = 1500, SCUFF_TRIES = 24000;
+  const SCUFF_LEN = [0.10, 0.34];           // m
+  const SCUFF_W = [0.28, 0.62];             // px = 13-29 mm
+  const SCUFF_A = [0.16, 0.38];
+  LS.g.lineCap = 'round';
+  for (let i = 0, tries = 0; i < SCUFF_N && tries < SCUFF_TRIES; tries++) {
+    const cx = (rng() * N) | 0, cy = (rng() * N) | 0;
+    if (T[cy * N + cx] < rng() * 0.9 + 0.1) continue;
+    i++;
+    const alongZ = laneT[cx] >= crossT[cy];
+    const th = (alongZ ? Math.PI / 2 : 0) + rr(rng, -0.55, 0.55)
+      + (rng() < 0.12 ? Math.PI / 2 : 0);
+    const len = rr(rng, SCUFF_LEN[0], SCUFF_LEN[1]);
+    const dx = Math.cos(th) * len / spanX * N * 0.5;
+    const dz = Math.sin(th) * len / spanZ * N * 0.5;
+    LS.g.strokeStyle = `rgba(${ri(rng, 22, 58)},${ri(rng, 21, 54)},${ri(rng, 19, 50)},${rr(rng, SCUFF_A[0], SCUFF_A[1])})`;
+    LS.g.lineWidth = rr(rng, SCUFF_W[0], SCUFF_W[1]);
+    LS.g.beginPath();
+    LS.g.moveTo(cx - dx, cy - dz); LS.g.lineTo(cx + dx, cy + dz);
+    LS.g.stroke();
+  }
+
+  // --- 6. caster skids, only where a cart actually turns -------------------
+  // Round 9's placement is right and is kept: a cart turns on about a 900 mm
+  // radius and its rear wheels do not steer, so the mark coming out of an aisle
+  // is an arc struck from the inside corner. Two things change. The stroke is
+  // now the width of a caster tread (26-49 mm) instead of 42-158 mm, and the
+  // arc is drawn with ctx.ellipse against BOTH axis scales so that a 0.9 m turn
+  // is 0.9 m in world x AND in world z — the old one was 0.90 x 0.72 m.
+  //
+  // AND THE COUNT, THE ALPHA AND THE SCATTER ARE ALL SET BY MEASUREMENT.
+  //
+  //   * at 4-9 arcs per corner and alpha 0.10-0.40 the census still found 21
+  //     pools, ALL of them skid and all at the three cross-aisle rows: arcs
+  //     struck from centres within 0.22 m of each other CROSS, and crossings
+  //     stack alpha into a compact patch even when every stroke is one pixel
+  //     wide. 3-7 arcs at 0.07-0.24 takes that to 2.
+  //   * ROUND 28 ASKED FOR THE 0.22 m CENTRE JITTER AND THE 0.15-0.55 rad START
+  //     JITTER TO BE LEFT ALONE. They are changed anyway, on evidence it did not
+  //     have: with the pools gone, an ablation render at chase_a4 (ON minus
+  //     skid, amplified 10x) shows what is left is a BOWTIE — a bilaterally
+  //     symmetric fan of hairlines radiating from four mirrored points 0.44 m
+  //     apart, 9.7 m out, exactly the "dark curling filaments" the round-27
+  //     critic drew a box around. Fewer, thinner arcs made it fainter and left
+  //     the shape intact, because the shape comes from the four centres being
+  //     one point each. A cart does not turn at a point. It enters the walkway
+  //     anywhere across the lane and swings anywhere along it, so the centre is
+  //     now scattered over the corner MOUTH — half a lane sigma by half a cross
+  //     sigma — and the start bearing over 1.2 rad instead of 0.4.
+  const SKID_N = [2, 5];                    // arcs per corner
+  const SKID_R = [0.62, 1.55];              // m, cart turning radius
+  const SKID_W = [0.55, 1.05];              // px = 26-49 mm
+  const SKID_A = [0.07, 0.24];
+  const SKID_SC = 0.55;                     // centre scatter, in run sigmas
+  const SKID_A0 = [0.10, 1.30];             // rad, start bearing off the corner
   for (const L of lanes) {
     for (const C of cross) {
       for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
         const cx = L.x + sx * (L.w || LSIG) * 0.95;
         const cz = C.z + sz * (C.w || CSIG) * 0.95;
-        const n = 5 + ((rng() * 7) | 0);
+        const jx = (L.w || LSIG) * SKID_SC, jz = (C.w || CSIG) * SKID_SC;
+        const n = SKID_N[0] + ((rng() * (SKID_N[1] - SKID_N[0] + 1)) | 0);
         for (let k = 0; k < n; k++) {
-          const rw = rr(rng, 0.62, 1.55);                 // metres
-          const a0 = Math.atan2(-sz, -sx) - rr(rng, 0.15, 0.55);
-          g.strokeStyle = `rgba(${ri(rng, 26, 62)},${ri(rng, 24, 56)},${ri(rng, 22, 50)},${rr(rng, 0.06, 0.30)})`;
-          g.lineWidth = rr(rng, 0.9, 3.4);
-          g.beginPath();
-          g.arc(px(cx + rr(rng, -0.22, 0.22)), py(cz + rr(rng, -0.22, 0.22)),
-            rw / spanX * N, a0, a0 + rr(rng, 0.5, 1.5));
-          g.stroke();
+          const rw = rr(rng, SKID_R[0], SKID_R[1]);        // metres
+          const a0 = Math.atan2(-sz, -sx) - rr(rng, SKID_A0[0], SKID_A0[1]);
+          LK.g.strokeStyle = `rgba(${ri(rng, 20, 52)},${ri(rng, 19, 48)},${ri(rng, 17, 44)},${rr(rng, SKID_A[0], SKID_A[1])})`;
+          LK.g.lineWidth = rr(rng, SKID_W[0], SKID_W[1]);
+          LK.g.beginPath();
+          LK.g.ellipse(px(cx + rr(rng, -jx, jx)), py(cz + rr(rng, -jz, jz)),
+            rw / spanX * N, rw / spanZ * N, 0, a0, a0 + rr(rng, 0.5, 1.5));
+          LK.g.stroke();
         }
       }
     }
   }
-  // heel marks and dropped-pallet gouges scattered ALONG the lanes, sampled
-  // from the traffic field by rejection so none of them land under a shelf
-  for (let i = 0, tries = 0; i < 900 && tries < 12000; tries++) {
-    const cx = (rng() * N) | 0, cy = (rng() * N) | 0;
-    if (T[cy * N + cx] < rng() * 0.9 + 0.1) continue;
-    i++;
-    g.strokeStyle = `rgba(${ri(rng, 30, 74)},${ri(rng, 28, 66)},${ri(rng, 24, 58)},${rr(rng, 0.05, 0.26)})`;
-    g.lineWidth = rr(rng, 0.7, 2.8);
-    g.beginPath();
-    const r = rr(rng, 3, 30), a = rng() * 6.28;
-    g.arc(cx, cy, r, a, a + rr(rng, 0.2, 1.1));
-    g.stroke();
-  }
-  // buffer swirls over the whole floor — the scrubber does not follow lanes,
-  // it drives in overlapping passes, so this one term is deliberately NOT
-  // correlated with traffic.
-  for (let i = 0; i < 420; i++) {
-    g.strokeStyle = rng() < 0.5 ? 'rgba(255,255,255,0.26)' : 'rgba(120,112,98,0.09)';
-    g.lineWidth = rr(rng, 0.8, 2.6);
-    g.beginPath();
-    const x = rng() * N, y = rng() * N, r = rr(rng, 40, 260), a = rng() * 6.28;
-    g.arc(x, y, r, a, a + rr(rng, 0.2, 0.9));
-    g.stroke();
-  }
-  // a few dark patches — a repair, a stain, a mat shadow
-  for (let i = 0; i < 26; i++) {
-    g.fillStyle = `rgba(96,88,74,${rr(rng, 0.05, 0.15)})`;
-    g.beginPath();
-    g.ellipse(rng() * N, rng() * N, rr(rng, 8, 54), rr(rng, 6, 40), rng() * 3, 0, 6.29);
-    g.fill();
+
+  // --- 7. composite, each layer clipped to reachable floor -----------------
+  for (const [term, L] of [['buff', LB], ['scuff', LS], ['skid', LK]]) {
+    if (skipped(term)) continue;
+    L.g.globalCompositeOperation = 'destination-in';
+    L.g.drawImage(maskC, 0, 0);
+    g.drawImage(L.c, 0, 0);
   }
   return tex(THREE, c, { rx: 1, ry: 1, aniso: 8 });
+}
+
+// ---------------------------------------------------------------------------
+// wearCheck() — THE ASSERTION THAT KEEPS THE FLOOR OUT OF THE SHADOWS' WAY.
+//
+// It reads the LIVE canvas off the material bound to the multiply plane, not a
+// re-bake and not the source constants, and it answers exactly the question
+// round 28 got wrong: how many marks on this floor are shaped and valued like a
+// contact shadow, with nothing standing there to cast one?
+//
+// A mark counts when it dips `dip` below its own local background (a 48 px box
+// blur, 2.2 m — wide enough that the lane-margin band is background rather than
+// signal), sits on floor a cart can reach, has aspect under 3, a longest side
+// between 0.25 and 1.6 m and an area over 0.05 m². That is the size and the
+// shape of the pool round 28's tread field puts under a cart.
+//
+// CALIBRATION IS AGAINST THE REAL DEFECT, NOT AN ARBITRARY INJECTION. dip 0.110
+// is round 28's own measurement of one synthetic contact shadow on this floor:
+// 0.877 -> 0.776 mean linear luma over 891 of 891 pixels. The pre-round-29
+// texture scored 162 marks at that magnitude. The guard is proven by stamping
+// N ellipses of exactly that size and depth into the live canvas and confirming
+// the census finds them, then that the restore is byte-identical.
+//
+// It REPORTS rather than throws. A control arm has to stay loadable — leak 8.
+function wearCheck(scene, THREE, opt = {}) {
+  const dip = opt.dip ?? 0.110, bgR = opt.bgR ?? 48;
+  let mesh = null;
+  scene.traverse((o) => {
+    if (o.isMesh && o.material && o.material.blending === THREE.MultiplyBlending
+      && o.geometry.type === 'PlaneGeometry') mesh = o;
+  });
+  const plan = WEAR_DBG.plan;
+  if (!mesh || !mesh.material.map || !plan) return { ok: false, why: 'no wear plane' };
+  const cvs = opt.canvas || mesh.material.map.image;
+  const n = cvs.width;
+  const d = cvs.getContext('2d', { willReadFrequently: true })
+    .getImageData(0, 0, n, n).data;
+  const L = new Float32Array(n * n);
+  for (let i = 0; i < n * n; i++) {
+    L[i] = (0.2126 * d[i * 4] + 0.7152 * d[i * 4 + 1] + 0.0722 * d[i * 4 + 2]) / 255;
+  }
+  // separable box blur = the local background
+  const bg = (() => {
+    const tmp = new Float32Array(n * n), out = new Float32Array(n * n), r = bgR;
+    const cl = (v) => (v < 0 ? 0 : v > n - 1 ? n - 1 : v);
+    for (let j = 0; j < n; j++) {
+      let s = 0;
+      for (let i = -r; i <= r; i++) s += L[j * n + cl(i)];
+      for (let i = 0; i < n; i++) {
+        tmp[j * n + i] = s / (2 * r + 1);
+        s += L[j * n + cl(i + r + 1)] - L[j * n + cl(i - r)];
+      }
+    }
+    for (let i = 0; i < n; i++) {
+      let s = 0;
+      for (let j = -r; j <= r; j++) s += tmp[cl(j) * n + i];
+      for (let j = 0; j < n; j++) {
+        out[j * n + i] = s / (2 * r + 1);
+        s += tmp[cl(j + r + 1) * n + i] - tmp[cl(j - r) * n + i];
+      }
+    }
+    return out;
+  })();
+  const px = (x) => (x - plan.minX) / plan.spanX * n;
+  const py = (z) => (z - plan.minZ) / plan.spanZ * n;
+  const open = new Uint8Array(n * n).fill(1);
+  for (const b of plan.blocks) {
+    const i0 = Math.max(0, Math.floor(px(b[0]))), i1 = Math.min(n, Math.ceil(px(b[2])));
+    const j0 = Math.max(0, Math.floor(py(b[1]))), j1 = Math.min(n, Math.ceil(py(b[3])));
+    for (let j = j0; j < j1; j++) open.fill(0, j * n + i0, j * n + i1);
+  }
+  const mask = new Uint8Array(n * n);
+  for (let i = 0; i < n * n; i++) if (open[i] && bg[i] - L[i] >= dip) mask[i] = 1;
+  const mmx = plan.spanX / n, mmz = plan.spanZ / n;    // metres per pixel
+  const seen = new Uint8Array(n * n), stack = new Int32Array(n * n);
+  const marks = [];
+  for (let k = 0; k < n * n; k++) {
+    if (!mask[k] || seen[k]) continue;
+    let sp = 0; stack[sp++] = k; seen[k] = 1;
+    let x0 = k % n, x1 = x0, y0 = (k / n) | 0, y1 = y0, cnt = 0;
+    while (sp) {
+      const p = stack[--sp]; cnt++;
+      const x = p % n, y = (p / n) | 0;
+      if (x < x0) x0 = x; if (x > x1) x1 = x;
+      if (y < y0) y0 = y; if (y > y1) y1 = y;
+      if (x > 0 && mask[p - 1] && !seen[p - 1]) { seen[p - 1] = 1; stack[sp++] = p - 1; }
+      if (x < n - 1 && mask[p + 1] && !seen[p + 1]) { seen[p + 1] = 1; stack[sp++] = p + 1; }
+      if (y > 0 && mask[p - n] && !seen[p - n]) { seen[p - n] = 1; stack[sp++] = p - n; }
+      if (y < n - 1 && mask[p + n] && !seen[p + n]) { seen[p + n] = 1; stack[sp++] = p + n; }
+    }
+    const w = (x1 - x0 + 1) * mmx, h = (y1 - y0 + 1) * mmz;
+    const lo = Math.min(w, h), hi = Math.max(w, h);
+    const area = cnt * mmx * mmz;
+    if (hi / Math.max(1e-6, lo) < 3 && hi > 0.25 && hi < 1.6 && area > 0.05) {
+      marks.push({ w: +w.toFixed(2), h: +h.toFixed(2), area: +area.toFixed(3), cx: (x0 + x1) >> 1, cy: (y0 + y1) >> 1 });
+    }
+  }
+  // THE THRESHOLD, DERIVED. A tolerance nobody derived is not an assertion.
+  // The shipped texture scores 0 and the texture this round replaced scores 211,
+  // so any line in 1..210 separates them; the choice inside that range has to
+  // come from what a LEGITIMATE future term could produce. The store has 96
+  // lane-by-cross-aisle corners and 8 lanes; 8 is "fewer than one pool per
+  // twelve corners, and fewer than one per lane" — a term that pools once per
+  // aisle fires it. It is also 3.8% of the defect, so any regression restoring
+  // more than a twenty-fifth of the old smudging is caught. Margin on the
+  // shipped build is the whole budget: it uses 0 of 8.
+  const max = opt.max ?? 8;
+  return {
+    ok: marks.length <= max, dip, pools: marks.length, max,
+    sample: marks.slice(0, 6),
+    why: marks.length <= max ? '' :
+      `${marks.length} contact-shadow-shaped pools on the open floor at dip ${dip}`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// wearSelfTest() — wearCheck() PROVEN AGAINST THE EXACT DEFECT IT REPLACED.
+//
+// A guard that has never been shown to fire is a comment. This one is not
+// calibrated to an arbitrary injection: it stamps ellipses of EXACTLY the size
+// and depth of the thing the round removed and of the thing the round must not
+// hide.
+//
+//   size  0.60 x 0.45 m — the footprint of round 28's contact pool under a cart
+//   depth a LINEAR RADIAL FALLOFF from 34.7% at the contact to 0 at the rim.
+//         Round 28 measured both numbers on this floor: mean dip 0.101 of 0.877
+//         = 11.5% over 891 of 891 pixels, max 0.347. A linear falloff from a to
+//         0 has area-mean int(a(1-r) 2r dr, 0..1) = a/3, and 0.347/3 = 0.1157 —
+//         so ONE shape reproduces both of round 28's numbers at once, and the
+//         guard is calibrated to the real thing rather than to a flat patch.
+//         The first version stamped a flat 11.5% and caught 2 of 24, because a
+//         flat fill sits exactly ON the threshold; that is recorded rather than
+//         quietly retuned.
+//
+// It corrupts the LIVE canvas (not a copy), asserts wearCheck goes from clean to
+// caught, restores, and asserts the restore is byte-identical. It reports rather
+// than throwing: a control arm has to stay loadable (leak 8).
+function wearSelfTest(scene, THREE, n = 24) {
+  const before = wearCheck(scene, THREE);
+  const plan = WEAR_DBG.plan;
+  let mesh = null;
+  scene.traverse((o) => {
+    if (o.isMesh && o.material && o.material.blending === THREE.MultiplyBlending
+      && o.geometry.type === 'PlaneGeometry') mesh = o;
+  });
+  if (!mesh || !plan) return { ok: false, why: 'no wear plane' };
+  const cvs = mesh.material.map.image, N = cvs.width;
+  const g = cvs.getContext('2d', { willReadFrequently: true });
+  const saved = g.getImageData(0, 0, N, N);
+  const rng = makeRng(0xC0FFEE);
+  const rx = 0.30 / plan.spanX * N, ry = 0.225 / plan.spanZ * N;   // 0.60 x 0.45 m
+  const lane = plan.lanes[Math.floor(plan.lanes.length / 2)];
+  for (let i = 0; i < n; i++) {
+    const wx = lane.x + rr(rng, -1.0, 1.0);
+    const wz = plan.minZ + rr(rng, 0.12, 0.88) * plan.spanZ;
+    const cx = (wx - plan.minX) / plan.spanX * N;
+    const cy = (wz - plan.minZ) / plan.spanZ * N;
+    const grd = g.createRadialGradient(cx, cy, 0, cx, cy, rx);
+    grd.addColorStop(0, 'rgba(0,0,0,0.347)');
+    grd.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grd;
+    g.save();
+    g.translate(cx, cy); g.scale(1, ry / rx); g.translate(-cx, -cy);
+    g.beginPath(); g.arc(cx, cy, rx, 0, 6.2832); g.fill();
+    g.restore();
+  }
+  const during = wearCheck(scene, THREE);
+  g.putImageData(saved, 0, 0);
+  const after = wearCheck(scene, THREE);
+  const now = g.getImageData(0, 0, N, N).data;
+  let bad = 0;
+  for (let i = 0; i < now.length; i++) if (now[i] !== saved.data[i]) bad++;
+  return {
+    ok: before.ok && !during.ok && after.ok && bad === 0
+      && during.pools >= n * 0.75,
+    stamped: n,
+    poolsBefore: before.pools, poolsDuring: during.pools, poolsAfter: after.pools,
+    restoreDiffBytes: bad,
+    why: bad ? 'restore is not byte-identical'
+      : (!during.ok ? '' : 'guard did not fire on injected contact pools'),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -66684,7 +67177,7 @@ function exitSignAtlas(THREE) {
   return t;
 }
 
-return { floorTex, ceilTex, stripTex, WELL_UV, wellTex, TSH_CELLS, trofferShadowTex, slotTex, pegTex, smearTex, floorWearTex, DANGLE_COLS, PROMO_DEPT, DANGLE_DEPT, promoCellFor, danglerAtlas, cartMeshTex, railTex, woodTex, boxMask, boxAtlas, bagAtlas, canMask, bottleMask, bagMask, cartonMask, signAtlas, bladeAtlas, wallSignAtlas, laneAtlas, PROMO_COLS, promoAtlas, signCellCheck, glowTex, wallTex, coolerBackTex, outsideTex, doorDecalAtlas, exitSignAtlas };
+return { floorTex, ceilTex, stripTex, WELL_UV, wellTex, TSH_CELLS, trofferShadowTex, slotTex, pegTex, smearTex, WEAR_DBG, floorWearTex, wearCheck, wearSelfTest, DANGLE_COLS, PROMO_DEPT, DANGLE_DEPT, promoCellFor, danglerAtlas, cartMeshTex, railTex, woodTex, boxMask, boxAtlas, bagAtlas, canMask, bottleMask, bagMask, cartonMask, signAtlas, bladeAtlas, wallSignAtlas, laneAtlas, PROMO_COLS, promoAtlas, signCellCheck, glowTex, wallTex, coolerBackTex, outsideTex, doorDecalAtlas, exitSignAtlas };
 })();
 
 /* ==== src/store/press.js ==== */
