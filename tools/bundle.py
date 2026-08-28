@@ -35,22 +35,41 @@ def resolve(spec, frm):
 
 def var(path): return "M_" + re.sub(r"[^A-Za-z0-9]", "_", path)
 
+def exported_name(entry):
+    """The name a CONSUMER imports, from an emit-ready return-object fragment.
+    `"MOTIF_DRAW: M"` -> `MOTIF_DRAW`; `"depict"` -> `depict`."""
+    return entry.split(":")[0].strip() if ":" in entry else entry
+
 def exports_of(src):
     """Collect exported names, and rewrite `export X` -> `X`."""
     names = []
     for m in re.finditer(r"^[ \t]*export\s+(?:async\s+)?(?:function\*?|class|const|let|var)\s+(\w+)", src, re.M):
         names.append(m.group(1))
     # `export { a, b as c };`
+    #
+    # AN ALIASED EXPORT NEEDS `c: b`, NOT `c`. This recorded the EXPORTED name and
+    # the return object below emits every entry as a SHORTHAND property, so
+    # `export { M as MOTIF_DRAW }` became `return { MOTIF_DRAW }` with no such
+    # local binding. The bundle PARSED — both syntax gates passed it — and then
+    # died at runtime with `MOTIF_DRAW is not defined`, stuck on the boot card.
+    # That is the third time source and bundle have diverged on this project and
+    # the first that a parse check could never have caught, because it is a
+    # reference error and not a syntax one. Entries are now emit-ready fragments.
     for m in re.finditer(r"^[ \t]*export\s*\{([^}]*)\}\s*;?", src, re.M):
         for part in m.group(1).split(","):
             part = part.strip()
             if not part: continue
-            names.append(part.split(" as ")[-1].strip() if " as " in part else part)
+            if " as " in part:
+                local, out = [q.strip() for q in part.split(" as ")]
+                names.append(out if local == out else f"{out}: {local}")
+            else:
+                names.append(part)
     src = re.sub(r"^([ \t]*)export\s+(?=(?:async\s+)?(?:function|class|const|let|var)\s)", r"\1", src, flags=re.M)
     src = re.sub(r"^[ \t]*export\s*\{[^}]*\}\s*;?[ \t]*$", "", src, flags=re.M)
     seen, uniq = set(), []
     for n in names:
-        if n not in seen: seen.add(n); uniq.append(n)
+        k = exported_name(n)
+        if k not in seen: seen.add(k); uniq.append(n)
     return src, uniq
 
 mods, order, building = {}, [], set()
@@ -110,9 +129,10 @@ def load(path):
     src = REEXPORT_RE.sub(strip_reexport, src)
     src = IMPORT_RE.sub(strip, src)
     src, names = exports_of(src)
+    have = {exported_name(x) for x in names}
     for n in reexported:
-        if n not in names:
-            names.append(n)
+        if n not in have:
+            have.add(n); names.append(n)
     mods[path] = {"src": src, "names": names, "prelude": prelude}
     building.discard(path)
     order.append(path)

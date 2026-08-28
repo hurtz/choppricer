@@ -25,6 +25,20 @@ import { BEHAVIOUR_GUILTY } from './lines.js';
 const HALF = AISLE_LEN / 2;
 const d2 = (ax, az, bx, bz) => Math.hypot(ax - bx, az - bz);
 const GUILTY = new Set(BEHAVIOUR_GUILTY);
+// ROUND 21 — A WORST-OF IS NOT A TOTAL, AND IT SHOULD NOT NEED A LIST.
+// This file pools hud.js's census in TWO places (per frame inside a shift, and
+// across shifts), and both did it by adding every numeric key with two
+// hand-written exceptions. Round 20 added `_subjNearWorst`, did not add it
+// beside them, and a pooled bench reported the SUM of every frame's worst case
+// as if it were a worst case. The same trap has now caught three fields in three
+// rounds — `_erasePct`, `_worstPx`, `_subjNearWorst` — because it is a list that
+// somebody has to remember to extend.
+//
+// So it is a NAMING RULE instead: a numeric census key whose name ends in
+// `Worst` pools by maximum. The two legacy string pairs keep their special cases
+// above it (a string cannot be maxed; its companion number is what is compared),
+// and any field a later round adds is right by default.
+const isWorstNum = (k, v) => typeof v === 'number' && /Worst$/.test(k);
 // "How close is this man to being gone." There are two doors now and they are
 // 35 m apart, so this is route metres to whichever way out he is nearest — the
 // number agents.js exposes for exactly this. Falls back to the old straight line
@@ -692,6 +706,18 @@ export async function run(ctx, opts = {}) {
         const v = r.census[k];
         if (k === '_overprintWorst' || k === '_worstPx') continue;   // worst-of, below
         if (k === '_eraseWorst' || k === '_erasePct') continue;      // ROUND 16, same
+        // ROUND 21 — AND THE CLASS, RATHER THAN A THIRD SPECIAL CASE. Round 20
+        // wrote `_subjNearWorst` per frame and it landed in the additive branch
+        // below, so a pooled bench reported a SUM OF WORSTS. `_overprintWorst`
+        // and `_eraseWorst` are hand-written exceptions two lines up and this
+        // one "was not added beside them" — which is what a list of exceptions
+        // does every time somebody adds a member. A NUMERIC key whose name ends
+        // in `Worst` is a maximum by construction, in both of this file's two
+        // pooling loops, and the next one costs nobody a decision.
+        if (isWorstNum(k, v)) {
+          if (census[k] == null || v > census[k]) census[k] = v;
+          continue;
+        }
         if (typeof v === 'number') census[k] = (census[k] || 0) + v;
         else if (v != null && census[k] == null) census[k] = v;
       }
@@ -761,7 +787,52 @@ export async function run(ctx, opts = {}) {
         // 94 erasures naming a number is a complaint.
         _eraseSites: Object.keys(census).filter((k) => k.slice(0, 4) === 'ERZ ')
           .sort((a, b) => census[b] - census[a])
-          .map((k) => `${census[k]}x  ${k.slice(4)}`) };
+          .map((k) => `${census[k]}x  ${k.slice(4)}`),
+        // ===================================================================
+        // ROUND 21 — THE SUBJECT LEDGER HAD NEVER REACHED A REPORT EITHER
+        // ===================================================================
+        // The loop below builds the mark tally and its first line is
+        // `if (k[0] === '_') continue`. Every key hud.sample() writes about the
+        // SUBJECT starts with `_` — `_subjOn`, `_subjCovSum`, `_subjHit`,
+        // `_subjPanelCovSum`, `_subjNearWorst` — and not one of them is in the
+        // literal above, so round 17's subject-coverage instrument has been
+        // pooled correctly across two loops and then dropped on the floor at the
+        // last step, for four rounds. Round 20's `_subjNearWorst` was being
+        // SUMMED into a report that never printed it.
+        //
+        // That is the same shape as round 20's guard with no caller, one stage
+        // later: a measurement that runs, pools, and is never published. Wiring
+        // the guard to hud.sample() is only half a fix if the census key it
+        // writes stops here.
+        //
+        // `_subjOn` is the denominator and is reported first for the reason the
+        // ink ledger's `_strings` is: a zero has to be distinguishable from an
+        // instrument that never had a frame it could speak about.
+        _subjOn: census._subjOn || 0,
+        _subjCovPct: pct(100 * (census._subjCovSum || 0), 100 * (census._subjOn || 0)),
+        _subjHit: census._subjHit || 0,
+        _subjPanelCovPct: pct(100 * (census._subjPanelCovSum || 0), 100 * (census._subjOn || 0)),
+        _subjNear: census._subjNear || 0,
+        _subjNearCovPct: pct(100 * (census._subjNearCovSum || 0), 100 * (census._subjNear || 0)),
+        _subjNearHit: census._subjNearHit || 0,
+        // A MAXIMUM, pooled by isWorstNum above. It was an addition in round 20.
+        _subjNearWorstPct: +(100 * (census._subjNearWorst || 0)).toFixed(1),
+        _subjOff: census._subjOff || 0,
+        // ---- AND THE GUARD, WHICH NOW HAS A CALLER ------------------------
+        // `_subjGuard` is the population: the census frames the guard actually
+        // ran on. `_subjGuardFail` and `_bandGuardFail` MUST BE 0 — each is a
+        // frame where the shipped layout stood on more of the man than the
+        // layout it replaced would have. `_subjGuardSeparable` is the subset of
+        // frames where the two layouts could differ at all, so a zero failure
+        // count can be told from a guard that never had a frame to speak on.
+        _subjGuard: census._subjGuard || 0,
+        _subjGuardSeparable: census._subjGuardSeparable || 0,
+        _subjGuardFail: census._subjGuardFail || 0,
+        _subjGuardWorst: census._subjGuardWorst || null,
+        _subjGuardDeltaWorst: census._subjGuardDeltaWorst || 0,
+        _bandGuardSeparable: census._bandGuardSeparable || 0,
+        _bandGuardFail: census._bandGuardFail || 0,
+        _bandGuardWorst: census._bandGuardWorst || null };
       const DESK = new Set(['officer', 'roster', 'rosterEmpty', 'dispatch', 'dispatchArmed',
         'dispatchIdle', 'deskKeyHint', 'paBtn', 'pipTiles', 'pipFresh', 'bandRow2', 'rowRunning',
         // ROUND 10: `rowPA` is an announcement's reaction on a roster row and
@@ -1044,6 +1115,10 @@ async function shift(ctx, policyName, opts) {
         // cross-shift one was fixed and this one was not. Both now skip.
         if (k === '_overprintWorst' || k === '_worstPx') continue;
         if (k === '_eraseWorst' || k === '_erasePct') continue;
+        if (isWorstNum(k, v)) {          // ROUND 21, see the cross-shift pooler
+          if (census[k] == null || v > census[k]) census[k] = v;
+          continue;
+        }
         if (typeof v === 'number') census[k] = (census[k] || 0) + v;
         else if (v != null && census[k] == null) census[k] = v;
       }

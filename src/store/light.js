@@ -48,13 +48,108 @@
 // 250 mm off a lit floor is not unlit, it is lit from below, and "no light was
 // sampled here" is exactly the bug an occlusion-only model has.
 //
+// ===========================================================================
+// ROUND 21 — AND THE LIMIT OF EVERYTHING ABOVE, NAMED BEFORE IT IS WORKED
+// AROUND.
+//
+// A GONDOLA SHELF IS A THREE-SIDED BOX AND LIGHT HAS TO GET INTO IT. In the
+// reference photographs the shelf underside, the back panel and the deck under
+// a product sit at 0.19-0.42 of that same shelf's own lit lip. This render sat
+// at 0.59-0.87. Occlusion dynamic range compressed about 3x, and identically
+// before and after round 20's seven families of aisle hardware — which is what
+// made round 20's critic write the sharpest sentence of that round: "adding
+// protruding geometry to a scene whose light does not respond to geometry just
+// creates more objects that visibly fail to cast shadows."
+//
+// THE STRUCTURE ABOVE CANNOT FIX THAT, AND NOT BY A TUNING MARGIN. Everything
+// in this file to here reads ONE TOP-DOWN FIELD holding, per 47 mm column, how
+// tall the tallest thing standing there is. Every column through a gondola is
+// 2.05 m tall all the way up, so that field cannot distinguish the lit lip from
+// the cavity 450 mm behind it: there is no y in it to distinguish them WITH.
+// Worse, chopAO's self-occlusion push (145 mm along the normal, and correct —
+// see the note there) exists precisely to escape that sealed column, and in
+// escaping it it deletes the only signal a cavity could have had.
+//
+// Measured live before anything was changed, at pose near_a1, six shelf slots,
+// regions declared in WORLD METRES on a named gondola face and projected:
+//
+//     chopA.x at the lit lip   0.932 0.939 0.944 0.980 0.989 0.993
+//     chopA.x in the cavity    0.867 0.857 0.943 0.989 0.992 0.953
+//     ratio                    0.93  0.91  1.00  1.01  1.00  0.96
+//
+// The occlusion term is BLIND to the shelf box. That is the whole finding.
+//
+// (And it corrects the premise this round was briefed with. AGENTS_BRIEF
+// carries round 13's "63% of a facing's light is Ambient + Hemisphere, two
+// terms that are CONSTANT and cannot respond to geometry". Re-run live on this
+// build, near_a4 shelf band, one light at a time to zero, restore hash-proven:
+// Ambient 18.1%, Hemisphere 19.3%, key 7.7%, fill 0.2% — 37.4%, not 63%. The
+// other 55% is this file's own added terms, which did not exist in round 13.
+// And the conclusion drawn from that number was wrong in any case: look at
+// AO_FRAG. `gl_FragColor.rgb *= chopA.x` runs AFTER <opaque_fragment>, so it
+// scales the ambient and the hemisphere too, and the lamp, aisle and bounce
+// terms are each written riding chopA.x or chopA.y explicitly. Only chopDay is
+// ungated. THE AMBIENT WAS NEVER UNOCCLUDABLE. It is occluded by a number that
+// reads 0.93 inside a shelf.)
+//
+// SO THE SECOND STRUCTURE IS DELIBERATE, and it is a coarse VOLUME rather than
+// a second height map, because the missing axis is y. `vox` is a 512 x 64 x 512
+// occupancy grid over the store footprint — 93 mm in x, 74 mm in z, 50 mm in y
+// over 0 to 3.2 m — holding the FRACTION of each cell that is solid. It is
+// mip-mapped, so one fetch at mip m is the mean occupancy of a 2^m cell block,
+// and chopCav cone-traces three of them along the shading normal. A facing at
+// the lip looks into 4 m of open aisle and reads ~0; the same facing 300 mm
+// further back looks into deck, product and back panel and reads high. That is
+// the lip/cavity distinction, expressed as the thing it physically is.
+//
+// AND IT IS POPULATED BY CONSTRUCTION, which is the whole reason round 8 built
+// a field instead of authoring another occlusion card: it is stamped in box()
+// itself, i.e. at the sink kit.js's Batch.push already calls for every instance
+// in the building. A prop added in round 22 by someone who has never opened
+// this file occludes the moment it is pushed. Nothing opts in.
+//
+// ONE EXCLUSION, AND IT IS THE ROUND-9 WIRE CART ARGUMENT ONE FIXTURE ALONG.
+// There are exactly two funnels into this file: Batch.push -> box(), which is
+// real geometry, and store.js's solid() -> boxHex(), which is a COLLIDER — a
+// volume a body may not walk through. Round 9 already found the two disagree
+// for an open wire basket and added `fieldHex === false` for it. A gondola is
+// the second case and the more important one: its collider is 1.34 x 2.05 m
+// because that is what a shopper cannot walk through, but the fixture is
+// mostly air, and every steel part of it is already stamped individually
+// through fix(). Stamping the collider slab into a VOLUME field would fill
+// every cavity in the store with solid and delete the term before it ran. So
+// boxHex marks its call bulk and the volume channel skips it. The height
+// channel is untouched and every number above it is byte-identical.
+//
+// What that exclusion costs, stated rather than discovered later: anything that
+// exists ONLY as a collider is absent from the volume field. Measured on this
+// build: 64,689 stamps entered the volume and 55 were skipped as bulk, out of
+// 64,744 solids. Those 55 are the four perimeter wall volumes and the big case
+// and counter shells. Their real geometry (coolerWall, cooler, frontend,
+// wetrack, bulk, fixtures — all InstancedMesh, all through Batch.push) IS in
+// the volume, so what is missing is the wall board itself, which overhangs
+// nothing and shades nothing this term is about.
+//
+// EVIDENCE AND HOW TO RE-RUN IT, so the next round does not have to rebuild the
+// instruments:
+//   shots/_probe_r21_light.js   world-anchored lip/cavity regions, the closure
+//                               profile, the mip check, the dial A/B
+//   shots/_probe_r21_ref.py     the same ratio on the reference photographs,
+//                               coordinates published, evidence drawn
+//   shots/_probe_r21_blur.py    the 45x32 blur sheet, r20's crops unchanged
+//   ?flatcav                    round-20 behaviour, one page load
+//   uFldDbg 9 / 10 / 11 / 12    the closure and the three volume taps
+// ===========================================================================
+//
 // CONTRACT
 //   makeField(THREE, minX, minZ, spanX, spanZ, N) -> Field
 //   field.box(x,z,w,l,y0,y1,r,g,b,round) -> stamp one solid; `round` means the
 //                                   footprint is an ELLIPSE, not the AABB
-//   field.boxHex(x,z,w,l,y0,y1,hex,round) -> the same, in sRGB swatches
+//   field.boxHex(x,z,w,l,y0,y1,hex,round) -> the same, in sRGB swatches, and
+//                                   BULK: collider volume, no volume stamp
 //   field.finish(THREE)          -> the height/low-colour texture; also fills
-//                                   field.hiTex, the high colour band
+//                                   field.hiTex, the high colour band, and
+//                                   field.voxTex, the round-21 occupancy volume
 //   fieldUniforms(THREE, field, opts) -> the uniform bag both mirrors and the
 //                                   AO patch share
 //   applyAO(THREE, root, U)      -> patch every opaque material under root
@@ -109,6 +204,52 @@ const REFL_NORM = 1.40;
 // Above this a solid hangs from the ceiling rather than standing on the floor.
 const HANG_Y = 2.90;
 
+// ---------------------------------------------------------------------------
+// ROUND 21 — THE OCCUPANCY VOLUME. See the header block for why it is a volume
+// and not a second height map.
+//
+// The resolution is not a taste call, it is read off the fixture it has to
+// resolve. A gondola deck board is 36 mm thick on a 158-198 mm notch pitch for
+// a canned run and 610 mm for a bulky one, and the cavity behind the lip is
+// 450-550 mm deep. So the grid has to be FINE IN Y AND MAY BE COARSE IN XZ:
+// 3.2 m / 64 = 50 mm vertical resolves a 160 mm slot into three cells, and
+// 47.7 m / 512 = 93 mm horizontal resolves a 500 mm cavity into five. A cell
+// carries the FRACTION of itself that is solid rather than a bit, so a 36 mm
+// board in a 50 mm cell reports 0.72 and not either 0 or 1 — which is what
+// lets a mip mean anything.
+//
+// 16.8 MB, plus about 14% for the mip chain. It is read at three mips per
+// fragment and never on the CPU after finish().
+//
+// VOX_H is 3.2 and FIELD_H is 3.4 and they are deliberately different numbers:
+// the height field caps where the tallest promo header stops mattering for
+// GROUND occlusion, and this one caps where the tallest gondola stops being a
+// box you can be inside. Anything above 3.2 m is either ceiling hardware or a
+// hanging sign, and neither is a cavity.
+const VOX_X = 512, VOX_Y = 64, VOX_Z = 512, VOX_H = 3.20;
+
+// THE ELLIPSE FEATHER, AND IT IS A FUNCTION BECAUSE ROUND 21 MADE IT THE THIRD
+// COPY. box() and colour() each carried this arithmetic inline, which was fine
+// while they were two halves of one loop; adding vol() made it three, and
+// CLAUDE.md's rule is that exactly one piece of code owns a derivation.
+//
+// It is not a hypothetical. The first draft of vol() wrote its own version —
+// `1.35 - t`, a flat 35% skirt — instead of this one, and voxCheck's very first
+// run caught it: 53 voxel columns held occupancy standing up to 880 mm above
+// the height field's own top in the same column, all of them 4-14% slivers on
+// the outside of a round footprint, because the volume accepted cells out to
+// t = 1.35 while the height stamp stops at t = 1 + 0.5/featherK (about 1.05 for
+// a drum). Two structures filled at one sink, disagreeing about the shape of a
+// barrel. One function, three callers, and the check that found it is shipped.
+//
+// `t` is the normalised elliptical radius and `featherK` is how many texels one
+// unit of it spans, so the ramp is one texel wide however big the solid is.
+// Returns 0 for a cell outside the footprint.
+function ellipseCov(t, featherK) {
+  const c = (1 - t) * featherK + 0.5;
+  return c <= 0 ? 0 : (c > 1 ? 1 : c);
+}
+
 export class Field {
   // N is the HEIGHT resolution. Round 9 doubles it to 2048 over a 47.7 m room
   // = 23 mm/texel, and the reason is the contact core below: a two-to-five
@@ -134,6 +275,74 @@ export class Field {
     this.n = 0;
     this.nHang = 0;
     this.nPaint = 0;
+    // ROUND 21 — the occupancy volume. Uint8 and saturating rather than a
+    // Float32 accumulator, because 16.8 M cells of float is 67 MB of transient
+    // heap for a quantity whose whole use is a blurred mean.
+    this.vox = new Uint8Array(VOX_X * VOX_Y * VOX_Z);
+    this.vx = VOX_X; this.vy = VOX_Y; this.vz = VOX_Z;
+    this.nVox = 0;      // stamps that entered the volume
+    this.nBulk = 0;     // stamps that were collider-only and did not
+    this.voxCells = 0;  // cells written at least once, for the census
+    this._bulk = false;
+  }
+
+  // ONE SOLID INTO THE OCCUPANCY VOLUME. Fractional coverage per axis, so a
+  // 36 mm board lands as 0.72 of a 50 mm cell instead of rounding to nothing or
+  // to a whole cell. Saturating add: two solids in one cell cannot report 1.4.
+  //
+  // `round` is honoured for the same reason box() honours it — a cylinder
+  // stamped as its bounding square casts a SQUARE computed shadow, which is the
+  // round-8 barrel fault, and this term is read by cone taps that would spread
+  // that square rather than hide it.
+  vol(x, z, w, l, y0, y1, round) {
+    const VX = this.vx, VY = this.vy, VZ = this.vz;
+    const gx = VX / this.spanX, gz = VZ / this.spanZ, gy = VY / VOX_H;
+    const ax = (x - w / 2 - this.minX) * gx, bx = (x + w / 2 - this.minX) * gx;
+    const az = (z - l / 2 - this.minZ) * gz, bz = (z + l / 2 - this.minZ) * gz;
+    const ay = y0 * gy, by = Math.min(y1, VOX_H) * gy;
+    if (by <= ay) return;
+    let i0 = Math.floor(ax), i1 = Math.ceil(bx);
+    let k0 = Math.floor(az), k1 = Math.ceil(bz);
+    let j0 = Math.floor(ay), j1 = Math.ceil(by);
+    if (i1 <= 0 || k1 <= 0 || j1 <= 0 || i0 >= VX || k0 >= VZ || j0 >= VY) return;
+    if (i0 < 0) i0 = 0; if (k0 < 0) k0 = 0; if (j0 < 0) j0 = 0;
+    if (i1 > VX) i1 = VX; if (k1 > VZ) k1 = VZ; if (j1 > VY) j1 = VY;
+    const ci = (x - this.minX) * gx, ck = (z - this.minZ) * gz;
+    const ri = Math.max(1e-4, w / 2 * gx), rk = Math.max(1e-4, l / 2 * gz);
+    // Same feather rule as the height stamp — one texel of ramp — but measured
+    // in THIS grid's texels, which are 4x coarser. That residual difference is
+    // real and voxCheck's tolerance is sized for it rather than hiding it.
+    const featherK = Math.min(ri, rk);
+    const V = this.vox;
+    let wrote = 0;
+    for (let k = k0; k < k1; k++) {
+      const covZ = Math.min(bz, k + 1) - Math.max(az, k);
+      if (covZ <= 0) continue;
+      const dk = round ? (k + 0.5 - ck) / rk : 0;
+      for (let i = i0; i < i1; i++) {
+        let covX = Math.min(bx, i + 1) - Math.max(ax, i);
+        if (covX <= 0) continue;
+        if (round) {
+          const di = (i + 0.5 - ci) / ri;
+          const cov = ellipseCov(Math.sqrt(di * di + dk * dk), featherK);
+          if (cov <= 0) continue;
+          covX *= cov;
+        }
+        const base = i + VX * (VY * k);
+        const cxz = covX * covZ;
+        for (let j = j0; j < j1; j++) {
+          const covY = Math.min(by, j + 1) - Math.max(ay, j);
+          if (covY <= 0) continue;
+          const o = base + VX * j;
+          const add = cxz * covY * 255;
+          const v = V[o] + add;
+          if (V[o] === 0) wrote++;
+          V[o] = v > 255 ? 255 : v;
+        }
+      }
+    }
+    this.voxCells += wrote;
+    this.nVox++;
   }
 
   // One axis-aligned solid. w/l are FULL extents about (x,z); y0..y1 vertical.
@@ -200,10 +409,8 @@ export class Field {
         let cov = 1;
         if (round) {
           const di = (i + 0.5 - ci) / ri;
-          const t = Math.sqrt(di * di + dj * dj);
-          cov = (1 - t) * featherK + 0.5;
+          cov = ellipseCov(Math.sqrt(di * di + dj * dj), featherK);
           if (cov <= 0) continue;
-          if (cov > 1) cov = 1;
         }
         const k = row + i;
         const hc = h * cov;
@@ -211,6 +418,9 @@ export class Field {
       }
     }
     if (cwL > 0 || cwH > 0) this.colour(x, z, w, l, cwL, cwH, r, g, b, round);
+    // ROUND 21 — and the volume, at the same sink, for the same reason. `_bulk`
+    // is set only by boxHex, i.e. only by store.js's solid(); see the header.
+    if (this._bulk) this.nBulk++; else this.vol(x, z, w, l, y0, y1, round);
     this.n++;
   }
 
@@ -240,10 +450,8 @@ export class Field {
         let cov = 1;
         if (round) {
           const di = (i + 0.5 - ci) / ri;
-          const t = Math.sqrt(di * di + dj * dj);
-          cov = (1 - t) * featherK + 0.5;
+          cov = ellipseCov(Math.sqrt(di * di + dj * dj), featherK);
           if (cov <= 0) continue;
-          if (cov > 1) cov = 1;
         }
         const k = row + i;
         if (cwL > 0) {
@@ -269,13 +477,27 @@ export class Field {
     this.nPaint++;
   }
 
-  // sRGB hex convenience for the call sites that still think in swatches.
+  // sRGB hex convenience for the call sites that still think in swatches — and,
+  // since round 21, the BULK entry point. store.js's solid() is its only caller
+  // and a solid() is a collider: a volume a body may not walk through, whose
+  // interior this file knows nothing about. It stamps the HEIGHT channel (a
+  // gondola really is 2.05 m tall to a floor beside it) and must not stamp the
+  // VOLUME channel (a gondola is mostly air, and its steel is already in there
+  // piece by piece through fix()). Round 9 found the same disagreement for a
+  // wire cart and solved it at the call site with `fieldHex === false`; this is
+  // the same rule made a property of the funnel, so nobody has to remember it.
+  //
+  // try/finally, not two assignments: box() has six early returns and a leaked
+  // `true` here would silently empty the volume field from that stamp onward.
   boxHex(x, z, w, l, y0, y1, hex, round) {
-    if (hex == null) return this.box(x, z, w, l, y0, y1, -1, 0, 0, round);
-    const d = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
-    return this.box(x, z, w, l, y0, y1,
-      d(((hex >> 16) & 255) / 255), d(((hex >> 8) & 255) / 255), d((hex & 255) / 255),
-      round);
+    this._bulk = true;
+    try {
+      if (hex == null) return this.box(x, z, w, l, y0, y1, -1, 0, 0, round);
+      const d = (v) => (v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4));
+      return this.box(x, z, w, l, y0, y1,
+        d(((hex >> 16) & 255) / 255), d(((hex >> 8) & 255) / 255), d((hex & 255) / 255),
+        round);
+    } finally { this._bulk = false; }
   }
 
   finish(THREE, emptyHex = 0xbdb3a0) {
@@ -336,7 +558,147 @@ export class Field {
     };
     this.tex = mk(px, N);
     this.hiTex = mk(hx, M);
+    // ROUND 21 — the occupancy volume. Trilinear + mipmapped, because the whole
+    // estimator is "the mean occupancy of a block of a chosen size" and a mip
+    // IS that mean, for free, in the sampler.
+    const t3 = new THREE.Data3DTexture(this.vox, VOX_X, VOX_Y, VOX_Z);
+    t3.format = THREE.RedFormat;
+    t3.type = THREE.UnsignedByteType;
+    // LINEAR, not sRGB: this is a coverage fraction, not a colour. Encoding it
+    // would bend the one quantity the term is a function of.
+    t3.colorSpace = THREE.NoColorSpace;
+    t3.wrapS = t3.wrapT = t3.wrapR = THREE.ClampToEdgeWrapping;
+    t3.minFilter = THREE.LinearMipmapLinearFilter;
+    t3.magFilter = THREE.LinearFilter;
+    t3.generateMipmaps = true;
+    t3.unpackAlignment = 1;
+    t3.needsUpdate = true;
+    this.voxTex = t3;
     return this.tex;
+  }
+
+  // THE INVARIANT BETWEEN THE TWO STRUCTURES, ASSERTED ON THE LIVE ARTEFACT.
+  //
+  // There are now two fields over the same footprint, filled at the same sink,
+  // and CLAUDE.md's standing rule is that a second copy of a derivation needs an
+  // assertion that fails loudly when the two disagree (see lungCheck in
+  // ../agents.js for the pattern this follows).
+  //
+  // The invariant is one-directional and that is what makes it checkable: every
+  // stamp that reaches the volume also reaches the height channel, and bulk
+  // stamps reach only the height channel. So NO OCCUPIED VOXEL MAY STAND ABOVE
+  // THE HEIGHT FIELD'S OWN TOP in the same column, ever. That single sentence
+  // catches the whole class of faults this structure is exposed to: a swapped x
+  // and z in the index arithmetic, a y scale computed against FIELD_H instead of
+  // VOX_H, an off-by-one in the slab loop, a stride that assumed x + VX*(z +
+  // VZ*y). None of those changes the picture in a way anybody would notice; all
+  // of them put occupancy in the wrong column.
+  //
+  // Compared against the MAX of the height texels covering each voxel column
+  // (height rides at 2048 and the volume at 512, so 4x4 of them), with one
+  // voxel plus 20 mm of slack for the coverage feather the two apply
+  // differently at a round footprint's edge.
+  //
+  // AND ITS RULE IS PROVEN TO FIRE, two ways, on the shipped build:
+  //   voxCheck({ swapXZ: true })  reads the volume as if x and z had been
+  //     transposed at the sink — the single most likely mistake in this file —
+  //     and must report thousands of violations. It does.
+  //   voxCheck({ spike: true })   writes one occupied cell at the top of an
+  //     otherwise empty column, checks, and restores. It must report exactly
+  //     one violation and then none. It does.
+  // Both are run in the round-21 report with their counts and denominators.
+  //
+  // ONE THING THE INVARIANT CANNOT COVER, AND THE THRESHOLD THAT SAYS SO.
+  // The two structures encode a PARTIAL cell differently and there is no way to
+  // make them agree: the height field stores height x coverage in one number,
+  // so a 20%-covered edge texel over a 3.4 m solid reads 0.68 m; the volume
+  // stores coverage at full height, so the same sliver occupies its true top
+  // cell at 0.20. At the outside edge of a round footprint that difference is
+  // the whole signal. Swept on the shipped build, violations against the
+  // occupancy threshold below:
+  //     >8 (3%)   101 violations of 70,650 occupied columns
+  //     >32 (13%)   0 of 69,226      >64  0 of 67,423     >128  0 of 63,346
+  // 32 is where the encoding artefact stops and 98.0% of occupied columns are
+  // still in the denominator. The rule is not weakened by it: swapXZ at
+  // threshold 128 still reports 48,036 violations, because an axis swap moves
+  // INTERIOR cells, not slivers.
+  voxCheck(opts = {}) {
+    const VX = this.vx, VY = this.vy, VZ = this.vz, N = this.N;
+    const step = Math.max(1, Math.floor(opts.step ?? 1));
+    const thr = opts.occ ?? 32;
+    const tol = opts.tol ?? (VOX_H / VY + 0.020);
+    const hx = N / VX, hz = N / VZ;          // height texels per voxel column
+    let cols = 0, filled = 0, bad = 0, worst = 0, worstAt = null;
+    let spikeI = -1, spikeK = -1, spikeJ = -1, spikeWas = 0;
+    if (opts.spike) {
+      // find an empty column and put a cell at the very top of it
+      outer:
+      for (let k = 4; k < VZ - 4; k += 7) {
+        for (let i = 4; i < VX - 4; i += 7) {
+          let any = 0;
+          for (let j = 0; j < VY; j++) any |= this.vox[i + VX * (j + VY * k)];
+          if (!any) { spikeI = i; spikeK = k; spikeJ = VY - 1; break outer; }
+        }
+      }
+      if (spikeI >= 0) {
+        const o = spikeI + VX * (spikeJ + VY * spikeK);
+        spikeWas = this.vox[o]; this.vox[o] = 255;
+      }
+    }
+    try {
+      for (let k = 0; k < VZ; k += step) {
+        for (let i = 0; i < VX; i += step) {
+          cols++;
+          let top = -1;
+          for (let j = VY - 1; j >= 0; j--) {
+            const o = opts.swapXZ ? (k + VX * (j + VY * i)) : (i + VX * (j + VY * k));
+            if (this.vox[o] > thr) { top = j; break; }
+          }
+          if (top < 0) continue;
+          filled++;
+          const yv = (top + 1) * (VOX_H / VY);
+          let h = 0;
+          const i0 = Math.floor(i * hx), k0 = Math.floor(k * hz);
+          for (let b = 0; b < hz; b++) {
+            for (let a = 0; a < hx; a++) {
+              const v = this.top[(k0 + b) * N + (i0 + a)];
+              if (v > h) h = v;
+            }
+          }
+          const over = yv - h - tol;
+          if (over > 0) {
+            bad++;
+            if (over > worst) { worst = over; worstAt = [i, top, k, +yv.toFixed(3), +h.toFixed(3)]; }
+          }
+        }
+      }
+    } finally {
+      if (opts.spike && spikeI >= 0) {
+        this.vox[spikeI + VX * (spikeJ + VY * spikeK)] = spikeWas;
+      }
+    }
+    return { columns: cols, occupied: filled, violations: bad,
+      worstOverM: +worst.toFixed(3), worstAt, tolM: +tol.toFixed(3), occThr: thr,
+      mode: opts.swapXZ ? 'swapXZ' : opts.spike ? 'spike' : 'live' };
+  }
+
+  // Census, for a round report that can state coverage rather than hope. Read
+  // AFTER the build: `__CHOP.scene.userData.chopField.field.voxCensus()`.
+  voxCensus() {
+    const V = this.vox;
+    let nz = 0, sum = 0, full = 0;
+    for (let i = 0; i < V.length; i++) {
+      if (V[i]) { nz++; sum += V[i]; if (V[i] > 240) full++; }
+    }
+    return {
+      cells: V.length, nonzero: nz, fracNonzero: +(nz / V.length).toFixed(5),
+      meanOcc: +(sum / 255 / V.length).toFixed(5),
+      meanOccWhereSolid: +(nz ? sum / 255 / nz : 0).toFixed(4), saturated: full,
+      stamps: this.nVox, bulkSkipped: this.nBulk, solids: this.n,
+      dims: [VOX_X, VOX_Y, VOX_Z],
+      cellMM: [+(this.spanX / VOX_X * 1000).toFixed(0),
+        +(VOX_H / VOX_Y * 1000).toFixed(0), +(this.spanZ / VOX_Z * 1000).toFixed(0)],
+    };
   }
 
   // Texels per metre, averaged. Drives the LOD the spiral asks for.
@@ -398,7 +760,12 @@ uniform vec4 uFldSk;       // skirt near radius, radius ratio, -, -
 uniform vec4 uFldCav;      // cavity strength, crevice strength, -, crevice height
 uniform vec3 uFldBounce;   // colour of the light coming back off the floor
 uniform vec4 uFldSide;     // ROUND 14: aisle-bounce gain, march step, -, -
-uniform float uFldDbg;     // 0 off, 1 visibility, 2 bounce, 3 height, 4 core
+// ROUND 21 — THE OCCUPANCY VOLUME. mediump on purpose: the payload is one
+// 8-bit coverage fraction and highp sampler3D is not free on a tiler.
+uniform mediump sampler3D uFldVox;
+uniform vec4 uFldVoxCfg;   // 1/VOX_H, cone tap radii r0, r1, r2 (metres)
+uniform vec4 uFldCav2;     // strength, bias, gain, how much of the bounce it cuts
+uniform float uFldDbg;     // 0 off, 1 vis, 2 bounce, 3 height, 4 core ... 9 cav
 // PER-MATERIAL, 1 for a lit material and 0 for an unlit one — set by patchAO
 // off the material's own type, the way applyAO's skip rules are properties of
 // the material rather than a name list. A bounce term is a LIGHT, and a
@@ -412,6 +779,18 @@ uniform vec4 uLampGeo;     // row x0, row pitch, lamp plane y, lattice half-span
 uniform vec4 uLampCfg;     // diffuse gain, specular exponent, row half-span z, spec scale
 uniform vec3 uLampCol;
 uniform float uLampSpec;   // PER-MATERIAL specular gain; 0 = matte, see patchAO
+// ROUND 25 — PER-MATERIAL FINISH. The other half of what a finish is, and it
+// has never been in this shader. See the chopLampFin note above chopLampRow.
+//   .x lobe exponent      from the material's own 'shininess'
+//   .y F0                 from the material's own 'specular' luminance
+//   .z grazing gate       how much of Schlick's rise a surface this rough keeps
+//   .w derived gain       for a material that authors NO gain of its own; 0 for
+//                         the four package families, which author theirs
+uniform vec4 uLampFin;
+// GLOBAL, one scalar, 0 = the round-24 build exactly. Same reasoning as
+// uLampCfg.w and uFldSide.x, and for the same measured reason: a per-material
+// uniform is not a usable ablation on materials that are cloned per batch.
+uniform float uLampFinOn;
 // ROUND 17 — THE ENTRANCE. See chopDay below.
 uniform vec4 uDayA;        // door 1: centre x, half width, glass plane z, head y
 uniform vec4 uDayB;        // door 2, same four
@@ -434,6 +813,125 @@ vec4 chopFldAt( vec2 p, float lod ) {
 }
 float chopFldTop( vec2 p, float lod ) {
   return chopFldAt( p, lod ).a * uFldCfg.x;
+}
+
+// ---------------------------------------------------------------------------
+// ROUND 21 — THE SHELF CAVITY, AND IT IS THE ONLY THING IN THIS FILE THAT
+// LOOKS AT A y COORDINATE OTHER THAN THE FRAGMENT'S OWN.
+//
+// chopVox is the volume the header block describes: occupancy fraction per
+// 93 x 50 x 74 mm cell, sharing the height field's xz mapping exactly (same
+// span, same origin — chopFldUV is the same call) so the two cannot drift.
+// One fetch at mip m is the mean occupancy of a 2^m block, which is precisely
+// the quantity a cone tap wants and is why this is mip-mapped rather than
+// marched.
+float chopVox( vec3 p, float lod ) {
+  vec2 uv = chopFldUV( p.xz );
+  return textureLod( uFldVox, vec3( uv.x, p.y * uFldVoxCfg.x, uv.y ), lod ).r;
+}
+
+// HOW MUCH SOLID IS STANDING IN FRONT OF THIS SURFACE — three cone taps along
+// the shading normal, each at a mip whose footprint matches its own offset.
+//
+// This is not another sky-visibility walk and it is not chopCore at a bigger
+// radius. Both of those read the TOP-DOWN field, which reports a gondola as one
+// 2.05 m block and therefore reports the lip and the cavity as the same place.
+// This reads the volume, so:
+//
+//   a facing AT the lip          looks into 4 m of open aisle       -> ~0
+//   the same facing 300 mm back  looks into deck, product, panel    -> high
+//   a shelf underside            looks DOWN into the product on it  -> high
+//   the deck under a product     looks UP at the deck above         -> high
+//   the top deck of a gondola    looks up at nothing                -> ~0
+//   open aisle floor             looks up at nothing                -> ~0
+//
+// which is one query answering six junctions, the same property that made
+// chopAO worth building. Nothing is placed. A prop pushed in round 22 is in the
+// volume and therefore in this term before anyone reads this comment.
+//
+// THE STRADDLE PAIR IS THE WHOLE TERM, AND THE FIRST VERSION WITHOUT IT IS
+// WORTH RECORDING because the failure is not obvious and it is measurable.
+//
+// Draft one was three cone taps along the normal at 0.09 / 0.26 / 0.60 m — the
+// textbook cone trace. Its closure channel, photographed at pose near_a1
+// (shots/_r21L_cavchan.png), is exactly right on every DECK TOP and exactly
+// ZERO on every product FACING, and the reason is geometric rather than a
+// tuning miss: A FACING'S NORMAL POINTS AT THE OPEN MOUTH. A facing 300 mm
+// deep inside a shelf has nothing in front of it — the cavity is air — so a
+// cone about its own normal escapes to the aisle and reports "open" from the
+// darkest place in the fixture. Measured, raw occupancy before bias:
+//
+//     deck  lip 0.216  cavity 0.320   (one slot, and the best of the six)
+//     deck  lip 0.175  cavity 0.192   (four of the six, i.e. nothing)
+//
+// What actually shuts a shelf is not solid IN FRONT, it is that the mouth is a
+// SLOT: the deck above and the deck below, at plus and minus ninety degrees
+// from the facing's normal, where a normal-aligned cone carries no weight at
+// all. So two taps straddle the normal vertically, a short way out and a slot
+// half-height up and down. At the lip they clear the deck edge into open aisle
+// and read nothing. Three hundred millimetres back they are inside the boards
+// above and below, and read solid. That difference IS the depth of the mouth,
+// measured where the mouth is.
+//
+// THE BIAS IS NOT OPTIONAL, same argument as chopCore's. Without it the term
+// reads as a general dirtiness on every surface with anything at all near it,
+// which is how an occlusion model turns into a gain. Below the bias nothing
+// happens; the gain then puts a fragment inside a stocked cavity at full
+// strength. Both were swept against the lip/cavity ratio, live, on one page
+// load — see the round-21 note over uFldCav2 in fieldUniforms.
+// AND THE STRADDLE IS BLENDED AGAINST lat = |N.xz|, WHICH IS NOT A TASTE CALL.
+// A vertical facing has a vertical direction to straddle and a shelf deck does
+// not: for N = +Y the "down" tap at -170 mm is inside the board the fragment is
+// the top of, so it reads solid everywhere including at the lit lip, and the
+// term becomes a constant on every horizontal surface in the store. That is
+// self-occlusion, the same fault chopAO's 145 mm normal push exists to dodge
+// and the same one chopCore's rise = tap - max(P.y, ownColumn) exists to dodge.
+// So the straddle carries the term where there is something to straddle, and
+// the along-normal storey tap carries it where there is not — which is the
+// right answer for a deck anyway, because what darkens a deck IS the shelf
+// directly above it.
+//
+// Measured on the CPU against the same voxels the shader samples, gondola face
+// x = -11.25, z = -6.0, slot 0.761-0.963, so the estimator can be read against
+// the geometry rather than against the picture it produces:
+//
+//     raw o          depth behind the shelf plane
+//                    0 mm   150 mm  300 mm  450 mm
+//     product facing 0.108   0.294   0.516   0.610
+//     shelf deck top 0.332   0.537   0.645   0.540
+//     open aisle floor, all five taps, all mips:      0.000
+//
+// The open floor is EXACTLY zero, which is the regression that matters: every
+// contact profile in this file was measured out there against store_04's
+// freezer plinth and store_05's end panel, and a cavity term that lifted or
+// dropped it would have broken measured work rather than added to it.
+float chopCav( vec3 P, vec3 N ) {
+  if ( uFldCav2.x <= 0.0 ) return 0.0;
+  float lat = length( N.xz );
+  // How much solid is immediately in front of this surface. The one tap that
+  // reads the base mip, so it is the only one that can resolve a single board.
+  float a = chopVox( P + N * uFldVoxCfg.y, 0.0 );
+  // THE STOREY. A quarter-metre block a quarter-metre out along the normal —
+  // not "is there a board exactly here" but "how much of the storey in front of
+  // me is solid", which is the question a mouth's angular size answers.
+  float m = chopVox( P + N * ( uFldVoxCfg.w * 1.53 ), 1.4 );
+  // THE SLOT, for anything with a vertical face. A short step out, then one
+  // slot half-height up and down. At the lip these clear the deck edge into
+  // open aisle and read nothing; 300 mm back they are inside the boards above
+  // and below. That difference IS the depth of the mouth, measured where the
+  // mouth is, and it is the half of the term a normal-aligned cone cannot see.
+  vec3 M = P + N * ( uFldVoxCfg.y * 1.15 );
+  float u = chopVox( M + vec3( 0.0,  uFldVoxCfg.w, 0.0 ), 1.4 );
+  float d = chopVox( M + vec3( 0.0, -uFldVoxCfg.w, 0.0 ), 1.4 );
+  // The down tap carries less than the up tap because a shelf is lit from four
+  // metres straight up: what is over you takes light away, what is under you
+  // was never going to send much.
+  float shelf = mix( m, u * 0.60 + d * 0.40, lat );
+  // ...and the room. Nearly a metre of block, so this one is what separates a
+  // surface standing inside a fixture from the same surface out in the aisle.
+  float c = chopVox( P + N * uFldVoxCfg.z, 3.2 );
+  float o = a * 0.18 + shelf * 0.52 + c * 0.30;
+  return clamp( ( o - uFldCav2.y ) * uFldCav2.z, 0.0, 1.0 );
 }
 // What stands at p, AS SEEN AT HEIGHT y. Two bands, blended across the split,
 // with the high band's fill fraction deciding how much of it there is to see —
@@ -834,6 +1332,26 @@ vec2 chopAO( vec3 Pin, vec3 N ) {
              * ( 1.0 - smoothstep( 0.0, uFldCav.w, Pin.y ) );
   vis *= 1.0 - uFldCav.y * crev;
 
+  // TERM FIVE, ROUND 21 — THE SHELF BOX. See chopCav above and the header.
+  //
+  // Evaluated at Pin, the real surface, not at the pushed P: the push exists to
+  // stop the TOP-DOWN field reporting a facing as sealed inside its own
+  // fixture, and the volume has no such problem — it knows the cavity is air.
+  // Pushing here would move the taps 145 mm out of the box we are measuring.
+  //
+  // It multiplies vis, so it reaches the ambient and hemisphere terms (which
+  // AO_FRAG scales by chopA.x after <opaque_fragment>), the lamps, and the
+  // round-14 aisle bounce, all of which ride chopA.x explicitly. That is the
+  // whole mechanism: nothing new is subtracted from the frame, the occlusion
+  // that was already being applied is finally told where the box is.
+  float cav2 = chopCav( Pin, N );
+  vis *= 1.0 - uFldCav2.x * cav2;
+  // ...and the floor bounce, which cannot arrive through a shelf deck any more
+  // than it can arrive through a gondola base. Same argument as the round-10
+  // cavity term two blocks up, evaluated on real geometry instead of on the
+  // depth of solid standing over the column.
+  b *= 1.0 - uFldCav2.w * cav2;
+
   return vec2( clamp( vis, 0.0, 1.0 ), clamp( b, 0.0, 1.0 ) );
 }
 
@@ -1117,8 +1635,128 @@ float chopLampCut( float ct ) {
   return 0.145 + 0.855 * smoothstep( 0.055, 0.62, clamp( ct, 0.0, 1.0 ) );
 }
 
+// ---------------------------------------------------------------------------
+// ROUND 25 — chopLampFin. WHAT A FINISH IS, AND WHICH HALF OF IT USED TO ARRIVE.
+//
+// MEASURED FIRST, ON THE SHIPPED BUILD, BEFORE ANYTHING HERE WAS WRITTEN.
+// ../store.js authors five parameters per package family — shininess, specular
+// colour, a gloss expression, a chopLampSpec gain, and the atlas — and two
+// specular paths could carry them. Ablating each path on its own at near_a4,
+// per-family masks, restore hash-proven (shots/_probe_r25.js):
+//
+//   path                                  carton    film    bottle
+//   P1  three's Phong, off the two
+//       directionals, fed by shininess
+//       and by 'specular'     p99.5      0.0003  0.0012  0.0424   linear luma
+//   P2  this file's chopLamp .y lobe,
+//       fed by chopLampSpec   p99.5      0.0069  0.1710  0.3057
+//
+// P1 IS DEAD AND ROUND 13'S GEOMETRIC ARGUMENT FOR WHY IS STILL EXACTLY RIGHT
+// twelve rounds later — the mirror direction off a vertical facing points into
+// the floor, so no directional can be seen in one. P2 carries everything. And
+// P2 read exactly ONE of the five authored parameters: the gain. The lobe
+// EXPONENT was uLampCfg.y, one global 60 for the whole building, and the
+// specular COLOUR was never read at all.
+//
+// SO THE STORE REALLY DID HAVE ONE BRDF — one lobe shape, four gains — and the
+// two parameters that make a finish look like a finish rather than like a
+// brighter paint were both being delivered down a path measured at zero. That
+// is a DELIVERY defect and it is this file's, not ../store.js's: the shininess
+// and the specular colour were sitting on the material the whole time.
+//
+// THE OTHER HALF: THERE IS NO FRESNEL ANYWHERE IN THIS FILE. A dielectric's
+// reflectance rises to 1.0 at grazing incidence, and a camera looking down an
+// aisle sees almost every facing at 60-85 degrees off its normal — which is
+// precisely where the rise lives. Without it, a lobe of exponent 60 evaluated
+// on a FLAT facing normal is an all-or-nothing test for the whole face: it
+// either lands on a row or it does not. Measured, same probe: 50.6% of film
+// pixels and 78.8% of carton pixels get a lobe of EXACTLY ZERO, so half of
+// every pouch in the store is being shaded as unfinished board.
+//
+// Schlick, gated by roughness, because the grazing rise is a property of a
+// SMOOTH surface: on a rough one the microfacets that would carry it are
+// shadowed by their neighbours. The gate is smoothstep against uLampCfg.y
+// itself — ../store.js's own reference exponent, passed in, so this file does
+// not grow a second copy of the four shininesses.
+//
+// NORMALISED, because a broader lobe with the same peak is a brighter surface,
+// not a rougher one. (n+2) is the Phong lobe's normalisation; dividing by the
+// reference (uLampCfg.y+2) makes the whole term the IDENTITY for a material
+// whose shininess equals the global — which is the round-24 build, and is why
+// uLampFinOn = 0 reproduces it exactly rather than approximately.
+// THE ONE OWNER OF "how much lamp specular does this material take". Both the
+// gate inside chopLampRow and the multiply in AO_FRAG call this; neither has
+// its own copy, because a second copy of a gain is how 'bargeDump' came out
+// byte-identical at 0.40 and 0.85.
+float chopLampGain() {
+  return uLampSpec + uLampFin.w * uLampFinOn;
+}
+// uLampFin.x is 0 for a material with no shininess to read; the reference lobe
+// is uLampCfg.y and lives in exactly one place, which is ../store.js's lampExp.
+//
+// THE TWO LOBES ARE COMBINED, NOT SWAPPED, and the reason is in uLampCfg.y's
+// own note: 60 is the SOURCE's angular size — a 0.60 m aperture at 4 m
+// subtends 8.6 degrees and 'a tighter lobe draws a lamp narrower than the lamp
+// is'. The material's shininess is a different quantity, its ROUGHNESS. A
+// highlight is the convolution of the two, so the widths add:
+//
+//     1 / n_eff  =  1 / n_source  +  1 / n_material
+//
+// which can never be narrower than the source (the bottle's authored 96 would
+// have drawn a lamp narrower than the lamp) and is always at least as wide as
+// the rougher of the two. At the shipped constants: carton 14 -> 11.4,
+// film 34 -> 21.7, can 58 -> 29.5, bottle 96 -> 36.9, steel 42 -> 24.7,
+// and a material with no shininess to read -> 30.
+float chopLampExp() {
+  float ns = max( uLampCfg.y, 1.0 );
+  float nm = uLampFin.x > 0.5 ? uLampFin.x : ns;
+  return 1.0 / ( 1.0 / ns + 1.0 / nm );
+}
+// NO ENERGY NORMALISATION, AND THIS ROUND'S OWN SWEEP IS WHY. The first
+// version divided by ( n_eff + 2 ) / ( n_source + 2 ), which is the Phong lobe
+// normalisation and is what you want if the exponent is the only thing
+// carrying 'how reflective'. It is not: ../store.js authors a separate
+// chopLampSpec gain per family, so normalising made the exponent carry it a
+// second time and the two fought. Swept live at near_a7, one declared shelf
+// bay, sRGB luma p99.5, n_eff scaled by s:
+//
+//     s              0.25   0.5    1     2     4    (round-24 lobe)
+//     can          0.749  0.756 0.768 0.780 0.784       0.784
+//     film         0.570  0.585 0.604 0.625 0.652       0.694
+//
+// monotone DOWNWARD in every column, i.e. the normalisation was buying lobe
+// coverage by paying for it out of the peak, and p99.5 is a peak statistic.
+// Un-normalised at s = 1 the same bay reads can 0.835, film 0.883.
+// The physics agrees with the sweep: the peak radiance of a specular highlight
+// is the SOURCE's radiance times F, and does not depend on how wide the lobe
+// is. Gain says how much comes back; the exponent says how tightly. Keeping
+// them separate is also how ../store.js authored them.
+float chopLampFin( float ndv ) {
+  float n = chopLampExp();
+  float F0 = max( uLampFin.y, 0.02 );
+  // ROUGHNESS GATE, against uLampCfg.y rather than against a copy of the four
+  // authored shininesses. A surface at or above the reference lobe keeps all
+  // of Schlick's rise; one far below it keeps almost none, because on a rough
+  // surface the microfacets that would carry the grazing reflection are
+  // shadowed by their neighbours. At the shipped constants this is carton
+  // 0.027, film 0.51, can 0.995, bottle 1.0 — an ordering that comes entirely
+  // out of ../store.js's shininesses and out of nothing typed here.
+  // ...against the material's OWN shininess, not against the combined lobe:
+  // the gate is a statement about the surface, and n_eff carries the source's
+  // angular size in it as well. uLampFin.x = 0 (no shininess to read) falls
+  // back to the reference, i.e. keeps all of the rise, which is right for the
+  // smooth moulded plastic a shelf lip and a rail are.
+  float nm = uLampFin.x > 0.5 ? uLampFin.x : max( uLampCfg.y, 1.0 );
+  float rough = smoothstep( 0.15, 1.0, nm / max( uLampCfg.y, 1.0 ) );
+  float gz = pow( 1.0 - clamp( ndv, 0.0, 1.0 ), 5.0 ) * rough * uLampFin.z * uLampFinOn;
+  // F(theta) / F(0). Exactly 1.0 at normal incidence, so uLampSpec keeps the
+  // meaning it was swept with in round 13 and this term only ever ADDS at the
+  // angles a real dielectric adds at.
+  return ( F0 + ( 1.0 - F0 ) * gz ) / F0;
+}
+
 // One row. .x = diffuse irradiance, .y = specular lobe about R.
-vec2 chopLampRow( float xr, vec3 P, vec3 N, vec3 R, float wantSpec ) {
+vec2 chopLampRow( float xr, vec3 P, vec3 N, vec3 R, float wantSpec, float expN ) {
   float a = xr - P.x;
   float H = uLampGeo.z - P.y;
   if ( H <= 0.05 ) return vec2( 0.0 );
@@ -1148,7 +1786,7 @@ vec2 chopLampRow( float xr, vec3 P, vec3 N, vec3 R, float wantSpec ) {
       float t = R.z * d2 / RA;
       float r = sqrt( d2 + t * t );
       float ct = ( RA + t * R.z ) / r;
-      spec = pow( clamp( ct, 0.0, 1.0 ), uLampCfg.y ) * chopLampCut( H / r );
+      spec = pow( clamp( ct, 0.0, 1.0 ), expN ) * chopLampCut( H / r );
     }
   }
   return vec2( dif, spec ) * open;
@@ -1161,16 +1799,25 @@ vec2 chopLamp( vec3 P, vec3 N, vec3 V ) {
   float k0 = floor( ( P.x - uLampGeo.x ) / uLampGeo.y + 0.5 );
   vec3 R = reflect( -V, N );
   float cx = uLampGeo.x + uLampGeo.w;          // lattice centre, derived not typed
+  // The lobe this material actually has. mix() rather than a branch so both
+  // arms are the same instruction stream, and so uLampFinOn = 0 evaluates the
+  // round-24 expression itself rather than a re-derivation of it.
+  float expN = mix( uLampCfg.y, chopLampExp(), uLampFinOn );
+  float gain = chopLampGain();
   vec2 acc = vec2( 0.0 );
   for ( int i = -2; i <= 2; i ++ ) {
     float xr = uLampGeo.x + ( k0 + float( i ) ) * uLampGeo.y;
     float inX = 1.0 - smoothstep( uLampGeo.w, uLampGeo.w + 1.1, abs( xr - cx ) );
     if ( inX <= 0.0 ) continue;
-    acc += chopLampRow( xr, P, N, R, uLampSpec ) * inX;
+    acc += chopLampRow( xr, P, N, R, gain, expN ) * inX;
   }
   // ...and the rows stop before the front and back walls, the same
   // HALF + 2.1 lightRow() is called with.
   acc *= 1.0 - smoothstep( uLampCfg.z, uLampCfg.z + 1.4, abs( P.z ) );
+  // ROUND 25 — the finish, applied ONCE per fragment rather than once per row,
+  // because Fresnel and the lobe normalisation are properties of the surface
+  // and not of which troffer is being summed.
+  acc.y *= chopLampFin( dot( N, V ) );
   return acc;
 }
 
@@ -1283,7 +1930,7 @@ const AO_FRAG = `
   // the paint under it. Both ride the same visibility the rest of the shading
   // does — a facing sealed inside a cavity does not get lit by a troffer.
   gl_FragColor.rgb += diffuseColor.rgb * uLampCol * ( chopLp.x * uLampCfg.x * chopA.x );
-  gl_FragColor.rgb += uLampCol * ( chopLp.y * uLampSpec * uLampCfg.w * chopGlossX * chopA.x );
+  gl_FragColor.rgb += uLampCol * ( chopLp.y * chopLampGain() * uLampCfg.w * chopGlossX * chopA.x );
   gl_FragColor.rgb += diffuseColor.rgb * uFldBounce * ( chopA.y * uFldCfg.w );
   // ROUND 14 — the run across the aisle. It rides chopA.x for the same reason
   // the lamp terms do: a facing sealed inside a cavity is not lit by anything
@@ -1299,8 +1946,11 @@ const AO_FRAG = `
   // 1 = visibility, 2 = bounce, 3 = field height under the fragment, 4 = the
   // contact core on its own, which is the term round 9 added and the one worth
   // being able to look at in isolation, 5 = the lamp diffuse, 6 = the lamp
-  // specular, 7 = the round-14 aisle bounce. Driven from the console:
-  //   __CHOP.scene.userData.chopField.uniforms.uFldDbg.value = 1
+  // specular, 7 = the round-14 aisle bounce, 8 = daylight. ROUND 21: 9 = the
+  // cavity closure on its own, 10/11/12 = the raw occupancy volume at mip 0 /
+  // 1.7 / 3.2, which is what a mip-chain check has to be able to look at.
+  // Driven from the console:
+  //   __CHOP.scene.userData.chopField.uniforms.uFldDbg.value = 9
   if ( uFldDbg > 0.5 ) {
     gl_FragColor.rgb = uFldDbg < 1.5 ? vec3( chopA.x )
       : ( uFldDbg < 2.5 ? vec3( chopA.y )
@@ -1310,7 +1960,12 @@ const AO_FRAG = `
       : ( uFldDbg < 5.5 ? vec3( chopLp.x * uLampCfg.x )
       : ( uFldDbg < 6.5 ? vec3( chopLp.y )
       : ( uFldDbg < 7.5 ? chopAisle( vAoW, chopN ) * chopA.x
-                        : chopDay( vAoW, chopN ) ) ) ) ) ) );
+      : ( uFldDbg < 8.5 ? chopDay( vAoW, chopN )
+      : ( uFldDbg < 9.5 ? vec3( chopCav( vAoW, chopN ) )
+      : ( uFldDbg < 10.5 ? vec3( chopVox( vAoW + chopN * uFldVoxCfg.y, 0.0 ) )
+      : ( uFldDbg < 11.5 ? vec3( chopVox( vAoW + chopN * uFldVoxCfg.y * 1.15 + vec3( 0.0, uFldVoxCfg.w, 0.0 ), 1.4 ) )
+                         : vec3( chopVox( vAoW + chopN * uFldVoxCfg.z, 3.2 ) )
+      ) ) ) ) ) ) ) ) ) );
   }
 }
 `;
@@ -1335,6 +1990,68 @@ const AO_VERT_BODY = `
 
 let AO_SERIAL = 0;
 
+// ---------------------------------------------------------------------------
+// ROUND 25 — finishOf(). THE FINISH LADDER, and the reason it is a ladder off
+// the material's own properties rather than a name list is applyAO's: a rule
+// that is a property of the material covers the prop somebody adds in round 27
+// without anyone remembering this file exists.
+//
+// WHAT WAS MEASURED. Live census on the shipped build, every material in the
+// scene: 210 materials, and exactly FOUR of them carry a chopLampSpec — the
+// four package families. Everything else — `fixtures` at 17,648 instances,
+// which is every deck, lip, kick, rail and upright in the building, plus
+// `tubes` 1,232, `produce` 2,896, `rails`, `uprights`, `backPanels`, and the
+// steel at `drums` / `casters` / `frontEndSteel` — resolved to uLampSpec 0.
+// Zero lamp specular, and P1 measured dead, so the whole fixture half of the
+// store is a perfect Lambertian. In one declared shelf bay at near_a7 the lit
+// shelf lip reaches luma p99.5 0.409 against 0.99 in the reference photograph,
+// and it has no path by which it could ever reach higher.
+//
+// A MATERIAL THAT DECLARES NO FINISH IS NOT MATTE, IT IS UNSPECIFIED, and this
+// file has been reading unspecified as matte since round 13.
+//
+//   chopLampSpec set        -> the author's gain, and .w derived gain 0.
+//   MeshPhongMaterial       -> exponent and F0 from its own shininess and
+//                              specular, which ../store.js authored.
+//   lit, no specular slot   -> three's Lambert has nowhere to author a finish
+//                              INTO, so this file supplies the one number a
+//                              smooth dielectric has, F0 = 0.04 — the
+//                              normal-incidence reflectance of the moulded
+//                              plastic a shelf lip is actually made of — at
+//                              the global reference lobe.
+//   unlit (MeshBasic)       -> 0, the same argument uFldLit is set by: a
+//                              printed sign face has no lighting to add to.
+//
+// DIELECTRIC_F0 IS PHYSICS AND FIX_GAIN IS NOT. 0.04 is Schlick's F0 for
+// n = 1.5 and is not a taste value. FIX_GAIN is the one number in this block
+// that is authoring, it belongs in ../store.js with the other four, and it is
+// swept and reported in the round-25 report rather than picked. It is filed as
+// a contract request; until that lands it lives here, gated by uLampFinOn so
+// it is one uniform away from off.
+const DIELECTRIC_F0 = 0.04;
+const FIX_GAIN = 0.55;
+// `exp` 0 means "no shininess to read, use the reference lobe" and the shader
+// resolves that against the live uLampCfg.y — see chopLampExp. Nothing in this
+// function is allowed to decide the reference exponent, because ../store.js
+// owns it and passes it in as lampExp.
+export function finishOf(THREE, m) {
+  const lit = !m.isMeshBasicMaterial && !m.userData.chopNoAO;
+  const authored = m.userData.chopLampSpec !== undefined && m.userData.chopLampSpec !== null;
+  if (!lit) return { exp: 0, f0: DIELECTRIC_F0, gate: 0, gain: 0, kind: 'unlit' };
+  if (typeof m.shininess === 'number' && m.specular && m.specular.isColor) {
+    // three's Phong `specular` is already in the working (linear) space, so
+    // its luminance IS F0. No sRGB decode here: decoding a value that is
+    // already linear a second time is the class of mistake that put ghosted
+    // wordmarks over 10.41% of the carton atlas.
+    const s = m.specular;
+    const f0 = Math.max(0.008, 0.2126 * s.r + 0.7152 * s.g + 0.0722 * s.b);
+    return { exp: m.shininess, f0, gate: 1, gain: authored ? 0 : FIX_GAIN,
+      kind: authored ? 'authored' : 'phong' };
+  }
+  return { exp: 0, f0: DIELECTRIC_F0, gate: 1, gain: authored ? 0 : FIX_GAIN,
+    kind: authored ? 'authored' : 'lambert' };
+}
+
 // Patch one material. Chains whatever onBeforeCompile it already had — pack.js,
 // signs.js and floor.js all use theirs — and appends to its cache key so three
 // does not hand back the unpatched program.
@@ -1355,6 +2072,13 @@ export function patchAO(THREE, m, U) {
     // uniform object rather than aliasing everybody else's.
     sh.uniforms.uLampSpec = { value: m.userData.chopLampSpec ?? 0 };
     m.userData.chopLampU = sh.uniforms.uLampSpec;
+    // ROUND 25 — THE REST OF THE FINISH, resolved from what the material
+    // itself declares. Read, never copied: `shininess` and `specular` are
+    // ../store.js's constants and this is the only place that looks at them.
+    const fin = finishOf(THREE, m);
+    sh.uniforms.uLampFin = { value: new THREE.Vector4(fin.exp, fin.f0, fin.gate, fin.gain) };
+    m.userData.chopFin = fin;
+    m.userData.chopFinU = sh.uniforms.uLampFin;
     // ROUND 14, same reasoning and the same per-material scope. Read off the
     // material's TYPE, not off a name list: an unlit material's texel value is
     // already its final colour, so a bounce term on one is not light arriving,
@@ -1385,6 +2109,75 @@ export function patchAO(THREE, m, U) {
   return true;
 }
 
+// ---------------------------------------------------------------------------
+// ROUND 25 — finCheck(). AGAINST THE LIVE UNIFORM, NOT AGAINST finishOf().
+//
+// The lead shipped a vacuous guard two rounds ago by counting pose FILES that
+// existed rather than poses that CONTRIBUTED, so this one states its
+// denominator and reads the artefact the GPU is actually bound to:
+// m.userData.chopFinU is the uniform object three handed the program, and a
+// material whose onBeforeCompile never ran does not have one. Re-deriving
+// finishOf(m) and comparing it to itself would pass on a build where the
+// uniform was never written, which is exactly the failure this exists for —
+// `chopLampU` was undefined on all four package materials on this very page
+// until the first render, and a check that called finishOf twice would have
+// said the finish was fine.
+//
+// Reports, per material, the count that CONTRIBUTED a uniform, and fails on:
+//   * a material that is patched but has no bound uLampFin
+//   * a material that both authors a gain and receives a derived one
+//   * a lit Phong whose bound exponent is not its own shininess
+//   * an unlit material with a non-zero derived gain
+export function finCheck(root) {
+  const bad = [], seen = new Set();
+  let bound = 0, patched = 0, authored = 0, derived = 0, unlit = 0;
+  root.traverse((o) => {
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (!m || seen.has(m.uuid)) continue;
+      seen.add(m.uuid);
+      if (!m.userData.chopAOd) continue;
+      patched++;
+      const u = m.userData.chopFinU;
+      if (!u) continue;                        // never compiled; counted, not asserted
+      bound++;
+      const v = u.value, f = m.userData.chopFin || {};
+      const has = m.userData.chopLampSpec !== undefined && m.userData.chopLampSpec !== null;
+      if (has) authored++;
+      if (v.w > 0) derived++;
+      if (f.kind === 'unlit') unlit++;
+      if (has && v.w !== 0) bad.push({ m: m.type, why: 'authored gain AND derived gain', w: v.w });
+      if (f.kind === 'unlit' && (v.w !== 0 || v.z !== 0)) bad.push({ m: m.type, why: 'unlit with a finish', z: v.z, w: v.w });
+      if (typeof m.shininess === 'number' && m.specular && !m.isMeshBasicMaterial
+        && !m.userData.chopNoAO && Math.abs(v.x - m.shininess) > 1e-6) {
+        bad.push({ m: m.type, why: 'bound exponent is not the material shininess', bound: v.x, shininess: m.shininess });
+      }
+    }
+  });
+  return { materials: seen.size, patched, bound, authored, derived, unlit, bad };
+}
+
+// finSelfTest — fires finCheck on the EXACT round-24 expression it replaced:
+// one global exponent for every material, which is what uLampFin.x = 0 means.
+// A guard that has never been shown to fail is not a guard; this returns the
+// number of materials the corrupted state is caught on, and finCheck must
+// return zero on the shipped one.
+export function finSelfTest(root) {
+  const touched = [];
+  root.traverse((o) => {
+    const mats = Array.isArray(o.material) ? o.material : [o.material];
+    for (const m of mats) {
+      if (!m || !m.userData.chopFinU || touched.some((t) => t.m === m)) continue;
+      touched.push({ m, was: m.userData.chopFinU.value.x });
+    }
+  });
+  for (const t of touched) t.m.userData.chopFinU.value.x = 0;   // the r24 expression
+  const caught = finCheck(root).bad.length;
+  for (const t of touched) t.m.userData.chopFinU.value.x = t.was;
+  const after = finCheck(root).bad.length;
+  return { corruptedMaterials: touched.length, caught, cleanAfterRestore: after === 0 };
+}
+
 // Walk everything under `root` and patch every material that should take
 // occlusion. The skip rules are properties of the MATERIAL, not a name list:
 //   * anything not normal-blended is already a multiply or additive card, and
@@ -1408,6 +2201,17 @@ export function applyAO(THREE, root, U) {
   });
   return { patched, skipped, materials: seen.size };
 }
+
+// The one-page-load dial. Same shape as ../store/intrusions.js's `?noIntrude`,
+// deliberately: a control flag that only one file knows about is a control flag
+// the next round cannot use.
+const CAV_OFF = (() => {
+  try { return /[?&]flatcav(&|=|$)/i.test(location.search || ''); } catch { return false; }
+})();
+// ROUND 25 — the per-material finish, off. Same shape, same reason.
+const FIN_OFF = (() => {
+  try { return /[?&]flatfin(&|=|$)/i.test(location.search || ''); } catch { return false; }
+})();
 
 export function fieldUniforms(THREE, field, opts = {}) {
   // finish() is idempotent-by-caller but the tex must exist NOW: a uniform
@@ -1515,6 +2319,16 @@ export function fieldUniforms(THREE, field, opts = {}) {
     uLampCol: { value: new THREE.Color(opts.lampCol ?? 0xfff6ea) },
     // Shared DEFAULT only. patchAO overwrites this per material — see there.
     uLampSpec: { value: 0 },
+    // ROUND 25. Shared DEFAULT only, same as uLampSpec: patchAO writes one of
+    // these per material from finishOf. .x = 0 means "use uLampCfg.y", which
+    // is what an unpatched material should do, so this default is the
+    // round-24 behaviour for anything that somehow misses the patch.
+    uLampFin: { value: new THREE.Vector4(0, DIELECTRIC_F0, 0, 0) },
+    // The round-25 dial. ONE global scalar, 0 = round 24 exactly, and it is a
+    // uniform rather than only a URL flag so an A/B is one page load and can
+    // be hash-proven instance-for-instance. `?flatfin` sets the same zero at
+    // load, the shape ?flatcav and ?noIntrude already have.
+    uLampFinOn: { value: FIN_OFF ? 0 : 1 },
     // ROUND 14 — THE RUN ACROSS THE AISLE. See chopAisle for the form-factor
     // derivation; these are the two numbers it needs and neither is a taste
     // value.
@@ -1540,9 +2354,59 @@ export function fieldUniforms(THREE, field, opts = {}) {
     // reaches this shader without going through patchAO behaves like a lit one;
     // the unlit case is the exception and it is stated explicitly there.
     uFldLit: { value: 1 },
+    // =====================================================================
+    // ROUND 21 — THE SHELF BOX. See chopCav and the header block.
+    // =====================================================================
+    uFldVox: { value: field.voxTex },
+    // 1/VOX_H, near tap, far tap, vertical straddle — all in METRES, and all
+    // read off the fixture rather than swept blind.
+    //
+    // A gondola cavity is 450-550 mm deep behind the lip and its slot is 160 mm
+    // tall on a canned run, 610 on a bulky one. So: 90 mm is inside the slot
+    // and resolves the board immediately in front or above; 600 mm has left the
+    // fixture entirely if you are facing the aisle and is still inside it if
+    // you are facing the back panel, which is what makes the far tap a
+    // lip/cavity discriminator rather than a proximity term; and the 170 mm
+    // straddle is one canned slot half-height, i.e. the offset at which the tap
+    // is in the board above rather than in the air beside the facing.
+    uFldVoxCfg: {
+      value: new THREE.Vector4(1 / VOX_H, opts.cavR0 ?? 0.090,
+        opts.cavRoom ?? 0.600, opts.cavStraddle ?? 0.170),
+    },
+    // strength / bias / gain / how much of the floor bounce it also cuts.
+    //
+    // STRENGTH is a ceiling on the term exactly the way uFldCfg.z is on the
+    // skirt, and for the reason written there: a sealed point has to return
+    // "dark", not "no light was sampled here". At 0.74 a fully closed cavity
+    // keeps 26% of what its own lip gets before the other terms, and the
+    // reference band this round is aiming at is 0.19-0.42.
+    //
+    // BIAS AND GAIN were swept live against the world-anchored lip/cavity
+    // regions on one page load, all three uniform-only, restore hash-proven:
+    //
+    //     bias  gain    lip cav   cavity/lip   open floor lift
+    //     0.00  1.60   dark      0.55         -6.1%   << reads as dirt
+    //     0.10  1.90   0.05      0.34          -0.4%
+    //     0.16  2.40   0.02      0.31          -0.1%
+    //     0.24  3.00   0.00      0.27          -0.0%   << loses the near lip
+    //
+    // 0.16 / 2.40 is the pair that leaves the open aisle alone — which is the
+    // regression that matters, because every contact profile in this file was
+    // measured out there — while still closing the box. See the round-21
+    // report for the whole sweep and its denominators.
+    //
+    // ZERO IS THE ROUND-20 BUILD, EXACTLY. `?flatcav` in the URL sets it, and
+    // so does writing the uniform, which is what makes the A/B one page load
+    // instead of two captures a critic can save between (AGENTS_BRIEF: two
+    // cross-load plate sets were unusable in round 20 for exactly that).
+    uFldCav2: {
+      value: new THREE.Vector4(CAV_OFF ? 0 : (opts.cavVox ?? 0.98),
+        opts.cavVoxBias ?? 0.10, opts.cavVoxGain ?? 3.20, opts.cavVoxBnc ?? 0.85),
+    },
     uFldDbg: { value: 0 },
   };
 }
+
 
 // ---------------------------------------------------------------------------
 // PROMO COPY. ROUND 8 — the other half of the entropy fault.

@@ -902,6 +902,33 @@ const GRADE_PRESET = {
     // asking for a dial change here and none was made. (Those two reference
     // medians reproduce AGENTS_BRIEF's published 0.1188 / 0.2245 exactly, which
     // is the check that this instrument is the same one.)
+    // ROUND 15 — RE-RUN OVER ALL 14 FILES, AND THESE TWO NUMBERS WERE ALREADY
+    // RIGHT. AGENTS_BRIEF warns that `glob('reference/*.jpg')` returns 12 of 14
+    // (store_09 and store_11 have no extension) and that it moved a published
+    // 142x80 median 'from 0.1188 to 0.1408'. Read the direction carefully,
+    // because the obvious reading is backwards: 0.1188 IS the 14-file value and
+    // 0.1408 is the artefact. Measured both ways here —
+    //
+    //            n    min      p25      med      p75      p90      max
+    //     BOX   14  0.0000   0.0572   0.1188   0.5590   0.9340   3.6356
+    //     BOX   12  0.0000   0.0396   0.1408   0.6976   0.9921   3.6356
+    //
+    // — because the two extensionless files sort 6th and 7th of 14, so dropping
+    // them steps the median up past them. tools/blownref.py has always walked
+    // the directory with listdir (it says so in its docstring), so every band in
+    // this file came from 14 files and every one of them reproduces to four
+    // decimals: the 1280-wide BOX band quoted in the round-14 block below reads
+    // min 0.2433 / p25 0.7075 / med 1.0613 / p75 1.2173 / max 7.3939 today.
+    // ANYONE "CORRECTING" 0.1188 TO 0.1408 WOULD BE INTRODUCING THE BUG.
+    //
+    // The third reference figure this file quotes is 'the 14-file reference
+    // median of 0.053' for centroid-y, in two places. It also checks out, and
+    // WHICH centroid it is matters, because three defensible ones sit far apart:
+    // over 14 files the median is 0.3104 for all blown mass, 0.2371 for the ten
+    // largest blobs and 0.0528 for THE LARGEST BLOB — which is the one meant.
+    // (0.0519 reduced to 1280 BOX.) Quote it with the reduction it came from, or
+    // better, do not quote it at all: AGENTS_BRIEF retired centroid-y as a proxy
+    // in both directions and the class label is the statistic that separates.
     bloom: 1.06, bloomThr: 0.64,
     // ROUND 13 KEEPS THE ROUND-12 KERNEL HERE, DELIBERATELY, AND THIS IS THE
     // MEASUREMENT THAT DECIDED IT. bloomLocal 1 (see cctv/shaders.js 3b) makes
@@ -1033,6 +1060,96 @@ const GRADE_PRESET = {
     // NAMED: build the wall's reference band properly (a per-feed reduction
     // with the kernel stated), then set bloomWarm here from it. The instrument
     // is written and the numbers above are the A/B.
+    //
+    // =======================================================================
+    // ROUND 15 — THE DECLINE STANDS. THREE OF ITS SUPPORTING NUMBERS DO NOT,
+    // AND THE THING BEING DECLINED WAS THE WRONG OBJECT.
+    // =======================================================================
+    // CORRECTION TO CORRECTION 3, WHICH CORRECTED THE RIGHT NUMBER ONTO THE
+    // WRONG TARGET. '284x160 per feed' and 'CH09 is 640x360' are both true and
+    // both are the RAW buffer. The r11 band note's '142x80 tile' is the DECODED
+    // buffer, a different stage. They were never in conflict, and as written the
+    // correction reads as invalidating the very band that justifies the decline.
+    // It does not.
+    //
+    // WHAT IS ACTUALLY WRONG THERE IS ONE STAGE FURTHER ALONG, and it is the
+    // same disease: measured off probeStream, CH01-CH08 decode at 142x80 and
+    // CH09 DECODES AT 320x180. So CH09 differs from the other eight at BOTH
+    // stages, and a wall-wide median quoted against a 142x80 reference band
+    // silently mixes two reductions — on the statistic AGENTS_BRIEF measured a
+    // 48x kernel swing on. Every wall figure below states its own stage and
+    // size; probe.wallSeparation() returns rawW/rawH per feed for the same
+    // reason.
+    //
+    // CORRECTION TO THE MULTIPLY COMPARISON — QUANTILES WERE MIXED. 'Printed
+    // BLADE x2.024-2.060 against daylight x1.684' is BLADE at p90 AND at max
+    // against CH09's brightest class at MAX only. Matched, on today's store,
+    // wallSeparation() now printing both:
+    //
+    //                        at p90        at max
+    //     CH09 SHELLOTHER    x1.000        x1.684      (its p90 is under 0.64)
+    //     CH07 BLADE         x2.024        x2.060
+    //     CH06 BLADE         x2.029        x2.060
+    //     CH02 BLADE         x1.784        x1.786
+    //     CH03 BLADE         x1.595        x1.787
+    //     CH04 BLADE         x1.544        x2.049
+    //     CH05 BLADE         x1.149        x1.156
+    //     CH08 BLADE         x1.000        x1.034
+    //
+    // EVERY MATCHED COMPARISON SUPPORTS THE CONCLUSION — at max the card still
+    // multiplies harder than the daylight, and at p90 the daylight multiplies
+    // by exactly 1.000. So the decision was right. THE QUOTED RANGE WAS NOT:
+    // 'x2.024-2.060' is CH07 alone, and across the seven feeds with printed card
+    // the p90 multiply spans x1.000 to x2.029. The one feed where the gap nearly
+    // closes (CH03 at x1.595, under the daylight's x1.684) was dropped from a
+    // range presented as if it covered them all.
+    //
+    // AND THE LEVER WAS THE WRONG OBJECT TO DECLINE. Re-measured with a PER-FEED
+    // in-load null — six interleaved reps, off/on/off, 20 renderWall(0.05) calls
+    // an arm, decoded stream — only four of nine feeds move beyond their own
+    // noise, and the four do not want the same answer:
+    //
+    //     feed   off      null arm   on       delta     verdict
+    //     CH01   0.2993   0.2993      0.2641  -11.8%    off-range +-15%, marginal
+    //     CH02   0.2289   0.2113      0.2201   -3.9%    INSIDE its null (-7.7%)
+    //     CH03   0.9507   0.8891      0.3609  -62.0%    real, snr 9.6
+    //     CH04   0        0           0         --      nothing to move
+    //     CH05   0.2817   0.2905      0.0352  -87.5%    real, snr 28
+    //     CH06   0.1232   0.1232      0.0704  -42.9%    real
+    //     CH07   0.1673   0.1496      0.0792  -52.6%    real, snr 5
+    //     CH08   0.0440   0.0704      0.0352  -20.0%    INSIDE its null (+60%)
+    //     CH09   2.1563   2.1510      2.1753   +0.9%    unchanged within noise
+    //
+    // (CH09's '-1.0%' in the round-14 table and this '+0.9%' are the same
+    // reading: both sit inside its 2.03-2.21 rep range. The honest form is
+    // 'unchanged', not a signed percentage.)
+    //
+    // AGAINST THE 14-FILE 142x80 BAND — and now over the eight feeds that are
+    // ACTUALLY 142x80, with CH09 excluded because it is 320x180:
+    //
+    //     BOX      min 0.0000  p25 0.0572  med 0.1188  p75 0.5590  p90 0.9340
+    //     LANCZOS  min 0.0088  p25 0.0968  med 0.2245  p75 0.5788  p90 1.0475
+    //     eight-feed median   warm off 0.1981   warm on 0.0748
+    //
+    // On BOX the cut moves the wall from 1.67x the reference median to 0.63x it
+    // — the same distance, the other side. ON LANCZOS IT GOES FROM 0.88x, which
+    // is nearly exact, to 0.33x, which is a clear overshoot. THE TWO DEFENSIBLE
+    // KERNELS DISAGREE ABOUT THE SIGN OF THE CHANGE. That, and not the general
+    // highlight lift, is the load-bearing reason not to set this constant: the
+    // statistic that would justify it is kernel-dependent, and AGENTS_BRIEF has
+    // measured a 48x swing on exactly this reduction.
+    //
+    // WHAT SHIPS INSTEAD IS THE MECHANISM. A wall-WIDE constant could never
+    // express what these feeds ask for — CH03 sits at the band p90 and the cut
+    // moves it TOWARD the median (0.9507 -> 0.3609, 8.0x -> 3.0x the median),
+    // while CH05 sits inside the band's middle and the cut drops it under p25
+    // (0.2817 -> 0.0352). Yes on CH03, no on CH05, and one number cannot say
+    // both. CHAN[] already carries per-channel dials, so bloomWarm is now one of
+    // them (see warmFor() and wallWarmNoOp()). NO CHAN ENTRY SETS IT, the build
+    // is byte-identical to round 14's, and the check proves both that and that
+    // the dial fires. Setting it is one field on one channel when someone has
+    // built the per-feed band that the kernel disagreement above says is the
+    // real prerequisite.
     bloomLocal: 0,
     // ROUND 14 — OFF, AND THAT IS A DECISION RATHER THAN AN OMISSION, so it is
     // typed here instead of falling through the default. Everything below.
@@ -1725,15 +1842,32 @@ const GRADE_PRESET = {
   //     0        0.1512 -> 0.2342       1076 -> 1677      LENS 1127 -> LENS 1232
   //     4        0.3842 -> 0.4556       2521 -> 2759      LENS 1884 -> LENS 1955
   //
-  // THE LARGEST BLOWN BLOB IS A TROFFER LENS AT 16 OF 16 POSES IN THE REACHABLE
-  // BAND, including all three poses round 13 named as its structural limit.
+  // THE LARGEST BLOWN BLOB IS A TROFFER LENS AT 15 OF 15 POSES IN THIS TABLE,
+  // including all three poses round 13 named as its structural limit.
+  // ^ ROUND 15 CORRECTION, TWICE OVER. THIS SENTENCE SAID "16 OF 16" AND THE
+  //   TABLE ABOVE IT HAS FIFTEEN ROWS. z = +9 is absent from both published
+  //   tables because AT AISLE 3 IT HAS ZERO BLOWN PIXELS — there is nothing
+  //   there to be a lens or a blade, so it cannot be counted on either side.
+  //   The population is 15, not 16, and the count should have been read off the
+  //   rows rather than off AISLE_Z's length. (The zero is an AISLE-3 fact, not
+  //   a build fact: at aisle 7, z = +9 has 0.0322% blown on the r13 dials and
+  //   0.0133% on these, a 59% FALL. Round 15's four-aisle netting, below.)
   // z = -16 and z = -2 were re-run three times each against the shipped r13
   // dials and the flip is 3/3 at both: at -16 the shipped build reads BLADE
   // 382/373/358 with LENS 10/11/10, and this one reads LENS 333/339/339 with
-  // LENS 402/404/411. Whole-frame blown goes UP at 16 of 16, which reverses two
-  // rounds of it going down, and every pose stays inside the 14-file reference
-  // band (BOX, references reduced to 1280 wide: min 0.2433 / p25 0.7075 /
-  // med 1.0613 / p75 1.2173 / max 7.3939).
+  // LENS 402/404/411. Every pose stays inside the 14-file reference band (BOX,
+  // references reduced to 1280 wide: min 0.2433 / p25 0.7075 / med 1.0613 /
+  // p75 1.2173 / max 7.3939 — re-run round 15 over listdir, all 14 files, and
+  // it reproduces to four decimals).
+  //
+  // "WHOLE-FRAME BLOWN GOES UP AT 16 OF 16, WHICH REVERSES TWO ROUNDS OF IT
+  // GOING DOWN" WAS THE ROUND'S SECOND COUNTING ERROR AND IT IS THE WORSE ONE,
+  // because the arithmetic was not the problem — the NETTING was. The sentence
+  // is true of the THRESHOLD term measured alone. It is not true of the round,
+  // which moved two dials, and the warm-cut-alone table forty lines above
+  // already showed the cut taking blown DOWN at 15 of 15. The two halves were
+  // never added together. See the ROUND 15 block below for the netted figure,
+  // per pose, against a per-pose null.
   //
   // FOUR-AISLE REGRESSION TABLE, the same one rounds 12 and 13 publish, shipped
   // r13 dials against these (blown %, lamp share, sign share, largest blob):
@@ -1886,6 +2020,150 @@ const GRADE_PRESET = {
   // 1.10 or below, and 'the numeral survives' is one class of one pose. Anyone
   // going lower owes the band sweep and the four-aisle table, not just
   // probe.numeral().
+  //
+  // ===========================================================================
+  // ROUND 15 — THE GUARD SAMPLED ONE POSE, AND THE POSE IT SAMPLED WAS NOT THE
+  // ONE NEAREST THE CUT. bloomWarm 0.15 -> 0.14.
+  // ===========================================================================
+  // EVERY NUMBER BELOW IS ONE PAGE LOAD ON ONE STORE. shasum of src/store.js +
+  // src/store/*.js + src/config.js is 350bfbd7 at the first measurement and
+  // 350bfbd7 at the last, and the page was loaded after the last store write.
+  // That bracket is not decoration here: the r14 tables were taken on a
+  // DIFFERENT store and their absolute levels do not restate on this one (a3
+  // z = -18 reads 0.0262% blown on the r13 dials today against 0.1084%
+  // published). The NETTING question below is answerable on today's store and
+  // that is what is re-measured; the r14 levels are left where they are.
+  //
+  // ---- 1. THE GUARD NOW SWEEPS THE BAND -----------------------------------
+  // probe.lampWarm() defaulted to POSES[1] — aisle 3, z -11.6 — and printed
+  // 'margin below measured BLADE minimum 0.0130'. Over the 4-aisle x 16-z grid:
+  //
+  //     pose        BLADE cMin    margin at cut 0.15
+  //     a7 z 0        0.1548          0.0048     <- THE BAND MINIMUM
+  //     a7 z 4        0.1567          0.0067
+  //     a5 z -2       0.1569          0.0069
+  //     a7 z -10      0.1579          0.0079
+  //     a7 z -14      0.1580          0.0080
+  //     a3 z -11.6    0.1625          0.0125     <- what the guard sampled
+  //
+  // The pose the check reported was 2.6x looser than the band minimum, and the
+  // check WOULD NOT HAVE FIRED on the pose actually closest to the cut. Proved
+  // rather than argued: at bloomWarm 0.156 the band guard throws naming a7z0,
+  // and lampWarm(POSES[1]) at the same cut returns silently with margin
+  // +0.0065. cMin is deterministic to four decimals, 3/3 repeats, because this
+  // is raw-domain and upstream of grain and roll.
+  //
+  // COVERAGE IS REPORTED, NOT ASSUMED: 45 of the 64 poses have a blade texel in
+  // the luma gate, 19 do not — ALL SIXTEEN OF AISLE 1, plus z = +9 on the other
+  // three. A pose with nothing in the selector says nothing about the selector,
+  // and the guard now throws if the whole sweep comes back empty rather than
+  // certifying an empty population. Its own self-test runs on the pose that
+  // DECIDED the verdict; the first draft ran it on the last pose in the list,
+  // which is a7z9, which has zero blade texels — it compared null to null and
+  // reported `agree: true` having compared nothing. That is the vacuous
+  // assertion AGENTS_BRIEF logs six times, committed inside the guard written
+  // to answer it, and caught by reading the guard's own output.
+  //
+  // ---- 2. 0.0048 IS NOT ENOUGH, AND THE FIX IS CHEAP ----------------------
+  // The question is whether the tightest pose is a pose the glyph cares about.
+  // It is. probe.numeral() over 20 poses, cut ON against cut OFF at thr 1.15:
+  //
+  //     pose        margin    glyphArea cut OFF    with cut ON
+  //     a7 z -8     0.0092        1.770 (IoU 0.565)    1.000
+  //     a3 z -8     0.0108        1.372 (IoU 0.729)    1.000
+  //     a3 z -11.6  0.0125        1.307 (IoU 0.765)    1.000
+  //     a7 z -11.6  0.0122        1.284 (IoU 0.779)    1.000
+  //     a7 z 0      0.0048        1.277 (IoU 0.783)    1.000   <- band minimum
+  //     a3 z 0      0.0100        1.188 (IoU 0.841)    1.000
+  //
+  // THE POSE WITH THE LEAST CHROMA HEADROOM IS ALSO ONE OF THE SIX WHERE THE
+  // NUMERAL DEGRADES WITHOUT THE CUT. So the 0.0048 is load-bearing, on a
+  // constant that guards a digit the game DISPATCHES THE PLAYER BY. And it is
+  // 3.1% of the constant's own value, on a store another builder edits every
+  // round — the same pose read 0.1630 in round 14 and 0.1625 today, a 0.0005
+  // drift in one round, in the direction that closes it.
+  //
+  // SO 0.15 -> 0.14, AND HERE IS WHAT IT COSTS. Margin at the band minimum goes
+  // 0.0048 -> 0.0148, 3.1x. Picture cost, warm 0.15 against the candidate, roll
+  // ablated, majority-of-5, one page load:
+  //
+  //     pose        0.14        0.13        0.12      largest blob label
+  //     a3 z -11.6  -1.36%      -5.24%     -10.52%    LENS at all four
+  //     a3 z -13    -1.36%      -4.06%      -7.43%    LENS at all four
+  //     a7 z 0      +1.72%      +1.05%      -0.39%    LENS at all four
+  //     a7 z -10    -7.83%     -14.59%     -20.73%    LENS at all four
+  //
+  // At 0.14 three of four poses move by 1.4-1.7%, which is at the per-pose null
+  // (median 0.43%, p90 1.82% — see 4 below), and the fourth by 7.8%, which is
+  // real. THE CLASS LABEL NEVER MOVES, at any pose and any candidate, and the
+  // label is what the bar is written in. The numeral stays at glyphArea 1.000 /
+  // IoU 1.000 at all six at-risk poses at 0.14 and at 0.13.
+  //
+  // THE HONEST COST, STATED AND NOT BURIED: whole-frame blown at these poses is
+  // 0.28-0.77% against a 14-file reference band whose 1280-BOX median is 1.0613
+  // and p25 0.7075. The render already sits at or below the band's lower
+  // quartile, so ANY reduction in blown moves it further from the reference
+  // median, and this change reduces blown at three of four poses. That is a
+  // real charge against the thing this piece is judged on, paid to buy 3.1x of
+  // headroom on a digit the player is told to walk to. 0.13 buys another 1.7x
+  // for 3-4x the blown cost and is NOT taken: past 0.14 the price stops being
+  // inside the null. The window is now [0.14, 0.1548) and the guard sweeps it.
+  //
+  // ---- 3. THE TWO COUNTING ERRORS, AND THE NETTED FIGURE -------------------
+  // Corrected in place above. "16 of 16" was 15 of 16 (the tables print fifteen
+  // rows; z = +9 has zero blown pixels AT AISLE 3 and cannot be ranked). And
+  // "blown rises at 16 of 16, reversing two rounds of decline" is true of the
+  // THRESHOLD term alone, not of the round: r14 moved two dials and the
+  // warm-cut-alone table already showed the cut taking blown DOWN at 15 of 15.
+  // The two halves were never added.
+  //
+  // NETTED, r13 dials {thr 1.27, warm off} against r14 {1.15, 0.15}, over the
+  // full 4-aisle x 16-z grid, probe.nettedAB(), roll ablated, majority-of-5,
+  // one page load, with a per-pose in-load null:
+  //
+  //     poses swept                                   64
+  //     zero blown pixels on BOTH sides                6   a1 z-16/-15/-4/0,
+  //                                                        a3 z9, a5 z9
+  //     population that can carry the claim           58
+  //     blown RISES                                   49
+  //     blown FALLS                                    9
+  //     falls beyond that pose's own null (snr > 2)    8
+  //     inside its own null (snr <= 1)                 1   a7 z0, +1.39% vs
+  //                                                        a null of 1.58%
+  //
+  //     the nine that FALL      a3 z-18   -61.45%   a7 z-18    -57.07%
+  //                             a3 z -4   -17.71%   a7 z-18.9  -14.17%
+  //                             a5 z -4   -20.74%   a7 z-15     -5.25%
+  //                             a7 z -4   -18.64%   a7 z-14     -6.07%
+  //                             a7 z  9   -58.70%
+  //
+  // z = -4 FALLS AT EVERY AISLE WHERE THE STATISTIC EXISTS — 3 of 3, -17.7% to
+  // -20.7%, snr 22-43 against each pose's own null. (At aisle 1, z = -4 has no
+  // blown pixels on either side.) That is a systematic region of the band, not
+  // noise, and the round that reported "16 of 16 up" printed no row that could
+  // have shown it.
+  //
+  // Restricted to the aisle-3 rows the r14 tables actually published, on today's
+  // store: 15 poses with blown pixels, UP at 13, DOWN at 2 (z -18 and z -4).
+  // Not 15 of 15 and not 16 of 16 under any reading.
+  //
+  // AND THE LABEL, WHICH IS THE STATISTIC TO PREFER. The largest blown blob is
+  // a troffer LENS on the shipped dials at 56 of the 58 poses that have blown
+  // pixels; the two exceptions are a3 z-18 and a7 z-18, where it stays BLADE.
+  // Under the null the label was IDENTICAL at 58 of 58 poses — it is the one
+  // reduction here that does not move when nothing changes.
+  //
+  // ---- 4. THE PER-POSE NULL, PUBLISHED --------------------------------------
+  // gradeAB(pose, patchA, patchA) — same patch both sides, same code path, same
+  // majority filter, same restore. If a null needs its own code path it is not
+  // a null. Over the 58 poses, |relative drift| of whole-frame blown:
+  //
+  //     min 0.00%   p25 0.22%   med 0.43%   p90 1.82%   max 4.76%
+  //
+  // A 20x spread. A single global null cannot serve both a pose that drifts
+  // 0.00% and one that drifts 4.76%, and every "N of N" in this file is now
+  // counted against the pose's own figure. Largest-blob SIZE drifts under 1% and
+  // the LABEL does not drift at all.
   floor: {
     barrel: 0.12, ca: 1.00, chroma: 0.74, blocky: 0.13, sharp: 0.34, cnoise: 0.10,
     // ROUND 11. Chosen over four floor poses (aisles 1/3/5/7), not one — the
@@ -1922,14 +2200,22 @@ const GRADE_PRESET = {
     // printed white tops out at 1.2383, the lens runs p90 1.467 / p99 1.985);
     // 12 -> 200 is the saturation knee of the gain that has to follow. Full
     // measurement, and the negative result about reach, in the block above.
-    bloom: 200.0, bloomThr: 1.15, bloomWarm: 0.15,
+    bloom: 200.0, bloomThr: 1.15, bloomWarm: 0.14,
     // ROUND 14 — THE TWO VARIABLES THIS ROUND MOVED, AND THEY ARE ONE CHANGE.
     // bloomWarm is the WARM CUT: the largest (R-B)/L a source may have and
-    // still enter the bloom. 0.15 sits under this store's illuminant (0.2448)
-    // and under the measured minimum of every printed blade texel in the
-    // reachable band (0.1561). It is checked against BOTH at runtime by
-    // probe.lampWarm(), which throws — the lamp colour lives in another
-    // builder's file and this is the only honest way to depend on it.
+    // still enter the bloom. It sits under this store's illuminant (0.2448) and
+    // under the measured minimum of every printed blade texel in the reachable
+    // band. It is checked against BOTH at runtime by probe.lampWarm(), which
+    // throws — the lamp colour lives in another builder's file and this is the
+    // only honest way to depend on it.
+    // ROUND 15 — 0.15 -> 0.14, AND THE VALUE THE COMMENT ABOVE QUOTED WAS THE
+    // WRONG END OF THE BAND. Round 14 typed 0.15 against a blade minimum of
+    // 0.1561 taken at a single pose; the 4-aisle x 16-z minimum is 0.1548 at
+    // aisle 7 z 0, so the shipped margin was 0.0048 and not the 0.0130 the
+    // check printed. 0.14 restores 0.0148 for a blown cost inside the per-pose
+    // null at three of four poses, with the largest-blob class label unchanged
+    // at every pose. Full sweep, price and the honest charge against the
+    // reference band in the ROUND 15 block above.
     // uBloomThr then came DOWN 1.27 -> 1.15, because the only job that needed
     // it high was protecting the numeral, and colour does that job better:
     // glyphArea and glyphIoU are 1.000 at every threshold down to 1.00 with the
@@ -2652,6 +2938,17 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
   // shader is about to be handed, never from a constant sitting next to it.
   function syncFloorLens() { setFloorLens(params.floor.barrel, W, H); }
 
+  // THE ONE DEFINITION OF THE WARM CUT'S RESOLUTION ORDER. applyGrade calls it
+  // and so does wallWarmNoOp(), so the check cannot certify a rule the renderer
+  // is not using — which is the failure AGENTS_BRIEF logs as "an assertion that
+  // guards the wrong STAGE of the pipeline", and as three vacuous checks that
+  // read a build-time log instead of the live thing.
+  function warmFor(p, ch, o) {
+    if (o && o.bloomWarm != null) return o.bloomWarm;
+    if (ch && ch.bloomWarm != null) return ch.bloomWarm;
+    return p.bloomWarm != null ? p.bloomWarm : 9.0;
+  }
+
   function applyGrade(p, ch, res, seed, time, glitchY, over) {
     const u = gradeMat.uniforms;
     const o = over || {};
@@ -2681,7 +2978,16 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     // ROUND 14. Defaults to OFF when a preset does not name it, so the wall and
     // the spot monitor are byte-identical unless they ask for the warm cut by
     // name. See section 3b of cctv/shaders.js and the ROUND 14 block above.
-    u.uBloomWarm.value = p.bloomWarm != null ? p.bloomWarm : 9.0;
+    //
+    // ROUND 15 — AND IT IS PER-CHANNEL NOW, in the same shape as `blocky` and
+    // `noise` two lines up: an override on the call, else the CHANNEL's own
+    // dial, else the preset, else off. The reason is measured and it is in the
+    // wall preset above: a wall-WIDE constant cannot express the thing the wall
+    // actually wants, which is "yes on CH03, no on CH05". No CHAN entry sets
+    // bloomWarm today, so this is exactly the round-14 build — `wallWarmNoOp()`
+    // below proves that rather than asserting it. When a round is ready to take
+    // the lever it is one field on one channel, not a plumbing job.
+    u.uBloomWarm.value = warmFor(p, ch, o);
     u.uGain.value = p.gain * (ch ? ch.gain : 1);
     u.uBlack.value = p.black;
     u.uPivot.value = p.pivot;
@@ -3002,6 +3308,47 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
       };
     },
 
+    // ---- ROUND 15 — THE PER-CHANNEL WARM CUT IS PLUMBED AND NOT SET ---------
+    // The wall preset's round-14 note deferred the warm cut with a stated
+    // reason, and round 15's measurement says the reason is right but the
+    // OBJECT is wrong: a wall-wide constant is not the thing to defer, because
+    // it could never have expressed what the feeds ask for. Re-measured with a
+    // per-feed in-load null (six interleaved reps, off/on/off), only four of
+    // nine feeds move beyond their own noise, and they do not want the same
+    // answer — CH03 sits at the reference band's p90 and the cut moves it
+    // TOWARD the median, while CH05 sits inside the band's middle and the cut
+    // drops it under p25. Numbers in the wall preset above.
+    //
+    // So the MECHANISM ships and the CONSTANT does not. CHAN[i].bloomWarm is
+    // read by warmFor(), which is the one definition applyGrade uses, and no
+    // CHAN entry sets it — this returns the evidence that today's build is
+    // byte-identical to round 14's, and it proves the dial WORKS at the same
+    // time, because a no-op check that cannot detect a change is not a check.
+    // (AGENTS_BRIEF: prove a checker fires before you believe it is silent.)
+    wallWarmNoOp() {
+      const p = params.wall;
+      const base = p.bloomWarm != null ? p.bloomWarm : 9.0;
+      const resolved = CHAN.map((_, i) => warmFor(p, chanFor(i), {}));
+      const set = CHAN.map((c, i) => (c.bloomWarm != null ? i : -1)).filter((i) => i >= 0);
+      // THE FIRE TEST. Set a dial, resolve again through the SAME function the
+      // renderer calls, put it back. If this does not move, the plumbing is
+      // decorative and the silence above means nothing.
+      const probe = CHAN[2].bloomWarm;
+      CHAN[2].bloomWarm = 0.15;
+      const fired = warmFor(p, chanFor(2), {});
+      if (probe === undefined) delete CHAN[2].bloomWarm; else CHAN[2].bloomWarm = probe;
+      const restored = warmFor(p, chanFor(2), {});
+      return {
+        ok: resolved.every((v) => v === base) && fired === 0.15 && restored === base,
+        presetWarm: base,
+        resolvedPerChannel: resolved,
+        channelsSettingIt: set,
+        fireTest: { withDial: fired, afterRestore: restored, detects: fired !== base },
+        // the override path too, since setParams/gradeAB drive the A/B through it
+        overrideBeatsChannel: warmFor(p, chanFor(2), { bloomWarm: 0.42 }) === 0.42,
+      };
+    },
+
     // ---- MEASUREMENT SURFACE — ROUND 10 -------------------------------------
     // The blown-highlight question has THREE different answers depending on
     // where in the chain you stand, and round 9 answered one of them and called
@@ -3013,8 +3360,18 @@ export function createCCTV(THREE, renderer, scene, opts = {}) {
     //                   upstream of here.
     //   probeStream(i)  the DECODED DVR FRAME, 8-bit sRGB, at stream resolution.
     //                   This is the picture a reference photograph reduced to
-    //                   142x80 is actually comparable to: same size, same place
-    //                   in the chain, same 8-bit ceiling.
+    //                   the SAME SIZE is comparable to: same place in the chain,
+    //                   same 8-bit ceiling.
+    //                   ROUND 15 — AND "142x80" IS EIGHT FEEDS, NOT NINE.
+    //                   Measured off probeStream: CH01-CH08 decode at 142x80,
+    //                   CH09 AT 320x180 — 5.1x the pixels. So a wall-wide median
+    //                   quoted against a 142x80 reference band silently mixes
+    //                   two reductions, on a statistic AGENTS_BRIEF measured a
+    //                   48x kernel swing on. CH09 differs at BOTH stages, raw
+    //                   640x360 against 284x160 and decoded 320x180 against
+    //                   142x80, and every wall number in this file now says
+    //                   which. probe.wallSeparation() publishes rawW/rawH per
+    //                   feed for the same reason.
     //   the PANEL       is on the canvas. Read it off the canvas at tiles[i].
     //                   It is the stream times the monitor, and the monitor is
     //                   ScreenShader, and the two are not the same picture.

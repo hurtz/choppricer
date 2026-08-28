@@ -10,12 +10,25 @@ import {
   makeRng, rr, ri, pick, Batch, Quads, setFieldSink, setFieldPaint,
 } from './store/kit.js';
 import * as LT from './store/light.js';
-import { DEPTS, FROZEN, fillShelf, fillBackRow } from './store/products.js';
+import {
+  DEPTS, FROZEN, fillShelf, fillBackRow, aspectCheck, clampAspect,
+} from './store/products.js';
 import * as TX from './store/tex.js';
 import * as PK from './store/pack.js';
 import * as FL from './store/floor.js';
 import * as SG from './store/signs.js';
 import * as FR from './store/front.js';
+import * as VD from './store/vendor.js';
+// ROUND 20 — the aisle volume. See ./store/intrusions.js for the whole
+// argument; the short form is that until this round every object in this
+// building stopped exactly at the shelf plane.
+import * as IN from './store/intrusions.js';
+// ROUND 27 — the price rail's cross-section and the card datum. See
+// ./store/rail.js: until this round the rails soup was 1,905 quads carrying
+// FOUR distinct normals and not one with a vertical component, and every card
+// was placed on the deck's comb rather than in the channel it is supposed to
+// be sitting in. `?flatrail` restores round 26 exactly.
+import * as RL from './store/rail.js';
 // cctv.js owns where the cameras hang; config's CAMERAS[].pos is only a fallback.
 // cctv.js does not import store.js, so this is not a cycle.
 import { cameraRig } from './cctv.js';
@@ -86,7 +99,13 @@ function textures(THREE) {
     strip: TX.stripTex(THREE),
     well: TX.wellTex(THREE),
     tsh: TX.trofferShadowTex(THREE),
-    rail: TX.railTex(THREE),
+    // ROUND 27 — `railTex` is a PAINTED cross-section: a five-stop vertical
+    // gradient plus a 1.6 px line captioned "the extruded channel that the tag
+    // strip slides into". The channel is geometry now, so the ON arm binds a
+    // near-flat anodised map instead and lets the seven facets do the shading.
+    // Leaving the painting under the geometry would stack two models of one
+    // cue, which is the round-8 fault this file already records once.
+    rail: RL.RAILC.on ? RL.channelTex(THREE) : TX.railTex(THREE),
     wood: TX.woodTex(THREE, [30, 40, 60], 77),
     wall: TX.wallTex(THREE),
     // round-2 packaging: real printed type, one atlas per package family
@@ -115,6 +134,18 @@ function textures(THREE) {
     fsign: FR.frontSignAtlas(THREE),
     mag: FR.magAtlas(THREE),
     promo: TX.promoAtlas(THREE, SIGN_DEPTS),
+    // ROUND 19 — THE THREE SIGN SYSTEMS THAT ARE NOT THE STORE'S OWN.
+    // r18's critic: 13 of its 14 render calls came off the blade/promo grammar,
+    // and the two things that grammar has none of are vendor identity and
+    // photographic content. store/vendor.js supplies both. See its header, and
+    // reference/store_00_Drinks..., which carries FIVE unrelated sign systems
+    // in one frame.
+    pos: VD.posAtlas(THREE),
+    lbox: VD.lightboxAtlas(THREE),
+    hanger: VD.hangerAtlas(THREE),
+    // ROUND 20 — point-of-purchase paper that stands IN the aisle: violators,
+    // clip-strip headers, taped photocopies, swing tags. See intrusions.js.
+    intrude: IN.intrusionAtlas(THREE),
     glow: TX.glowTex(THREE),
     // round-6's contact ramp and ground pool are gone — light.js computes the
     // same darkening per fragment, everywhere, instead of on cards. See the
@@ -153,6 +184,7 @@ function textures(THREE) {
           + e.step).join(' | '));
     }
     TEX.typeStats = PK.typeStats();
+    TEX.typeAudit = PK.typeAudit();
   }
   return TEX;
 }
@@ -190,6 +222,58 @@ const FULL = [0, 0, 1, 1];
 // The package shader, the atlas-cell UV remap and the mask channel contract
 // all live in ./store/pack.js now.
 
+// ---------------------------------------------------------------------------
+// ROUND 20 — THE UNIT CUBE WAS NOT A UNIT CUBE, AND IT NEVER HAS BEEN.
+//
+// Found by builder-store-r20 while measuring lip crossing, and it is the
+// CLAUDE.md hazard in its purest form: a derivation with one owner, believed by
+// everyone, and false.
+//
+//   pillowGeo   local z extent 2.021
+//   gussetGeo   local z extent 1.810
+//
+// Both start from BoxGeometry(1,1,1) — coordinates +/-0.5 — and then multiply z
+// by a bulge that peaks near 2. Every caller in this project sizes a package by
+// passing sx/sy/sz to Batch.push believing it is scaling a unit cube, because
+// that is what every other geometry here is. products.js's place() computes
+// clearance off that belief, and so ABOUT 4,200 BAGS HAVE STOOD ROUGHLY 105 mm
+// THROUGH THE SHELF LIP IN EVERY BUILD THIS PROJECT HAS SHIPPED — 59.5% of them
+// crossing at a 5 mm threshold. It looked like merchandising and it was
+// arithmetic.
+//
+// FIXED BY NORMALISING HERE rather than by exporting the true extents for
+// place() to pay for. Two reasons and the second is the general one:
+//
+//   * place() lives in products.js, which is another builder's file this round,
+//     and a contract that says "this geometry is a unit cube" is cheaper to
+//     make TRUE than to make everybody compensate for.
+//   * a second consumer would have had to remember. The bug exists precisely
+//     because a fact about the geometry lived somewhere other than in the
+//     geometry.
+//
+// WHAT IT COSTS, stated rather than buried: a bag is now as deep as it was
+// authored to be, which is about half as deep as it has been rendering. Some of
+// the lip crossing this project has always had was this bug. Deliberate
+// overhang now comes from the two places that can control it — place()'s
+// setback, which can go negative since r20, and the stray facings in
+// store/intrusions.js — instead of from a silent multiplier.
+function unitBox(g) {
+  g.computeBoundingBox();
+  const b = g.boundingBox, p = g.attributes.position;
+  const sx = 1 / Math.max(1e-6, b.max.x - b.min.x);
+  const sy = 1 / Math.max(1e-6, b.max.y - b.min.y);
+  const sz = 1 / Math.max(1e-6, b.max.z - b.min.z);
+  const cx = (b.max.x + b.min.x) / 2, cy = (b.max.y + b.min.y) / 2;
+  const cz = (b.max.z + b.min.z) / 2;
+  for (let i = 0; i < p.count; i++) {
+    p.setXYZ(i, (p.getX(i) - cx) * sx, (p.getY(i) - cy) * sy, (p.getZ(i) - cz) * sz);
+  }
+  p.needsUpdate = true;
+  g.computeBoundingBox();
+  g.computeVertexNormals();
+  return g;
+}
+
 function pillowGeo(THREE) {
   // A bag is not a box. The sealed crimps at top and bottom pinch to almost
   // nothing while the middle bulges past the nominal footprint — without that
@@ -225,8 +309,9 @@ function pillowGeo(THREE) {
     p.setX(i, x * (crimp ? 0.86 : 1.0) * (0.97 + (n - 0.5) * 0.10));
     p.setY(i, y * (crimp ? 0.96 : 1.0) + (n - 0.5) * 0.035 * (1 - t));
   }
-  g.computeVertexNormals();
-  return g;
+  // the bulge above peaks at 2.02x on z; unitBox puts the outline back inside
+  // the unit cube every caller sizes it as. See the note above unitBox.
+  return unitBox(g);
 }
 
 // Four lathe profiles. A cleaning or HBA shelf in a real store is a row of
@@ -341,8 +426,8 @@ function gussetGeo(THREE) {
     p.setX(i, x * (1.0 - 0.13 * crimp - 0.06 * foot) * (0.98 + (n - 0.5) * 0.07));
     p.setY(i, y + (n - 0.5) * 0.020 * (1 - crimp));
   }
-  g.computeVertexNormals();
-  return g;
+  // the gusset foot peaks at 1.81x on z — same fix, same reason.
+  return unitBox(g);
 }
 
 // SHRINK-WRAPPED MULTIPACK. A twelve of soup or a six of kitchen roll is a
@@ -365,8 +450,15 @@ function wrapGeo(THREE) {
     p.setZ(i, z * k * (Math.abs(z) > 0.4 ? bulge : 1));
     p.setY(i, y * (1.0 - 0.10 * corner));
   }
-  g.computeVertexNormals();
-  return g;
+  // ...AND THE THIRD ONE, WHICH NOBODY REPORTED.
+  // chopUnitCheck fired on this geometry the first time it ran: 0.9557 on x.
+  // The corner pull is applied to every vertex of the +x face, and this box is
+  // subdivided 3x3x2, so the +x face has NO vertex at y = 0 — its nearest rows
+  // sit at y = +/-1/6, where the corner term is already 0.233 and k is 0.9557.
+  // A face whose own centre is missing cannot reach the width it was given.
+  // 4.4% under, in the safe direction, and wrong for the same reason the bag
+  // was 102% over: a fact about the outline that only the outline knew.
+  return unitBox(g);
 }
 
 // ---------------------------------------------------------------------------
@@ -378,6 +470,21 @@ export function buildStore(THREE, scene) {
   // on scene.userData.chopFrontEnd; see FRONT_END at the bottom of this file.
   let DESK_POSE = null;
   const rng = makeRng(0x5f0c1a);
+  // ROUND 20 — THE SHELF-EDGE TAG DRAWS FROM ITS OWN STREAM.
+  //
+  // Asked for by the lead on builder-store-r20's behalf. ragged() and tagUV()
+  // between them draw 7-9 values per tag off the shared stream, and the number
+  // of tags a deck emits depends on how that deck was filled — so a change to
+  // ARRANGEMENT re-rolled every notch, blade, kick joint and coupon flag built
+  // after it, and no A/B on this file could be paired. Splitting the tag draws
+  // out is the cheapest half of that: an arrangement change no longer moves the
+  // fixtures, which is the pairing that matters.
+  //
+  // It is not free and the cost is stated rather than buried: taking these
+  // draws out shifts the shared stream ONCE, so every plate captured before
+  // this commit is unpairable with every plate captured after it. Everything in
+  // this round's report was re-captured on the far side of it.
+  const tagRng = makeRng(0x7a6c1d);
   const col = new THREE.Color();
   const T = textures(THREE);
 
@@ -524,10 +631,10 @@ export function buildStore(THREE, scene) {
   // per-instance aCell attribute offsets into the atlas, so 24 carton designs
   // cost the same single draw call that 1 design used to.
   const PG = {
-    box: PK.unitCellUV(THREE, G.box, 'box', PK.ATLAS.carton.wrap),
-    wrap: PK.unitCellUV(THREE, G.wrap, 'box', PK.ATLAS.carton.wrap),
-    bag: PK.unitCellUV(THREE, G.bag, 'box', PK.ATLAS.pouch.wrap),
-    gusset: PK.unitCellUV(THREE, G.gusset, 'box', PK.ATLAS.pouch.wrap),
+    box: PK.unitCellUV(THREE, G.box, 'box', PK.ATLAS.carton.wrap, null, 'carton/box'),
+    wrap: PK.unitCellUV(THREE, G.wrap, 'box', PK.ATLAS.carton.wrap, null, 'carton/wrap'),
+    bag: PK.unitCellUV(THREE, G.bag, 'box', PK.ATLAS.pouch.wrap, null, 'pouch/bag'),
+    gusset: PK.unitCellUV(THREE, G.gusset, 'box', PK.ATLAS.pouch.wrap, null, 'pouch/gusset'),
     // ROUND 18 — every round shape is handed the BARREL WINDOW of the atlas
     // that prints it. That window is the contract between pack.js's artwork
     // and this unwrap; before it existed, LatheGeometry's index-based v put
@@ -542,12 +649,14 @@ export function buildStore(THREE, scene) {
     squat: PK.unitCellUV(THREE, G.bSquat, 'lathe', 0, PK.ATLAS.bottle.barrel, 'bottle/squat'),
     spray: PK.unitCellUV(THREE, G.bSpray, 'lathe', 0, PK.ATLAS.bottle.barrel, 'bottle/spray'),
   };
-  // Fails the page load, where the watch sees it, rather than shipping a store
-  // whose round packages are printed through a point index. See latheCheck().
-  {
-    const bad = PK.latheCheck();
-    if (bad.length) throw new Error('store.js lathe unwrap: ' + bad.join(' | '));
-  }
+  // ROUND 19 — THE LATHE ASSERTION MOVED. It used to run HERE, on the seven
+  // geometries this block had just built, by reading the log latheFold() wrote
+  // while building them. That is a check on an intention. Batch clones every
+  // one of these buffers to hang `aCell` on it, so the seven objects checked
+  // here are not the 51 the GPU draws — and r18's critic corrupted those 51
+  // while this call went on returning []. It now runs against the SCENE, below,
+  // next to chopShelfCheck(), and is published so it can be re-run after
+  // anything touches a uv buffer.
   const BSHAPES = ['soda', 'jug', 'squat', 'spray'];
   const CSHAPES = ['can', 'rim', 'jarL', 'tub'];
 
@@ -569,9 +678,41 @@ export function buildStore(THREE, scene) {
     for (const k of BSHAPES) {
       bs[k] = new Batch(THREE, PG[k], M.pkgBottle, PK.ATLAS.bottle, true);
     }
+    // ROUND 19 — THE ASPECT CLAMP LIVES HERE, AND ONLY HERE.
+    //
+    // r18's aspectCheck read the K table and passed 11/11 while the store
+    // shipped instances at 4.22:1. Two multipliers sit between the table and
+    // the GPU and neither is visible from products.js: the per-instance scale
+    // jitter, and the fact that a lathe's local x-extent is 0.83-0.99 rather
+    // than 1, so `w` metres of declared width buys less than `w` of package.
+    //
+    // The router is where a shape name finally becomes a geometry, so it is the
+    // only place in the build that holds BOTH the requested scale and the
+    // outline that will draw it. Putting the clamp in products.js would mean
+    // duplicating this resolution — `map[shape] || map[dflt]` — into a second
+    // file, which is the hazard CLAUDE.md opens with and which has already cost
+    // this file two rounds. products.js owns the BAND; this owns the lookup.
+    //
+    // sz travels with sx for a round batch because a can's depth IS its width.
+    const geoBox = new Map();
+    const boxOf = (b) => {
+      let e = geoBox.get(b);
+      if (!e) {
+        const g = b.geo;
+        if (!g.boundingBox) g.computeBoundingBox();
+        e = { name: g.name || '', lw: g.boundingBox.max.x - g.boundingBox.min.x,
+          lh: g.boundingBox.max.y - g.boundingBox.min.y, round: !!b.round };
+        geoBox.set(b, e);
+      }
+      return e;
+    };
     const router = (map, dflt) => ({
       push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell, shape) {
-        (map[shape] || map[dflt]).push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell);
+        const b = map[shape] || map[dflt];
+        const e = boxOf(b);
+        const fx = clampAspect(e.name, e.lw, e.lh, sx, sy);
+        if (fx !== sx) { if (e.round) sz = fx; sx = fx; }
+        b.push(px, py, pz, ex, ey, ez, sx, sy, sz, c, cell);
       },
     });
     // products.js pushes with an optional `shape` key; route to that outline.
@@ -622,6 +763,15 @@ export function buildStore(THREE, scene) {
     col.setHex(hex); Bsteel.box(x, y, z, sx, sy, sz, col);
   };
   const tube = (x, y, z, ex, ey, ez, r, len, hex, B = Btube) => { col.setHex(hex); B.push(x, y, z, ex, ey, ez, r, len, r, col); };
+  // ROUND 20 — a box with a full euler. `fix` has no rotation and `fixR` has
+  // only a roll about Z, which was enough while everything in this store was
+  // square to the room. An object hanging in the aisle is not: a violator
+  // twists in its clip, a clip strip leans, a coil of cable is a coil. This is
+  // the same Batch.push everything else uses, so an intrusion stamps the
+  // occupancy field exactly like a shelf does.
+  const boxE = (x, y, z, ex, ey, ez, sx, sy, sz, hex, B = Bfix) => {
+    col.setHex(hex); B.push(x, y, z, ex, ey, ez, sx, sy, sz, col);
+  };
   const drum = (x, y, z, r, len, hex) => { col.setHex(hex); Bdrum.push(x, y, z, 0, 0, 0, r, len, r, col); };
 
   // quad soups
@@ -658,6 +808,17 @@ export function buildStore(THREE, scene) {
   //   Qdangle cardboard promo danglers hanging on strings from the ceiling
   const Qslot = new Quads(), Qpeg = new Quads();
   const Qdangle = new Quads();
+  // ROUND 19 — three soups for three sign systems that are not the store's own.
+  //   Qpos     vendor shelf-talkers clipped to a gondola face at shelf height
+  //   Qlbox    backlit promo lightboxes, hung across the aisles
+  //   Qhang    small black one-word category hangers, on their own wires
+  const Qpos = new Quads(), Qlbox = new Quads(), Qhang = new Quads();
+  // ROUND 20 — Qintr. Every printed surface that stands OUT IN THE AISLE
+  // rather than on a face: the violator card perpendicular to the shelf, the
+  // clip-strip header, the taped photocopy curling off the lip, the swing tag
+  // hung by one corner. One soup, DoubleSide, because none of these is a decal
+  // and every one of them is seen from both sides.
+  const Qintr = new Quads();
   // ROUND 10 — WHICH SOUPS PAINT THEMSELVES INTO THE FIELD.
   // Signage only, and that is the whole list on purpose. These are the surfaces
   // a mirror needs and a shadow must not have: bright, high-contrast, mostly
@@ -676,8 +837,33 @@ export function buildStore(THREE, scene) {
     Qwsign.field = c(0xdbd2bc);
     Qfsign.field = c(0xe0d8c2);     // front-end plates: cream board, dark copy
     Qmag.field = c(0xa89a92);       // a magazine rack averages to a warm mud
+    // ROUND 19. The lightbox is the brightest object hanging in the store, so
+    // it is the one that most needs to exist for the floor mirror; the POS card
+    // sits ON a gondola whose stamp already owns that column, so — same rule as
+    // Qrail and Qtag — it is deliberately NOT painted.
+    Qlbox.field = c(0xc8452e);      // photographic panel under a red/blue wash
+    Qhang.field = c(0x1e1e21);      // a black hanger is a dark hole in the band
+    // ROUND 20. The intrusion cards ARE painted, unlike Qrail/Qtag/Qpos, and
+    // the reason is the rule those three are exempt under: they sit inside a
+    // gondola whose solid stamp already owns that column. These do not — they
+    // stand 60-145 mm out in the aisle, in the column the FLOOR occupies, so
+    // the mirror has nothing else to get their colour from. Averaged over the
+    // atlas: shout red/yellow over cream board.
+    Qintr.field = c(0xc9903a);
   };
   paintSoups();
+  // ROUND 20 — THE AISLE VOLUME. intrusions.js owns the shapes and the rates;
+  // this hands it the store's own rng, its own box and rod batches and the one
+  // new soup, so nothing in there allocates a draw call or a random stream of
+  // its own. See buildRun for the two call sites.
+  // Its own SEED, not the store's rng — see the ablation note in intrusions.js.
+  // A layer that draws from the shared stream cannot be turned off without
+  // re-rolling the entire planogram behind it, which is what made this round's
+  // first before/after plate unreadable.
+  const INTR = IN.makeIntrusions({
+    seed: 0x20A15E, boxE, Q: Qintr, cellUV,
+    rod: (x, y, z, ex, ey, ez, d, len, hex) => tube(x, y, z, ex, ey, ez, d, len, hex),
+  });
   // ROUND-4 additions.
   //   Qwell   the inward-facing walls of every recessed troffer housing
   //   Qtsh    the shadow each housing throws onto the tiles it is let into
@@ -1668,6 +1854,111 @@ export function buildStore(THREE, scene) {
     dangle(STORE.minX + 3 + rng() * (SW - 6), BACK_WALK_Z + rr(rng, -1.6, 1.6),
       rr(rng, 3.3, 4.5), rng() < 0.62 ? FROZEN.key : null);
   }
+
+  // =========================================================================
+  // ROUND 19 — THE SIGN SYSTEMS THAT ARE NOT THIS STORE'S.
+  //
+  // Everything above this line — blades, aisle boards, promo headers, danglers
+  // — is one design system with one palette and one voice, and r18's critic
+  // called 13 of its 14 render tiles off it. What a real store looks like is
+  // reference/store_00_Drinks...: FIVE systems in one frame, at three different
+  // heights, in unrelated colours, because four of them were designed by other
+  // companies and shipped to the store in a box.
+  //
+  // Two of the three go in here because they HANG; the vendor shelf-talker goes
+  // on the gondola face inside buildRun, where the fixture it clips to is.
+  //
+  // THE LIGHTBOX. 2.55 x 0.72 m, which is the reference panel's 3.5:1 at the
+  // size it reads against a 5.2 m ceiling. It hangs ACROSS the aisles rather
+  // than along them — you read it walking up the cross-aisle, which is the only
+  // reason a 3.5:1 panel is that shape — and it is double-sided because it has
+  // a lit face on both sides of the same box.
+  const lightbox = (x, z, y, cell, yaw) => {
+    const uv = cellUV(cell % VD.LB_CELLS, 1, VD.LB_CELLS);
+    const w = 2.55, h = 0.72, D = 0.115;
+    const cs = Math.cos(yaw), sn = Math.sin(yaw);
+    // THE FACE SITS PROUD OF THE BOX, and the first build did not.
+    //
+    // Both faces were drawn on the box's CENTRE plane, inside a 0.115 m deep
+    // extrusion, so the frame enclosed its own acrylic and every panel in the
+    // store rendered as a black rectangle. What found it was an ablation:
+    // hiding the lightboxes changed ZERO pixels while their vertices projected
+    // on screen at [401,235]-[1174,275]. AGENTS_BRIEF's rule for a suspicious
+    // reading is written about instruments, and it is just as true of a render
+    // — a term that cannot be switched off is a term that is not on.
+    for (const sgn of [1, -1]) {
+      const d = sgn * (D / 2 + 0.004);
+      Qlbox.rect([x + d * sn, y, z + d * cs],
+        [sgn * cs * w / 2, 0, -sgn * sn * w / 2], [0, h / 2, 0],
+        uv[0], uv[1], uv[2], uv[3]);
+    }
+    // the extruded aluminium box the acrylic is stretched over, and four drops
+    fixR(x, y, z, w + 0.09, h + 0.09, D, 0, 0x2b2823);
+    for (const sx of [-1, 1]) {
+      for (const sz of [-1, 1]) {
+        const dx = x + sx * cs * (w * 0.42) - sz * sn * 0.045;
+        const dz = z - sx * sn * (w * 0.42) - sz * cs * 0.045;
+        tube(dx, (y + h / 2 + CEIL_H - 0.02) / 2, dz, 0, 0, 0, 0.007,
+          CEIL_H - 0.02 - y - h / 2, 0xc9c2ae);
+        fix(dx, CEIL_H - 0.028, dz, 0.05, 0.018, 0.05, 0x9a9484, BfixC);
+      }
+    }
+  };
+  // One over each gondola head at the front cross-aisle and a second row deeper
+  // in, which is exactly where the reference has them: they mark the ends of
+  // the runs, so they sit on the gondola pitch and not on the aisle pitch.
+  //
+  // WHERE, AND IT IS A MEASUREMENT OFF THE RIG RATHER THAN A TASTE CALL. The
+  // first placement put these at FRONT_WALK_Z - 1.15 = z -17.65, over the
+  // checkouts, and they were invisible from every pose aniso.js publishes:
+  // `chase_a1` stands at z -11 looking to +2, so the whole row was behind the
+  // camera. AGENTS_BRIEF's rule for this is r13's — "a pose set is
+  // representative because it covers the band the player's camera occupies,
+  // which is a measurement off the rig, not a judgement" — and it applies just
+  // as hard to where you PUT a thing as to where you measure it from.
+  //
+  // The chase runs toward the exit, so the player spends it looking at the
+  // FRONT of the store; the desk-to-aisle walk looks at the back. A row at each
+  // end of the gondola runs, inset into the cross-aisle rather than past it, is
+  // in shot for both. At 25 m a 2.55 m panel is ~134 px wide at this fov, which
+  // is the reference panel's own read: a colour block with a headline in it.
+  {
+    let cell = 0;
+    for (let i = 0; i < AISLE_COUNT - 1; i++) {
+      const gx = offLamp(aisleX(i) + PITCH / 2);
+      lightbox(gx, FRONT_WALK_Z + 1.25, 3.44, cell++, 0);
+      if (i % 2 === 1) lightbox(gx, BACK_WALK_Z - 1.30, 3.52, cell++, 0);
+    }
+  }
+
+  // THE BLACK HANGERS. The third system, and the cheapest half of the effect:
+  // one word, white on black, 0.86 x 0.30 m, hung at 2.62 m — BELOW the blades
+  // and below the lightboxes, on its own wires, in a colour nothing else in the
+  // store uses. What makes the reference frame read as several systems is not
+  // that the signs are different, it is that they are at different HEIGHTS in
+  // the same sight line, so two of them are never mistaken for one grammar.
+  const hanger = (x, z, y, cell) => {
+    const uv = cellUV(cell % VD.HANGER_CELLS, 1, VD.HANGER_CELLS);
+    const w = 0.86, h = 0.30;
+    for (const sgn of [1, -1]) {
+      Qhang.rect([x, y, z + sgn * 0.004], [sgn * w / 2, 0, 0], [0, h / 2, 0],
+        uv[0], uv[1], uv[2], uv[3]);
+    }
+    for (const s of [-1, 1]) {
+      const dx = x + s * w * 0.40;
+      tube(dx, (y + h / 2 + CEIL_H - 0.016) / 2, z, 0, 0, 0, 0.004,
+        CEIL_H - 0.016 - y - h / 2, 0xcfc8b4);
+      fix(dx, CEIL_H - 0.026, z, 0.036, 0.014, 0.022, 0x9a9484, BfixC);
+    }
+  };
+  for (let i = 0; i < AISLE_COUNT; i++) {
+    const ax = aisleX(i);
+    for (let k = 0; k < 3; k++) {
+      hanger(offLamp(ax + rr(rng, -0.55, 0.55)), rr(rng, -HALF + 3.0, HALF - 3.0),
+        2.62 + rr(rng, -0.06, 0.06), i * 3 + k);
+    }
+  }
+
   scene.onBeforeRender = (r, sc, cam) => {
     const p = cam && cam.position;
     const v = !p || p.y < CEIL_H - 0.15;
@@ -1884,28 +2175,55 @@ export function buildStore(THREE, scene) {
         RAIL_H[(rng() * RAIL_H.length) | 0]);
     }
   };
+  // ROUND 27 — both emitters now RETURN a RailIndex: the list of sections they
+  // actually built, in order, so the card emitter can ask what it is sliding a
+  // card into instead of guessing from the deck. The flat arm builds the index
+  // too and simply never reads it, so the two arms differ by geometry and by
+  // nothing else. `plane` is the SAME world coordinate the flat quad sat on, so
+  // `?flatrail` and the ON arm hang their hardware off one datum.
   function railRun(lip, y, a0, a1, dir, stepFn, ph = 0) {
     let k = 0;
+    const ix = new RL.RailIndex();
     railSeg((mid, w, yy, h) => {
-      qX(Qrail, lip + dir * 0.012, yy + (stepFn ? stepFn(k++) : 0), mid,
-        w, h, dir, [0, 0, w, 1]);
+      const yk = yy + (stepFn ? stepFn(k++) : 0);
+      if (RL.RAILC.on) {
+        ix.push(RL.emitChannel(Qrail, {
+          ax: 0, plane: lip, sgn: dir, mid, len: w, y: yk, h,
+        }));
+      } else {
+        qX(Qrail, lip + dir * 0.012, yk, mid, w, h, dir, [0, 0, w, 1]);
+        ix.push({ ax: 0, plane: lip, sgn: dir, mid, len: w, y: yk, h, seat: null });
+      }
     }, a0 + (ph % SECT) * 0.5, a1, y);
     for (let a = a0 + rr(rng, 0.6, FLAG_EVERY); a < a1 - 0.2; a += rr(rng, 2.9, FLAG_EVERY * 3.4)) {
       couponFlag(lip, y, a, dir, true);
     }
+    return ix;
   }
+  // `cz` here is the FINISHED plane the flat quad sat on, not a lip — the four
+  // callers pass their own offset in. So the channel's datum is cz - dir*0.012,
+  // which is the one place that conversion happens.
   function railRunX(cz, y, a0, a1, dir) {
+    const ix = new RL.RailIndex();
     railSeg((mid, w, yy, h) => {
-      qZ(Qrail, mid, yy, cz, w, h, dir, [0, 0, w, 1]);
+      if (RL.RAILC.on) {
+        ix.push(RL.emitChannel(Qrail, {
+          ax: 2, plane: cz - dir * 0.012, sgn: dir, mid, len: w, y: yy, h,
+        }));
+      } else {
+        qZ(Qrail, mid, yy, cz, w, h, dir, [0, 0, w, 1]);
+        ix.push({ ax: 2, plane: cz - dir * 0.012, sgn: dir, mid, len: w, y: yy, h, seat: null });
+      }
     }, a0, a1, y);
     for (let a = a0 + rr(rng, 0.6, FLAG_EVERY); a < a1 - 0.2; a += rr(rng, 2.9, FLAG_EVERY * 3.4)) {
       couponFlag(cz, y, a, dir, false);
     }
+    return ix;
   }
   // 13 printed tag designs then 3 orphan states — see pack.js TAG_SKU.
   const tagUV = (kindT) => (kindT === 'orphan'
-    ? cellUV(PK.TAG_SKU + ((rng() * (16 - PK.TAG_SKU)) | 0), 4, 4)
-    : cellUV((rng() * PK.TAG_SKU) | 0, 4, 4));
+    ? cellUV(PK.TAG_SKU + ((tagRng() * (16 - PK.TAG_SKU)) | 0), 4, 4)
+    : cellUV((tagRng() * PK.TAG_SKU) | 0, 4, 4));
 
   // THE LABEL STRIP IS RAGGED. ROUND 9.
   //
@@ -1932,28 +2250,34 @@ export function buildStore(THREE, scene) {
   // OVER the SKU card underneath it. Both are emitted from here for the same
   // reason the jitter is: there are twenty call sites and none of them should
   // know about either.
+  // tagRng, not rng — see the note where tagRng is declared.
   const ragged = (h) => {
-    if (rng() < 0.055) return null;                       // pulled and never replaced
+    if (tagRng() < 0.055) return null;                    // pulled and never replaced
     return {
-      dy: rr(rng, -0.0045, 0.0035),
+      dy: rr(tagRng, -0.0045, 0.0035),
       // one in six went in crooked; the rest are within half a degree
-      tilt: rng() < 0.17 ? rr(rng, -0.105, 0.105) : rr(rng, -0.012, 0.012),
-      h: h * (rng() < 0.13 ? rr(rng, 0.68, 0.78) : rr(rng, 0.94, 1.05)),
+      tilt: tagRng() < 0.17 ? rr(tagRng, -0.105, 0.105) : rr(tagRng, -0.012, 0.012),
+      h: h * (tagRng() < 0.13 ? rr(tagRng, 0.68, 0.78) : rr(tagRng, 0.94, 1.05)),
       // a card that has come out of its channel at one end. 4 to 9 mm of kick
       // over the outer quarter — enough to catch a lamp along its own edge,
       // which is what makes it visible at all.
-      peel: rng() < 0.07 ? { f: rr(rng, 0.62, 0.78), k: rr(rng, 0.004, 0.009) } : null,
+      peel: tagRng() < 0.07 ? { f: rr(tagRng, 0.62, 0.78), k: rr(tagRng, 0.004, 0.009) } : null,
       // and the yellow card somebody stapled over the top of it last Tuesday
-      over: rng() < 0.10 ? {
-        c: rr(rng, -0.30, 0.30), w: rr(rng, 0.52, 0.76),
-        t: rr(rng, -0.22, 0.22), p: rr(rng, 0.0016, 0.0032),
+      over: tagRng() < 0.10 ? {
+        c: rr(tagRng, -0.30, 0.30), w: rr(tagRng, 0.52, 0.76),
+        t: rr(tagRng, -0.22, 0.22), p: rr(tagRng, 0.0016, 0.0032),
       } : null,
     };
   };
   // One emitter for both axes. `C` is the card centre, `R`/`U` its half-extent
   // vectors, `N` the unit outward normal — the only thing that differs between
   // a rail on a gondola face and one on a back-wall run.
-  const ragCard = (C, R, U, N, uv, g) => {
+  // ROUND 27 — `uv2` is now passed IN rather than drawn here. It is the same
+  // draw off the same stream in the same order (nothing between the two touches
+  // tagRng), moved up so the ON arm can decline to emit a card that has no
+  // channel to sit in WITHOUT changing the number of draws. Both arms make an
+  // identical sequence of tagRng calls; see the dial note in store/rail.js.
+  const ragCard = (C, R, U, N, uv, g, uv2) => {
     if (g.peel) {
       const f = g.peel.f, k = g.peel.k;
       const mid = [C[0] + R[0] * (f - 1), C[1] + R[1] * (f - 1), C[2] + R[2] * (f - 1)];
@@ -1968,7 +2292,7 @@ export function buildStore(THREE, scene) {
       Qtag.rect(C, R, U, uv[0], uv[1], uv[2], uv[3]);
     }
     if (g.over) {
-      const o = g.over, uv2 = tagUV(null);
+      const o = g.over;
       const cs = Math.cos(o.t), sn = Math.sin(o.t);
       // rotate R and U about N by o.t — a stapled card is never square to the
       // one under it, and a rotation in the card's own plane is what that is
@@ -1981,17 +2305,80 @@ export function buildStore(THREE, scene) {
       uv2[0], uv2[1], uv2[2], uv2[3]);
     }
   };
-  const ragX = (x, y, z, d, h, dir, kindT) => {
-    const g = ragged(h); if (!g) return;
-    const uv = tagUV(kindT), hd = dir > 0 ? -d / 2 : d / 2;
-    ragCard([x, y + g.dy, z], [0, g.tilt * d * 0.5, hd], [0, g.h / 2, 0],
-      [dir, 0, 0], uv, g);
+  // ---- THE DATUM. ROUND 27. ----------------------------------------------
+  //
+  // Measured on the shipped build before any of this was written:
+  //
+  //   tag quads with no rail section under them at all   1,133 / 15,762  7.19%
+  //   tag y-extent exceeding its host rail's face        6,669 / 14,629 45.59%
+  //   tag taller than the rail it sits on                2,621 / 14,629 17.92%
+  //   top-edge error vs the rail top, mm  absMean 16.29  p01 -63.6  p99 +56.0
+  //   card plane proud of the rail plane, mm             p50 +8.0  max +14.5
+  //   adjacent cards in ONE section, top-edge step, mm   p50 3.18  p95 24.75
+  //
+  // The cause is that the card and the rail were placed by two DIFFERENT combs
+  // that were never meant to agree. The rail steps on `notch(k, d)` where k
+  // counts railSeg's variable-length sections; the card steps on `stepAt(pos)`
+  // where the index comes from the SHELF BOARD's equal-length sections. Two
+  // samplings of one 25.4 mm stair, indexed differently, so the difference is
+  // any multiple of a notch — and on top of that the rail carries +-4 mm of its
+  // own base jitter and the card another -4.5..+3.5 mm of its own.
+  //
+  // So the card stops being placed at all. It is SEATED: `ix.at(pos)` finds the
+  // channel, `ix.frame()` returns the seat's own centre, half-extents, tilt and
+  // normal, and the card's top edge is the channel line by construction — not
+  // by two expressions agreeing. Where there is no channel there is no card.
+  // Where the channel ends mid-card the card is CUT at the joint, artwork and
+  // all, rather than floating past it.
+  //
+  // The flat arm is unchanged, including its shear: `R = [0, tilt*d/2, +-d/2]`
+  // with `U` left vertical is a PARALLELOGRAM, not a rotation — the same shape
+  // round 26's `cardCheck` found in 1,243 of 1,784 intrusion cards. The ON arm
+  // rotates R and U together the way `over` already did.
+  const seatCard = (ix, pos, wIn, uv, uv2, g) => {
+    const sec = ix ? ix.at(pos + g.dy) : null;
+    if (!sec || !sec.seat) { RL.bump('orphans'); return; }
+    if (sec.openV < RL.MIN_OPEN) { RL.bump('shortRails'); return; }
+    // CLIPPED BY THE OPENING, along the run as well as across it: a card cannot
+    // be wider than the channel left in this section.
+    const a0 = sec.mid - sec.len / 2 + 0.002, a1 = sec.mid + sec.len / 2 - 0.002;
+    const lo = Math.max(a0, pos + g.dy - wIn / 2), hi = Math.min(a1, pos + g.dy + wIn / 2);
+    if (hi - lo < 0.020) { RL.bump('orphans'); return; }
+    // crop the artwork by the same fractions, so a cut card is cut and not
+    // squeezed — the print stays at the scale every other card is printed at
+    const f0 = (lo - (pos + g.dy - wIn / 2)) / wIn, f1 = (hi - (pos + g.dy - wIn / 2)) / wIn;
+    const du = uv[2] - uv[0];
+    const uvc = [uv[0] + du * f0, uv[1], uv[0] + du * f1, uv[3]];
+    const F = ix.frame(sec, (lo + hi) / 2, (hi - lo) / 2);
+    const t = Math.max(-RL.SLOP, Math.min(RL.SLOP, g.tilt));
+    const cs = Math.cos(t), sn = Math.sin(t);
+    const R = [F.R[0] * cs - F.U[0] * sn, F.R[1] * cs - F.U[1] * sn, F.R[2] * cs - F.U[2] * sn];
+    const U = [F.R[0] * sn + F.U[0] * cs, F.R[1] * sn + F.U[1] * cs, F.R[2] * sn + F.U[2] * cs];
+    // record BEFORE the push, so `q0` is this card's own first quad in the soup
+    // and railCheck compares the built buffer against what the emitter meant.
+    const q0 = Qtag.v / 4;
+    ragCard(F.C, R, U, F.N, uvc, g, uv2);
+    RL.note({ q0, datum: sec.y + sec.seat.topV, openV: sec.openV, t,
+      peel: !!g.peel, over: !!g.over });
+    RL.bump('cards');
   };
-  const ragZ = (x, y, z, w, h, dir, kindT) => {
+  const ragX = (x, y, z, d, h, dir, kindT, ix) => {
     const g = ragged(h); if (!g) return;
-    const uv = tagUV(kindT), hw = dir > 0 ? w / 2 : -w / 2;
+    const uv = tagUV(kindT);
+    const uv2 = g.over ? tagUV(null) : null;
+    if (RL.RAILC.on) { seatCard(ix, z, d, uv, uv2, g); return; }
+    const hd = dir > 0 ? -d / 2 : d / 2;
+    ragCard([x, y + g.dy, z], [0, g.tilt * d * 0.5, hd], [0, g.h / 2, 0],
+      [dir, 0, 0], uv, g, uv2);
+  };
+  const ragZ = (x, y, z, w, h, dir, kindT, ix) => {
+    const g = ragged(h); if (!g) return;
+    const uv = tagUV(kindT);
+    const uv2 = g.over ? tagUV(null) : null;
+    if (RL.RAILC.on) { seatCard(ix, x, w, uv, uv2, g); return; }
+    const hw = dir > 0 ? w / 2 : -w / 2;
     ragCard([x, y + g.dy, z], [hw, g.tilt * w * 0.5, 0], [0, g.h / 2, 0],
-      [0, 0, dir], uv, g);
+      [0, 0, dir], uv, g, uv2);
   };
 
   function buildRun(idx, x, halfW, faces, opts = {}) {
@@ -2208,7 +2595,7 @@ export function buildStore(THREE, scene) {
         // continuous extruded bar the full 25 m of the aisle, which is a very
         // strong architectural giveaway even at distance: real shelving is
         // assembled from 3-4ft sections and every joint shows.
-        railRun(lip, DECK[d] - 0.020, z0, z1, f.dir, (k) => notch(k, d), PH);
+        const RIX = railRun(lip, DECK[d] - 0.020, z0, z1, f.dir, (k) => notch(k, d), PH);
         const head = (DECK[d + 1] !== undefined ? DECK[d + 1] : TOP + 0.03) - DECK[d] - 0.036;
         // cavity gradient: dark under the shelf above, fading down. Also what
         // makes a sold-out void read as a black hole rather than a beige gap.
@@ -2239,26 +2626,25 @@ export function buildStore(THREE, scene) {
             fix(lip - f.dir * (dep * 0.30), DECK[d] + dh, z, dep * 0.42, 0.008, 0.008, 0xd9d2c0);
           }
         }
-        // SHELF-EDGE WOBBLERS. A printed flag on a springy stem clipped to the
-        // rail, sticking out into the aisle at an angle. Every store has them,
-        // no rendered store does, and they are the highest-contrast small
-        // object available at exactly eye level.
-        if (DECK[d] > 0.42 && rng() < 0.52) {
-          for (let k = 0, n = ri(rng, 1, 3); k < n; k++) {
-            const wz = rr(rng, z0 + 0.6, z1 - 0.6);
-            const tilt = rr(rng, -0.45, 0.45);
-            fix(lip + f.dir * 0.035, DECK[d] - 0.006, wz, 0.055, 0.020, 0.006, P.metal);
-            const wy = DECK[d] + 0.075, w = rr(rng, 0.085, 0.115);
-            const uv = cellUV((rng() * 16) | 0, 4, 4);
-            for (const sgn of [1, -1]) {
-              Qdangle.rect([lip + f.dir * 0.075, wy, wz + sgn * 0.003],
-                [0, 0, sgn * f.dir * (w / 2) * Math.cos(tilt)],
-                [Math.sin(tilt) * w * 0.30, w * 0.36, 0],
-                uv[0], uv[1], uv[2], uv[3]);
-            }
-            fix(lip + f.dir * 0.055, DECK[d] + 0.030, wz, 0.045, 0.062, 0.004, P.metal);
-          }
-        }
+        // SHELF-EDGE INTRUSIONS. ROUND 20 — and this REPLACES the round-7
+        // wobbler that used to sit here, which is worth stating rather than
+        // quietly deleting. That block was authored against the right note
+        // ("a printed flag on a springy stem clipped to the rail, sticking out
+        // into the aisle") and built the wrong object: a 75 mm flat quad whose
+        // plane was PARALLEL to the shelf face, with a 55 mm clip and no arm.
+        // Parallel to the face is a billboard, and r20's critic called every
+        // one of the store's twelve plates on exactly that — "a flat,
+        // camera-facing, zero-thickness billboard quad with no shadow and no
+        // overlap onto the product behind it". The replacement has an arm, a
+        // card that is not parallel to anything, and four siblings.
+        //
+        // Note the DENOMINATOR moved as well: this used to fire on 52% of decks
+        // for 1-3 objects, i.e. about one per 10 m of deck. It now runs at one
+        // per 1.1-2.2 m. See the placement note in intrusions.js for where that
+        // rate comes from and why it is deliberately half the reference crop's.
+        INTR.deck({
+          lip, dir: f.dir, y: DECK[d], z0, z1, B, dept: f.dept, col,
+        });
         // pull: top decks are faced right up to the lip, bottom decks sink back
         const pull = d / (DECK.length - 1);
         // the same notch this deck's board and rail are hung at, sampled by
@@ -2272,7 +2658,7 @@ export function buildStore(THREE, scene) {
           vacancy: prof.vacancy, litAt: faceLit, stepAt,
           tag: (aStart, aw, kindT) => {
             ragX(lip + f.dir * 0.020, DECK[d] - 0.021 + stepAt(aStart),
-              aStart + aw / 2, aw, 0.050, f.dir, kindT);
+              aStart + aw / 2, aw, 0.050, f.dir, kindT, RIX);
           },
         });
         // BACK ROWS behind the facings, on every deck. See fillBackRow.
@@ -2304,26 +2690,15 @@ export function buildStore(THREE, scene) {
         // the two flanges that catch the shelf brackets
         fix(lip - f.dir * 0.058, UPC, z, 0.045, UPH, UPW * 0.55, 0x9d9583);
       }
-      // CLIP STRIPS. A plastic ladder of hooks hung off a shelf lip carrying a
-      // column of single-serve pouches — cross-merchandising, in every real
-      // aisle, and about the densest small detail available at eye level. They
-      // hang PROUD of the cavity AO card, so they catch the light and read as
-      // bright clutter against the shadowed facings behind them.
-      for (let s = 0; s < ri(rng, 3, 6); s++) {
-        const d0 = ri(rng, Math.min(2, DECK.length - 1), DECK.length - 1);
-        const zc = rr(rng, z0 + 1.0, z1 - 1.0);
-        const top = DECK[d0] - 0.045;
-        const nHook = ri(rng, 4, 7);
-        fix(lip + f.dir * 0.020, top - 0.20, zc, 0.016, 0.42, 0.028, 0xe4dece);
-        const hsl = pick(rng, f.dept.colors);
-        for (let k = 0; k < nHook; k++) {
-          col.setHSL((hsl[0] + k * 9) % 360 / 360, Math.min(1, hsl[1] / 100 * 1.1),
-            Math.min(0.9, hsl[2] / 100 * rr(rng, 0.95, 1.15)));
-          B.bag.push(lip + f.dir * 0.036, top - 0.055 - k * 0.058, zc + rr(rng, -0.006, 0.006),
-            rr(rng, -0.05, 0.05), (f.dir > 0 ? Math.PI / 2 : -Math.PI / 2) + rr(rng, -0.12, 0.12),
-            0, 0.062, 0.052, 0.018, col, (rng() * 8) | 0);
-        }
-      }
+      // CLIP STRIPS AND THE COILED CABLE. ROUND 20 — the clip strips used to
+      // be built here and they hung at lip + 20 mm with their pouches at
+      // lip + 36 mm, which is BEHIND the front of a 60 mm price rail: a clip
+      // strip inside the cavity is not cross-merchandising, it is wallpaper.
+      // intrusions.js hangs the same object at 55-85 mm with its product at
+      // 100-145 mm, gives every pocket a real wire hook, and leaves most of
+      // those hooks EMPTY — which is the state the reference crop actually
+      // shows and the one no render has ever had.
+      INTR.face({ lip, dir: f.dir, DECK, z0, z1, B, dept: f.dept, col });
       // (The painted floor "smear" that used to live here is gone. The floor
       // now mirrors this run for real — see store/floor.js: the mirrored view
       // ray is tested against the gondola bodies before it reaches the ceiling,
@@ -2361,6 +2736,42 @@ export function buildStore(THREE, scene) {
           qX(Qblade, lip + f.dir * 0.066, by, bz, 2.24, 0.52, f.dir, uv);
           for (const s of [-1, 1]) fix(lip - f.dir * 0.05, by - 0.21, bz + s * 0.95, 0.15, 0.08, 0.04, P.metal);
         }
+        // ROUND 19 — THE VENDOR SHELF-TALKER, and this is the piece of the
+        // round that lands at the range a critic actually judges from.
+        //
+        // Everything else added this round hangs at 2.6-3.5 m and is judged at
+        // 8-20 m. aniso.js's facingPx says the near poses stand 1.55 m off a
+        // shelf face, which is as close as the chase rig can get — so a card ON
+        // the face, at deck height, is one of the very few printed surfaces in
+        // this store the player is ever within two metres of, and the only one
+        // large enough to carry a legible vendor wordmark there.
+        //
+        // It is a rigid board in a wire clip on the shelf lip, standing proud
+        // of the facings and tipped up 6 degrees, which is what those clips do.
+        // 0.30 x 0.24 m, the size of the Campbell's card in the reference.
+        {
+          // One per 4.2 m of run per face. The reference frame carries exactly
+          // one visible vendor card, and a 25 m run at this pitch puts six on a
+          // face, of which an aisle view sees one or two — which is the same
+          // thing. The first pass ran at 6.4 m and NO card appeared in any of
+          // aniso.js's published poses, which is r17's baked-but-never-placed
+          // arriving as a density rather than as a table.
+          const nP = Math.max(1, Math.round(len / 4.2));
+          for (let k = 0; k < nP; k++) {
+            const d0 = ri(rng, 1, Math.max(1, DECK.length - 2));
+            const pz = z0 + 1.1 + ((k + 0.5) / nP) * (len - 2.2) + rr(rng, -0.5, 0.5);
+            if (pz < z0 + 0.6 || pz > z1 - 0.6) continue;
+            const py = DECK[d0] + 0.135;
+            const cell = ((f.aisle === undefined ? 3 : f.aisle) * 3 + k) % (VD.POS_COLS * VD.POS_ROWS);
+            const uv = cellUV(cell, VD.POS_COLS, VD.POS_ROWS);
+            qX(Qpos, lip + f.dir * 0.052, py, pz, 0.30, 0.24, f.dir, uv);
+            // the wire clip: a lip channel grip and the two arms that hold it
+            fix(lip + f.dir * 0.030, py - 0.125, pz, 0.030, 0.026, 0.30, 0xb6afa0);
+            for (const sg2 of [-1, 1]) {
+              fix(lip + f.dir * 0.040, py - 0.02, pz + sg2 * 0.142, 0.020, 0.20, 0.010, 0xc2bbab);
+            }
+          }
+        }
       }
       // CONTACT SHADOW AT THE FLOOR. ROUND 6. Round 5 emitted a broad ambient
       // pool here and a 0.46 m "tight" quad — but both were normal-blended
@@ -2385,7 +2796,7 @@ export function buildStore(THREE, scene) {
         for (let d = 0; d < ECDECK.length; d++) {
           fix(x, ECDECK[d] - 0.018, lip - dir * (EC_D / 2), halfW * 2 - 0.04, 0.036, EC_D, P.deck);
           fix(x, ECDECK[d] - 0.041, lip - dir * (EC_D / 2), halfW * 2 - 0.05, 0.020, EC_D, P.shelfUnder);
-          railRunX(lip + dir * 0.012, ECDECK[d] - 0.020, x - halfW + 0.02, x + halfW - 0.02, dir);
+          const RIXE = railRunX(lip + dir * 0.012, ECDECK[d] - 0.020, x - halfW + 0.02, x + halfW - 0.02, dir);
           const head = (ECDECK[d + 1] !== undefined ? ECDECK[d + 1] : 2.02) - ECDECK[d] - 0.036;
           fillBackRow(B, rng, faces[0].dept, {
             axis: 'x', a0: x - halfW + 0.04, a1: x + halfW - 0.04,
@@ -2398,7 +2809,7 @@ export function buildStore(THREE, scene) {
             pull: d / (ECDECK.length - 1), vacancy: 0.4,
             tag: (aStart, aw, kindT) => {
               ragZ(aStart + aw / 2, ECDECK[d] - 0.021, lip + dir * 0.020, aw, 0.050,
-                dir, kindT);
+                dir, kindT, RIXE);
             },
           });
         }
@@ -2490,7 +2901,7 @@ export function buildStore(THREE, scene) {
       for (const uy of [SHELF_H + 0.30, SHELF_H + 0.72]) {
         fix(lip - dir * (halfW * 0.5), uy - 0.018, zmid, halfW + 0.02, 0.036, len, P.deck);
         fix(lip - dir * (halfW * 0.5), uy - 0.041, zmid, halfW, 0.020, len, P.shelfUnder);
-        railRun(lip, uy - 0.020, z0, z1, dir);
+        const RIXU = railRun(lip, uy - 0.020, z0, z1, dir);
         fillBackRow(B, rng, faces[0].dept, {
           axis: 'z', a0: z0 + 0.05, a1: z1 - 0.05, lip: lip - dir * 0.22,
           face: dir, deckY: uy, headroom: 0.38, depth: 0.19, lit: 0.78, col,
@@ -2501,7 +2912,7 @@ export function buildStore(THREE, scene) {
           pull: 0.8, vacancy: 1.1,
           tag: (aStart, aw, kindT) => {
             ragX(lip + dir * 0.020, uy - 0.021, aStart + aw / 2, aw, 0.050,
-              dir, kindT);
+              dir, kindT, RIXU);
           },
         });
       }
@@ -2609,7 +3020,7 @@ export function buildStore(THREE, scene) {
     for (let d = 0; d < CD.length; d++) {
       fix(mid, CD[d] - 0.016, cz, D - 0.16, 0.032, len - 0.1, 0xfbf6ea);
       fix(mid, CD[d] - 0.040, cz, D - 0.20, 0.018, len - 0.12, 0x7d7466);
-      railRun(lip + dir * 0.014, CD[d] - 0.020, z0 + 0.1, z1 - 0.1, dir);
+      const RIXC = railRun(lip + dir * 0.014, CD[d] - 0.020, z0 + 0.1, z1 - 0.1, dir);
       for (let bk = 1; bk <= 2; bk++) {
         fillBackRow(B, rng, prof, {
           axis: 'z', a0: z0 + 0.15, a1: z1 - 0.15,
@@ -2632,7 +3043,7 @@ export function buildStore(THREE, scene) {
         // than a dry one, not less.
         pull: d / Math.max(1, CD.length - 1), vacancy: 1.35,
         tag: (aStart, aw, kindT) => {
-          ragX(lip + dir * 0.020, CD[d] - 0.021, aStart + aw / 2, aw, 0.048, dir, kindT);
+          ragX(lip + dir * 0.020, CD[d] - 0.021, aStart + aw / 2, aw, 0.048, dir, kindT, RIXC);
         },
       });
     }
@@ -3017,13 +3428,13 @@ export function buildStore(THREE, scene) {
         const y = 0.46 + d * 0.32;
         fix(cx + 0.59, y - 0.015, rMid, 0.20, 0.03, rLen - 0.06, P.deck);
         fix(cx + 0.59, y - 0.036, rMid, 0.18, 0.016, rLen - 0.08, P.shelfUnder);
-        railRun(rLip - 0.012, y - 0.018, rS + 0.03, rN - 0.03, 1);
+        const RIXR = railRun(rLip - 0.012, y - 0.018, rS + 0.03, rN - 0.03, 1);
         fillShelf(B, rng, DEPTS[3], {
           axis: 'z', a0: rS + 0.04, a1: rN - 0.04, lip: rLip - 0.020, face: 1,
           deckY: y, headroom: 0.29, depth: 0.16, lit: 1.02, col, pull: 0.94,
           vacancy: 0.18,
           tag: (aStart, aw, kindT) => {
-            ragX(rLip - 0.028, y - 0.019, aStart + aw / 2, aw, 0.044, 1, kindT);
+            ragX(rLip - 0.028, y - 0.019, aStart + aw / 2, aw, 0.044, 1, kindT, RIXR);
           },
         });
       }
@@ -3493,7 +3904,7 @@ export function buildStore(THREE, scene) {
     for (let d = 0; d < CD.length; d++) {
       fix(cmid, CD[d] - 0.016, coolZ + 0.06, cw - 0.1, 0.032, 0.86, 0xfbf6ea);
       fix(cmid, CD[d] - 0.040, coolZ + 0.06, cw - 0.12, 0.018, 0.84, 0x7d7466);
-      railRunX(lip - 0.014, CD[d] - 0.020, coolX0 + 0.1, coolX1 - 0.1, -1);
+      const RIXF = railRunX(lip - 0.014, CD[d] - 0.020, coolX0 + 0.1, coolX1 - 0.1, -1);
       for (let bk = 1; bk <= 2; bk++) {
         fillBackRow(B, rng, FROZEN, {
           axis: 'x', a0: coolX0 + 0.15, a1: coolX1 - 0.15,
@@ -3506,7 +3917,7 @@ export function buildStore(THREE, scene) {
         deckY: CD[d], headroom: 0.34, depth: 0.68, lit: 0.84, col,
         pull: d / Math.max(1, CD.length - 1), vacancy: 1.35,
         tag: (aStart, aw, kindT) => {
-          ragZ(aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048, -1, kindT);
+          ragZ(aStart + aw / 2, CD[d] - 0.021, lip - 0.020, aw, 0.048, -1, kindT, RIXF);
         },
       });
     }
@@ -3593,7 +4004,7 @@ export function buildStore(THREE, scene) {
     for (let d = 0; d < RD.length; d++) {
       fix(wmid, RD[d] - 0.016, wz + 0.05, ww - 0.1, 0.032, 0.72, 0xfbf6ea);
       fix(wmid, RD[d] - 0.040, wz + 0.05, ww - 0.12, 0.018, 0.70, 0x7d7466);
-      railRunX(wz - 0.32, RD[d] - 0.020, wx0 + 0.1, wx1 - 0.1, -1);
+      const RIXW = railRunX(wz - 0.32, RD[d] - 0.020, wx0 + 0.1, wx1 - 0.1, -1);
       for (let bk = 1; bk <= 2; bk++) {
         fillBackRow(B, rng, DEPTS[7], {
           axis: 'x', a0: wx0 + 0.1, a1: wx1 - 0.1,
@@ -3607,7 +4018,7 @@ export function buildStore(THREE, scene) {
         pull: d / Math.max(1, RD.length - 1),
         tag: (aStart, aw, kindT) => {
           ragZ(aStart + aw / 2, RD[d] - 0.021, wz - 0.31 - 0.020, aw, 0.048,
-            -1, kindT);
+            -1, kindT, RIXW);
         },
       });
     }
@@ -4155,6 +4566,23 @@ export function buildStore(THREE, scene) {
     // ROUND 10 — the cavity and the crevice. See chopAO in light.js for what
     // each is and why a down-facing surface took no occlusion at all before.
     cav: 0.78, crev: 0.72, crevH: 0.090,
+    // ROUND 21 — THE CAVITY VOLUME. chopAO's occlusion term was blind to the
+    // inside of a shelf: a top-down field sees every column through a gondola
+    // as 2.05 m tall, and chopAO's 145 mm normal push exists to escape that
+    // sealed column, which deleted the only signal a cavity could have had.
+    // Measured at near_a1 over six slots, chopA.x read 0.932-0.993 at the lit
+    // lip and 0.857-0.992 in the cavity — the term could not tell inside from
+    // out. light.js now cone-traces a 512x64x512 occupancy volume stamped
+    // inside Field.box, the sink kit.js's Batch.push already calls, so nothing
+    // opts in. These live HERE and not as defaults in light.js so that one
+    // place in the build still says how dark this store gets.
+    // The contract request that asked for these named six. There are SEVEN:
+    // cavVoxBnc was still defaulting inside light.js, which is the exact defect
+    // the request existed to close. Every value here is byte-equal to that
+    // file's own ?? default, so this move is a no-op on the render by
+    // construction — verified below, not assumed.
+    cavVox: 0.98, cavVoxBias: 0.10, cavVoxGain: 3.20, cavVoxBnc: 0.85,
+    cavR0: 0.090, cavRoom: 0.600, cavStraddle: 0.170,
     // =====================================================================
     // ROUND 13 — THE TROFFER ROWS, AS LIGHT AND NOT ONLY AS GEOMETRY.
     // =====================================================================
@@ -4168,6 +4596,17 @@ export function buildStore(THREE, scene) {
     // Re-measured on the product mask over six named poses, k is p5 0.149 /
     // p50 0.407 / p95 0.913, p95/p50 = 2.24, and an albedo of L* 93 now
     // arrives at L* 78.
+    //
+    // ROUND 21 — DO NOT CARRY THE 63% FORWARD EITHER. Re-run live on the
+    // near_a4 shelf band, 580,000 px, one light zeroed at a time with the
+    // restore hash-proven: Ambient 18.1%, Hemisphere 19.3%, key 7.7%,
+    // fill 0.2% — 37.4%, not 63%. The remaining ~55% is light.js's own terms,
+    // which did not exist when the 63% was measured. And the CONCLUSION drawn
+    // from it was wrong independently of the number: AO_FRAG runs
+    // gl_FragColor.rgb *= chopA.x AFTER <opaque_fragment>, so ambient and
+    // hemisphere were always being scaled by the occlusion term. They were
+    // never unoccludable. The defect was that the term itself could not see a
+    // shelf box — see the cavity note above.
     //
     // These six values are the SAME variables lightRow() is called with, four
     // hundred lines below. Nothing here is a second copy of the row plan: move
@@ -4294,8 +4733,16 @@ export function buildStore(THREE, scene) {
     // the reason is entirely geometric: the tag channel is extruded 15-20
     // degrees off vertical, so it mirrors the strip directly above it straight
     // into the lens. tilt models that without rebuilding 4,000 quads.
+    //
+    // ROUND 27 REBUILT THE 4,000 QUADS. The channel has an upper return whose
+    // top surface genuinely faces the light run, a seat genuinely leaning back
+    // 9.2 degrees, and two undersides genuinely facing the floor — so `tilt`
+    // goes to zero in the ON arm. Leaving it would tip the UNDERSIDES up as
+    // well, which is the failure mode of a shading fudge once the geometry it
+    // stands in for exists: it cannot tell which facet it is on.
     color: 0xfffdf4, emissive: 0x2a2620, lambert: true,
-    grid: [0, 0], near: 2.2, far: 8.5, lod: 4.0, gloss: 1.05, glareMax: 0.62, tilt: 0.36,
+    grid: [0, 0], near: 2.2, far: 8.5, lod: 4.0, gloss: 1.05, glareMax: 0.62,
+    tilt: RL.RAILC.on ? 0.0 : 0.36,
     top: 0.05, foot: 0.16, name: 'railMat',
   }), 'rails');
   soup(Qslot, sharp(new THREE.MeshLambertMaterial({ map: T.slot, color: 0xf6f0dd }), -0.9), 'uprights');
@@ -4305,6 +4752,65 @@ export function buildStore(THREE, scene) {
     near: 4.5, far: 13.0, lod: 3.0, gloss: 0.44, top: 0.20, foot: 0.10,
     name: 'dangleMat',
   }), 'danglers');
+  // ROUND 19 — THE THREE VENDOR SYSTEMS.
+  //
+  // A BACKLIT panel is the only printed surface in this store that is a SOURCE
+  // rather than a reflector, so it takes an emissive and a low gloss: an
+  // internally lit acrylic face does not carry much of a ceiling reflection
+  // because it is brighter than the ceiling. Everything else in signMat still
+  // applies — the photographic fall-off especially, since these are the largest
+  // pieces of type in the building and they must go to colour blocks at range
+  // rather than staying razor-sharp, which is the r7 finding that started this
+  // material.
+  // ...and it is BASIC, not Lambert, and that is a physics call rather than a
+  // convenience. The first build shipped it Lambert with an emissive and every
+  // panel rendered near-black: this store's two directional lights sit at 66.8
+  // and 26.6 degrees of elevation, so a VERTICAL face gets almost nothing from
+  // either — the same fact light.js documents about why the lamp specular never
+  // lands on a product facing. The aisle blades and boards are already
+  // MeshBasicMaterial for exactly this reason ("unlit by authoring", and
+  // AGENTS_BRIEF records a critic checking that call and letting it stand). A
+  // backlit acrylic face is the strongest case for it in the building: it is a
+  // source, so its brightness is a property of the lamp behind it and not of
+  // the room in front of it.
+  soup(Qlbox, SM(T.lbox, {
+    color: 0xfffdf6, side: THREE.DoubleSide,
+    grid: [1, VD.LB_CELLS], near: 6.0, far: 22.0, lod: 2.8, gloss: 0.26, glareMax: 0.18,
+    top: 0.08, foot: 0.07, name: 'lightboxMat',
+  }), 'lightboxes');
+  // A vendor card is laminated litho on board and it is seen from 1.5 m, so it
+  // keeps a near LOD and a real gloss band across its face.
+  soup(Qpos, SM(T.pos, {
+    color: 0xfdf8ec, grid: [VD.POS_COLS, VD.POS_ROWS], near: 2.0, far: 7.0, lod: 4.6,
+    gloss: 0.82, tilt: 0.10, top: 0.12, foot: 0.14, name: 'posMat',
+  }), 'vendorPOS');
+  // ROUND 20 — THE AISLE-VOLUME CARDS.
+  //
+  // DoubleSide, and that is not a convenience: a violator sticks out
+  // perpendicular to the shelf, so half the aisle sees its back. A one-sided
+  // quad here would give every one of them a viewing hemisphere in which it
+  // vanishes, and the silhouette is the entire point of the object.
+  //
+  // The acuity curve is set for a 90-250 mm card, between the 100 mm coupon
+  // flag (near 1.4 / far 4.6) and the 300 mm vendor POS (near 2.0 / far 7.0).
+  // At aniso.js's near poses these are 1.55 m away and crisp; by chase range
+  // they are colour blocks, which is what r20's critic says they must be —
+  // "at chase range these objects read as silhouette against the aisle,
+  // nothing else" — and it is the r7 fall-off argument arriving at the one
+  // family of object it was always most true of.
+  soup(Qintr, SM(T.intrude, {
+    color: 0xfdf9ee, side: THREE.DoubleSide, grid: [IN.INTR_COLS, IN.INTR_ROWS],
+    near: 1.9, far: 6.4, lod: 4.4, gloss: 0.80, tilt: 0.08,
+    top: 0.10, foot: 0.12, name: 'intrusionMat',
+  }), 'aisleIntrusions');
+  // A black hanger is matte-printed dibond. Almost no gloss, and the type is
+  // reversed out, so the fall-off has to be gentle or the word is gone by 8 m —
+  // and the player navigates by these.
+  soup(Qhang, SM(T.hanger, {
+    color: 0xffffff, side: THREE.DoubleSide, grid: [1, VD.HANGER_CELLS],
+    near: 6.0, far: 19.0, lod: 2.6, gloss: 0.24, glareMax: 0.16,
+    top: 0.08, foot: 0.06, name: 'hangerMat',
+  }), 'categoryHangers');
   // SHELF CAVITY CARDS — DELETED IN ROUND 8, WITH THE FLOOR CONTACT RAMPS.
   //
   // Round 3 drew a multiply gradient across the mouth of every cavity (Qcav)
@@ -4321,9 +4827,13 @@ export function buildStore(THREE, scene) {
   // occlusion models stacked multiplicatively is how the aisle got to a mean
   // luminance of 83 against 94-154 for the reference photographs.
   // one tag per SKU run — irregular rhythm, keyed to the facing above it
+  // ROUND 27 — the card sits IN the channel now, on a seat that leans back
+  // 9.2 degrees, so its shading normal is tipped by the geometry rather than by
+  // a uniform. Same argument as railMat: `tilt` is a stand-in for a normal, and
+  // once the normal is real the stand-in double-counts.
   soup(Qtag, SM(T.tag, {
     color: 0xf6f1e4, grid: [4, 4], near: 1.6, far: 5.6, lod: 5.0,
-    gloss: 0.95, tilt: 0.34, top: 0.06, foot: 0.20, name: 'tagMat',
+    gloss: 0.95, tilt: RL.RAILC.on ? 0.0 : 0.34, top: 0.06, foot: 0.20, name: 'tagMat',
   }), 'shelfTags');
   soup(Qsign, SM(T.sign, {
     color: 0xf2ecdd, grid: [4, 4], near: 6.5, far: 19.0, lod: 6.0,
@@ -4744,6 +5254,266 @@ export function buildStore(THREE, scene) {
         + r.bad.slice(0, 6).join(' | '));
     }
     scene.userData.chopShelfStats = r;
+  }
+
+  // ROUND 19 — THE THREE LIVE ASSERTIONS. All three of r18's checks passed
+  // while the artefact was wrong, each by reading an earlier stage than the
+  // defect: a bake-time log, an authored size table, and a ledger four of the
+  // five atlases wrote to. They now read the scene graph, and they are
+  // published on scene.userData so anything that touches geometry, an instance
+  // matrix or an atlas can re-run them without a reload.
+  //
+  //   chopLatheCheck()   live uv on the barrel of every round buffer the GPU has
+  //   chopAspectCheck()  every instance matrix, silhouette against its outline
+  //   chopTypeCheck()    every fillText that ran, against what the ledger saw
+  scene.userData.chopLatheCheck = () => PK.latheCheck(scene);
+  scene.userData.chopAspectCheck = () => aspectCheck(scene);
+  // ROUND 20 — THE FOURTH LIVE ASSERTION: IS THE AISLE VOLUME STILL FULL?
+  //
+  // It walks every instanceMatrix and every quad soup's position buffer and
+  // measures, per 20 mm of z along ten gondola faces, how far the furthest
+  // object standing within 400 mm of that face reaches into the aisle. That
+  // profile IS the shelf-edge silhouette the critic called, in metres, off the
+  // geometry — and unlike the two lip statistics AGENTS_BRIEF retired today it
+  // does not scan an image row across a receding perspective, so it is the same
+  // number from any camera.
+  //
+  // It is published rather than only thrown so it can be re-run after anything
+  // touches geometry, and so the next round can compare against the figure this
+  // one reports rather than against a sentence about it.
+  // ROUND 20 — AND THE ASSERTION THAT WOULD HAVE CAUGHT THE UNIT-CUBE BUG.
+  //
+  // It reads the position buffer of every package geometry the GPU actually
+  // holds, not the seven objects pillowGeo/gussetGeo returned at build — Batch
+  // clones each buffer to hang aCell on it, and r19 records a check on those
+  // seven passing while the 51 the GPU draws were corrupt.
+  //
+  // Only the box family. A LATHE's local x-extent is legitimately 0.83-0.99 —
+  // a 9-gon inscribed in the unit circle — and r19 documents that as the reason
+  // clampAspect exists, so folding lathes in here would either fire forever or
+  // need a tolerance wide enough to miss the 2.02 this is built to catch.
+  scene.userData.chopUnitCheck = () => {
+    const bad = [];
+    const seen = new Set();
+    scene.traverse((o) => {
+      const g = o.geometry;
+      if (!g || !g.name || seen.has(g)) return;
+      if (!/^(carton|pouch)\//.test(g.name)) return;
+      seen.add(g);
+      const p = g.attributes.position;
+      const ex = [[1e9, -1e9], [1e9, -1e9], [1e9, -1e9]];
+      for (let i = 0; i < p.count; i++) {
+        const v = [p.getX(i), p.getY(i), p.getZ(i)];
+        for (let a = 0; a < 3; a++) {
+          if (v[a] < ex[a][0]) ex[a][0] = v[a];
+          if (v[a] > ex[a][1]) ex[a][1] = v[a];
+        }
+      }
+      const sp = ex.map((e) => +(e[1] - e[0]).toFixed(4));
+      if (sp.some((v) => v < 0.98 || v > 1.02)) {
+        bad.push(g.name + ' extents ' + sp.join('/'));
+      }
+    });
+    return bad;
+  };
+  {
+    const bad = scene.userData.chopUnitCheck();
+    if (bad.length) {
+      throw new Error('store.js unit cube: ' + bad.join(' | ')
+        + ' — every caller sizes these as a unit cube; see unitBox()');
+    }
+  }
+  // ROUND 27 — the price rail's cross-section and the card datum, read off the
+  // built soups. `?flatrail` is a named control and a control must not be made
+  // unloadable by an assertion, so its failure is recorded and not thrown; the
+  // ON arm throws. See railCheck's header for both halves and their derivations.
+  scene.userData.chopRailCheck = () => RL.railCheck(scene);
+  scene.userData.chopRailSelfTest = () => RL.railSelfTest(scene);
+  {
+    const r = scene.userData.chopRailCheck();
+    scene.userData.chopRailStats = { ...RL.railStats(), check: r };
+    if (!r.ok && RL.RAILC.on) throw new Error('store.js rail: ' + r.notes.join(' | '));
+  }
+  scene.userData.chopLipCensus = (o) => IN.lipCensus(THREE, scene, o);
+  scene.userData.chopIntrusionCheck = () => IN.intrusionCheck(THREE, scene, INTR.ledger());
+  {
+    const r = scene.userData.chopIntrusionCheck();
+    if (r.bad.length) throw new Error('store.js aisle: ' + r.bad.join(' | '));
+    scene.userData.chopIntrusionStats = { ...r.census, ledger: INTR.ledger() };
+  }
+  // ROUND 19 — BAKED IS NOT PLACED, FOR THE SIGNAGE.
+  //
+  // vendor.js's vendorCheck() asserts every device and every motif reached a
+  // CANVAS. That is the stage r16's depictCheck was stuck at, and r17 needed
+  // two more before the number meant anything. So this is the third: it reads
+  // the scene graph and asserts each of the three new systems is present with
+  // the geometry to prove it, and that every CELL of each atlas is placed
+  // somewhere — a lightbox design that never hangs is r17's soySplash with a
+  // headline on it.
+  //
+  // The cell recovery is off the UV buffer, which is the artefact: each quad's
+  // v range identifies its row in a 1 x N atlas.
+  scene.userData.chopSignCheck = () => {
+    const want = { lightboxes: VD.LB_CELLS, categoryHangers: VD.HANGER_CELLS };
+    const bad = [];
+    const seen = {};
+    scene.traverse((o) => {
+      if (!want[o.name] || !o.geometry || !o.geometry.attributes.uv) return;
+      const uv = o.geometry.attributes.uv, n = want[o.name];
+      const set = (seen[o.name] = seen[o.name] || new Set());
+      for (let i = 0; i < uv.count; i++) {
+        set.add(Math.min(n - 1, Math.floor((1 - uv.getY(i)) * n + 1e-4)));
+      }
+    });
+    let pos = 0;
+    scene.traverse((o) => {
+      if (o.name === 'vendorPOS' && o.geometry) pos = o.geometry.attributes.uv.count / 4;
+    });
+    for (const k of Object.keys(want)) {
+      if (!seen[k]) { bad.push(k + ' is BAKED BUT NEVER PLACED — no such node in the scene'); continue; }
+      for (let i = 0; i < want[k]; i++) {
+        if (!seen[k].has(i)) bad.push(k + ' cell ' + i + ' is baked and never hung');
+      }
+    }
+    if (!pos) bad.push('vendorPOS is baked and never clipped to a shelf');
+    return Object.assign(bad, {
+      posCards: pos,
+      cells: Object.fromEntries(Object.keys(seen).map((k) => [k, seen[k].size + '/' + want[k]])),
+    });
+  };
+  {
+    const vb = VD.vendorCheck();
+    if (vb.length) throw new Error('store.js vendor signage (bake): ' + vb.join(' | '));
+    const sb = scene.userData.chopSignCheck();
+    if (sb.length) throw new Error('store.js vendor signage (scene): ' + sb.join(' | '));
+    scene.userData.chopSignStats = { ...VD.vendorStats(), ...sb.cells, posCards: sb.posCards };
+  }
+
+  // ===========================================================================
+  // AND THE PROOF THAT THEY FIRE — AGAINST THE EXACT CORRUPTIONS THAT FOOLED
+  // r18, NOT AGAINST SYNTHETIC ONES.
+  //
+  // AGENTS_BRIEF, on r18: "a self-test that passes proves the check CAN fire.
+  // It does not prove the check is WATCHING the artefact." r18's typeCheck
+  // self-test was honest and reproducible — 116 of 688 runs failing with the
+  // guarantee off — and the check was still blind to the price rail. So each
+  // test below reproduces the specific thing that got past the r18 version:
+  //
+  //   lathe   aniso.js's uvAB(): LatheGeometry's index-based v written back
+  //           onto the LIVE buffers. r18's check read a bake-time log and
+  //           returned [] through it.
+  //   aspect  one bottle/soda instance matrix stretched to 4.22:1, the figure
+  //           r18's critic measured on the shipped build. r18's check read the
+  //           K table, where that number does not exist.
+  //   type    a display-size price numeral inked with a raw fillText, which is
+  //           what the r18 tag atlas did ten times. See typeCoverageSelfTest.
+  //
+  // Every restore is asserted BYTE-IDENTICAL on the buffer, not merely
+  // "the check went quiet" — this project has had two byte-identical PNGs
+  // including the restored one, and a probe that leaves the store corrupted
+  // would poison every capture any other agent takes afterwards.
+  scene.userData.chopCheckSelfTest = () => {
+    const out = { lathe: null, aspect: null, type: null };
+
+    // ---- 1. THE LATHE, corrupted the way uvAB() corrupts it ----------------
+    {
+      const geos = new Map();
+      scene.traverse((o) => {
+        if (!o.isInstancedMesh || !o.geometry || o.geometry.type !== 'LatheGeometry') return;
+        if (!geos.has(o.geometry.uuid)) geos.set(o.geometry.uuid, o.geometry);
+      });
+      const saved = [];
+      for (const g of geos.values()) {
+        const uv = g.attributes.uv;
+        saved.push({ g, arr: Float32Array.from(uv.array) });
+        // r17's mapping, recovered the way aniso.js recovers it: latheBands is
+        // monotone in the profile index, so sorting the distinct v values gives
+        // back the point order and the old v was 0.004 + k/(n-1) * 0.992.
+        const keys = [...new Set(Array.from({ length: uv.count }, (_, i) => uv.getY(i)))]
+          .sort((a, b) => a - b);
+        const n = keys.length;
+        const idx = new Map(keys.map((v, k) => [v, 0.004 + (k / (n - 1)) * 0.992]));
+        for (let i = 0; i < uv.count; i++) uv.setY(i, idx.get(uv.getY(i)));
+        uv.needsUpdate = true;
+      }
+      const fired = PK.latheCheck(scene);
+      const worst = (fired.rows || []).filter((r) => r.kind === 'lathe')
+        .sort((a, b) => b.stretch - a.stretch)[0];
+      for (const s of saved) {
+        s.g.attributes.uv.array.set(s.arr);
+        s.g.attributes.uv.needsUpdate = true;
+      }
+      const after = PK.latheCheck(scene);
+      let identical = true;
+      for (const s of saved) {
+        const a = s.g.attributes.uv.array;
+        for (let i = 0; i < a.length; i++) if (a[i] !== s.arr[i]) { identical = false; break; }
+        if (!identical) break;
+      }
+      out.lathe = {
+        buffersCorrupted: saved.length,
+        complaintsWhileCorrupted: fired.length,
+        worstStretchWhileCorrupted: worst ? worst.stretch : null,
+        worstVSpanWhileCorrupted: worst ? worst.vSpan : null,
+        complaintsAfterRestore: after.length,
+        restoreByteIdentical: identical,
+        ok: fired.length > 0 && after.length === 0 && identical,
+      };
+    }
+
+    // ---- 2. THE ASPECT, corrupted to r18's own 4.22:1 ----------------------
+    {
+      let target = null;
+      scene.traverse((o) => {
+        if (target || !o.isInstancedMesh || !o.count) return;
+        if (o.geometry && o.geometry.name === 'bottle/soda') target = o;
+      });
+      let res = { ok: false, why: 'no bottle/soda instance found' };
+      if (target) {
+        const M = target.instanceMatrix;
+        const saved = Float32Array.from(M.array);
+        const g = target.geometry;
+        if (!g.boundingBox) g.computeBoundingBox();
+        const lw = g.boundingBox.max.x - g.boundingBox.min.x;
+        const lh = g.boundingBox.max.y - g.boundingBox.min.y;
+        const sx = Math.hypot(M.array[0], M.array[1], M.array[2]);
+        const sy = Math.hypot(M.array[4], M.array[5], M.array[6]);
+        const want = 4.216;                    // the figure measured on the r18 build
+        const k = want / ((lh * sy) / (lw * sx));
+        for (let i = 4; i < 7; i++) M.array[i] *= k;
+        M.needsUpdate = true;
+        const fired = aspectCheck(scene);
+        M.array.set(saved); M.needsUpdate = true;
+        const after = aspectCheck(scene);
+        let identical = true;
+        for (let i = 0; i < saved.length; i++) {
+          if (M.array[i] !== saved[i]) { identical = false; break; }
+        }
+        res = {
+          stretchedOneInstanceTo: want,
+          complaintsWhileCorrupted: fired.length,
+          complaint: fired[0] || null,
+          complaintsAfterRestore: after.length,
+          restoreByteIdentical: identical,
+          ok: fired.length > 0 && after.length === 0 && identical,
+        };
+      }
+      out.aspect = res;
+    }
+
+    // ---- 3. THE PRICE NUMERAL -----------------------------------------------
+    out.type = PK.typeCoverageSelfTest();
+
+    out.ok = !!(out.lathe.ok && out.aspect.ok && out.type.ok);
+    return out;
+  };
+  {
+    const bad = scene.userData.chopLatheCheck();
+    if (bad.length) throw new Error('store.js lathe unwrap (LIVE): ' + bad.join(' | '));
+    scene.userData.chopLatheRows = bad.rows;
+    const asp = scene.userData.chopAspectCheck();
+    if (asp.length) throw new Error('store.js package aspect (LIVE): ' + asp.slice(0, 5).join(' | '));
+    scene.userData.chopAspectRows = asp.rows;
   }
 
   // =========================================================================

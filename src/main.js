@@ -178,14 +178,61 @@ async function snapClean(name, pose, opts = {}) {
   }
   const hidden = hud.style.display;
   hud.style.display = 'none';
-  renderer.render(scene, probeCam);
-  const url = renderer.domElement.toDataURL('image/png');
-  hud.style.display = hidden;
+  let url;
+  try {
+    renderer.render(scene, probeCam);
+    url = renderer.domElement.toDataURL('image/png');
+  } finally {
+    // RESTORE. `reHide` was collected and then never consumed, so ONE storeOnly
+    // capture hid every cart, shopper and child FOR THE REST OF THE PAGE LOAD.
+    // That is not a cosmetic leak: it put an empty, tidy corridor in every
+    // render tile of every blind A/B this project has run, while every
+    // photograph it was scored against has people, carts and pulled-forward
+    // stock in it — a symmetry tell handed to the render by the harness, which
+    // AGENTS_BRIEF spent several rounds attributing to the test design. It also
+    // silently emptied any GRADED capture taken later in the same load.
+    // Found by builder-store-r19 and fixed here; `finally` so a throwing render
+    // cannot leave the scene half-hidden either.
+    for (const o of reHide) o.visible = true;
+    hud.style.display = hidden;
+  }
   const res = await fetch('/shot?name=' + encodeURIComponent(name), { method: 'POST', body: url });
   return res.text();
 }
-addEventListener('pointerdown', () => audio.resume(), { once: true });
-addEventListener('keydown', () => audio.resume(), { once: true });
+// ---- MUTE FOR AUTOMATED TESTING -----------------------------------------
+// Every agent driving this page clicks and presses keys, and those are exactly
+// the gestures a browser requires before it will start an AudioContext — so a
+// tab being tested plays the store's full ambience, PA and foley out of the
+// machine's speakers, at whoever is sitting there. Opt-in, persisted per
+// browser profile, and OFF by default so a real player is unaffected:
+//
+//     ?mute  in the URL          one page load
+//     __CHOP.mute(true)          persists via localStorage until mute(false)
+//
+// When muted the resume() listeners are never wired at all — the context stays
+// in its default suspended state rather than being started and then turned
+// down, which is both quieter and cheaper.
+const MUTED = (() => {
+  try {
+    if (/[?&]mute(&|=|$)/.test(location.search)) return true;
+    return localStorage.getItem('chopMute') === '1';
+  } catch { return false; }          // private mode / storage blocked
+})();
+function setMuted(on) {
+  try { localStorage.setItem('chopMute', on ? '1' : '0'); } catch { /* ignore */ }
+  try {
+    if (audio.master && audio.master.gain) audio.master.gain.value = on ? 0 : 1;
+    ['ambience', 'pa', 'foley', 'ui'].forEach((n) => audio.setMix && audio.setMix(n, on ? 0 : 1));
+    if (on) { audio.talkStop && audio.talkStop(); audio.ctx && audio.ctx.suspend && audio.ctx.suspend(); }
+  } catch { /* audio may not be up yet; the flag still persists */ }
+  return on;
+}
+if (MUTED) {
+  setMuted(true);
+} else {
+  addEventListener('pointerdown', () => audio.resume(), { once: true });
+  addEventListener('keydown', () => audio.resume(), { once: true });
+}
 
 // Record the LIVE audio graph — same idea as snap(), for ears instead of eyes.
 // Taps audio.master so it captures exactly what a player hears, not a special path.
@@ -215,4 +262,5 @@ window.__CHOP = {
   THREE, scene, renderer, agents, game, cctv, world, input, keys, snap, run, step,
   snapClean, probeCam,
   pause() { rafOn = false; }, resume() { if (!rafOn) { rafOn = true; last = performance.now(); requestAnimationFrame(frame); } },
+  mute: setMuted, get muted() { return MUTED; },
 };

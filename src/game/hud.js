@@ -175,21 +175,52 @@ export function createHUD(hudEl) {
   let inked = null;
   // ROUND 16. The user->device reduction, ONCE. Both the glyph ledger and the
   // plate ledger below need it and it was inline in inkOne(); a second
-  // hand-copy of a transform is the hazard CLAUDE.md opens with. Returns the
-  // axis-aligned device bound of a user-space rectangle, which is conservative
-  // for stamp()'s -7 degree rotation (it over-reports area, never under).
+  // hand-copy of a transform is the hazard CLAUDE.md opens with.
+  //
+  // ---- ROUND 17: "CONSERVATIVE" WAS DOING REAL DAMAGE --------------------
+  // Round 16 reduced a rotated rectangle to its axis-aligned bound and called
+  // that conservative, which it is — and conservative here means WRONG BY
+  // 32 PIXELS IN THE ONE DIRECTION THAT MATTERS. stamp() is -7 degrees over a
+  // ~520 px plate: half the width times sin 7 is 32 px, so the reported top
+  // edge climbs 32 px out of the plate and into the row above it, which on the
+  // write-up screen is the top band's row. Every erasure the shipped ledger
+  // reported against a stamp is that artefact and not a defect — six of them on
+  // the build round 16 shipped, i.e. ALL of the residual it published.
+  //
+  // A bound that over-reports is not free. It is a checker crying wolf, and
+  // AGENTS_BRIEF's standing rule is that one of those gets switched off. So the
+  // quad is KEPT, and coveredFrac() below tests against the real rotated
+  // polygon; the AABB survives as the cheap candidate filter it always was.
+  // `quad` is null for the identity and for pure translation/scale, so the
+  // exact axis-aligned path stays exact and costs nothing.
   function devBox(x0, y0, x1, y1) {
     try {
       const m = ctx.getTransform();
       if (m && (m.a !== 1 || m.b !== 0 || m.c !== 0 || m.d !== 1 || m.e !== 0 || m.f !== 0)) {
-        const pts = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]]
+        // Wound TL -> TR -> BR -> BL. Round 16's order was TL,TR,BL,BR, which is
+        // fine for a min/max and is a bowtie if you ever treat it as a polygon.
+        const q = [[x0, y0], [x1, y0], [x1, y1], [x0, y1]]
           .map(([px, py]) => [m.a * px + m.c * py + m.e, m.b * px + m.d * py + m.f]);
-        const xs = pts.map((q) => q[0]), ys = pts.map((q) => q[1]);
-        return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+        const xs = q.map((p) => p[0]), ys = q.map((p) => p[1]);
+        const rot = Math.abs(m.b) > 1e-9 || Math.abs(m.c) > 1e-9;
+        return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys),
+          rot ? q : null];
       }
     } catch { /* engine without getTransform: identity is the common case */ }
-    return [x0, y0, x1, y1];
+    return [x0, y0, x1, y1, null];
   }
+  // Point in a convex quad, by sign consistency of the four edge cross products.
+  function inQuad(q, x, y) {
+    let pos = 0, neg = 0;
+    for (let i = 0; i < 4; i++) {
+      const a = q[i], b = q[(i + 1) & 3];
+      const cr = (b[0] - a[0]) * (y - a[1]) - (b[1] - a[1]) * (x - a[0]);
+      if (cr > 1e-9) pos++; else if (cr < -1e-9) neg++;
+    }
+    return pos === 0 || neg === 0;
+  }
+  const inRect = (r, x, y) => (r.quad ? inQuad(r.quad, x, y)
+    : (x > r.x0 && x < r.x1 && y > r.top && y < r.bot));
   function inkOne(s, x, y, o) {
     if (!s) return;
     const w = advOf(s, o);
@@ -212,7 +243,7 @@ export function createHUD(hudEl) {
     const b = devBox(x0, y - asc, x0 + w, y + dsc);
     const by = devBox(x0 + w / 2, y, x0 + w / 2, y)[1];
     inked.push({ s, y: by, size: sz, alpha: ctx.globalAlpha, x0: b[0], x1: b[2],
-      top: b[1], bot: b[3], seq: seq++ });
+      top: b[1], bot: b[3], quad: b[4], seq: seq++ });
   }
   // Two strings collide when their drawn boxes overlap horizontally AND their
   // baselines are close enough to share a line. The vertical test is 0.6x the
@@ -220,13 +251,39 @@ export function createHUD(hudEl) {
   // pair up, loose enough that the FOOTSTEPS case (13 px and 11 px on the SAME
   // baseline) is caught. Sub-pixel touches are ignored: a 0.5 px threshold, so
   // a right-aligned string ending exactly where the next begins is not a hit.
+  // ---- ROUND 17: THE BASELINE RULE HAS A HOLE, AND IT IS TYPE-SIZE SHAPED --
+  // `0.6 x the larger size` was calibrated on 11-13 px type sharing a row. This
+  // screen now runs 21-46 px headline numerals over 11-12 px labels, and a 46 px
+  // string has ~34 px of ascent: its glyphs reach a row and a half ABOVE its own
+  // baseline, so it can be printed straight through a small string while the
+  // baseline test says the two are nowhere near each other. That is an opaque
+  // `fillText` over a word — the mechanism round 16 listed as still live and
+  // unmeasured — and it is invisible to both ledgers: the plate ledger hooks
+  // fills, not text.
+  //
+  // It is NOT folded into `overprints`. Two strings whose BOXES intersect are
+  // not necessarily two strings you cannot read — glyphs are mostly gaps, and an
+  // ascender box clearing the line below it is the normal case in type. So it is
+  // its own channel, `crossRow`, with its own count, and it earns promotion by
+  // being looked at rather than by being asserted. Same discipline as `ghosted`
+  // and `near`: reported separately, never dropped, never silently escalated.
+  const CROSS_MIN = 2;      // px of intersection in EACH axis before it counts
   function overprints(list) {
-    const out = []; const ghosted = [];
+    const out = []; const ghosted = []; const crossRow = [];
     for (let i = 0; i < list.length; i++) {
       for (let j = i + 1; j < list.length; j++) {
         const a = list[i], b = list[j];
-        if (Math.abs(a.y - b.y) >= Math.max(a.size, b.size) * 0.6) continue;
         const ov = Math.min(a.x1, b.x1) - Math.max(a.x0, b.x0);
+        if (Math.abs(a.y - b.y) >= Math.max(a.size, b.size) * 0.6) {
+          if (ov < CROSS_MIN) continue;
+          if (Math.min(a.alpha, b.alpha) < INK_LEGIBLE) continue;
+          const vov = Math.min(a.bot, b.bot) - Math.max(a.top, b.top);
+          if (vov < CROSS_MIN) continue;
+          crossRow.push({ a: a.s, b: b.s, overlapPx: +ov.toFixed(1),
+            vPx: +vov.toFixed(1), size: [a.size, b.size],
+            y: [+a.y.toFixed(1), +b.y.toFixed(1)] });
+          continue;
+        }
         if (ov <= 0.5) continue;
         const hit = { a: a.s, b: b.s, overlapPx: +ov.toFixed(1), y: a.y,
           alpha: [+a.alpha.toFixed(3), +b.alpha.toFixed(3)] };
@@ -234,6 +291,7 @@ export function createHUD(hudEl) {
       }
     }
     out.ghosted = ghosted;
+    out.crossRow = crossRow;
     return out;
   }
 
@@ -323,12 +381,47 @@ export function createHUD(hudEl) {
     return '?';
   }
   let plateSkipped = 0;
+  // ROUND 17 — AND THE 0.5 IS A CLIFF, NOT A MEASUREMENT.
+  // ERASE_ALPHA is a hard threshold and nothing on this screen was ever tuned
+  // against it: an effective 0.490 is filed as innocent and a 0.518 as an
+  // eraser, and the difference between those two on a lit supermarket floor is
+  // nothing a player could name. A threshold that cannot be validated on its own
+  // axis (AGENTS_BRIEF) at least has to declare how close it came, so plates in
+  // [CLIFF_ALPHA, ERASE_ALPHA) are kept in their own list and `erasures()`
+  // reports what the count WOULD be at the lower threshold. If those two numbers
+  // ever separate, the constant is load-bearing and has to be measured; while
+  // they agree, it is not, and that is worth knowing without changing anything.
+  const CLIFF_ALPHA = 0.35;
+  let dimmed = null;
+  // ---- ROUND 17: WHOSE PLATE IS IT ----------------------------------------
+  // The first subject-coverage numbers off this ledger were 28% at 10-20 m on
+  // 100% of frames, and reading the site list showed most of it was the MARKER
+  // CLUSTER'S OWN plates — his label and his distance readout, which are meant
+  // to be next to him and which at 14 m are two 18 px bars against a man who
+  // draws 68 px tall. Folding those in with the pursuit panel makes one number
+  // out of two different facts, and the one this round is about is the chrome.
+  //
+  // So a plate records who drew it. Set at the two blocks that draw ON the
+  // subject and nowhere else, which keeps it a two-line mechanism rather than a
+  // taxonomy: everything unlabelled is chrome, which is the safe default —
+  // a new band added by a later round counts against the chrome number without
+  // anybody remembering to tag it.
+  let plateTag = null;
   function paintOne(x, y, w, h) {
     if (!(w > 0) || !(h > 0)) return;
     const a = ctx.globalAlpha * fillAlpha();
-    if (a < ERASE_ALPHA) { plateSkipped++; seq++; return; }
+    if (a < ERASE_ALPHA) {
+      plateSkipped++;
+      if (a >= CLIFF_ALPHA && dimmed) {
+        const d = devBox(x, y, x + w, y + h);
+        dimmed.push({ x0: d[0], top: d[1], x1: d[2], bot: d[3], quad: d[4],
+          alpha: a, seq, site: siteOf() });
+      }
+      seq++; return;
+    }
     const b = devBox(x, y, x + w, y + h);
-    painted.push({ x0: b[0], top: b[1], x1: b[2], bot: b[3], alpha: a, seq: seq++, site: siteOf() });
+    painted.push({ x0: b[0], top: b[1], x1: b[2], bot: b[3], quad: b[4],
+      alpha: a, seq: seq++, site: siteOf(), tag: plateTag });
   }
   // The four fill primitives this file uses. `fillRect` is 53 of the 57 sites;
   // the other four are `fill()` on a path (the REC blip, two status dots, and
@@ -363,6 +456,70 @@ export function createHUD(hudEl) {
     rawFill(...args);
     if (painted && pb) paintOne(pb[0], pb[1], pb[2] - pb[0], pb[3] - pb[1]);
   };
+  // ---- ROUND 17: THE THREE ERASERS THAT ARE LATENT RATHER THAN ABSENT -----
+  // `clearRect`, `drawImage` and a destructive `globalCompositeOperation` all
+  // remove pixels and NONE of them is a fill. Round 16 enumerated them and left
+  // them unhooked because this file uses none of them — which is true today and
+  // is a fact about the current copy of the file, not a property of the ledger.
+  // Both of the erasure classes that have cost a round here arrived as a new
+  // draw site somebody added later (the FOOTSTEPS banner, backRect), so the
+  // cheap thing is to hook them now while the count is provably zero: any
+  // number these produce is a real change, because the baseline is 0 sites.
+  //
+  // clearRect is alpha 1 by definition. drawImage is assumed opaque, the same
+  // bias fillAlpha() takes for a gradient — over-report rather than hide.
+  //
+  // ---- AND HOOKING IT FOUND A SITE THE ENUMERATION SAID WAS NOT THERE -----
+  // "latent, unhooked" was wrong on its first run: `render()` opens with
+  // clearRect(0, 0, W, H), so there has always been exactly one clear per frame.
+  // It is not an eraser of the WORLD — this canvas sits OVER the WebGL one, so a
+  // clear REVEALS the store rather than hiding it, and counted naively it scored
+  // the subject at 100% covered on every frame of every chase. Flagged `clear`
+  // and excluded from coverOf() for that reason. It stays in the string ledger,
+  // where a clear genuinely does remove earlier ink — and where it can never
+  // fire, because every string is drawn after it.
+  const rawClearRect = ctx.clearRect.bind(ctx);
+  ctx.clearRect = function (x, y, w, h) {
+    rawClearRect(x, y, w, h);
+    if (painted && w > 0 && h > 0) {
+      const b = devBox(x, y, x + w, y + h);
+      painted.push({ x0: b[0], top: b[1], x1: b[2], bot: b[3], quad: b[4],
+        alpha: 1, clear: true, seq: seq++, site: siteOf(), tag: plateTag });
+    }
+  };
+  const rawDrawImage = ctx.drawImage.bind(ctx);
+  ctx.drawImage = function (...a) {
+    rawDrawImage(...a);
+    if (!painted) return;
+    // (img,dx,dy) | (img,dx,dy,dw,dh) | (img,sx,sy,sw,sh,dx,dy,dw,dh)
+    const im = a[0] || {};
+    const x = a.length >= 9 ? a[5] : a[1], y = a.length >= 9 ? a[6] : a[2];
+    const w = a.length >= 9 ? a[7] : a.length >= 5 ? a[3] : (im.width || 0);
+    const h = a.length >= 9 ? a[8] : a.length >= 5 ? a[4] : (im.height || 0);
+    if (!(w > 0) || !(h > 0)) return;
+    const al = ctx.globalAlpha;
+    if (al < ERASE_ALPHA) { plateSkipped++; return; }
+    const b = devBox(x, y, x + w, y + h);
+    painted.push({ x0: b[0], top: b[1], x1: b[2], bot: b[3], quad: b[4],
+      alpha: al, seq: seq++, site: siteOf(), tag: plateTag });
+  };
+  // A destructive composite mode does not paint a rectangle you can record — it
+  // changes what every LATER fill means, so the honest response is for the
+  // instrument to say it cannot answer rather than to answer wrongly. This is
+  // the guard-the-guard shape: `_composite` rides out on the census, and any
+  // value in it invalidates the erasure numbers on that frame out loud.
+  let compositeSeen = null;
+  try {
+    const pd = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(ctx),
+      'globalCompositeOperation');
+    if (pd && pd.set && pd.get) {
+      Object.defineProperty(ctx, 'globalCompositeOperation', {
+        configurable: true,
+        get() { return pd.get.call(ctx); },
+        set(v) { if (v && v !== 'source-over') compositeSeen = String(v); pd.set.call(ctx, v); },
+      });
+    }
+  } catch { /* engine without the descriptor: the census reports null */ }
 
   // Exact area of the union of `rects` inside `box`, by coordinate compression.
   // Not a sampled estimate: two plates that each cover half a word must not
@@ -371,6 +528,11 @@ export function createHUD(hudEl) {
   function coveredFrac(t, rects) {
     const bw = t.x1 - t.x0, bh = t.bot - t.top;
     if (!(bw > 0) || !(bh > 0)) return 0;
+    // ROUND 17: the exact path below is exact for axis-aligned rectangles and
+    // only for those. The moment a rotated quad is involved (see devBox) it has
+    // to be sampled, so that case is split off rather than quietly answered with
+    // the wrong bound. It is the rare case: one element on this screen rotates.
+    if (t.quad || rects.some((r) => r.quad)) return coveredFracRot(t, rects);
     const xs = new Set([t.x0, t.x1]), ys = new Set([t.top, t.bot]);
     for (const r of rects) {
       if (r.x0 > t.x0 && r.x0 < t.x1) xs.add(r.x0);
@@ -392,6 +554,29 @@ export function createHUD(hudEl) {
     }
     return area / (bw * bh);
   }
+  // ROUND 17. The same question when a rotated quad is in play. Coordinate
+  // compression cannot answer it — the breakpoints of a -7 degree edge are not
+  // four numbers — so this samples cell centres over the target's own bound and
+  // divides by the samples that are actually INSIDE the target. On the boxes
+  // this runs against (a glyph box is ~100x14 px, a stamp plate ~520x50) the
+  // grid is finer than 0.7 px in both axes, which is two orders of magnitude
+  // under the 32 px error it exists to remove. Stated as an approximation
+  // because it is one; the axis-aligned path above stays exact and unchanged, so
+  // no number published before this round moves unless a rotation was involved.
+  const ROT_NX = 160, ROT_NY = 40;
+  function coveredFracRot(t, rects) {
+    let inT = 0, cov = 0;
+    for (let i = 0; i < ROT_NX; i++) {
+      const x = t.x0 + (i + 0.5) * (t.x1 - t.x0) / ROT_NX;
+      for (let j = 0; j < ROT_NY; j++) {
+        const y = t.top + (j + 0.5) * (t.bot - t.top) / ROT_NY;
+        if (t.quad && !inQuad(t.quad, x, y)) continue;
+        inT++;
+        for (const r of rects) if (inRect(r, x, y)) { cov++; break; }
+      }
+    }
+    return inT ? cov / inT : 0;
+  }
   // A string is ERASED when legible plates drawn after it cover ERASE_FRAC of
   // its glyph box. Illegible strings are skipped for the same reason the
   // overprint test skips them: the CRT burn-in ghost at alpha 0.055 is meant to
@@ -408,20 +593,66 @@ export function createHUD(hudEl) {
   // separately for the same reason `ghosted` is: a checker that folds a
   // near-miss into a failure gets switched off, and one that drops it silently
   // is worse.
-  function erasures(list, plates, near = []) {
+  // ---- ROUND 17: AND IT HAS NO SEVERITY -----------------------------------
+  // The ledger answers "were these glyphs covered". The player's question is
+  // "can I still read the word", and those come apart in one specific way that
+  // this HUD does on purpose: an element paints its own backing plate over
+  // whatever was there and then prints THE SAME STRING on top of it. The word is
+  // not destroyed, it is REPRINTED — and the ledger scores that at 100% and
+  // sends the next round after a non-bug. `DOOR 1` is the live case.
+  //
+  // So a covered string is checked for a REPRINT: a later, legible string with
+  // the same text (numbers normalised, so `HIM 17.2m` and `HIM 17.3m` are one
+  // word) whose own box lands on the same rows and covers most of the same
+  // columns. When one exists the entry is filed under `reprinted` — never
+  // dropped, because the layout is still doing something worth knowing about,
+  // and a checker that silently swallows a case is the failure mode this file's
+  // `ghosted` note is about. It just is not an erasure.
+  const REPRINT_OVERLAP = 0.6;
+  function reprintOf(t, list) {
+    const key = siteWordOf(t.s);
+    const tw = t.x1 - t.x0;
+    if (!(tw > 0)) return null;
+    for (const u of list) {
+      if (u === t || u.seq <= t.seq || u.alpha < INK_LEGIBLE) continue;
+      if (siteWordOf(u.s) !== key) continue;
+      // same row: the baselines have to be within a line of each other, the
+      // same test overprints() uses to decide two strings share a row.
+      if (Math.abs(u.y - t.y) >= Math.max(u.size, t.size) * 0.6) continue;
+      const ov = Math.min(u.x1, t.x1) - Math.max(u.x0, t.x0);
+      if (ov / tw >= REPRINT_OVERLAP) return u;
+    }
+    return null;
+  }
+  function erasures(list, plates, near = [], out2 = {}) {
     const out = [];
+    const reprinted = out2.reprinted || (out2.reprinted = []);
+    const cliff = out2.cliff || (out2.cliff = []);
+    const dim = out2.dim || [];
     for (const t of list) {
       if (t.alpha < INK_LEGIBLE) continue;
-      const over = plates.filter((r) => r.seq > t.seq
+      const hitting = (rs) => rs.filter((r) => r.seq > t.seq
         && r.x0 < t.x1 && r.x1 > t.x0 && r.top < t.bot && r.bot > t.top);
-      if (!over.length) continue;
+      const over = hitting(plates);
+      if (!over.length) {
+        // ROUND 17: nothing opaque landed on it — but did something just under
+        // the 0.5 cliff? See CLIFF_ALPHA. Counted, not promoted.
+        if (dim.length) {
+          const d = hitting(dim);
+          if (d.length && coveredFrac(t, d) >= ERASE_FRAC) cliff.push(siteWordOf(t.s));
+        }
+        continue;
+      }
       const frac = coveredFrac(t, over);
       if (frac < ERASE_FRAC) { near.push(over[0].site); continue; }
       let worst = over[0];
       for (const r of over) if (coveredFrac(t, [r]) > coveredFrac(t, [worst])) worst = r;
-      out.push({ s: t.s, pct: +(frac * 100).toFixed(1), by: worst.site,
+      const rec = { s: t.s, pct: +(frac * 100).toFixed(1), by: worst.site,
         y: +t.y.toFixed(1), x0: +t.x0.toFixed(1), x1: +t.x1.toFixed(1),
-        alpha: +worst.alpha.toFixed(3) });
+        alpha: +worst.alpha.toFixed(3) };
+      const rp = reprintOf(t, list);
+      if (rp) { rec.reprint = +(rp.x0).toFixed(1); reprinted.push(rec); continue; }
+      out.push(rec);
     }
     return out;
   }
@@ -476,6 +707,162 @@ export function createHUD(hudEl) {
   function pursuitUp(f) { return !!(f && f.target && f.target.state === 'flee'); }
 
   // ===========================================================================
+  // ROUND 17 — THE SUBJECT IS NOT A STRING
+  // ===========================================================================
+  // Two rounds of erasure work, an ink ledger and then a plate ledger, and the
+  // worst thing on this screen was never in either of them. At a measured 3.8 m
+  // gap — the moment the chase is decided — the fleeing man renders from the
+  // KNEES UP behind the pursuit panel: legs and shoes below it, torso a dark
+  // smear through it, the bracket sitting on the floor at his feet.
+  // shots/critic_r16_erasure_door1.png.
+  //
+  // Both ledgers are HUD-versus-HUD BY CONSTRUCTION. Every target in them is a
+  // string this file typeset, so no amount of refining them can ever reach a
+  // HUD-over-world defect, and the thing being covered is the one thing
+  // PROMPT.md's second bar is about: seeing the man you are a few feet from.
+  //
+  // The fix to the INSTRUMENT is one object. A body is a rectangle on this
+  // canvas exactly like a word is, so it goes into the SAME plate ledger as a
+  // target and `coveredFrac` answers the same question about it. What was
+  // missing was never the machinery; it was one box.
+  //
+  // ---- AND IT IS DERIVED FROM THE WORLD, NOT FROM THE MARKER --------------
+  // Round 16's proxy for this was the bracket chip's position, and it fires on
+  // 169 of 397 chase frames while UNDER-counting: in the photographed frame the
+  // chip sat at y = 205 and the man's body spanned y = 40..190, so the proxy was
+  // testing a rectangle the man is not in. A marker is a claim ABOUT the
+  // subject; it is not his silhouette. So this projects the silhouette: four
+  // corners at his shoulders' width, from the floor to the crown of his head,
+  // through the same projectFromCop + warpFloor pair every marker on this screen
+  // goes through. If the lens changes, this changes with it for free.
+  //
+  // ---- AND IT IS CHECKED AGAINST PIXELS, NOT AGAINST ITSELF ---------------
+  // Every number this round publishes is a fraction OF this rectangle, so a
+  // rectangle that is not on the man is a confident fiction — six checks on this
+  // project have already certified a stage earlier than the defect. So it was
+  // ablated: hide the fleeing man's body group, re-render the SAME frame, diff
+  // the graded, barrel-warped output and erode by 2 px to kill the grade's
+  // grain. On the shipped build at 4.44 m with 95.8% of him on canvas:
+  //
+  //     null (nothing changed, same frame twice)      0 eroded px
+  //     his silhouette                            8,904 eroded px
+  //     of which INSIDE this rectangle            8,827  -> containment 0.991
+  //     the 77 outside                            1-3 px past the shoulders,
+  //                                               at his swinging arms
+  //     his pixels as a share of the rectangle    44.7%
+  //
+  // Evidence image: shots/r17_instrument_evidence.png. A zero noise floor is
+  // what makes the 77 readable as arms rather than as grain.
+  //
+  // ONE TRAP FOUND DOING IT, WORTH KNOWING: hiding `s.mesh` — the shopper's ROOT
+  // group — also removes a second figure elsewhere on the frame, so containment
+  // reads 0.427 and the box looks wrong. Hiding `s.mesh.children[0]`, the body
+  // group, is the clean ablation. An ablation that removes more than it names is
+  // the "region split that does not split what it claims" from AGENTS_BRIEF.
+  //
+  // ---- WHAT IT IS ALLOWED TO KNOW -----------------------------------------
+  // `f.target` is the PUBLISHED BELIEF, which is what the brackets are drawn on
+  // and all this file is ever permitted to see. On a `contact` frame game.js's
+  // own sightCheck() identity makes belief and man the same point, which is why
+  // every headline this round quotes is taken on contact frames. On a cold frame
+  // this box is where the HUD THINKS he is — still the right thing for the panel
+  // to dodge, and not a measurement of where the man was.
+  const BODY_H = 1.78;      // crown of a standing shopper, metres
+  const BODY_W = 0.55;      // shoulder to shoulder, the same figure the COLD
+                            // ring's pxPerM is derived from — one number, once.
+  // A frame is scored as COVERING him at a fifth of his silhouette. That is not
+  // a calibrated threshold and is not presented as one: the census carries the
+  // mean fraction as well, so anybody who disagrees with the cut can read the
+  // number it was cut from. `NEAR` is the range PROMPT.md's second bar lives at
+  // — round 16's hand-played chases oscillated between 3.3 and 5.0 m and ended
+  // at 4.4 / 8.1 / 4.7 m, so 8 m is the band where the man's body is the
+  // information and the door race has stopped being it.
+  const SUBJ_HIT = 0.20;
+  const SUBJ_NEAR_M = 8.0;
+  function subjectBox(G, f) {
+    if (!(G && G.cop && f && f.target)) return null;
+    const sx = f.target.x, sz = f.target.z;
+    const dx = sx - G.cop.x, dz = sz - G.cop.z;
+    const d = Math.hypot(dx, dz);
+    if (!(d > 0.05)) return null;
+    // Shoulders lie across the line of sight, so the widest he can look from
+    // here is BODY_W perpendicular to it. At the ranges this matters (2-25 m)
+    // the difference from a true billboard is under a pixel.
+    const ox = (-dz / d) * (BODY_W / 2), oz = (dx / d) * (BODY_W / 2);
+    let x0 = Infinity, x1 = -Infinity, top = Infinity, bot = -Infinity;
+    for (const s of [1, -1]) {
+      for (const h of [0.02, BODY_H]) {
+        const raw = projectFromCop(G.cop, sx + s * ox, h, sz + s * oz);
+        if (raw.behind) return null;
+        const q = warpFloor(raw);
+        if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x;
+        if (q.y < top) top = q.y; if (q.y > bot) bot = q.y;
+      }
+    }
+    const full = Math.max(1e-6, (x1 - x0) * (bot - top));
+    // Off-canvas is not occlusion. Only the part of him that is ON the frame can
+    // be covered by a panel, so the box is clipped and `vis` records how much of
+    // him the frame holds — a man half off the left edge is the chevron's
+    // problem and must not be counted as the panel's.
+    const cx0 = Math.max(0, x0), cx1 = Math.min(W, x1);
+    const cy0 = Math.max(0, top), cy1 = Math.min(H, bot);
+    if (!(cx1 - cx0 > 0) || !(cy1 - cy0 > 0)) return null;
+    return { x0: cx0, x1: cx1, top: cy0, bot: cy1, d, full,
+      vis: ((cx1 - cx0) * (cy1 - cy0)) / full, px: (x1 - x0) * (bot - top) };
+  }
+  // How much of the man the chrome is standing on, on THIS frame. `plates` is
+  // the plate ledger's own list, so an element added to this file lands in this
+  // number without anybody adding it to a list — which is the property the
+  // enumerated keep-out list below explicitly does not have.
+  //
+  // Every plate counts, with no draw-order filter: the HUD is a separate canvas
+  // laid over the WebGL one, so EVERYTHING on it is "later" than the world.
+  // `only` is null for everything, 'chrome' for everything the subject cluster
+  // did not draw, or ANY plate tag for exactly that element. The tag arm is not
+  // a convenience: subjCheck() below has to ask about the pursuit panel's own
+  // plates and nothing else, and the alternative is matching `site` against a
+  // line number, which is a transcription of a position in this file — the
+  // hazard CLAUDE.md opens with, in its cheapest form.
+  //
+  // ---- ROUND 21: "OFF-CANVAS IS NOT OCCLUSION" WAS ONLY HALF IMPLEMENTED ---
+  // subjectBox() clips in BOTH axes, so the comment above is true of the box.
+  // It was not true of the FRACTION, because `coveredFrac` divides by the
+  // CLIPPED area — so a man 90% off an edge has a denominator that is 10% of
+  // him, and any panel sitting on the sliver that is left reads as most of him.
+  // Round 20's chrome headline is 73% one bottom panel on exactly those frames
+  // (his box top y601-624, `vis` 0.07-0.13), and my own baseline sweep found the
+  // MIRROR of it at the top: the top band reads 98.3 / 100 / 100 percent on
+  // three frames whose `vis` is 0.263 / 0.116 / 0.009 — a man three pixels from
+  // gone off the top of the screen, with the band standing on those three
+  // pixels. Both readings are the same arithmetic and both are wrong in the same
+  // direction.
+  //
+  // So the denominator is HIS WHOLE SILHOUETTE, on canvas or not:
+  //
+  //     covered_area / full_area  =  (covered_area / clipped_area) * vis
+  //
+  // which is what the sentence "the chrome covers n% of him" has always claimed
+  // to mean. A man wholly on canvas is unaffected (`vis` = 1) — every frame that
+  // decides this round's headline is a `vis` >= 0.98 frame — and a man who has
+  // left the frame can no longer contribute a large number for a panel standing
+  // on his last three pixels. THIS DEFLATES NUMBERS THIS ROUND WOULD RATHER
+  // QUOTE, and it is applied before the fix it scores; see the report.
+  //
+  // The scaling lives HERE, in the one function every caller goes through, and
+  // not at the call sites — the site tally in hud.cover() below had its own copy
+  // of the division and got the same treatment by calling `fracOf`.
+  function fracOf(box, rects) {
+    return rects.length ? coveredFrac(box, rects) * (box.vis == null ? 1 : box.vis) : 0;
+  }
+  function coverOf(box, plates, only) {
+    if (!box) return 0;
+    const over = plates.filter((r) => !r.clear && r.x0 < box.x1 && r.x1 > box.x0
+      && r.top < box.bot && r.bot > box.top
+      && (only == null ? true : only === 'chrome' ? r.tag !== 'subj' : r.tag === only));
+    return fracOf(box, over);
+  }
+
+  // ===========================================================================
   // ROUND 16 — THE RESERVED BANDS. THE THIRD ELEMENT JOINED.
   // ===========================================================================
   // The note above says: "This is a keep-out, not a layout engine. Two elements
@@ -526,8 +913,159 @@ export function createHUD(hudEl) {
   // the after are one page load and one byte-identical scene apart, which is
   // the only ablation form this project trusts. Ship is 'r16' and the ONLY
   // caller of the other is a capture or a critic.
-  let BANDS = 'r16';
-  hud.bands = function (mode) { if (mode) BANDS = mode; return BANDS; };
+  // ROUND 17 ships 'r17' and keeps 'r16' as the executable before. Everything
+  // round 16 built stays on under both — only the pursuit panel's shape, its
+  // slot and the door tags' keep-out differ, which is what makes the A/B one
+  // hud.bands() call on a byte-identical frame instead of two builds.
+  // ---- ROUND 21: THE LAYOUT NAMES ARE AN ORDER, NOT A SET -----------------
+  // Every gate that had accumulated here was written `BANDS === 'r17'` or
+  // `BANDS !== 'r17'`. That reads as "is this the shipped layout" and MEANS "is
+  // this exactly r17", and the two stop being the same sentence the moment a
+  // round ships a new name. Adding 'r21' would have turned three of them off
+  // with no error and no output: `pursuitRect` would have returned the WIDE
+  // rectangle on every frame — round 20's fix, the one this round was told not
+  // to undo, disabled by a string comparison — and the door tag's dodge and its
+  // subject keep-out with it.
+  //
+  // Found by grepping the constant before shipping the name, not by a check.
+  // A layout name is a POINT ON A TIMELINE: r21 has everything r17 had, plus
+  // the band. So the gates ask `from('r17')`, and the next round's name costs
+  // one entry in this array instead of three silent regressions.
+  const BAND_ORDER = ['r15', 'r16', 'r17', 'r21'];
+  const from = (n) => BAND_ORDER.indexOf(BANDS) >= BAND_ORDER.indexOf(n);
+  let BANDS = 'r21';
+  hud.bands = function (mode) {
+    if (mode) {
+      if (BAND_ORDER.indexOf(mode) < 0) {
+        // A typo'd layout name used to be indistinguishable from the oldest
+        // layout, because every gate in the file failed its equality test. An
+        // A/B run against a name nobody implements is a measured comparison of
+        // one build with itself, which is the "empty sample" this project has
+        // retired two metrics over.
+        throw new Error(`hud.bands: unknown layout "${mode}" — one of ${BAND_ORDER.join(', ')}`);
+      }
+      BANDS = mode;
+    }
+    return BANDS;
+  };
+
+  // ===========================================================================
+  // ROUND 17 — THE PANEL YIELDS TO THE MAN
+  // ===========================================================================
+  // MEASURED FIRST. 12 chases, 1,300 census frames at 20 Hz on the LIVE camera,
+  // two driver policies x two glance conditions, the man's silhouette scored
+  // against every legible plate this file paints (see subjectBox):
+  //
+  //     all frames                  chrome covers 4.0% of him, >=20% on 7.9%
+  //     <=8 m and CONTACT           5.1%,  >=20% on 10.6% of 870 frames
+  //     his box reaching above y200 21.1%, on 118 frames — 9.1% of the chase
+  //
+  // and the site tally names the culprit without an argument:
+  //
+  //     hud.js:674   panel() body    117 frames   mean 30.0%   worst 87.9%
+  //     hud.js:1180  topBand()        41 frames   mean 28.6%   worst  100%
+  //
+  // At d = 3.24 m the pursuit panel alone takes 28.1% of him and the top band a
+  // further 18.7% — 46.9% of the man, at the range the chase is decided. That is
+  // shots/critic_r16_erasure_door1.png, reproduced as a number.
+  //
+  // ---- WHAT MOVES, AND WHY IT IS THE PANEL AND NOT THE MARKER -------------
+  // The top band is the frame's title bar and a man whose head is off the top of
+  // the screen is a man you are on top of; there is nothing to move there.
+  //
+  //   ROUND 21: THAT ARGUMENT IS WRONG AND ITS OWN POPULATION SAYS SO. The band
+  //   fires at 5.40 m with the whole man on canvas. It moved; see THE BAND
+  //   YIELDS TO THE MAN at topBand(). The sentence is left standing because the
+  //   reasoning in it is the reasoning that had to be refuted.
+  //
+  // The panel is 680x78 of chrome sitting exactly where a man 3-6 m ahead renders,
+  // and MOST OF WHAT IS IN IT HAS STOPPED BEING A QUESTION at that range. So the
+  // panel gets out of the way, and pays for the room by dropping the one thing
+  // that decides nothing: the chip for the door he is NOT running at.
+  //
+  // NOTHING ELSE IS HIDDEN. Tight still carries the sight-state title, his door,
+  // his metres, your metres, the verdict, the gap, the ETA and the run track.
+  // The complaint this answers is that the panel ranked its numbers wrong and
+  // stood on the subject — not that it said too much.
+  //
+  // ---- THE TRIGGER IS IN THE UNITS OF THE DEFECT --------------------------
+  // Not a distance, and not a guess at one: the panel goes tight when the WIDE
+  // rectangle would cover TIGHT_ON of his silhouette, and comes back when it
+  // would cover under TIGHT_OFF. The fix is therefore defined by the same
+  // quantity the round is measured in, and a later change to the camera or the
+  // lens moves both together instead of stranding a hand-picked 9 m.
+  //
+  // ---- THE RESULT, MATCHED FRAME FOR FRAME --------------------------------
+  // 7 chases (4 straight, 3 with a 35 degree glance sweep), 838 sampled frames,
+  // BOTH layouts scored on the SAME frame via hud.bands() — no cross-load
+  // comparison, which is the only ablation form this project trusts:
+  //
+  //                              r16 (wide)        r17 (ship)
+  //     chrome on him, mean        4.27%             2.91%
+  //     chrome >= 20% of him    64 frames          37 frames
+  //     <=8 m and CONTACT, mean    4.14%             2.73%   (554 frames)
+  //     THE PANEL'S OWN PLATES     1.19% mean        0.04% mean
+  //       >= 20% of him         25 frames           0 frames
+  //       worst single frame        47.8%             7.1%
+  //
+  // Restricted to the 56 frames (6.7%) where the wide rect really does land on
+  // him, the panel takes 17.8% of him and the shipped one 0.6%, and 0 of 56 are
+  // worse. Both extremes stay at 100% because the TOP BAND can cover a man whose
+  // head is off the top of the frame, and nothing about this round moves that.
+  //   ROUND 21: two things move it. The band chips (topBand), and the
+  //   denominator — a "100%" reached on a man 99% off the top of the screen was
+  //   coverOf() dividing by the CLIPPED box, not by him.
+  //
+  // Decisive-frame pair, one frame, one hud.bands() call apart:
+  // shots/r17_final_r16.png (chrome 54.9%, panel 32.9%, legs and shoes below the
+  // band and a dark smear through it) against shots/r17_final_r17.png (22.0% /
+  // 0.0%, the whole man) at a 4.44 m gap on CONTACT.
+  const PURSUIT_TIGHT = { w: 330, h: 72 };
+  const TIGHT_ON = 0.06, TIGHT_OFF = 0.02;
+  // Two slots, not a slide. A panel the player looks for has to be in a place he
+  // can look; sliding it continuously along x would keep it off the man and make
+  // it impossible to find. LEFT is free during a chase by construction —
+  // dispatchRect() returns null while pursuitUp(). RIGHT is hard against the
+  // look gauge, read off LOOK_RECT rather than transcribed.
+  const SIDE_HYST = 0.08;
+  let tightOn = false, tightSide = 'left', prCache, prFrame = -1, renderSeq = 0;
+  // Fraction of the subject's box that a rectangle covers. Plain rectangle
+  // intersection — this is a layout question, not an ink question, so it does
+  // not go through the plate ledger.
+  function boxOn(sb, R) {
+    if (!sb || !R) return 0;
+    const w = Math.min(sb.x1, R.x + R.w) - Math.max(sb.x0, R.x);
+    const h = Math.min(sb.bot, R.y + R.h) - Math.max(sb.top, R.y);
+    if (!(w > 0) || !(h > 0)) return 0;
+    return (w * h) / Math.max(1e-6, (sb.x1 - sb.x0) * (sb.bot - sb.top));
+  }
+  function tightSlots() {
+    const { w, h } = PURSUIT_TIGHT;
+    return { left: { x: 10, y: PURSUIT_RECT.y, w, h },
+      right: { x: LOOK_RECT.x - 8 - w, y: PURSUIT_RECT.y, w, h } };
+  }
+  // ONE OWNER, MEMOISED PER FRAME. floorKeepOuts(), backRect(), doorTagBoxes()
+  // and the drawing site all ask for this rectangle, and the hysteresis above is
+  // state — so four calls in one frame would step it four times. `prFrame` is
+  // the render counter, bumped once in render().
+  function pursuitRect(G, f) {
+    if (!pursuitUp(f)) { tightOn = false; return null; }
+    if (!from('r17')) return PURSUIT_RECT;
+    if (prFrame === renderSeq) return prCache;
+    prFrame = renderSeq;
+    const sb = subjectBox(G, f);
+    const onMan = boxOn(sb, PURSUIT_RECT);
+    if (!tightOn && onMan >= TIGHT_ON) tightOn = true;
+    else if (tightOn && onMan <= TIGHT_OFF) tightOn = false;
+    if (!tightOn) { prCache = PURSUIT_RECT; return prCache; }
+    const S = tightSlots();
+    const lo = boxOn(sb, S.left), ro = boxOn(sb, S.right);
+    const cur = tightSide === 'left' ? lo : ro;
+    const oth = tightSide === 'left' ? ro : lo;
+    if (oth + SIDE_HYST < cur) tightSide = tightSide === 'left' ? 'right' : 'left';
+    prCache = tightSide === 'left' ? S.left : S.right;
+    return prCache;
+  }
   // The two LOWER bands, same deal. These are the ones the readout runs into:
   // it clamps its own bottom at 516 and the heard banner starts at 496, so the
   // clamp was never a clearance. Their widths come off the strings they hold —
@@ -569,11 +1107,65 @@ export function createHUD(hudEl) {
   // in one 9,600-frame bench, worst 44.1% of `◀ SUBJ-07`. Geometry hoisted so
   // the cluster can reserve the rows and the drawing loop below reads the same
   // boxes; the numbers appear once.
+  //
+  // ---- ROUND 17: A RESERVER THAT WAS NEVER A RESERVEE ---------------------
+  // These rectangles go INTO the keep-out list above and were never resolved
+  // AGAINST it. The pursuit panel is drawn after them and paints over them, so a
+  // `DOOR 1` tag that lands in the panel's rows renders as a dark ghost box on
+  // the progress bar and the word inside it is gone — which is "a broken
+  // widget", the phrase round 16 used for the defect it fixed one element along.
+  // shots/critic_r16_erasure_door1.png has it, at x 555-605, sitting on the red
+  // track. The tag was the only element on this screen contributing a keep-out
+  // and obeying none.
+  //
+  // So it takes a row instead of clamping to one, exactly as the subject's label
+  // learned to in round 16. It resolves DOWNWARD for the same reason everything
+  // else here does: the bands hang from the ceiling. And the STEM follows it —
+  // the tag's whole claim is "this word is attached to that door", so the stem is
+  // now drawn to the door's own threshold rather than a fixed 15 px, and it is
+  // suppressed entirely if the tag has been pushed past the threshold, because a
+  // stem pointing up at nothing is the false precision round 15 retired for the
+  // chevron.
   const DOORTAG_O = { s: 12, w: 'bold' };
+  // The bottom of the tag's own clamp (`cy` is clamped to 524 and the plate is
+  // 20 px), read here so the dodge below cannot invent a second copy of it.
+  const TAG_MAX_Y = 524 - 9;
+  // Round 16's lesson, applied to this round's own regression: the previous
+  // behaviour stays executable so the A/B is one hud.tagDodge() call on a
+  // byte-identical frame rather than two builds. Ship is ON; the only caller of
+  // the other is a capture or a critic.
+  let TAG_DODGE = true;
+  hud.tagDodge = function (v) { if (v != null) TAG_DODGE = !!v; return TAG_DODGE; };
   function doorTagBoxes(G, f) {
     if (!(f && f.door && f.target && f.target.state === 'flee' && G.cop)) return [];
     const dr = f.door;
     const out = [];
+    // The bands a floor tag has to clear. Deliberately NOT floorKeepOuts() —
+    // that list calls this function, and these three are the ones drawn after it.
+    const ko = [];
+    if (from('r17')) {
+      for (const r of bandRects(G, f)) ko.push(r);
+      const PR = pursuitRect(G, f); if (PR) ko.push(PR);
+      const BK = backRect(G, f); if (BK) ko.push(BK);
+    }
+    // ---- AND THE COST OF THE LINE ABOVE, MEASURED AND THEN PAID -----------
+    // Making the tag step out of the pursuit panel moved it onto the MAN on 5
+    // extra frames of a 612-frame matched sweep (14 -> 19, mean 2.2% of him,
+    // worst 6.1%). Small, and it is the round's own defect one element along:
+    // the reserver that was never a reservee became a reserver that reserves
+    // around chrome and not around the subject.
+    //
+    // So the man is a keep-out too — but ONLY WHERE IT HELPS. rowBelow()
+    // resolves downward without a ceiling, and his box is 150-500 px tall at
+    // chase range, so stepping around him can park a door tag below its own
+    // clamp, off the bottom of the floor view, pointing at nothing. That is
+    // round 15's clamp regression exactly ("a clamp does not find free space,
+    // it finds the panel that is already there"), and it is a worse defect than
+    // the one being fixed. The rule is therefore: take the subject-aware row if
+    // it still lands inside the tag's own clamp, otherwise keep the row the
+    // chrome-only pass gave and let the tag sit on him. Prefer not to move over
+    // moving somewhere worse.
+    const sbTag = TAG_DODGE && from('r17') ? subjectBox(G, f) : null;
     dr.all.forEach((e, i) => {
       const his = i === dr.i;
       if (!his && dr.sure) return;
@@ -583,16 +1175,74 @@ export function createHUD(hudEl) {
       const cy = off ? 560 : Math.max(92, Math.min(524, p.y));
       const lbl = (off && p.x < W / 2 ? '◀ ' : '') + e.label + (off && p.x >= W / 2 ? ' ▶' : '');
       const bw = advOf(lbl, DOORTAG_O) + 20;
-      out.push({ e, i, his, off, cx, cy, lbl, bw,
-        rect: { x: cx - bw / 2, y: cy - 9, w: bw, h: 20 } });
+      const x0 = cx - bw / 2;
+      let ty = ko.length ? rowBelow(cy - 9, 20, x0, bw, ko) : cy - 9;
+      if (sbTag) {
+        const man = { x: sbTag.x0, y: sbTag.top,
+          w: sbTag.x1 - sbTag.x0, h: sbTag.bot - sbTag.top };
+        const alt = rowBelow(ty, 20, x0, bw, ko.concat([man]));
+        if (alt <= TAG_MAX_Y) ty = alt;
+      }
+      // Where the door actually meets the floor, so the stem points at the thing
+      // the tag names. Same projection, same lens, one height lower.
+      const thr = warpFloor(projectFromCop(G.cop, e.x, 0, e.z));
+      out.push({ e, i, his, off, cx, cy, lbl, bw, ty,
+        thr: thr.behind ? null : thr.y,
+        rect: { x: x0, y: ty, w: bw, h: 20 } });
     });
     return out;
   }
-  const BACK_BANNER_Y = 146, BACK_BANNER_H = 34;
-  function backRect(f) {
+  const BACK_BANNER_Y = 146, BACK_BANNER_H = 34, BACK_BANNER_H2 = 50;
+  const BACK_MO = { s: 15, w: 'bold', ls: 1.8 };
+  const BACK_SO = { s: 11, w: 'bold' };
+  const BACK_PAD = 16, BACK_GAP = 14;
+  // ---- THE BANNER THE TIGHT PANEL BROKE, AND HOW IT WAS FOUND -------------
+  // Making the panel narrow made this banner narrow with it — 680 px -> 330 —
+  // and its two strings are laid out left-flush and right-flush on ONE
+  // baseline. At 330 px they print through each other and the player reads
+  // `SUBJEGTiNgBREAKlNGtFOR THEsREAR`: the FOOTSTEPS bug of round 14, in the
+  // code of the round that cites it, three hundred lines below the note that
+  // says a helper nobody calls is not a guard. shots/r17_panel_r17.png is it.
+  //
+  // It was NOT found by the ledger that was built for it. `_overprints` reports
+  // this pair correctly — same baseline, 15 px and 11 px, overlapping — and
+  // nobody had run a census on a frame where a subject breaks for the rear
+  // WHILE the panel is tight. That combination did not exist before this round.
+  // So the instrument was right and unread, which is this project's other
+  // recurring failure ("ship an instrument, then READ it").
+  //
+  // The layout is now DERIVED rather than assumed: measure both strings with
+  // advOf — THE function this file's own history says must be called — and if
+  // they do not fit side by side, stack them and shrink each to its row. One
+  // owner, so the keep-out rectangle and the drawing site cannot disagree about
+  // how tall the banner is.
+  function backLayout(G, f) {
     if (!f || !f.viaBack || !pursuitUp(f)) return null;
-    return { x: PURSUIT_RECT.x, y: BACK_BANNER_Y, w: PURSUIT_RECT.w, h: BACK_BANNER_H };
+    // ROUND 17: hangs off the LIVE panel rect, not the wide constant. A banner
+    // 680 px wide under a 330 px panel is two elements that used to be one. `G`
+    // is threaded rather than reaching for a memo, because a rectangle that is
+    // right only when somebody called something else first is the class of bug
+    // CLAUDE.md opens with.
+    const PR = pursuitRect(G, f) || PURSUIT_RECT;
+    const main = '▲ ' + (f.backLine || 'SUBJECT BREAKING FOR THE REAR');
+    const sub = f.backSub || '';
+    const inner = PR.w - 2 * BACK_PAD;
+    const oneRow = advOf(main, BACK_MO) + (sub ? BACK_GAP + advOf(sub, BACK_SO) : 0);
+    const stacked = oneRow > inner;
+    // Shrink-to-fit, per row, off the measured advance. A clip would eat the
+    // tail of `SUBJECT BREAKING FOR THE REAR`, which is where the sentence
+    // keeps its verb; a smaller size keeps every word.
+    const fit = (s, o) => {
+      const w = advOf(s, o);
+      return w <= inner ? o.s : Math.max(9, Math.floor(o.s * inner / w));
+    };
+    return { main, sub, stacked, pad: BACK_PAD,
+      mo: { ...BACK_MO, s: stacked ? fit(main, BACK_MO) : BACK_MO.s },
+      so: { ...BACK_SO, s: stacked ? fit(sub, BACK_SO) : BACK_SO.s },
+      rect: { x: PR.x, y: BACK_BANNER_Y, w: PR.w,
+        h: stacked ? BACK_BANNER_H2 : BACK_BANNER_H } };
   }
+  function backRect(G, f) { const b = backLayout(G, f); return b ? b.rect : null; }
   // Everything that paints over the floor's marker cluster, on THIS frame.
   //
   // ---- THIS LIST IS ENUMERATED. THE LEDGER IS WHAT GUARDS IT. -------------
@@ -611,32 +1261,65 @@ export function createHUD(hudEl) {
   // that runs.
   function floorKeepOuts(G, f) {
     const out = [];
-    if (BANDS === 'r16') {
-      out.push({ x: 0, y: 0, w: W, h: FLOOR_BAND }, LOOK_RECT);
+    if (from('r16')) {
+      // ROUND 21: the band's LIVE rectangles, not a transcription of its widest
+      // shape. Same object identity the pursuit panel already had — bandCheck()
+      // asserts it with ===, so a future copy of `{0,0,W,FLOOR_BAND}` typed back
+      // in here fails loudly instead of agreeing until the band moves.
+      for (const r of bandRects(G, f)) out.push(r);
+      out.push(LOOK_RECT);
       // ROUND 12: the SEVENTH and EIGHTH. The stamp's rotated plate and its
       // sub-line's bar, both off stampLayout(), because the plate ledger caught
       // them painting out `SUBJ-12` at 100%. See the note there — the plate half
       // predates this round and nobody had measured it.
       const SL = stampLayout(f);
       for (const r of [dispatchRect(f), heardRect(f), dialogueRect(f), promptRect(f),
-        backRect(f), SL && SL.plate, SL && SL.sub]) {
+        backRect(G, f), SL && SL.plate, SL && SL.sub]) {
         if (r) out.push(r);
       }
       for (const t of doorTagBoxes(G, f)) out.push(t.rect);
     }
-    if (pursuitUp(f)) out.push(PURSUIT_RECT);   // round 15 had this one already
+    // Round 15 had this one already; round 17 makes it the LIVE rectangle, so
+    // the cluster reserves the panel that is actually going to be painted rather
+    // than the widest one it could have been.
+    const PR = pursuitRect(G, f);
+    if (PR) out.push(PR);
     return out;
   }
   const hits = (y, h, x0, w, R) => !(x0 + w <= R.x || x0 >= R.x + R.w
     || y + h <= R.y || y >= R.y + R.h);
-  const rowFree = (y, h, x0, w, ko) => !ko.some((R) => hits(y, h, x0, w, R));
+  // ---- ROUND 21: NO KEEP-OUT IS THE CANVAS EDGE ---------------------------
+  // Round 20 shipped the subject label typeset off the top of the screen on 34
+  // of 500 chase frames (6.8%) — `SUBJ-07` at top -20 to -40, so the marker
+  // printed a bracket with no identity, which is the player-visible outcome
+  // round 16 existed to fix, arriving by a different road.
+  //
+  // ONE PREDICATE CAUSES IT, and it is this one. `rowFree` asks whether any
+  // keep-out RECTANGLE intersects the row — and the list is six pieces of
+  // chrome, none of which is the edge of the canvas. So y = -40 reads FREE,
+  // round 16's flip is gated on `!rowFree(above)`, and the flip never fires on
+  // exactly the frames the label has left the screen. The label was not losing
+  // a fight with a band; nobody had told the test the screen has edges.
+  //
+  // A row off the top is not free and a row off the bottom is not free. That is
+  // the whole fix, in the predicate every caller already goes through, rather
+  // than a seventh rectangle in a list whose own comment says not to trust it.
+  // `rowBelow` gets the matching half: it resolves DOWNWARD, so it starts from
+  // the canvas rather than from wherever the caller's arithmetic landed, and
+  // then chains through the bands as before. Deliberately NOT the round-15
+  // clamp that regressed 25 -> 261 overprints — that clamp had no keep-out list
+  // and parked the label on the DISPATCHED TO panel; this one starts at 0 and
+  // then steps out of everything, which is the difference.
+  const onCanvasRow = (y, h) => y >= 0 && y + h <= H;
+  const rowFree = (y, h, x0, w, ko) => (!from('r21') || onCanvasRow(y, h))
+    && !ko.some((R) => hits(y, h, x0, w, R));
   // Push a row down until it is clear of every band. It resolves DOWNWARD for
   // round 15's reason — the bands hang from the ceiling and there is nothing
   // under the lowest of them but floor — and it iterates because clearing the
   // top band can land you on the panel below it. The guard is a loop bound, not
   // a belief: four bands can chain at most four times.
   function rowBelow(y, h, x0, w, ko) {
-    let yy = y;
+    let yy = from('r21') ? Math.max(0, y) : y;    // see rowFree: the canvas has edges
     for (let pass = 0; pass < ko.length + 1; pass++) {
       let moved = false;
       for (const R of ko) if (hits(yy, h, x0, w, R)) { yy = R.y + R.h + 4; moved = true; }
@@ -849,15 +1532,188 @@ export function createHUD(hudEl) {
     tx('REC', 1256, 60, { s: 26, w: 'bold', c: '#ffffff', a: 'right', ls: 4 });
     ctx.globalAlpha = 1;
   }
-  function topBand(G, h, label) {
+  // ===========================================================================
+  // ROUND 21 — THE BAND YIELDS TO THE MAN
+  // ===========================================================================
+  // Round 17 moved the pursuit panel off him and argued for leaving this: "the
+  // top band is the frame's title bar and a man whose head is off the top of the
+  // screen is a man you are on top of; there is nothing to move there."
+  //
+  // ITS OWN POPULATION REFUTES IT, and my own baseline sweep reproduces that —
+  // 6 chases, 389 census frames, oracle driver, the shipped r17 build:
+  //
+  //     site                       frames  mean   worst  points of the 4.11
+  //     hud.js:674  WIND panel        28   33.8%   85.2%   2.43   (59%)
+  //     hud.js:1439 THIS BAND          8   60.3%   100%    1.24   (30%)
+  //     pursuit:*   the panel          0      —      —     0.00   (round 20 holds)
+  //
+  // The band is the largest occluder of a man you can still see. It fires at
+  // 5.40 m with `vis` 1.0 — the whole man on canvas, at the range PROMPT.md's
+  // second bar is written about — and it is 52 px of title strip carrying REC, a
+  // store name and a wall clock. NONE OF IT CHANGES DURING A CHASE.
+  //
+  // ---- AND WHAT MY OWN INSTRUMENT SAYS AGAINST THAT ------------------------
+  // Published next to the headline rather than under it. The three worst band
+  // frames in that sweep read 98.3 / 100 / 100 percent at `vis` 0.263 / 0.116 /
+  // 0.009 — a man who is 74%, 88% and 99% off the TOP of the screen, with the
+  // band standing on the sliver that is left. Under the corrected denominator
+  // (see coverOf) those are 25.9 / 11.6 / 0.9 percent, and the band's real
+  // remaining bite is the 28-30% it takes on the `vis` 0.48-1.0 frames beside
+  // them. The defect is smaller than round 20's critic measured it and it is
+  // still the biggest one left; both halves are the finding.
+  //
+  // ---- THE FIX IS THE ROUND'S OWN LEVER, APPLIED ONE ELEMENT ALONG ---------
+  // Not a shrink — a 26 px strip across his head is the same defect at half
+  // price. The band keeps every word and gives up the AREA BETWEEN THEM: two
+  // chips sized by advOf() off the strings they hold, at the two ends where the
+  // strings already were, and 778 px of open canvas across the middle where his
+  // head is. Same shape as the panel's tight slot, same trigger units (the
+  // fraction of his silhouette the FULL band would take), same hysteresis.
+  //
+  // The 1 px rule at the foot of the band stays full width and is deliberately
+  // not exempted from the ledger: it is the line that still reads as a title bar
+  // when the fill is gone. ITS WHOLE MEASURED COST, quoted rather than argued
+  // away — 3 shifts x 240 s, 7,200 census frames, 142,143 strings, 114,098
+  // plates:
+  //
+  //     chrome statistic          0.3% of him on the frames the band is chipped
+  //     plate ledger              1 erasure, `9.5% "SUBJ-11" by hud.js:1696`
+  //
+  // One label in 7,200 frames loses a twentieth of its glyph box to a hairline.
+  // The fix for that would be to reserve the rule as a keep-out, which pushes
+  // every label below y 56 and hands back the 778 px of free top-of-frame this
+  // round just bought — a bad trade for one erasure, made explicitly rather than
+  // by not looking.
+  //
+  // ---- ONE OWNER, AND AN ASSERTION THAT SAYS SO ---------------------------
+  // CLAUDE.md opens with this file's hand-copied camera rig, "correct only while
+  // the camera never moved and held in sync purely by coincidence". A band that
+  // paints two rectangles while floorKeepOuts() reserves one is that bug exactly.
+  // So bandRects() is the only place the shape exists, the drawing site iterates
+  // what it returns, floorKeepOuts() and doorTagBoxes() push THE SAME OBJECTS,
+  // and bandCheck() asserts both — the painted rectangles against the live plate
+  // ledger, and the reserved ones by `===` identity, which is what fails when
+  // somebody types `{0,0,W,FLOOR_BAND}` back in rather than calling this.
+  //
+  // ---- AND THE RESIDUAL THE FIRST CUT LEFT, MEASURED AND THEN PAID --------
+  // Chips alone took the band from 0.87% of him to 0.17% over 602 matched
+  // frames, and the leftover is a shape: 16 of those 602 frames (2.7%) have him
+  // at the far LEFT or far RIGHT of frame, x0 20-155 or 1094-1128, i.e. UNDER A
+  // CHIP. Worst 11.7% at 3.42 m on CONTACT with 81% of him on canvas — the same
+  // defect as the strip, in a tenth of the area.
+  //
+  // So the chips yield too, and the thing they give up is the thing that does
+  // not change: the left chip drops the unit name (a constant, and it is on the
+  // desk screen as well) and keeps the blinking REC; the right chip drops the
+  // DATE and keeps the running time. Same trigger shape as the band's, tested
+  // against the FULL chip rectangle in both directions so the hysteresis has one
+  // frame of reference.
+  const BAND_ON = 0.06, BAND_OFF = 0.02;    // TIGHT_ON/TIGHT_OFF, same units
+  const CHIP_ON = 0.03, CHIP_OFF = 0.01;
+  const BAND_LO = { s: 14, w: 'bold', ls: 2.2 };
+  const BAND_CO = { s: 16, w: 'bold', ls: 1.4 };
+  const BAND_PIP_O = { s: 11, w: 'bold', ls: 0.8 };
+  // The floor screen's own title. It is a constant and the chips are sized off
+  // it, so it lives here rather than at the call site: a chip measured from one
+  // string and painted under another is this file's hand-copied camera rig in
+  // its cheapest form. Chip mode exists on the floor only — the desk band and
+  // the outro band never see a fleeing man.
+  const FLOOR_LABEL = 'ON FOOT — UNIT 1';
+  let bandTight = false, minL = false, minR = false, brCache = null, brFrame = -1;
+  // What each chip actually says. ONE OWNER for the string as well as the box —
+  // the chip is sized from exactly the string the drawing site prints, so the
+  // two cannot drift the way a chip measured off one label and painted with
+  // another would.
+  // They take the RECTANGLE LIST, not the module state, because the drawing site
+  // must print what bandRects() actually returned for THIS render. The `r17`
+  // ablation returns the full strip and carries no flags, and reading module
+  // state here would have let the shipped layout's hysteresis reach into the
+  // before it is being compared against.
+  const bandLabel = (R) => (R && R.minL ? '' : FLOOR_LABEL);
+  const bandClock = (G, R) => (R && R.minR ? dvrTime(G.st.clock) : dvrClock(G.st.clock));
+  // The two chips, derived from the strings that are about to be drawn into
+  // them. The label starts at x 82 and the clock is right-aligned at W-14; both
+  // numbers are read from the drawing site below rather than restated.
+  function bandChips(G, wantMinL, wantMinR) {
+    const h = FLOOR_BAND;
+    const lbl = wantMinL ? '' : FLOOR_LABEL;
+    // With no label the chip has to hold the REC blip (centred x 24) and the
+    // word REC (x 36), and nothing else.
+    let lw = lbl ? 82 + advOf(lbl, BAND_LO) + 12 : 36 + advOf('REC', { s: 12, w: 'bold', ls: 1.6 }) + 12;
+    // The complaint pips ride this band on the floor (see the drawing site) and
+    // they are the one thing on it that DOES change during a shift, so they
+    // cannot be dropped. They are at x 300 and their sentence runs from 344, so
+    // when they are up the left chip grows to hold them rather than leaving
+    // three red squares floating on the shelving with no plate under them —
+    // and it cannot go minimal either, which is why `minL` is gated on them.
+    if (G.st.complaints > 0) {
+      lw = Math.max(lw, 344 + advOf(`${G.st.complaints}/3 COMPLAINTS`, BAND_PIP_O) + 10);
+    }
+    const clk = wantMinR ? dvrTime(G.st.clock) : dvrClock(G.st.clock);
+    const cw = advOf(clk, BAND_CO) + 26;
+    return [{ x: 0, y: 0, w: lw, h }, { x: W - cw, y: 0, w: cw, h }];
+  }
+  // ONE OWNER, MEMOISED PER FRAME — pursuitRect()'s note applies verbatim: the
+  // hysteresis is state, and three callers in one frame would step it three
+  // times. `renderSeq` is bumped once in render().
+  function bandRects(G, f) {
+    if (brFrame === renderSeq) return brCache;
+    brFrame = renderSeq;
+    const full = [{ x: 0, y: 0, w: W, h: FLOOR_BAND }];
+    if (!pursuitUp(f) || !G.cop) {
+      bandTight = minL = minR = false; brCache = full; return full;
+    }
+    // THE ABLATION MUST NOT MOVE THE SHIPPED STATE. `hud.bands('r17')` renders
+    // the executable before, and a `bandTight = false` on this path would mean
+    // that measuring the old layout resets the new one's hysteresis — so a frame
+    // sitting between BAND_OFF and BAND_ON would come back full-width after
+    // every A/B call, and the instrument would be changing the artefact it
+    // measures. That is snap()'s step(0) in a different costume, and subjCheck()
+    // renders the r16 layout on every census frame now. So the before returns
+    // the full strip and touches nothing.
+    if (!from('r21')) { brCache = full; return full; }
+    // Idempotent: the trigger is a pure function of this frame, so the extra
+    // renders the instruments take re-apply the same threshold to the same
+    // value and cannot walk the hysteresis.
+    const sb = subjectBox(G, f);
+    const on = boxOn(sb, full[0]);
+    if (!bandTight && on >= BAND_ON) bandTight = true;
+    else if (bandTight && on <= BAND_OFF) bandTight = false;
+    if (!bandTight) { minL = minR = false; brCache = full; return full; }
+    // Second stage. Both tests are taken against the FULL chip rectangle, in
+    // both directions, so the hysteresis has one frame of reference and a chip
+    // cannot oscillate by changing the box its own test is run against.
+    const F2 = bandChips(G, false, false);
+    const lo = boxOn(sb, F2[0]), ro = boxOn(sb, F2[1]);
+    if (!minL && lo >= CHIP_ON) minL = true; else if (minL && lo <= CHIP_OFF) minL = false;
+    if (!minR && ro >= CHIP_ON) minR = true; else if (minR && ro <= CHIP_OFF) minR = false;
+    if (G.st.complaints > 0) minL = false;    // the pips need their plate
+    brCache = bandChips(G, minL, minR);
+    brCache.minL = minL; brCache.minR = minR;   // carried ON the array, so there
+    return brCache;                             // is one return value and one owner
+  }
+  function topBand(G, h, label, rects) {
     mark('band');
-    ctx.fillStyle = 'rgba(2,4,3,0.93)'; ctx.fillRect(0, 0, W, h);
+    const t0 = plateTag;
+    // Tagged, so the census can name this element instead of matching a line
+    // number out of a site string — which is how round 20's chrome statistic
+    // came to be 73% one panel nobody had named.
+    plateTag = 'band';
+    const R = rects || [{ x: 0, y: 0, w: W, h }];
+    if (R.length > 1) mark('bandYield');
+    ctx.fillStyle = 'rgba(2,4,3,0.93)';
+    for (const r of R) ctx.fillRect(r.x, r.y, r.w, r.h);
     ctx.fillStyle = LINE; ctx.fillRect(0, h - 1, W, 1);
     const blink = (G.now % 1) < 0.6;
     if (blink) { ctx.fillStyle = RED; ctx.beginPath(); ctx.arc(24, h / 2 - 5, 5.5, 0, 7); ctx.fill(); }
     tx('REC', 36, h / 2 - 1, { s: 12, w: 'bold', c: blink ? RED : RED_D, ls: 1.6 });
-    tx(label, 82, h / 2 - 1, { s: 14, w: 'bold', c: AMB, ls: 2.2 });
-    tx(dvrClock(G.st.clock), W - 14, h / 2 - 2, { s: 16, w: 'bold', c: GRN, a: 'right', ls: 1.4 });
+    // The strings come off the same two functions the chips are SIZED from, so a
+    // chip measured for `HH:MM:SS` can never be printed with the date in it.
+    const lbl = rects ? bandLabel(rects) : label;
+    if (lbl) tx(lbl, 82, h / 2 - 1, { ...BAND_LO, c: AMB });
+    tx(rects ? bandClock(G, rects) : dvrClock(G.st.clock), W - 14, h / 2 - 2,
+      { ...BAND_CO, c: GRN, a: 'right' });
+    plateTag = t0;
   }
   // ---- ROUND 9: THE STATUS ROW ATE A PANEL --------------------------------
   // What used to be here: `16-CH DVR / 9 CH ACTIVE / MOTION ANALYTICS: ON`,
@@ -1791,6 +2647,11 @@ export function createHUD(hudEl) {
       // content off the frame at the edge midlines (raw x=1280 lands at 1295),
       // so testing the pinhole would call a man on screen who is not.
       mark('brackets');
+      // ROUND 17: everything from here to the readout's plate is drawn ON the
+      // subject deliberately. Tagged so the coverage ledger can separate "his
+      // own label is over his chest" from "a panel is over his chest" — see
+      // plateTag. Cleared at the end of the block, unconditionally.
+      plateTag = 'subj';
       const raw = projectFromCop(G.cop, f.target.x, 1.75, f.target.z);
       const p = warpFloor(raw);
       const d = Math.hypot(f.target.x - G.cop.x, f.target.z - G.cop.z);
@@ -2012,7 +2873,7 @@ export function createHUD(hudEl) {
       const lx0 = cl.x - lw / 2;
       const above = cl.y - bh2 / 2 - 24;
       const below = cl.y + bh2 / 2 + 6;
-      const flipped = BANDS === 'r16' && !rowFree(above, 18, lx0, lw, KO)
+      const flipped = from('r16') && !rowFree(above, 18, lx0, lw, KO)
         && below + 18 < H - 44 && rowFree(below, 18, lx0, lw, KO);
       const ly = flipped ? below
         : rowFree(above, 18, lx0, lw, KO) ? above : rowBelow(above, 18, lx0, lw, KO);
@@ -2082,13 +2943,13 @@ export function createHUD(hudEl) {
       // Measured: the first cut of this fix cleared all three chrome classes
       // and opened a fourth, 116 erasures of `SUBJ-nn ▶` by the readout plate
       // with 106 matching overprints. One list, not two rules.
-      const KO2 = BANDS === 'r16' ? KO.concat([{ x: lx0, y: ly, w: lw, h: 18 }]) : KO;
+      const KO2 = from('r16') ? KO.concat([{ x: lx0, y: ly, w: lw, h: 18 }]) : KO;
       let dy2 = rowBelow(
         flipped ? ly + 20 : Math.min(cl.y + (sg === 'cold' ? 22 : bh2 / 2 + 4), 516),
         18, dcx - dw / 2, dw, KO2);
       // Round 15's special case, kept ONLY for the 'r15' ablation above. KO2
       // covers every configuration it covered on the shipped path.
-      if (BANDS !== 'r16' && dy2 === ly && lw > 0 && !(dcx - dw / 2 + dw <= lx0
+      if (!from('r16') && dy2 === ly && lw > 0 && !(dcx - dw / 2 + dw <= lx0
         || dcx - dw / 2 >= lx0 + lw)) dy2 = ly + 20;
       // ROUND 15's special case lived here: "Both plates dodge to the same row
       // when the marker sits in a narrow band (cl.y 111-118 at the minimum
@@ -2105,6 +2966,7 @@ export function createHUD(hudEl) {
       ctx.fillStyle = 'rgba(3,7,4,0.94)'; ctx.fillRect(dcx - dw / 2, dy2, dw, 18);
       box(dcx - dw / 2, dy2, dw, 18, c);
       tx(dl, dcx, dy2 + 14, { ...DO, c, a: 'center' });
+      plateTag = null;
     }
 
     // --- THE DOORS, ON THE FLOOR ----------------------------------------------
@@ -2118,8 +2980,9 @@ export function createHUD(hudEl) {
     const TAGS = doorTagBoxes(G, f);
     if (TAGS.length) {
       mark('doorTags');
+      plateTag = 'door';
       const dr = f.door;
-      TAGS.forEach(({ e, i, his, off, cx, cy, lbl, bw }) => {
+      TAGS.forEach(({ e, i, his, off, cx, cy, lbl, bw, ty, thr }) => {
         // Through the lens, same as the brackets. These land forty metres away
         // on the front wall, i.e. usually near the middle of frame where the
         // barrel's displacement is smallest — which is why the door tags never
@@ -2154,22 +3017,37 @@ export function createHUD(hudEl) {
         // surface in the game. The plate has to be near-opaque or the tag is
         // just texture; the unchosen door is dimmed by colour, not by alpha.
         ctx.globalAlpha = his ? 1 : 0.85;
-        ctx.fillStyle = 'rgba(3,7,4,0.94)'; ctx.fillRect(cx - bw / 2, cy - 9, bw, 20);
-        box(cx - bw / 2, cy - 9, bw, 20, c);
-        tx(lbl, cx, cy + 6, { ...BO, c, a: 'center' });
+        // ROUND 17: `ty` is the row this tag actually gets, after stepping out
+        // of the pursuit panel and the top band — see doorTagBoxes(). It equals
+        // `cy - 9` on every frame where nothing was in the way, which is most of
+        // them, so this is the same tag it always was until it would have been
+        // painted out.
+        ctx.fillStyle = 'rgba(3,7,4,0.94)'; ctx.fillRect(cx - bw / 2, ty, bw, 20);
+        box(cx - bw / 2, ty, bw, 20, c);
+        tx(lbl, cx, ty + 15, { ...BO, c, a: 'center' });
         // a stem down to the threshold, so the tag reads as attached to a door.
         // ROUND 15: not when the tag is off-screen — the stem would be pointing
         // at a patch of floor that has nothing to do with the door, which is the
         // same false-precision the chevron block above retires for `lost`.
+        // ROUND 17: to the door's own threshold rather than a fixed 15 px, so a
+        // tag that had to move down still points at the thing it names — and
+        // NOT AT ALL once it has been pushed past the threshold, because a stem
+        // pointing up at a patch of floor is the false precision round 15
+        // retired for the chevron, in a shorter line.
         if (!off) {
-          ctx.strokeStyle = c; ctx.lineWidth = 1;
-          ctx.beginPath(); ctx.moveTo(cx, cy + 11); ctx.lineTo(cx, cy + 26); ctx.stroke();
+          const y0 = ty + 21;
+          const y1 = Math.min(thr == null ? y0 + 15 : thr, y0 + 30);
+          if (y1 > y0 + 4) {
+            ctx.strokeStyle = c; ctx.lineWidth = 1;
+            ctx.beginPath(); ctx.moveTo(cx, y0); ctx.lineTo(cx, y1); ctx.stroke();
+          }
         }
         ctx.globalAlpha = 1;
       });
+      plateTag = null;
     }
 
-    topBand(G, FLOOR_BAND, 'ON FOOT — UNIT 1');
+    topBand(G, FLOOR_BAND, FLOOR_LABEL, bandRects(G, f));
     // The complaint pips follow the officer out onto the floor and nothing else
     // does — see the RECORD panel's grave below. They are still only drawn once
     // there is something to draw.
@@ -2256,10 +3134,25 @@ export function createHUD(hudEl) {
     // both halves of the race — his route metres and yours — and YOUR number
     // goes green on the door you would win. That is the whole decision.
     if (f && f.target && f.target.state === 'flee') {
-      const { x: px, y: py, w: pw } = PURSUIT_RECT;
+      // ROUND 17: the panel's box comes off pursuitRect(), which is the same
+      // object floorKeepOuts() reserved and doorTagBoxes() stepped around this
+      // frame — memoised, so all four agree by construction rather than by three
+      // of them recomputing the same hysteresis.
+      const PR = pursuitRect(G, f) || PURSUIT_RECT;
+      const { x: px, y: py, w: pw } = PR;
+      const tight = PR.w < PURSUIT_RECT.w;
       const dr = f.door;
       const back = !!f.viaBack;
       mark('pursuit');
+      if (tight) mark('pursuitTight');
+      // ROUND 17 (second pass): every plate this block paints is the pursuit
+      // panel's, and subjCheck() below has to be able to say "the PANEL is
+      // standing on him" rather than "some chrome is". Same two-line mechanism
+      // the subject cluster and the door tags already use; cleared before the
+      // rear banner, which is a different element that happens to hang off this
+      // rectangle. Everything still counts towards `chrome` — the tag narrows a
+      // question, it does not exempt anybody.
+      plateTag = 'pursuit';
       // ROUND 12: the panel's own title carries the sight state, because every
       // number underneath it — his route metres to each door, the progress
       // track, the ETA — is computed from the belief. While the belief IS him
@@ -2273,15 +3166,27 @@ export function createHUD(hudEl) {
       // not merely guessing, it is guessing again after being wrong once, and
       // saying "CONTACT LOST 9.4s" over the top of that understates it.
       const swept = !!(f.sight && f.sight.sweep);
-      panel(px, py, pw, 78,
-        swept ? 'PURSUIT — REVERTED TO LAST SIGHTING · HE DID NOT GO THAT WAY'
+      // ROUND 17: the long sweep title is 59 characters and the tight panel is
+      // 330 px wide, so panel()'s `max` would clip it to `PURSUIT — REVERTED TO
+      // LAS…` — a sentence whose whole content is in the half that gets cut. A
+      // short form for the narrow box rather than a clipped long one. (These
+      // three live here as literals, which round 12's copy sweep argues against;
+      // the fourth is beside them rather than in a second place.)
+      panel(px, py, pw, PR.h,
+        swept ? (tight ? 'PURSUIT — WRONG WAY, REVERTED'
+          : 'PURSUIT — REVERTED TO LAST SIGHTING · HE DID NOT GO THAT WAY')
           : stale ? `PURSUIT — CONTACT LOST ${age.toFixed(1)}s` : 'PURSUIT — SUBJECT FLEEING',
         { accent: swept ? '#b06a2e' : stale ? '#8a6a2e' : back ? '#ff7a2e' : RED, line: RED_D });
 
-      // door chips, laid out left-to-right by where the doors actually are
-      const chips = dr ? dr.all.map((e, i) => ({ e, i })).sort((a, b) => a.e.x - b.e.x) : [];
+      // door chips, laid out left-to-right by where the doors actually are.
+      // ROUND 17: not in the tight panel. A chip is 106x56 and there are two of
+      // them; the one for the door he is NOT running at is the clearest case on
+      // this screen of a number that decides nothing, and it is the room the man
+      // needs. His own door keeps both halves of its race, one row down.
+      const chips = !tight && dr ? dr.all.map((e, i) => ({ e, i })).sort((a, b) => a.e.x - b.e.x) : [];
       const cw = 106, chh = 56, cy = py + 20;
-      const cx0 = px + pw - 12 - chips.length * cw - (chips.length - 1) * 8;
+      const cx0 = tight ? px + pw - 10
+        : px + pw - 12 - chips.length * cw - (chips.length - 1) * 8;
       chips.forEach(({ e, i }, k) => {
         const x = cx0 + k * (cw + 8);
         const his = i === dr.i;
@@ -2314,14 +3219,74 @@ export function createHUD(hudEl) {
       });
 
       // his run to that door, as a track
-      const tx0 = px + 12, tw = Math.max(120, cx0 - 16 - tx0), bar = py + 38;
+      //
+      // ---- ROUND 17: THE ROWS ARE IN READING ORDER NOW ---------------------
+      // Round 16 put GAP at 13 px (19 on NO CUT) on the BOTTOM row, under two
+      // 106x56 chips whose HIM/YOU numerals were 13 px bold and colour-coded in
+      // the top right. The critic's photograph of a 2.3 m gap is the argument:
+      //
+      //     GAP 2.3m                 small, left
+      //     HIM 16.7 / YOU 15.1      LARGE, top-right, colour-coded
+      //
+      // "The two numbers that decide nothing are the two that read first."
+      // Round 16's fix was honest and it was a SIZE SWAP on one condition
+      // (`noCut`); this is the ranking. GAP is the interception race — it moves
+      // with every stride and every powerup and it is undecided until the last
+      // metre — so it takes the top-left of the body at 26 px, twice the height
+      // of anything else on the panel, in every state rather than in one. The
+      // door race keeps its numbers and loses the argument about which is
+      // bigger, which is all the complaint was ever about.
+      //
+      // MEASURED OFF THE INK LEDGER, at the gap the complaint was filed at —
+      // every string this file drew above y 200 on a live 2.41 m CONTACT frame,
+      // sorted by the size it was actually typeset at:
+      //
+      //     GAP 2.4m                 26 px      <- the race that is still open
+      //     REC                      26 px         (the recording blip)
+      //     08/27/2026 23:13:24      16 px
+      //     ON FOOT — UNIT 1         14 px
+      //     OUT IN 17.7s             14 px
+      //     59.6m  /  60.8m          13 px      <- HIM / YOU, half the height
+      //
+      // The critic's frame carried `GAP 2.3m` small and left against
+      // `HIM 16.7 / YOU 15.1` LARGE and colour-coded. shots/r17_rank_r17.png.
+      //
+      // ---- ROUND 21 CORRECTS THIS CLAIM, AGAINST THE OLD SOURCE -----------
+      // What used to be written here was "it is now exactly 2:1 the other way".
+      // The SHIPPED half of that is true and reproduces on the pixels — round
+      // 20's critic re-read the live ink ledger at 3.17 m CONTACT and got GAP 26
+      // px against HIM/YOU 13 px. The COMPARISON is not.
+      //
+      //     git show HEAD:src/game/hud.js
+      //       GAP        s: noCut ? 19 : 13
+      //       HIM / YOU  s: 13   (inside a 106x56 filled chip)
+      //
+      // So the TYPE ratio went 1.00 -> 2.00 in the ordinary state and 1.46 ->
+      // 2.00 on `noCut`. It was never 1:2. What round 16 inverted was
+      // PROMINENCE — a filled, colour-coded 106x56 chip in the top right against
+      // a bare left-aligned string — and prominence and point size are two
+      // different claims. "Exactly 2:1 the other way" was inferred from the
+      // complaint about the old layout rather than read off the old layout.
+      // WHEN YOU CLAIM A REVERSAL, DIFF THE OLD SOURCE.
+      //
+      // HONEST LIMIT: this is the one part of the round with NO executable
+      // before. `hud.bands('r16')` restores the round-16 RECTANGLE, not the
+      // round-16 type scale, so the ranking cannot be A/B'd on one page load the
+      // way the panel's shape can. The evidence for it is the ledger table above
+      // and the diff, not an ablation — which is exactly why the sentence that
+      // had no ablation behind it is the one that turned out to be wrong.
+      const barH = tight ? 8 : 14;
+      const tx0 = px + (tight ? 10 : 12);
+      const tw = Math.max(120, cx0 - (tight ? 0 : 16) - tx0);
+      const bar = py + (tight ? 52 : 46);
+      const gapY = py + (tight ? 46 : 40);       // baseline of the headline row
+      const footY = py + PR.h - 4;               // baseline of the small row
       const prog = 1 - Math.min(1, f.exitDist / Math.max(0.001, f.exitDist0));
-      ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(tx0, bar, tw, 16);
-      ctx.fillStyle = back ? '#7a3a12' : RED; ctx.fillRect(tx0, bar, tw * prog, 16);
-      box(tx0, bar, tw, 16, RED_D);
+      ctx.fillStyle = 'rgba(255,255,255,0.07)'; ctx.fillRect(tx0, bar, tw, barH);
+      ctx.fillStyle = back ? '#7a3a12' : RED; ctx.fillRect(tx0, bar, tw * prog, barH);
+      box(tx0, bar, tw, barH, RED_D);
       const mx = tx0 + tw * prog;
-      ctx.fillStyle = '#fff'; ctx.fillRect(mx - 1, bar - 4, 3, 24);
-      tx(f.subjCode || 'SUBJECT', tx0 + 2, bar - 6, { s: 10, c: DIM });
+      ctx.fillStyle = '#fff'; ctx.fillRect(mx - 1, bar - 4, 3, barH + 8);
       // ROUND 9: silent when there is only one way out. `ROUTE COMMITTED` is
       // the answer to "can his door preference still overrule the geometry",
       // and with a single exit that question does not exist — it was printing
@@ -2334,15 +3299,103 @@ export function createHUD(hudEl) {
       const twoDoors = !!dr && dr.all.length > 1;
       const noCut = !!(dr && dr.noCut);
       if (noCut) mark('pursuitNoCut');
+      // =====================================================================
+      // ROUND 21 — FOUR ELEMENTS, ONE ROW, ONE CURSOR
+      // =====================================================================
+      // Round 20 shipped a live overprint here and it is the class that round
+      // cites. The row typeset `YOU 40m` at x 208 w 47 and the verdict at x 202
+      // w 128 — the verdict starting SIX PIXELS LEFT of the number and drawn
+      // after it, rendering `NIOU40m`. shots/r20c_crop_overprint.png.
+      //
+      // BOTH BOXES WERE MEASURED CORRECTLY. `advOf` had the width of every
+      // string on the row and the layout was still wrong, because four elements
+      // clamped INDEPENDENTLY into the same 310 px span: three at fixed
+      // fractions (0.02 / 0.30 / 0.60 of `tw`) and one right-aligned at the far
+      // end, each with its own `max`, none of them aware of a neighbour.
+      // Measuring a string is not laying out a row. Four correct measurements
+      // and no cursor is a collision waiting for the longest verdict.
+      //
+      // So there is a cursor, and the invariant is one sentence: NO CELL'S
+      // RIGHT EDGE PASSES THE VERDICT'S LEFT EDGE. The verdict is placed first
+      // because it is the only element here that is a sentence rather than a
+      // number, every other cell's width is `min(its advance, its cap, the room
+      // the cursor has left)`, and a cell squeezed under FOOT_MIN is dropped
+      // rather than printed as a two-letter stub.
+      //
+      // ---- AND ONE THING IS DROPPED OUTRIGHT FROM THE TIGHT PANEL ---------
+      // Four cells do not fit in 310 px however they are laid out — measured:
+      // subj 47 + door 74 + you 47 + verdict 128 + three gaps = 320. Something
+      // gives, and the tight panel already has the rule for choosing what: it
+      // dropped the chip for the door he is NOT running at, as "the clearest
+      // case on this screen of a number that decides nothing". The case number
+      // is a DUPLICATE — `f.subjCode` and the bracket's own `f.target.code` are
+      // the same string out of game.js:3496, and the bracket prints it over his
+      // head on every chase frame. The wide panel keeps it; it has the room.
+      //
+      // ---- AND THE BUG IS EXECUTABLE, WHICH IS HOW IT IS SCORED -----------
+      // Round 15's rule: make the rejected layout selectable by name so the
+      // probe runs against the bug and not only against the fix. `hud.bands`
+      // below 'r21' rebuilds round 20's four independent clamps exactly, so the
+      // overprint and its absence are one hud.bands() call apart on a
+      // byte-identical frame — the only ablation form this project trusts.
+      if (!from('r21')) {
+        tx(f.subjCode || 'SUBJECT', tx0 + 2, footY, { s: 10, c: DIM, max: tw * 0.42 });
+        if (tight && dr && dr.all[dr.i] && isFinite(dr.him[dr.i])) {
+          const gone0 = dr.cut ? !dr.cut[dr.i] : false;
+          tx(`${dr.all[dr.i].label}${dr.sure ? '' : ' ?'}  ${dr.him[dr.i].toFixed(0)}m`,
+            tx0 + 2 + tw * 0.30, footY,
+            { s: 10, w: 'bold', c: dr.sure ? RED : AMB, max: tw * 0.30 });
+          tx(`YOU ${isFinite(dr.you[dr.i]) ? dr.you[dr.i].toFixed(0) + 'm' : '—'}`,
+            tx0 + 2 + tw * 0.60, footY,
+            { s: 10, w: 'bold', max: tw * 0.24,
+              c: gone0 ? '#9a8a5e' : dr.you[dr.i] < dr.him[dr.i] - 0.5 ? GRN : '#ff9a2e' });
+        }
+        tx(noCut ? (f.doorNoCut || 'NO CUT — RUN HIM DOWN')
+          : twoDoors ? (dr.sure ? (f.doorLock || 'ROUTE COMMITTED')
+            : (f.doorOpen || 'BOTH DOORS LIVE')) : '',
+        tx0 + tw, footY,
+        { s: 10, w: 'bold', c: noCut ? '#9a8a5e' : dr && dr.sure ? RED : AMB, a: 'right',
+          max: tw * (tight ? 0.42 : 0.6) });
+      } else {
+      const FOOT_O = { s: 10, w: 'bold' };
+      const FOOT_GAP = 8, FOOT_MIN = 16;
+      const verdict = noCut ? (f.doorNoCut || 'NO CUT — RUN HIM DOWN')
+        : twoDoors ? (dr.sure ? (f.doorLock || 'ROUTE COMMITTED')
+          : (f.doorOpen || 'BOTH DOORS LIVE')) : '';
+      const vW = verdict ? Math.min(advOf(verdict, FOOT_O), tw * (tight ? 0.44 : 0.6)) : 0;
+      const vX0 = tx0 + tw - vW;               // the verdict's left edge, and the wall
+      const cells = [];
+      if (!tight) {
+        cells.push({ s: f.subjCode || 'SUBJECT', o: { s: 10, c: DIM }, cap: tw * 0.42 });
+      }
+      // his door's own race, off the same dr.him/dr.you the chips read — not a
+      // summary of them, the numbers themselves.
+      if (tight && dr && dr.all[dr.i] && isFinite(dr.him[dr.i])) {
+        const gone = dr.cut ? !dr.cut[dr.i] : false;
+        cells.push({ s: `${dr.all[dr.i].label}${dr.sure ? '' : ' ?'}  ${dr.him[dr.i].toFixed(0)}m`,
+          o: { ...FOOT_O, c: dr.sure ? RED : AMB }, cap: tw * 0.34 });
+        cells.push({ s: `YOU ${isFinite(dr.you[dr.i]) ? dr.you[dr.i].toFixed(0) + 'm' : '—'}`,
+          o: { ...FOOT_O,
+            c: gone ? '#9a8a5e' : dr.you[dr.i] < dr.him[dr.i] - 0.5 ? GRN : '#ff9a2e' },
+          cap: tw * 0.28 });
+      }
+      let footX = tx0 + 2;
+      for (const c of cells) {
+        const room = (verdict ? vX0 - FOOT_GAP : tx0 + tw) - footX;
+        const w = Math.min(advOf(c.s, c.o), c.cap, Math.max(0, room));
+        if (w < FOOT_MIN) break;               // no room left: stop, do not stub
+        tx(c.s, footX, footY, { ...c.o, max: w });
+        footX += w + FOOT_GAP;
+      }
       // ROUND 12 (copy sweep): these three were string literals HERE while
       // ./game/lines.js exported DOOR_OPEN and DOOR_LOCK that nothing read. Two
       // owners of four words, and the dead half is the one a writer would have
       // edited. Off `f` now, same as backLine/backSub two blocks down.
-      tx(noCut ? (f.doorNoCut || 'NO CUT — RUN HIM DOWN')
-        : twoDoors ? (dr.sure ? (f.doorLock || 'ROUTE COMMITTED')
-          : (f.doorOpen || 'BOTH DOORS LIVE')) : '',
-      tx0 + tw, bar - 6,
-      { s: 10, w: 'bold', c: noCut ? '#9a8a5e' : dr && dr.sure ? RED : AMB, a: 'right' });
+      if (verdict) {
+        tx(verdict, tx0 + tw, footY,
+          { ...FOOT_O, c: noCut ? '#9a8a5e' : dr && dr.sure ? RED : AMB, a: 'right', max: vW });
+      }
+      }
       // Same rule as the bracket's number: a tenth of a metre is a measurement
       // and only CONTACT has one. The ETA is a prediction either way, but a
       // prediction off a reckoned position is a prediction about a guess, so it
@@ -2357,26 +3410,37 @@ export function createHUD(hudEl) {
       // problem was never that the panel said too much, it was that the loudest
       // thing on it had stopped changing.
       tx(sg === 'contact' ? `GAP ${f.dist.toFixed(1)}m` : `GAP ~${Math.round(f.dist / 2) * 2}m`,
-        tx0 + 2, bar + 34,
-        { s: noCut ? 19 : 13, w: 'bold', c: stale ? '#8a7a4a' : noCut ? '#ffd08a' : AMB });
-      tx(f.eta ? `${stale ? 'OUT IN ~' : 'OUT IN '}${f.eta.toFixed(1)}s` : '', tx0 + tw, bar + 34,
-        { s: 13, w: 'bold', c: stale ? '#8a6a2e' : back ? '#ff9a2e' : RED, a: 'right' });
+        tx0 + 2, gapY,
+        { s: 26, w: 'bold', c: stale ? '#8a7a4a' : noCut ? '#ffd08a' : AMB, ls: 1.2 });
+      tx(f.eta ? `${stale ? 'OUT IN ~' : 'OUT IN '}${f.eta.toFixed(1)}s` : '', tx0 + tw, gapY,
+        { s: tight ? 12 : 14, w: 'bold', c: stale ? '#8a6a2e' : back ? '#ff9a2e' : RED,
+          a: 'right' });
 
       // --- THE COMMITMENT MOMENT ---------------------------------------------
       // He has turned and broken for the rear cross-aisle. It is the one
       // irreversible decision in this chase and it is worth thirty metres, and
       // until now the player found out about it by losing. Say it out loud.
-      const BK = backRect(f);
-      if (BK) {
+      plateTag = null;                    // the banner is not the panel
+      const BL = backLayout(G, f);
+      if (BL) {
+        const BK = BL.rect;
         mark('backBanner');
+        if (BL.stacked) mark('backBannerStacked');
         const fl = (G.now % 0.8) < 0.5;
         ctx.fillStyle = fl ? 'rgba(128,44,8,0.95)' : 'rgba(58,20,4,0.95)';
         ctx.fillRect(BK.x, BK.y, BK.w, BK.h);
         box(BK.x, BK.y, BK.w, BK.h, fl ? '#ff7a2e' : '#7a3a12');
-        tx('▲ ' + (f.backLine || 'SUBJECT BREAKING FOR THE REAR'), px + 16, 169,
-          { s: 15, w: 'bold', c: fl ? '#ffd9b3' : '#ff9a2e', ls: 1.8 });
-        tx(f.backSub || '', px + pw - 16, 169,
-          { s: 11, w: 'bold', c: fl ? '#ffb98a' : '#a3521c', a: 'right' });
+        // One row while both strings fit side by side; two when they do not.
+        // Every number here comes off BL, so the box drawn above and the rows
+        // drawn into it are the same derivation — see backLayout().
+        tx(BL.main, BK.x + BL.pad, BK.y + (BL.stacked ? 19 : 23),
+          { ...BL.mo, c: fl ? '#ffd9b3' : '#ff9a2e' });
+        if (BL.sub) {
+          tx(BL.sub,
+            BL.stacked ? BK.x + BL.pad : BK.x + BK.w - BL.pad,
+            BK.y + (BL.stacked ? 39 : 23),
+            { ...BL.so, c: fl ? '#ffb98a' : '#a3521c', a: BL.stacked ? 'left' : 'right' });
+        }
       }
     }
 
@@ -2424,6 +3488,14 @@ export function createHUD(hudEl) {
       : t.sprint ? 'SPRINTING' : t.wind === 'ready' ? 'READY' : 'RECOVERING';
 
     mark('wind');
+    // ROUND 21: tagged. 59% of my baseline chrome statistic (2.43 of 4.11
+    // points) is THIS panel, and round 20's critic found the same thing at 73%
+    // — every one of those frames a frame where the man is 87-93% off the
+    // BOTTOM of the screen. It is named now, so the next round can decompose
+    // the number without grepping a line number out of a site string. Tagging
+    // exempts nobody: `only === 'chrome'` is `tag !== 'subj'`, so this still
+    // counts towards every chrome figure this file publishes.
+    plateTag = 'wind';
     panel(sx, sy, sw, sh, 'WIND', { accent: col, line: gassed ? RED_D : LINE });
     // the tank just came back — go
     const flare = t.readyAt != null && G.now - t.readyAt < 0.4;
@@ -2472,6 +3544,7 @@ export function createHUD(hudEl) {
       // once and worth nothing on the four hundredth frame of a chase.
       keyRow(G, sx + 16, sy + 92, sw - 40, ['sprint'], { mark: 'floorKeyHint' });
     }
+    plateTag = null;
     // ---- PULSE, RETIRED IN ROUND 9 ---------------------------------------
     // `PULSE 148` in the corner of this panel, on 100% of floor frames, for
     // three rounds. Round 6 defended it as the lagging signal that carries a
@@ -2913,6 +3986,8 @@ export function createHUD(hudEl) {
   // ------------------------------------------------------------------ render
   hud.render = function render(G) {
     regions = [];
+    plateTag = null;                    // never let a throw leak a tag forward
+    renderSeq++;                        // see pursuitRect(): one resolve per frame
     ctx.clearRect(0, 0, W, H);
     // Re-anchor the DVR stamp to wall time, once, before anything prints it.
     clockBase = Date.now() - G.st.clock * 1000;
@@ -2938,9 +4013,42 @@ export function createHUD(hudEl) {
   // point: the answer is what was painted, not what the code thinks it paints.
   hud.sample = function (G) {
     census = {};
-    inked = []; painted = []; seq = 0; plateSkipped = 0;
+    inked = []; painted = []; dimmed = []; seq = 0; plateSkipped = 0;
+    compositeSeen = null;
     hud.render(G);
     const c = census; census = null;
+    // ---- ROUND 17: THE SUBJECT, MEASURED THE SAME WAY A WORD IS ------------
+    // See subjectBox(). Recorded only on the frames the question exists: the
+    // player is on foot and a man is running from him. `_subjOn` is the
+    // population; everything else divides by it. `_subjNear*` is the same thing
+    // restricted to decisive range and to CONTACT, which is the only sight state
+    // where the box is provably the man and not a belief about him.
+    const F = G && G.st && G.st.mode === 'floor' ? G.floor : null;
+    if (F && pursuitUp(F)) {
+      const sb = subjectBox(G, F);
+      if (sb) {
+        const cov = coverOf(sb, painted, 'chrome');
+        c._subjOn = 1;
+        c._subjCovSum = cov;
+        if (cov >= SUBJ_HIT) c._subjHit = 1;
+        c._subjPxSum = sb.px;
+        c._subjCovAllSum = coverOf(sb, painted);
+        // The panel's own share, attributed by plate tag rather than by line
+        // number, so a chase bench reports the quantity subjCheck() promises
+        // about instead of only the chrome total it is one term of.
+        c._subjPanelCovSum = coverOf(sb, painted, 'pursuit');
+        const near = sb.d <= SUBJ_NEAR_M && F.sight && F.sight.grade === 'contact';
+        if (near) {
+          c._subjNear = 1;
+          c._subjNearCovSum = cov;
+          if (cov >= SUBJ_HIT) c._subjNearHit = 1;
+          c._subjNearWorst = cov;
+        }
+      } else {
+        c._subjOff = 1;                 // behind the lens or wholly off canvas
+      }
+    }
+    if (compositeSeen) c._composite = compositeSeen;
     // ROUND 15 — see the INK LEDGER block above. Reported on the census object
     // because that is what ./eval.js already pools across a whole shift; the
     // worst pair is carried so a non-zero count names the two strings rather
@@ -2948,9 +4056,30 @@ export function createHUD(hudEl) {
     const bad = overprints(inked);
     // ROUND 16 — the plate ledger. Same frame, same canvas, same pooling path.
     const near = [];
-    const era = erasures(inked, painted, near);
+    const out2 = { dim: dimmed };
+    const era = erasures(inked, painted, near, out2);
     c._plates = painted.length; c._platesTranslucent = plateSkipped;
     c._erasures = era.length;
+    // ROUND 17 — the three channels that stop this instrument over-reporting or
+    // under-reporting, each counted on its own so promotion is a decision and
+    // not an accident. See erasures(), overprints() and CLIFF_ALPHA.
+    c._eraseReprint = out2.reprinted.length;
+    for (const e of out2.reprinted) {
+      const k = 'ERZR ' + e.by + ' > ' + siteWordOf(e.s);
+      c[k] = (c[k] || 0) + 1;
+    }
+    c._eraseCliff = out2.cliff.length;
+    c._crossRow = bad.crossRow.length;
+    if (bad.crossRow.length) {
+      let cw = bad.crossRow[0];
+      for (const p of bad.crossRow) if (p.overlapPx > cw.overlapPx) cw = p;
+      c._crossRowWorst = `${cw.overlapPx}x${cw.vPx}px  "${cw.a}"(${cw.size[0]}) x "${cw.b}"(${cw.size[1]})`;
+      c._crossRowPx = cw.overlapPx;
+      for (const p of bad.crossRow) {
+        const k = 'XRW ' + siteWordOf(p.a) + ' x ' + siteWordOf(p.b);
+        c[k] = (c[k] || 0) + 1;
+      }
+    }
     // The early-warning half: bands that touched a glyph box without covering
     // enough of it to count. Named by site so a graze can be reserved before it
     // becomes an erasure — backRect() was a graze on nobody's list until it
@@ -2977,7 +4106,7 @@ export function createHUD(hudEl) {
         c[k] = (c[k] || 0) + 1;
       }
     }
-    c._strings = inked.length; inked = null; painted = null;
+    c._strings = inked.length; inked = null; painted = null; dimmed = null;
     c._overprints = bad.length;
     c._overprintsGhosted = bad.ghosted.length;
     if (bad.length) {
@@ -2991,20 +4120,401 @@ export function createHUD(hudEl) {
       c._overprintWorst = `${w.overlapPx}px  "${w.a}" x "${w.b}"`;
       c._worstPx = w.overlapPx;
     }
+    // =======================================================================
+    // ROUND 21 — THE GUARD GETS A CALLER
+    // =======================================================================
+    // `subjCheck` and `subjSelfTest` were built in round 20 to protect round
+    // 20's own fix, validated in three directions, proven to throw on an empty
+    // sample — and had NO CALLER anywhere in src, tools or docs. They ran only
+    // when a human typed them. AGENTS_BRIEF already carries "a check that passes
+    // because it never runs"; that entry recurred inside the round that cited
+    // it, one file away from the ink ledger it sits beside, which IS counted on
+    // every census frame and pooled into the bench.
+    //
+    // This is the caller. Same frame, same census, same pooling path as
+    // `_overprints` — so a layout change that undoes round 20 or round 21 shows
+    // up as a non-zero number in a bench nobody had to remember to run.
+    //
+    // COST, MEASURED, NOT ASSUMED: subjCheck renders three times (shipped,
+    // wide, and the restore that leaves the canvas as the player's), so a census
+    // frame with a chase on it costs 4 renders instead of 1. It is gated to the
+    // frames the guard can speak about at all — floor mode, a man fleeing — and
+    // `hud.guard(false)` turns it off for a bench that is timing something else.
+    // A default of OFF would be this entry again.
+    if (GUARD_ON && F && pursuitUp(F)) {
+      const g = hud.subjCheck(G, GUARD_INJECT ? { inject: GUARD_INJECT } : {});
+      if (g.on) {
+        c._subjGuard = 1;
+        if (!g.ok) {
+          c._subjGuardFail = 1;
+          c._subjGuardWorst = g.why;
+          // Named to end in `Worst` on purpose: ./eval.js pools numeric keys
+          // with that suffix by maximum (see isWorstNum). `_subjGuardWorst`
+          // beside it is a STRING and pools first-wins, which is the same
+          // limitation the two legacy worst-of pairs have.
+          c._subjGuardDeltaWorst = g.panelPct - g.widePct;
+        }
+        if (!g.bandOk) {
+          c._bandGuardFail = 1;
+          c._bandGuardWorst = g.bandWhy;
+        }
+        // The separable population, so a zero can be told from an instrument
+        // that never had a frame it could speak about — round 15's lampWarm()
+        // reported agreement having compared nothing.
+        if (g.widePct > 100 * SUBJ_EPS) c._subjGuardSeparable = 1;
+        if (g.wideBandPct > 100 * SUBJ_EPS) c._bandGuardSeparable = 1;
+      }
+    }
     return c;
   };
   // The same check on demand, for a console or a critic: render one frame, get
   // every drawn string and every collision back. Does not disturb the census.
   hud.inkAudit = function (G) {
-    inked = []; painted = []; seq = 0; plateSkipped = 0;
+    inked = []; painted = []; dimmed = []; seq = 0; plateSkipped = 0;
+    compositeSeen = null;
     hud.render(G);
-    const list = inked, plates = painted; inked = null; painted = null;
+    const list = inked, plates = painted, dim = dimmed;
+    inked = null; painted = null; dimmed = null;
     const bad = overprints(list);
     const near = [];
-    const era = erasures(list, plates, near);
-    return { strings: list.length, overprints: bad, ghosted: bad.ghosted, boxes: list,
-      plates: plates.length, platesTranslucent: plateSkipped,
-      erasures: era, near, rects: plates };
+    const out2 = { dim };
+    const era = erasures(list, plates, near, out2);
+    // ROUND 17 — the man, on the same frame, off the same plate list. See
+    // subjectBox(): `subject` is his silhouette in canvas pixels and `cover` is
+    // the fraction of it this HUD is standing on.
+    const F = G && G.st && G.st.mode === 'floor' ? G.floor : null;
+    const sb = F && pursuitUp(F) ? subjectBox(G, F) : null;
+    const worst = [];
+    if (sb) {
+      for (const r of plates) {
+        if (r.clear) continue;
+        const one = fracOf(sb, [r]);          // ROUND 21: same denominator as coverOf
+        if (one > 0.01) worst.push({ site: (r.tag ? r.tag + ':' : '') + r.site,
+          pct: +(one * 100).toFixed(1) });
+      }
+      worst.sort((a, b) => b.pct - a.pct);
+    }
+    return { strings: list.length, overprints: bad, ghosted: bad.ghosted,
+      crossRow: bad.crossRow, boxes: list,
+      plates: plates.length, platesTranslucent: plateSkipped, dim: dim.length,
+      erasures: era, reprinted: out2.reprinted, cliff: out2.cliff,
+      near, rects: plates, composite: compositeSeen,
+      subject: sb, cover: sb ? +(coverOf(sb, plates, 'chrome') * 100).toFixed(1) : null,
+      coverAll: sb ? +(coverOf(sb, plates) * 100).toFixed(1) : null,
+      coverBy: worst.slice(0, 8) };
+  };
+  // The subject-coverage half on its own, for a driver that wants it every frame
+  // of a chase without the string work. Same box, same plates, one owner.
+  hud.cover = function (G) {
+    inked = []; painted = []; dimmed = []; seq = 0; plateSkipped = 0;
+    hud.render(G);
+    const plates = painted;
+    inked = null; painted = null; dimmed = null;
+    const F = G && G.st && G.st.mode === 'floor' ? G.floor : null;
+    if (!F || !pursuitUp(F)) return null;
+    const sb = subjectBox(G, F);
+    if (!sb) return { off: true, d: F.dist, grade: F.sight && F.sight.grade };
+    // Named by site, because a coverage number nobody can attribute is a number
+    // nobody can fix — the ERZ tally is what turned 94 erasures into three
+    // classes and this is the same trick one target along.
+    const sites = [];
+    for (const r of plates) {
+      if (r.clear) continue;
+      if (!(r.x0 < sb.x1 && r.x1 > sb.x0 && r.top < sb.bot && r.bot > sb.top)) continue;
+      const one = fracOf(sb, [r]);          // ROUND 21: same denominator as coverOf
+      if (one > 0.005) sites.push([(r.tag ? r.tag + ':' : '') + r.site, +(one * 100).toFixed(1)]);
+    }
+    sites.sort((a, b) => b[1] - a[1]);
+    return { cover: coverOf(sb, plates, 'chrome'), all: coverOf(sb, plates),
+      own: coverOf(sb, plates, 'subj'),
+      // ROUND 21: named by TAG, not by line number. Round 20's chrome statistic
+      // could only be decomposed by grepping `hud.js:674` out of a site string,
+      // which is a transcription of a position in this file. The two elements
+      // that own the statistic now answer to their own names.
+      band: coverOf(sb, plates, 'band'), wind: coverOf(sb, plates, 'wind'),
+      panelOn: coverOf(sb, plates, 'pursuit'),
+      // ROUND 21: the SAME numbers under the pre-round denominator (the clipped
+      // box), carried on the same frame so "how much of the old headline was the
+      // denominator" is a subtraction and not a cross-load comparison. `vis` is
+      // the whole difference; both are published because a round that deflates
+      // its own gap has to show the deflation, not just the new level.
+      coverRaw: sb.vis > 0 ? coverOf(sb, plates, 'chrome') / sb.vis : 0,
+      bandRaw: sb.vis > 0 ? coverOf(sb, plates, 'band') / sb.vis : 0,
+      // The trigger quantity itself: what the WIDE panel would take of him on
+      // this frame, whatever shape the panel is actually in. Reported so the
+      // threshold in pursuitRect() can be argued with off the same number.
+      wideOn: boxOn(sb, PURSUIT_RECT), tight: (pursuitRect(G, F) || {}).w < PURSUIT_RECT.w,
+      d: sb.d, px: sb.px, vis: sb.vis,
+      grade: F.sight && F.sight.grade, box: sb, sites,
+      x0: +sb.x0.toFixed(1), x1: +sb.x1.toFixed(1),
+      top: +sb.top.toFixed(1), bot: +sb.bot.toFixed(1) };
+  };
+
+  // ===========================================================================
+  // ROUND 17 — THE GUARD, AND WHY IT IS NOT A CEILING
+  // ===========================================================================
+  // Six checks on this project have certified something they could not see, and
+  // the pattern in every one is a check that guards an EARLIER STAGE than the
+  // defect: a table, a bake log, a layout intention. So this one reads the frame
+  // — the live plate list off the live render, and the man's silhouette off the
+  // live camera and the live lens.
+  //
+  // ---- THE PROMISE, WRITTEN AS THE THING THAT CAN BE FALSE -----------------
+  // The obvious guard is a CEILING: "the panel never covers more than X% of
+  // him." Measured over 7 chases and 612 matched frames, the shipped tight
+  // panel still reaches 34.8% of him on its worst frame — a man close enough to
+  // span both slots has nowhere for the panel to go. So a ceiling set from that
+  // measurement sits above every value it will ever see and can never fire,
+  // which is the vacuous check this file's own history keeps producing.
+  //
+  // The promise the round actually makes is RELATIVE, so that is what is
+  // checked: THE SHIPPED LAYOUT MUST NOT STAND ON MORE OF HIM THAN THE WIDE
+  // PANEL WOULD HAVE. That is falsifiable on every frame with a subject on it,
+  // it needs no constant chosen after the fact, and it fires on exactly the
+  // change that would undo this round — a tight slot moved inward, the side
+  // flip removed, or a new element parked in the slot the panel moved into.
+  //
+  // ---- AND IT IS PROVEN IN THREE DIRECTIONS, NOT ASSERTED ------------------
+  // subjSelfTest() runs an opaque plate over his box (must fail), the same
+  // plate off him (must pass), and — on any frame where the wide panel really
+  // does land on him — the round-16 layout itself (must fail). The third is the
+  // exact corruption this guard exists to catch, executed rather than described,
+  // and the first two make the check provably able to fire on a frame where the
+  // third cannot separate the layouts.
+  const SUBJ_EPS = 0.005;      // half a percent of him: below the plate ledger's
+                               // own 0.005 site cut, so it cannot manufacture a
+                               // complaint out of a rounding difference.
+  // ROUND 21 — the switch and the corruption hook for the census caller in
+  // hud.sample(). ON by default: a guard that has to be switched on is the
+  // guard that had no caller. `GUARD_INJECT` is the SAME opaque plate
+  // subjSelfTest() uses, reachable from the census path, so the wiring itself
+  // can be proven to fire on a real bench instead of only in a console.
+  let GUARD_ON = true, GUARD_INJECT = null;
+  hud.guard = function (on, inject) {
+    if (on != null) GUARD_ON = !!on;
+    if (inject !== undefined) GUARD_INJECT = inject;
+    return { on: GUARD_ON, inject: GUARD_INJECT };
+  };
+  function subjMeasure(G, inject) {
+    inked = []; painted = []; dimmed = []; seq = 0; plateSkipped = 0;
+    hud.render(G);
+    if (inject) {
+      // Inside the same ledger: `painted` is still open here and closes below,
+      // so an injected plate is indistinguishable from one this file drew. It
+      // is tagged 'pursuit' because that is the population under test.
+      const t = plateTag; plateTag = 'pursuit';
+      ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(0,0,0,0.95)';
+      ctx.fillRect(inject.x, inject.y, inject.w, inject.h);
+      plateTag = t;
+    }
+    const plates = painted;
+    inked = null; painted = null; dimmed = null;
+    const F = G && G.st && G.st.mode === 'floor' ? G.floor : null;
+    if (!F || !pursuitUp(F)) return { on: false, why: 'no pursuit this frame' };
+    const sb = subjectBox(G, F);
+    if (!sb) return { on: false, why: 'subject off canvas or behind the lens' };
+    return { on: true, sb, plates,
+      panel: coverOf(sb, plates, 'pursuit'),
+      band: coverOf(sb, plates, 'band'),        // ROUND 21, same promise
+      chrome: coverOf(sb, plates, 'chrome'),
+      wideOn: boxOn(sb, PURSUIT_RECT),
+      tight: (pursuitRect(G, F) || {}).w < PURSUIT_RECT.w,
+      chips: bandRects(G, F).length > 1,
+      d: sb.d, bands: BANDS };
+  }
+  // What the panel takes of him under the SHIPPED layout, against what the wide
+  // rectangle would have taken, on ONE frame. `ok` is the promise above.
+  //
+  // `opts.inject` goes into the SHIPPED measurement ONLY, and that asymmetry is
+  // the whole point: it simulates the corruption this guard exists to catch —
+  // a new opaque element parked in the slot the panel moved into. The first
+  // draft injected into both sides, both went to 100%, `ship <= wide` held, and
+  // the self-test passed having proved nothing. Round 14's "empty sample" in a
+  // new costume, and it took the guard's own output to see it.
+  hud.subjCheck = function (G, opts = {}) {
+    const was = BANDS;
+    let ship, wide;
+    try {
+      ship = subjMeasure(G, opts.inject);
+      if (!ship.on) return { on: false, why: ship.why, ok: true };
+      BANDS = 'r16';                     // the executable wide layout
+      wide = subjMeasure(G, null);
+    } finally {
+      BANDS = was;
+      // LEAVE THE CANVAS AS THE PLAYER'S. This renders twice and the second
+      // render is the WIDE layout, so without this the visible HUD — and any
+      // hud.shot() taken afterwards — would be the layout under test rather
+      // than the one that ships. A measurement that changes the artefact it
+      // measured is how snap()'s step(0) corrupted this round's first evidence.
+      // Swallowed deliberately: a throw HERE would replace whatever real error
+      // put us in this finally with a second, less informative one.
+      try { hud.render(G); } catch { /* the original throw is the useful one */ }
+    }
+    const panelOk = ship.panel <= wide.panel + SUBJ_EPS;
+    // ROUND 21 — THE SAME PROMISE, ONE ELEMENT ALONG. The chipped top band must
+    // not stand on more of him than the full-width band would have. It is not a
+    // tautology: the chips are derived from string advances, so a longer store
+    // name, a wider clock format or a chip nudged outside the strip breaks it,
+    // and those are exactly the edits that would undo this round without
+    // touching a line of layout code.
+    const bandOk = ship.band <= wide.band + SUBJ_EPS;
+    const ok = panelOk && bandOk;
+    return { on: true, ok, panelOk, bandOk, bands: was,
+      d: +ship.d.toFixed(2), tight: ship.tight, chips: ship.chips,
+      panelPct: +(100 * ship.panel).toFixed(1),
+      widePct: +(100 * wide.panel).toFixed(1),
+      bandPct: +(100 * ship.band).toFixed(1),
+      wideBandPct: +(100 * wide.band).toFixed(1),
+      chromePct: +(100 * ship.chrome).toFixed(1),
+      wideChromePct: +(100 * wide.chrome).toFixed(1),
+      wideOnPct: +(100 * ship.wideOn).toFixed(1),
+      visPct: +(100 * ship.sb.vis).toFixed(1),
+      box: [Math.round(ship.sb.x0), Math.round(ship.sb.top),
+        Math.round(ship.sb.x1), Math.round(ship.sb.bot)],
+      why: panelOk ? null : `the shipped panel covers ${(100 * ship.panel).toFixed(1)}% of the `
+        + `subject where the wide panel covers ${(100 * wide.panel).toFixed(1)}%`,
+      bandWhy: bandOk ? null : `the chipped band covers ${(100 * ship.band).toFixed(1)}% of the `
+        + `subject where the full band covers ${(100 * wide.band).toFixed(1)}%` };
+  };
+  // THROWS. Run it on a chase frame; it needs a subject on canvas and says so
+  // rather than passing on an empty sample, which is how round 15's lampWarm()
+  // first reported agreement having compared nothing.
+  hud.subjSelfTest = function (G) {
+    const base = hud.subjCheck(G);
+    if (!base.on) throw new Error('subjSelfTest: EMPTY SAMPLE — ' + base.why
+      + '. Run this on a frame where a subject is fleeing and on canvas.');
+    const sb = subjMeasure(G).sb;
+    const w = sb.x1 - sb.x0, h = sb.bot - sb.top;
+    // 1. ON HIM. An opaque plate over his whole box, tagged as the panel's and
+    //    added to the SHIPPED layout only, must break the promise.
+    const on = hud.subjCheck(G, { inject: { x: sb.x0, y: sb.top, w, h } });
+    if (on.ok) throw new Error('subjSelfTest: THE GUARD DID NOT FIRE on an opaque '
+      + 'plate covering the whole subject box — it is not watching the frame. '
+      + JSON.stringify(on));
+    // 2. OFF HIM. The same plate somewhere he is not must leave it silent.
+    const off = hud.subjCheck(G, { inject: { x: 0, y: 0, w: 24, h: 24 } });
+    if (!off.ok) throw new Error('subjSelfTest: the guard fired on a plate that is '
+      + 'nowhere near the subject — it is reporting something other than coverage. '
+      + JSON.stringify(off));
+    // 3. THE REAL CORRUPTION, where this frame can express it. `separable` is
+    //    reported rather than assumed: most frames of a chase have the man
+    //    nowhere near the panel, and a self-test that quietly passes on those
+    //    would be measuring nothing.
+    const separable = base.widePct > 100 * SUBJ_EPS;
+    if (separable && base.panelPct > base.widePct + 100 * SUBJ_EPS) {
+      throw new Error('subjSelfTest: THE SHIPPED LAYOUT IS WORSE THAN THE ONE IT '
+        + 'REPLACED on this frame — ' + base.why);
+    }
+    return { ok: true, separable, d: base.d, tight: base.tight, chips: base.chips,
+      shipPanelPct: base.panelPct, widePanelPct: base.widePct,
+      shipBandPct: base.bandPct, wideBandPct: base.wideBandPct,
+      shipChromePct: base.chromePct, wideChromePct: base.wideChromePct,
+      injectedOnHimPct: on.panelPct, injectedOffHimPct: off.panelPct };
+  };
+
+  // ===========================================================================
+  // ROUND 21 — ONE OWNER PER RECTANGLE, AND AN ASSERTION THAT SAYS SO
+  // ===========================================================================
+  // CLAUDE.md opens with this file's hand-copied camera rig: "reproduced here so
+  // HUD markers can sit on world positions without needing the camera object" —
+  // correct only while the camera never moved, held in sync purely by
+  // coincidence, and its rule is that a second copy needs an assertion that
+  // fails loudly when the two disagree (`lungCheck()` in agents.js).
+  //
+  // The band now has THREE readers of one shape: the drawing site, the subject
+  // cluster's keep-out list, and the door tags' keep-out list. Nothing stops a
+  // future round typing `{ x: 0, y: 0, w: W, h: FLOOR_BAND }` back into one of
+  // them — it is one line, it is obviously right, and it stays right until the
+  // day the band chips. That is the bug, written out in advance.
+  //
+  // So this asserts BOTH halves off the live frame:
+  //   PAINTED   the band-tagged, full-height plates in the plate ledger match
+  //             bandRects() rectangle for rectangle.
+  //   RESERVED  floorKeepOuts() contains those rectangles BY `===` IDENTITY.
+  //             Not by value — a transcribed copy is value-equal on the very
+  //             frames it is correct on, and identity is the property that
+  //             actually distinguishes one owner from two.
+  const BAND_TOL = 1.0;         // px; the ledger stores device-space bounds
+  hud.bandCheck = function (G, opts = {}) {
+    inked = []; painted = []; dimmed = []; seq = 0; plateSkipped = 0;
+    hud.render(G);
+    if (opts.inject) {
+      const t = plateTag; plateTag = 'band';
+      ctx.globalAlpha = 1; ctx.fillStyle = 'rgba(2,4,3,0.95)';
+      ctx.fillRect(opts.inject.x, opts.inject.y, opts.inject.w, opts.inject.h);
+      plateTag = t;
+    }
+    const plates = painted;
+    inked = null; painted = null; dimmed = null;
+    const F = G && G.st && G.st.mode === 'floor' ? G.floor : null;
+    if (!F) return { on: false, ok: true, why: 'not on the floor screen' };
+    const want = bandRects(G, F);
+    const drawn = plates.filter((r) => r.tag === 'band'
+      && r.bot - r.top > FLOOR_BAND - BAND_TOL);
+    const fmt = (r) => `[${Math.round(r.x0 != null ? r.x0 : r.x)},`
+      + `${Math.round(r.top != null ? r.top : r.y)},`
+      + `${Math.round(r.x1 != null ? r.x1 : r.x + r.w)},`
+      + `${Math.round(r.bot != null ? r.bot : r.y + r.h)}]`;
+    const why = [];
+    if (drawn.length !== want.length) {
+      why.push(`painted ${drawn.length} full-height band plates, bandRects() says `
+        + `${want.length}: painted ${drawn.map(fmt).join(' ')} vs ${want.map(fmt).join(' ')}`);
+    } else {
+      const byX = [...drawn].sort((a, b) => a.x0 - b.x0);
+      const wX = [...want].sort((a, b) => a.x - b.x);
+      for (let i = 0; i < wX.length; i++) {
+        const a = byX[i], b = wX[i];
+        if (Math.abs(a.x0 - b.x) > BAND_TOL || Math.abs(a.top - b.y) > BAND_TOL
+          || Math.abs(a.x1 - (b.x + b.w)) > BAND_TOL
+          || Math.abs(a.bot - (b.y + b.h)) > BAND_TOL) {
+          why.push(`band plate ${fmt(a)} is not the rectangle bandRects() owns, ${fmt(b)}`);
+        }
+      }
+    }
+    // The identity half. `bandRects` is memoised on renderSeq, so the objects it
+    // returns here are the very objects the render above used.
+    const ko = floorKeepOuts(G, F);
+    for (const r of want) {
+      if (ko.indexOf(r) < 0) {
+        why.push('floorKeepOuts() does not hold bandRects()\'s own object for '
+          + fmt(r) + ' — a second copy of the band\'s shape exists');
+      }
+    }
+    return { on: true, ok: why.length === 0, chips: want.length > 1,
+      painted: drawn.map(fmt), want: want.map(fmt), why: why.join('; ') || null };
+  };
+  // THROWS. Proven in three directions on a live floor frame, and the third is
+  // the one that matters: a rectangle that is value-equal to the band's but is
+  // not the band's object must be REJECTED, or the identity test above is an
+  // equality test wearing its clothes.
+  hud.bandSelfTest = function (G) {
+    const base = hud.bandCheck(G);
+    if (!base.on) throw new Error('bandSelfTest: EMPTY SAMPLE — ' + base.why
+      + '. Run this on a floor frame.');
+    if (!base.ok) throw new Error('bandSelfTest: THE SHIPPED BAND ALREADY FAILS — ' + base.why);
+    // 1. AN UNAUTHORISED BAND PLATE. Same size as the strip, somewhere it is
+    //    not, tagged as the band's. The check must see it.
+    const bad = hud.bandCheck(G, { inject: { x: 400, y: 0, w: 200, h: FLOOR_BAND } });
+    if (bad.ok) throw new Error('bandSelfTest: THE CHECK DID NOT FIRE on an extra '
+      + 'full-height band plate — it is not reading the frame. ' + JSON.stringify(bad));
+    // 2. AND IT IS NOT MERELY COUNTING PLATES: a plate that is not the band's
+    //    height is the rule line and the REC blip, which are the band's and are
+    //    not its shape. A 2 px one must leave it silent.
+    const thin = hud.bandCheck(G, { inject: { x: 400, y: 10, w: 200, h: 2 } });
+    if (!thin.ok) throw new Error('bandSelfTest: the check fired on a 2 px plate — '
+      + 'it is counting band-tagged fills, not band rectangles. ' + JSON.stringify(thin));
+    // 3. THE IDENTITY TEST IS AN IDENTITY TEST. A structural copy of the band's
+    //    own rectangle is what a transcription looks like, and `indexOf` must
+    //    reject it. Asserted directly rather than assumed of the language.
+    const F = G && G.st && G.st.mode === 'floor' ? G.floor : null;
+    const want = bandRects(G, F);
+    const copy = { ...want[0] };
+    if (want.indexOf(copy) >= 0) {
+      throw new Error('bandSelfTest: a VALUE-EQUAL COPY of the band rectangle passed '
+        + 'the identity test — the one-owner assertion is an equality assertion.');
+    }
+    return { ok: true, chips: base.chips, want: base.want, painted: base.painted,
+      injectedExtraFired: !bad.ok, thinPlateSilent: thin.ok };
   };
 
   // Viewport px -> 1280x720 HUD space, matching object-fit: contain.

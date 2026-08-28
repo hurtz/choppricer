@@ -5,6 +5,52 @@
 // console:  const A = await import('/src/store/aniso.js');
 //
 // =========================================================================
+// ROUND 19 — K IS RETIRED. READ THIS BEFORE QUOTING ANYTHING BELOW.
+//
+// The header that follows is r18's and it is left intact, because the reasoning
+// that built K is worth keeping and the ablation machinery under it is still
+// the right way to mask a class. But **K itself must not be quoted again**, and
+// the round-18 headline it carried — a "+46% residual" against the reference
+// photographs — does not survive. Three findings, all from r18's critic:
+//
+//   1. THE RULE IS ASYMMETRIC AND THE ASYMMETRY DOES THE WORK. The render side
+//      is masked by ABLATION and the photograph side by RECTANGLES. Run the
+//      crop rule on both sides and the render is **not quotable at 6 of 6
+//      poses by this file's own refusal test** — the densest round window
+//      reachable on a render frame is 10-35% round pixels, so no rectangle can
+//      isolate the class at all. AGENTS_BRIEF calls this the asymmetric-rule
+//      trap and says it is "the easiest way on this project to manufacture a
+//      gap that does not exist".
+//
+//   2. K MEASURES ARRANGEMENT, NOT PACKAGING SHAPE. store_01_Langenstein's
+//      reads K = 2.034, sweep [1.559, 2.208], **0.0% of a 675-crop sweep below
+//      1.0** — fully quotable, and pointing the OTHER way — because it is
+//      bottles standing in vertical rows against boxes in horizontal shelf
+//      bands. The statistic cannot tell a body of revolution from a planogram.
+//      Ninth region-dependent metric retired on this project.
+//
+//   3. THE FIX WAS NEVER RESTING ON IT. The unwrap is verified **off the
+//      geometry**: barrel v-span 0.099-0.248 -> 0.570-0.745 with r = 0.992-0.998
+//      on all 51 lathes. That is the evidence, it is a direct reading of the
+//      artefact, and round 19 turned it into a live assertion — pack.js's
+//      latheCheck(scene) now recovers each profile from POSITIONS and reads the
+//      v the GPU is holding, so the same measurement runs on every page load
+//      instead of once in a transcript.
+//
+// WHAT IN THIS FILE IS STILL GOOD: `ablate` / `uvAB` (the mask-by-ablation
+// method and the within-run swap), `facingPx` (how many pixels a facing gets,
+// projected off the live camera), `atlasBytes`, and POSES. What is dead is the
+// ratio-of-ratios K and every number derived from it.
+//
+// AND THE LEGIBILITY CLAIM THAT GOES WITH IT. r18's "7.40x" was the EXTREME of
+// the stretch distribution, not its middle — the median was 3.39x. And facingPx
+// says the median can facing is **1.5-2.4 px at chase range**, 8.5 px at the
+// nearest pose the rig can reach and 54 px maximum anywhere, so **no per-can
+// legibility claim is available at all.** What improved is the aggregate
+// banding of the shelf. Say it that way.
+// =========================================================================
+//
+// =========================================================================
 // ROUND 18 — WHY THIS EXISTS, AND WHAT ROUND 17'S CRITIC PROVED AGAINST ITS
 // OWN HEADLINE.
 //
@@ -318,5 +364,60 @@ export function atlasBytes(scene = window.__CHOP.scene) {
     storeTexturesMB: +(storeTotal / 1048576).toFixed(1),
     textures: seen.size,
     rows,
+  };
+}
+
+// --- DRAW CALLS AND TRIANGLES, AS A WITHIN-RUN TOGGLE -----------------------
+//
+// AGENTS_BRIEF is unusually specific about this one, because two rounds got it
+// wrong: `renderer.info` read 129 calls / 2,511,402 tris and 135 /2,513,886 on
+// THE SAME BUILD AT THE SAME POSE minutes apart, so "naming the pose is not
+// enough — the probe's own hide-set moves it. The only trustworthy comparison
+// is a toggle within a single run: capture, flip, capture again, without
+// reloading or re-deriving the hide-set."
+//
+// So: the hide-set is established ONCE by a single snapClean(storeOnly) call,
+// and then both arms are plain renderer.render() calls into that same state
+// with nothing between them but `visible` on the three round-19 sign nodes.
+// No reload, no second derivation, no material swap — a `visible` flag cannot
+// drop a shader define or invalidate a program, which is the failure mode
+// AGENTS_BRIEF records for map-stripping ablations.
+//
+// It reports the pose because the ABSOLUTE numbers are still pose-dependent and
+// nobody should restate them. The DELTA is the quantity that means something.
+export const DRAW_POSE = { tag: 'draw_chaseOut_a1', pos: [-13.25, 1.55, -2.0],
+  look: [-13.25, 1.55, -15.0] };
+
+export async function drawAB(pose = DRAW_POSE) {
+  const C = window.__CHOP;
+  const R = C.renderer;
+  const names = ['lightboxes', 'vendorPOS', 'categoryHangers'];
+  const nodes = [];
+  C.scene.traverse((o) => { if (names.includes(o.name)) nodes.push(o); });
+  if (nodes.length !== names.length) {
+    throw new Error('drawAB: expected ' + names.length + ' round-19 sign nodes, found '
+      + nodes.length + ' (' + nodes.map((o) => o.name).join(',') + '). A probe that '
+      + 'silently measures nothing is worse than no probe.');
+  }
+  // ONE derivation of the hide-set and one camera pose, both from snapClean.
+  await C.snapClean(pose.tag + '_on', pose, { storeOnly: true });
+  const read = () => {
+    R.info.reset();
+    R.render(C.scene, C.probeCam);
+    return { calls: R.info.render.calls, tris: R.info.render.triangles };
+  };
+  const on = read();
+  const wasVisible = nodes.map((o) => o.visible);
+  nodes.forEach((o) => { o.visible = false; });
+  const off = read();
+  nodes.forEach((o, i) => { o.visible = wasVisible[i]; });
+  const back = read();
+  return {
+    pose: pose.tag, camera: { pos: pose.pos, look: pose.look, fov: pose.fov ?? 52 },
+    on, off,
+    delta: { calls: on.calls - off.calls, tris: on.tris - off.tris },
+    restored: back.calls === on.calls && back.tris === on.tris,
+    nodes: nodes.map((o) => o.name + ':' + (o.geometry && o.geometry.index
+      ? o.geometry.index.count / 3 : 0) + 'tri'),
   };
 }

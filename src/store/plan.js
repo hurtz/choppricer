@@ -189,7 +189,28 @@ export const ATLAS = {
   // vertical smear: a 6.4x vertical stretch divides |dL/dy| by 6.4 and leaves
   // |dL/dx| alone, which is the anisotropy sign inversion, arrived at
   // mechanically.
-  can:    { cols: 6, rows: 4, cw: 192, ch: 144, wrap: 0, form: 'N', barrel: [0.085, 0.870] },
+  // ROUND 20 — [0.085, 0.870] WAS ASYMMETRIC AND STARVED THE BOTTOM ROLLED RIM.
+  // Bottom margin 0.085 against a top margin of 0.130: the top band got 1.53x
+  // the rows for the same feature, and CAN_PROFILES.rim is geometrically
+  // symmetric (constant radius 0.462 from y -0.408 to +0.408, so the barrel is
+  // 81.6% of the can and the geometric band is [0.092, 0.908]).
+  //
+  // THE GEOMETRIC BAND IS NOT THE RIGHT ONE, AND THAT IS THE INTERESTING PART.
+  // Pricing the two rolled-rim walls (segments 2->3 and 6->7) through
+  // latheBands()'s own weight sharing at ch 144, RADIAL_W 0.10, floor 3 texels:
+  //
+  //     [0.085, 0.870]  bottom 2.85 FAIL   top 3.96 ok    endRatio 1.53
+  //     [0.092, 0.908]  bottom 3.09 ok     top 2.80 FAIL  endRatio 1.00
+  //     [0.107, 0.893]  bottom 3.59 ok     top 3.26 ok    endRatio 1.00
+  //
+  // The geometric band trades one failing rim for the other. The profile is
+  // symmetric in HEIGHT but not in WEIGHT: it closes to r=0 at y=+0.485 rather
+  // than +0.50, so segment 8->9 carries 0.015 of extra y travel, the top end
+  // zone has more total weight to share, and the top rim's slice is diluted.
+  // [0.107, 0.893] equalises the two ends and clears the floor at both while
+  // leaving the barrel's share of the cell where it already was — 0.786 against
+  // the shipped 0.785, stretch 1.038 against 1.039. It costs the label nothing.
+  can:    { cols: 6, rows: 4, cw: 192, ch: 144, wrap: 0, form: 'N', barrel: [0.107, 0.893] },
   bottle: { cols: 6, rows: 3, cw: 160, ch: 212, wrap: 0, form: 'B', barrel: [0.090, 0.660] },
 };
 // Bake order. The deal is greedy and stateful across atlases: a motif baked on

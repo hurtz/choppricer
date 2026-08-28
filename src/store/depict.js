@@ -209,7 +209,16 @@ function frost(g, cx, cy, rw, rh, rng, n = 7) {
 // ===========================================================================
 // THE MOTIFS. Each gets (g, cx, cy, rw, rh, rng) and owns that box.
 // ===========================================================================
+// ROUND 19 — EXPORTED. The signage needed photographic content and this file is
+// already the one owner of what a peach looks like in this store. A second
+// drawing of a peach for a promo lightbox would be CLAUDE.md's duplication
+// hazard with a picture in it: the sign and the can would drift apart, and the
+// whole point of a vendor lightbox is that it shows the thing on the shelf
+// under it. store/vendor.js decodes these into sRGB — they are written in the
+// package MASK space (r = brandness, g = print brightness, b = food band), not
+// in colour, so a caller that blits one straight to a sign gets a green mess.
 const M = {};
+export { M as MOTIF_DRAW };
 
 // ---- grains, baking --------------------------------------------------------
 M.wheatEar = (g, cx, cy, rw, rh, rng) => {                 // flour

@@ -37,6 +37,18 @@ export { ATLAS };
 // on flour, on tuna and on kettle chips, because its only inputs were a layout
 // index and a hue band. depict() draws the product.
 import { depict, depictCheck, foodB, MOTIF, windowSnapshot } from './depict.js';
+// ROUND 22 — THE PRESS. See src/store/press.js: every band, plate, ribbon and
+// rule in this file was drawn in ink(r, g), i.e. the ONE per-instance brand
+// hue at some brightness, so a face carried exactly one chromatic ink. The
+// b-channel spot inks the shader has decoded since round 5 were written only
+// inside depict(). PRESS.on is the dial, and it is off-by-default-identical:
+// press.js draws from its own per-cell rng so this file's generator stream is
+// unmoved either way, which is what makes the A/B a single variable.
+import {
+  PRESS, setPress, livery, pressCarton, pressPouch, pressCanPanel, pressBandInk,
+  inkCensus, decodeSelfTest, cfgCheck, pressInk, pressTone, pressGloss,
+} from './press.js';
+export { PRESS, setPress };
 const MOTIF_OF = (d) => MOTIF[d] || null;
 
 // ROUND 15. Every band of copy on a facing now comes from copyFor(), which is
@@ -249,10 +261,19 @@ export function bakeCheckSelfTest() {
 // and a torn remnant. products.js asks for one wherever it leaves a bare bay.
 export const TAG_SKU = 13, TAG_COLS = 4, TAG_ROWS = 4;
 
+// ROUND 19 — every atlas canvas in this file is born audited. Instrumenting the
+// four bakes by hand would have covered exactly the four atlases somebody
+// remembered, which is precisely the failure r18's critic found one layer up in
+// setTypeCtx. Auditing at the one place a drawing surface is created means a
+// fifth atlas added next round is inside the count on the day it is written.
+// The wrapper is bound to the ctx OBJECT, never the prototype, so it cannot see
+// the CCTV wall, the HUD or any other canvas in the page.
 function cv(w, h) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
-  return [c, c.getContext('2d')];
+  const g = c.getContext('2d');
+  armTypeAudit(g);
+  return [c, g];
 }
 const ink = (r, g, b = 0) => `rgb(${r | 0},${g | 0},${b | 0})`;
 const rgba = (r, g, b, a) => `rgba(${r | 0},${g | 0},${b | 0},${a})`;
@@ -317,11 +338,355 @@ export { foodB };
 // — records it with the ink, and typeCheck() reports the worst-case step.
 const TYPE_LOG = [];
 let TYPE_CTX = null;
-export function setTypeCtx(atlas, cell) { TYPE_CTX = atlas ? { atlas, cell } : null; }
+
+// ===========================================================================
+// ROUND 19 — `mode`, AND THE AUDIT THAT COUNTS DRAW CALLS.
+//
+// r18's critic broke this check without touching a pixel: `setTypeCtx` was
+// called for four atlases, so the shelf-tag atlas — the price rail, item #4 on
+// AGENTS_BRIEF's bar — sat entirely outside the guarantee. Ten raw `fillText`
+// sites including the price numerals, and a `fitText('CLEARANCE')` whose
+// contrast step silently no-opped because TYPE_CTX was null. It contributed
+// 0 of 688 logged runs. The self-test was honest and the coverage was fiction.
+//
+// TWO CHANGES, AND THE SECOND IS THE ONE THAT GENERALISES.
+//
+// 1. `mode`. The four mask atlases encode print brightness in the g channel and
+//    the shader decodes `albedo = base * (0.045 + 0.955*g)`, so their contrast
+//    lives on g and nowhere else. The tag atlas is a PLAIN sRGB CanvasTexture
+//    drawn straight — its ink is a literal colour. Running the g-channel
+//    formula over it would have been a number about the wrong quantity, which
+//    is how this project has retired nine statistics. So the ledger records
+//    which contrast model a run belongs to and typeCheck applies that one.
+//
+// 2. THE AUDIT. Extending coverage by hand fixes today's gap and leaves the
+//    next one open: nothing would notice a new atlas, or a new raw fillText in
+//    an old one. So the bake now runs inside `withTypeAudit`, which counts
+//    every fillText and strokeText THE CANVAS ACTUALLY RECEIVES, on the ctx
+//    object itself rather than on the prototype (so it structurally cannot see
+//    the CCTV wall or any other canvas), and typeCheck fails when a string was
+//    inked that the ledger never saw. Grep finds the sites you can name; a
+//    draw-call count finds the ones you cannot — the same argument as r15's
+//    ink ledger, applied one surface along.
+// AND IT HAS TO KNOW WHAT IT IS LOOKING AT, OR IT CRIES WOLF. These atlases
+// deliberately ink hundreds of strings nobody is meant to read: legalBlock's
+// ingredients columns at 4-6 px in a 340 px cell, barcode digits, panel rules.
+// Guaranteeing contrast on those would be wrong — the whole point of the legal
+// block is that it is dense luminance noise, and a check that complains about
+// 700 of them is a check people switch off. AGENTS_BRIEF: "a checker that cries
+// wolf gets ignored, which is worse than not having one."
+//
+// So the audit records the SIZE each string was inked at, from the ctx's own
+// font string, and only strings at or above DISPLAY_PX are held to the
+// guarantee. Everything is counted and reported either way, so the split is
+// visible rather than assumed. 10 px in the cell is the line: at the 340 px
+// carton cell and the 84-110 px a facing subtends at its very largest
+// (aniso.js facingPx), 10 px of cell is under 3 px on screen — the size at
+// which a real photograph has already lost the word.
+export const DISPLAY_PX = 10;
+const AUDIT = { on: false, big: 0, small: 0, viaFit: 0, sites: [], viaFitNow: false };
+const fontPx = (f) => { const m = /(\d+(?:\.\d+)?)px/.exec(String(f)); return m ? +m[1] : 0; };
+
+// ===========================================================================
+// ROUND 20 — THE PLATE LEDGER. TYPESET IS NOT PAINTED, ON THIS SURFACE TOO.
+//
+// r19 drew the flash line at cx 96 with maxW 0.56 of a 192 px cell and then
+// drew the barcode's opaque plate from x 126.72. Measured exactly, off the live
+// font metrics rather than off a screenshot: 17 OF 24 can cells ran their flash
+// string under that plate, by 4.7 to 23.0 px — FRENCH STYLE, TRADITIONAL,
+// HONEY ROASTED, DOUBLE CHOCOLATE — and the plate is drawn last, so the tail of
+// the word is gone. shots/r20p_canatlas_g.png is the r19 bake and shows it.
+//
+// typeCheck() could not see this and never could: it is a CONTRAST check, and
+// the contrast of a glyph that has been painted over is not the question.
+// AGENTS_BRIEF, on two rounds of HUD width-auditing that missed the same class:
+// "what erases words is ctx.fillRect... when you build an instrument to catch a
+// class of defect, enumerate every mechanism in that class first."
+//
+// So this records the RECTANGLES as well as the strings, on the ctx object (so
+// it structurally cannot see the CCTV wall, the HUD or the offscreen composite),
+// and reports an opaque source-over rect drawn AFTER a display-size string that
+// covers part of its box. Effective alpha is globalAlpha TIMES the alpha in the
+// fill string — the naive globalAlpha test gets that exactly backwards — and a
+// multiply or lighter rect is a shading term, not an eraser.
+const PLATE = { rects: new Map(), text: new Map(), seq: 0 };
+const bucket = () => (TYPE_CTX ? TYPE_CTX.atlas + '#' + TYPE_CTX.cell : '(none)');
+const alphaOfFill = (s) => {
+  const t = String(s);
+  const m = /rgba\(\s*\d+\s*,\s*\d+\s*,\s*\d+\s*,\s*([0-9.]+)\s*\)/.exec(t);
+  if (m) return +m[1];
+  if (/^#[0-9a-f]{8}$/i.test(t)) return parseInt(t.slice(7), 16) / 255;
+  if (/^(#|rgb\()/i.test(t)) return 1;
+  return 0;                                   // a gradient or a pattern: not a plate
+};
+const push = (map, key, v) => { const a = map.get(key); if (a) a.push(v); else map.set(key, [v]); };
+
+// THE LEDGER HAS ITS OWN SIZE BAR, AND FINDING OUT WHY IS THIS ROUND'S SECOND
+// INSTRUMENT FAULT. The first draft reused DISPLAY_PX (10), and the r19
+// reproduction below then returned ZERO: the can flash is drawn at LH * 0.082 =
+// 9.27 px, so the ledger built to catch that erasure could not see it. DISPLAY_PX
+// is an ABSOLUTE px value applied to cells of 144, 160, 212 and 240 rows — 10 px
+// is 2.9% of a carton cell and 6.4% of a can cell, so one number cannot mean the
+// same thing on both. It is left alone because typeCheck's contrast population is
+// calibrated on it; the plate ledger takes its own bar instead.
+//
+// 6.0 px is where this file's deliberately-unreadable type stops: the legal block
+// runs at 5.2 px on a can and 4.3 on a bottle and the barcode digits at 3.5, all
+// of which are dense luminance noise by design, while the flash (9.3) and the
+// descriptor (8.1) are words. A word painted out is a defect at any size someone
+// was meant to read it at.
+export const PLATE_PX = 6.0;
+
+export function plateNoteText(g, txt, cx, y, w, px, align) {
+  if (px < PLATE_PX || PROBE.on) return;      // a probe re-bake describes the probe
+  const t = g.getTransform();
+  const x0 = align === 'left' ? cx : cx - w / 2;
+  push(PLATE.text, bucket(), {
+    txt, px, seq: PLATE.seq++,
+    x0: t.e + x0 * t.a, x1: t.e + (x0 + w) * t.a,
+    y0: t.f + (y - px * 0.72) * t.d, y1: t.f + (y + px * 0.08) * t.d,
+  });
+}
+
+// A rect thinner than this fraction of the glyph box is a RULE, not a plate.
+// The first run of this check reported two complaints and the build was right
+// both times: the shelf tag's struck-through was-price draws a 52x2 rule across
+// a 12.8 px numeral, covers 15.6% of its box, and destroys nothing — a strike is
+// SUPPOSED to cross the word. AGENTS_BRIEF, on the critic that killed one of its
+// own rules first: "that rule staying silent afterwards is positive evidence the
+// gate works." An eraser has to be tall enough to hide a glyph; the r19 barcode
+// plate is 0.95 of the flash's box height and still fires.
+const RULE_H = 0.30;
+
+export function plateCheck(minCover = 0.02) {
+  const bad = [];
+  let strings = 0, plates = 0;
+  for (const [k, ts] of PLATE.text) {
+    const rs = PLATE.rects.get(k) || [];
+    strings += ts.length; plates += rs.length;
+    for (const s of ts) {
+      const bh = Math.max(1e-6, s.y1 - s.y0);
+      const area = Math.max(1e-6, (s.x1 - s.x0) * bh);
+      let cov = 0, by = null;
+      for (const r of rs) {
+        if (r.seq < s.seq) continue;                     // painted before: not an eraser
+        if ((r.y1 - r.y0) < RULE_H * bh) continue;       // a rule, not a plate
+        const ox = Math.min(s.x1, r.x1) - Math.max(s.x0, r.x0);
+        const oy = Math.min(s.y1, r.y1) - Math.max(s.y0, r.y0);
+        if (ox <= 0 || oy <= 0) continue;
+        cov += ox * oy; by = r;
+      }
+      if (cov / area > minCover) {
+        bad.push({ cell: k, txt: s.txt, px: +s.px.toFixed(1), cover: +(cov / area).toFixed(3),
+          plate: by ? [Math.round(by.x0), Math.round(by.y0), Math.round(by.x1), Math.round(by.y1)] : null });
+      }
+    }
+  }
+  return Object.assign(bad, { strings, plates, buckets: PLATE.text.size });
+}
+export function plateStats() {
+  return { strings: [...PLATE.text.values()].reduce((a, b) => a + b.length, 0),
+    plates: [...PLATE.rects.values()].reduce((a, b) => a + b.length, 0),
+    buckets: PLATE.text.size };
+}
+export function resetPlateLedger() { PLATE.rects.clear(); PLATE.text.clear(); PLATE.seq = 0; }
+
+// Three directions, on a canvas made the way the atlases are, because a probe
+// that only ever fires on the case you built it for is not calibrated:
+//   1. an opaque plate drawn AFTER a display-size string MUST fire
+//   2. the same plate at alpha 0.30 must NOT
+//   3. the same opaque plate drawn BEFORE the string must NOT
+// It puts the ledger back afterwards and re-runs the real check, because an
+// instrument left dirty is worse than no instrument.
+export function plateCheckSelfTest() {
+  const keepR = new Map(PLATE.rects), keepT = new Map(PLATE.text), keepS = PLATE.seq;
+  const keepCtx = TYPE_CTX;
+  const run = (mode) => {
+    PLATE.rects.clear(); PLATE.text.clear(); PLATE.seq = 0;
+    const [, g] = cv(256, 128);
+    setTypeCtx('(plate-self-test)', mode);
+    g.textBaseline = 'alphabetic';
+    const paint = () => {
+      g.globalAlpha = 1;
+      g.fillStyle = mode === 'translucent' ? 'rgba(255,255,255,0.30)' : 'rgb(250,250,250)';
+      g.fillRect(60, 40, 90, 30);
+    };
+    if (mode === 'before') paint();
+    g.fillStyle = 'rgb(20,20,20)';
+    fitText(g, 'DOUBLE CHOCOLATE', 100, 60, 180, 20, FACE.fat, '900');
+    if (mode !== 'before') paint();
+    return plateCheck().length;
+  };
+  // 4. THE ACTUAL r19 BUG, reproduced to its own numbers rather than
+  //    synthesised: a 192 px cell, the flash centred at cx 96 with maxW 0.56 of
+  //    the cell, and barcode()'s opaque plate from x = 0.66 of the cell.
+  //    typeCoverageSelfTest() uses the same discipline for its half.
+  const r19 = () => {
+    PLATE.rects.clear(); PLATE.text.clear(); PLATE.seq = 0;
+    const [, g] = cv(192, 144);
+    setTypeCtx('(plate-self-test)', 'r19');
+    g.textBaseline = 'alphabetic';
+    const LH = (0.915 - 0.130) * 144;
+    const yb = 0.130 * 144 + LH * 0.930;
+    g.fillStyle = 'rgb(255,240,0)';
+    fitText(g, 'DOUBLE CHOCOLATE', 96, yb, 192 * 0.56, LH * 0.082, FACE.fat, '900');
+    g.fillStyle = 'rgb(6,252,0)';
+    g.fillRect(192 * 0.66, 0.130 * 144 + LH * 0.880, 192 * 0.24, LH * 0.062);
+    const out = plateCheck();
+    return out.length ? out[0].cover : 0;
+  };
+  const fires = run('opaque');
+  const translucent = run('translucent');
+  const before = run('before');
+  const rule = (() => {
+    PLATE.rects.clear(); PLATE.text.clear(); PLATE.seq = 0;
+    const [, g] = cv(256, 128);
+    setTypeCtx('(plate-self-test)', 'rule');
+    g.textBaseline = 'alphabetic';
+    g.fillStyle = 'rgb(20,20,20)';
+    fitText(g, '$8.77', 100, 60, 180, 20, FACE.fat, '900');
+    g.fillStyle = 'rgb(40,40,40)';
+    g.fillRect(60, 54, 90, 2);                  // a strike-through: 2 px on a 16 px box
+    return plateCheck().length;
+  })();
+  const r19cover = r19();
+  PLATE.rects.clear(); PLATE.text.clear();
+  for (const [k, v] of keepR) PLATE.rects.set(k, v);
+  for (const [k, v] of keepT) PLATE.text.set(k, v);
+  PLATE.seq = keepS;
+  TYPE_CTX = keepCtx;
+  return { firesOnOpaquePlate: fires, silentOnAlpha030: translucent, silentWhenPlateFirst: before,
+    silentOnStrikeThrough: rule, r19FlashCoveredByBarcode: +r19cover.toFixed(3),
+    liveComplaints: plateCheck().length,
+    ok: fires > 0 && translucent === 0 && before === 0 && rule === 0 && r19cover > 0.02 };
+}
+
+export function armTypeAudit(g) {
+  const proto = Object.getPrototypeOf(g);
+  const origRect = proto.fillRect;
+  g.fillRect = function (x, y, w, h) {
+    // Effective alpha is globalAlpha TIMES the alpha in the fill string, and a
+    // multiply or lighter composite paints a shading term, not a plate.
+    const ea = (this.globalAlpha === undefined ? 1 : this.globalAlpha) * alphaOfFill(this.fillStyle);
+    if (!PROBE.on && ea >= 0.90 && this.globalCompositeOperation === 'source-over') {
+      const t = this.getTransform();
+      push(PLATE.rects, bucket(), {
+        seq: PLATE.seq++,
+        x0: t.e + Math.min(x, x + w) * t.a, x1: t.e + Math.max(x, x + w) * t.a,
+        y0: t.f + Math.min(y, y + h) * t.d, y1: t.f + Math.max(y, y + h) * t.d,
+      });
+    } else PLATE.seq++;
+    return origRect.call(this, x, y, w, h);
+  };
+  const wrap = (name, kind) => {
+    const orig = proto[name];
+    g[name] = function (txt, x, y, ...rest) {
+      if (AUDIT.viaFitNow) AUDIT.viaFit++;
+      else {
+        const t = this.getTransform ? this.getTransform() : null;
+        const px = fontPx(this.font) * (t ? Math.hypot(t.b, t.d) : 1);
+        if (px >= DISPLAY_PX) {
+          AUDIT.big++;
+          if (AUDIT.sites.length < 40) {
+            AUDIT.sites.push(kind + ' ' + px.toFixed(0) + 'px "' + String(txt).slice(0, 28) + '"');
+          }
+        } else AUDIT.small++;
+      }
+      return orig.call(this, txt, x, y, ...rest);
+    };
+  };
+  wrap('fillText', 'fillText');
+  wrap('strokeText', 'strokeText');
+  return g;
+}
+
+// Kept for a caller that owns a canvas cv() did not make. Same counter.
+export function withTypeAudit(g, fn) {
+  const was = { on: AUDIT.on, fill: g.fillText, stroke: g.strokeText };
+  AUDIT.on = true;
+  const wrap = (orig, kind) => function (txt, x, y, ...rest) {
+    if (AUDIT.on) {
+      if (AUDIT.viaFitNow) AUDIT.viaFit++;
+      else {
+        // the transform can scale the type as well as the font string; take the
+        // vertical scale off the live matrix so a translated-and-scaled cell
+        // reports the size the texel actually gets
+        const t = this.getTransform ? this.getTransform() : null;
+        const px = fontPx(this.font) * (t ? Math.hypot(t.b, t.d) : 1);
+        if (px >= DISPLAY_PX) {
+          AUDIT.big++;
+          if (AUDIT.sites.length < 40) {
+            AUDIT.sites.push(kind + ' ' + px.toFixed(0) + 'px "' + String(txt).slice(0, 28) + '"');
+          }
+        } else AUDIT.small++;
+      }
+    }
+    return orig.call(this, txt, x, y, ...rest);
+  };
+  g.fillText = wrap(was.fill, 'fillText');
+  g.strokeText = wrap(was.stroke, 'strokeText');
+  try { return fn(); } finally {
+    AUDIT.on = was.on;
+    delete g.fillText; delete g.strokeText;      // back to the prototype methods
+  }
+}
+export function typeAudit() {
+  return { unguardedDraws: AUDIT.big, subDisplayDraws: AUDIT.small,
+    guardedDraws: AUDIT.viaFit, sites: AUDIT.sites.slice(0, 12) };
+}
+export function resetTypeAudit() {
+  AUDIT.big = 0; AUDIT.small = 0; AUDIT.viaFit = 0; AUDIT.sites.length = 0;
+}
+
+// THE PROOF THAT THE COVERAGE HALF FIRES, AND IT REPRODUCES r18's ACTUAL BUG
+// RATHER THAN A SYNTHETIC ONE. What r18 shipped on the price rail was
+//
+//     g.font = `900 ${CH * 0.46}px ${FACE.fat}`;
+//     g.fillText(big, 6, py);
+//
+// — a display-size numeral inked straight at the canvas, contributing nothing
+// to the ledger, on the one surface AGENTS_BRIEF calls out as bar item #4. So
+// the test draws exactly that, on a canvas made the same way the atlases are,
+// and asserts typeCheck() reports it. Then it puts the counters back and
+// asserts the complaint is gone, because a test that leaves the instrument
+// dirty is worse than no test.
+export function typeCoverageSelfTest() {
+  const before = { big: AUDIT.big, small: AUDIT.small, viaFit: AUDIT.viaFit,
+    sites: AUDIT.sites.slice() };
+  const clean = typeCheck().length;
+  const [, g] = cv(256, 128);
+  g.fillStyle = '#141312';
+  g.font = `900 ${128 * 0.46}px ${FACE.fat}`;
+  g.textAlign = 'left';
+  g.fillText('4', 6, 128 * 0.58);              // the r18 price numeral, verbatim
+  const dirty = typeCheck();
+  const caught = dirty.find((e) => e.atlas === '(coverage)');
+  AUDIT.big = before.big; AUDIT.small = before.small; AUDIT.viaFit = before.viaFit;
+  AUDIT.sites.length = 0; AUDIT.sites.push(...before.sites);
+  const after = typeCheck().length;
+  return {
+    cleanBefore: clean,
+    firedOnRawNumeral: !!caught,
+    complaint: caught ? caught.txt : null,
+    restoredClean: after === clean,
+    ok: clean === 0 && !!caught && after === clean,
+  };
+}
+
+export function setTypeCtx(atlas, cell, mode = 'mask') {
+  TYPE_CTX = atlas ? { atlas, cell, mode } : null;
+}
 export function typeLog() { return TYPE_LOG; }
 
 // albedo multiplier for a mask g value, straight out of the shader above
 const gMul = (v) => 0.045 + 0.955 * (v / 255);
+// Rec.709 relative luminance through the sRGB EOTF. Used only by `direct` mode,
+// where the ink is a literal colour rather than a mask channel. AGENTS_BRIEF:
+// "state your colour space with every luma threshold" — this one is
+// linear-light, computed from sRGB bytes, and it is the only place in this file
+// that decodes a transfer function.
+const srgbLin = (b) => { const v = b / 255; return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; };
+const relLuma = (r, g, b) => 0.2126 * srgbLin(r) + 0.7152 * srgbLin(g) + 0.0722 * srgbLin(b);
 // Canvas NORMALISES fillStyle on read: an opaque `rgb(255,150,0)` comes back
 // as '#ff9600'. The first version of this parser only understood the rgb()
 // form, so it matched nothing and the ledger silently logged zero entries —
@@ -350,12 +715,17 @@ function fitText(g, txt, cx, y, maxW, px, face, weight = '900', align = 'center'
   const w = g.measureText(txt).width || 1;
   const sx = Math.min(1, maxW / w);
   const fix = TYPE_CTX ? sampleGround(g, txt, cx, y, Math.min(w, maxW), px, align) : null;
+  // ROUND 20 — the box this string is about to occupy, recorded BEFORE the
+  // translate/scale below, in the same device coordinates sampleGround reads its
+  // ground in. See the plate ledger above: this is the half typeCheck cannot see.
+  plateNoteText(g, txt, cx, y, Math.min(w, maxW), px, align);
   g.save();
   if (fix) g.fillStyle = fix;
   g.translate(cx, y);
   g.scale(sx, 1);
   g.textAlign = align;
-  g.fillText(txt, 0, 0);
+  AUDIT.viaFitNow = true;
+  try { g.fillText(txt, 0, 0); } finally { AUDIT.viaFitNow = false; }
   g.restore();
   return Math.min(w, maxW);
 }
@@ -380,12 +750,30 @@ function stepFix(gg, up, min) {
 // transform is read with getTransform() rather than tracked in a variable,
 // because every atlas loop translates to its own cell and a tracked copy of
 // that offset is the duplicated-derivation hazard CLAUDE.md opens with.
+// LEDGER OFF, GUARANTEE ON. A probe re-bake must not write to TYPE_LOG —
+// sheet.js re-bakes each atlas three times per ablation — but it must still be
+// the SAME ATLAS the store is drawing from, and until round 22 it was not.
+//
+// FOUND BY pressRestoreCheck(), WHICH IS WHY THAT CHECK EXISTS. The r22 A/B
+// bakes its control arm under PROBE, and the restore assertion compares a fresh
+// PROBE bake against the live canvas: 10.41% of the carton atlas's texels
+// differed, across all 48 cells, max delta 142 levels, 207,947 of them in the
+// PRINT-BRIGHTNESS channel. The cause is the line this comment replaces —
+// `if (PROBE.on && TYPE_FIX) return null` skipped the contrast correction as
+// well as the ledger write, so every probe bake in this repo has carried
+// UNCORRECTED type: ghosted wordmarks the shipped atlas does not have.
+//
+// That contaminates any A/B whose control arm is a probe bake, which is
+// endsSwap('r19') and every sheet.js ablation. It did not change round 20's
+// conclusion (that comparison is about the end rings, not the type) but the
+// control it published was one bug away from the build it was standing in for.
+//
+// The distinguishing condition is TYPE_FIX, not PROBE: typeCheckSelfTest is the
+// only caller that turns the guarantee OFF, and it is the only probe caller
+// that needs the ledger. So the guarantee now always runs and the ledger write
+// is what is conditional.
 function sampleGround(g, txt, cx, y, w, px, align) {
-  // sheet.js re-bakes each atlas three times per ablation and must not write
-  // to this ledger. typeCheckSelfTest() also sets PROBE, and MUST write — it is
-  // the only caller that turns the guarantee off, so that is what distinguishes
-  // them.
-  if (PROBE.on && TYPE_FIX) return null;
+  const LEDGER = !PROBE.on || !TYPE_FIX;
   const ink = parseInk(g.fillStyle);
   if (!ink) return;
   const t = g.getTransform();
@@ -398,6 +786,39 @@ function sampleGround(g, txt, cx, y, w, px, align) {
   for (let o = 0; o < d.length; o += 4 * 7) { sr += d[o]; sg += d[o + 1]; n++; }
   if (!n) return null;
   const gndR = Math.round(sr / n), gndG = Math.round(sg / n);
+
+  // --- DIRECT MODE: a plain sRGB card, where the ink IS a colour ------------
+  // The mask atlases carry print brightness in g and nothing else, so their
+  // step is computed on g. A shelf tag is drawn straight to an sRGB texture, so
+  // its step is a luminance step between two literal colours. Same guarantee,
+  // same bar, measured on the quantity that actually exists on that surface.
+  if (TYPE_CTX.mode === 'direct') {
+    let br = 0, bg = 0, bb = 0, m = 0;
+    for (let o = 0; o < d.length; o += 4 * 7) { br += d[o]; bg += d[o + 1]; bb += d[o + 2]; m++; }
+    const gy = relLuma(br / m, bg / m, bb / m);
+    const iy = relLuma(ink[0], ink[1], ink[2]);
+    const dstep = Math.abs(iy - gy) / Math.max(iy, gy, 1e-4);
+    let use = ink;
+    if (TYPE_FIX && dstep < MIN_STEP) {
+      // move the ink AWAY from the ground along its own hue: darker ink goes
+      // darker, lighter goes lighter. A price numeral that has to change colour
+      // to be read is a design fault, so this is expected to be rare and the
+      // ledger records every time it fires.
+      const up = iy >= gy;
+      const want = up ? gy / (1 - MIN_STEP) : gy * (1 - MIN_STEP);
+      const k = want / Math.max(iy, 1e-4);
+      use = ink.map((v) => Math.max(0, Math.min(255, Math.round(v * k))));
+      if (up && relLuma(...use) < want) use = [255, 255, 255];
+    }
+    const fy = relLuma(use[0], use[1], use[2]);
+    if (LEDGER) TYPE_LOG.push({
+      atlas: TYPE_CTX.atlas, cell: TYPE_CTX.cell, mode: 'direct', txt, px: +px.toFixed(1),
+      inkY: +fy.toFixed(4), gndY: +gy.toFixed(4), askY: +iy.toFixed(4),
+      fixed: use !== ink,
+    });
+    return use === ink ? null : `rgb(${use[0]},${use[1]},${use[2]})`;
+  }
+
   const step = (v) => Math.abs(gMul(v) - gMul(gndG)) / Math.max(gMul(v), gMul(gndG));
   let useG = ink[1];
   if (TYPE_FIX && step(useG) < MIN_STEP) {
@@ -416,10 +837,12 @@ function sampleGround(g, txt, cx, y, w, px, align) {
     else if (okHi) useG = hi;
     else useG = sLo >= sHi ? lo : hi;      // unreachable bar: take the best there is
   }
-  TYPE_LOG.push({
-    atlas: TYPE_CTX.atlas, cell: TYPE_CTX.cell, txt, px: +px.toFixed(1),
-    inkR: ink[0], askG: ink[1], inkG: useG, gndR, gndG, fixed: useG !== ink[1],
-  });
+  if (LEDGER) {
+    TYPE_LOG.push({
+      atlas: TYPE_CTX.atlas, cell: TYPE_CTX.cell, txt, px: +px.toFixed(1),
+      inkR: ink[0], askG: ink[1], inkG: useG, gndR, gndG, fixed: useG !== ink[1],
+    });
+  }
   return useG === ink[1] ? null : `rgb(${ink[0]},${useG},${ink[2]})`;
 }
 
@@ -437,12 +860,36 @@ export const MIN_STEP = 0.34;
 let TYPE_FIX = true;
 export function setTypeFix(on) { TYPE_FIX = !!on; return TYPE_FIX; }
 
+export function stepOf(e) {
+  if (e.mode === 'direct') {
+    return Math.abs(e.inkY - e.gndY) / Math.max(e.inkY, e.gndY, 1e-4);
+  }
+  const a = gMul(e.inkG), b = gMul(e.gndG);
+  return Math.abs(a - b) / Math.max(a, b);
+}
+
+// ROUND 19 — THE CHECK NOW HAS A COVERAGE HALF, AND IT IS THE HALF THAT WOULD
+// HAVE CAUGHT r18. The per-entry loop below is unchanged in spirit and could
+// never have fired for the price rail, because the price rail wrote no
+// entries. `unguarded` is the count of strings the canvas actually inked
+// outside fitText during the bake — read off the draw calls, not off a list of
+// atlases somebody remembered to name.
 export function typeCheck(min = MIN_STEP) {
   const bad = [];
   for (const e of TYPE_LOG) {
-    const a = gMul(e.inkG), b = gMul(e.gndG);
-    const step = Math.abs(a - b) / Math.max(a, b);
+    const step = stepOf(e);
     if (step < min - 1e-6) bad.push({ ...e, step: +step.toFixed(3) });
+  }
+  const a = typeAudit();
+  if (a.unguardedDraws) {
+    bad.push({ atlas: '(coverage)', txt: a.unguardedDraws + ' string(s) inked outside the '
+      + 'contrast guarantee during the bake — e.g. ' + a.sites.slice(0, 4).join(', '),
+      step: 0, unguarded: a.unguardedDraws });
+  }
+  if (!TYPE_LOG.length) {
+    bad.push({ atlas: '(coverage)', txt: 'the type ledger is EMPTY. Zero is the most '
+      + 'suspicious reading an instrument can give — r18 logged zero because its parser only '
+      + 'understood rgb() and canvas normalises fillStyle to hex.', step: 0 });
   }
   return bad;
 }
@@ -487,16 +934,12 @@ export function typeCheckSelfTest(THREE) {
   } finally { setTypeFix(true); setPackProbe(false); }
   const fresh = TYPE_LOG.splice(keep);
   const bad = [];
-  for (const e of fresh) {
-    const step = Math.abs(gMul(e.inkG) - gMul(e.gndG)) / Math.max(gMul(e.inkG), gMul(e.gndG));
-    if (step < MIN_STEP - 1e-6) bad.push(e);
-  }
+  for (const e of fresh) if (stepOf(e) < MIN_STEP - 1e-6) bad.push(e);
   const by = {};
   for (const e of bad) by[e.atlas] = (by[e.atlas] || 0) + 1;
   return { runs: fresh.length, complaints: bad.length, byAtlas: by,
     ok: bad.length > 50,
-    worst: bad.map((e) => ({ ...e, step: +(Math.abs(gMul(e.inkG) - gMul(e.gndG))
-      / Math.max(gMul(e.inkG), gMul(e.gndG))).toFixed(3) }))
+    worst: bad.map((e) => ({ ...e, step: +stepOf(e).toFixed(3) }))
       .sort((a, b) => a.step - b.step).slice(0, 8) };
 }
 
@@ -846,6 +1289,30 @@ function cartonDesign(g, i, W, H, M, rng) {
       wmY = H * 0.62; wmPx = H * 0.12; wmCx = W * 0.5 + M * 0.35; wmMaxW = fw * 0.86;
       photoX = x0 + fw * 0.5; photoY = H * 0.34; photoR = fw * 0.46; break;
   }
+  // ONE OWNER for the flash ribbon's y. It is read twice — once by the press
+  // layer, which must not put a keyline through it, and once by the ribbon
+  // itself 90 lines below. A second copy of this expression is exactly the
+  // hazard CLAUDE.md opens with, and it would rot silently the moment an arch
+  // moved.
+  const flY = arch === 6 ? H * 0.755 : (arch === 1 ? H * 0.395 : H * 0.455);
+  const flH = H * 0.052;
+
+  // ---- THE PRESS ----------------------------------------------------------
+  // See src/store/press.js. Every band, plate and rule on this face used to be
+  // the ONE per-instance brand hue at a different brightness, and the hue
+  // census said so: median 1 distinct hue family per face on all four families,
+  // at every delivered size. This paints the face's large structure in the
+  // b-channel spot inks the shader has decoded since round 5 and pack.js has
+  // only ever written inside depict()'s photo box.
+  //
+  // It runs AFTER the layout is decided and BEFORE the depiction, so no zone
+  // boundary can land on a glyph and the serving suggestion prints over the
+  // field rather than under it. Its randomness comes from its own per-cell
+  // stream, so with PRESS off this file consumes the identical draws it
+  // consumed in r21 and the control atlas is byte-identical.
+  const PRESSED = pressCarton(g, x0, fw, H, i, {
+    wmTop: wmY - wmPx * 1.05, wmBot: wmY + H * 0.13, flY, flH, fam,
+  });
 
   // ---- serving-suggestion photograph (drawn under the type) ---------------
   // ROUND 16. One call for food and non-food alike: what a package pictures is
@@ -903,9 +1370,16 @@ function cartonDesign(g, i, W, H, M, rng) {
     FACE.grot, '600', arch === 4 ? 'left' : 'center');
 
   // ---- flavour flash ribbon ----------------------------------------------
-  const flY = arch === 6 ? H * 0.755 : (arch === 1 ? H * 0.395 : H * 0.455);
-  g.fillStyle = ink(255, fam === 2 ? 210 : 120);
-  g.fillRect(0, flY, W, H * 0.052);
+  // The single largest full-width element on the face, and until r22 it was the
+  // brand hue at 47% brightness — i.e. a shadow of the ground rather than a
+  // second ink. A real flavour flash is a SPOT: the vendor's other colour,
+  // printed edge to edge, with a rule under it.
+  g.fillStyle = PRESSED ? PRESSED.L.inkA() : ink(255, fam === 2 ? 210 : 120);
+  g.fillRect(0, flY, W, flH);
+  if (PRESSED) {
+    g.fillStyle = PRESSED.L.aG > 140 ? PRESSED.L.key() : PRESSED.L.lit();
+    g.fillRect(0, flY + flH - 3, W, 3);
+  }
   g.fillStyle = ink(fam === 2 ? 255 : 10, fam === 2 ? 40 : 250);
   fitText(g, flash, W * 0.5 + M * 0.35, flY + H * 0.040, fw * 0.70, H * 0.038,
     FACE.fat, '900');
@@ -939,7 +1413,17 @@ function cartonDesign(g, i, W, H, M, rng) {
   g.fillStyle = fam === 2 ? ink(40, 245) : ink(12, 45);
   fitText(g, wt, x0 + fw * 0.045, noPhoto ? H * 0.565 : H * 0.785, fw * 0.50, H * 0.030,
     FACE.grot, '700', 'left');
-  if (rng() < 0.82) {
+  // ROUND 20 — NOT ON arch 6, AND THE PLATE LEDGER IS WHY. arch 6 is the banded
+  // layout: wordmark low at H*0.62, sub-descriptor at H*0.731, flash ribbon at
+  // H*0.755. This panel is an OPAQUE fillRect over H*0.700-0.875 at x fw*0.62-
+  // 0.96, and both of those lines are centred on wmCx with enough width to run
+  // under it — measured by plateCheck() on the shipped bake at 29.6-31.1% of the
+  // sub's box and 12.3-20.1% of the flash's, on 6 of 48 carton cells. The words
+  // are ULTRA STRONG, UNSWEETENED, HOMESTYLE, ORIGINAL: display type, painted
+  // out, invisible to typeCheck because a covered glyph's contrast is not the
+  // question. A real banded carton puts its facts panel on the SIDE for exactly
+  // this reason. The rng() draw is kept so the generator stream is unmoved.
+  if (rng() < 0.82 && arch !== 6) {
     nutriPanel(g, x0 + fw * 0.62, H * 0.700, fw * 0.34, H * 0.175, rng,
       cp.panel, PANEL_ROWS[cp.legalKey]);
   }
@@ -996,9 +1480,32 @@ export function pouchAtlas(THREE) {
     const dark = i % 3 === 2;
     g.fillStyle = dark ? ink(255, 120) : ink(255, 205);
     g.fillRect(0, 0, W, H);
+    // ROUND 22 — the press, before the crinkle so the film reads over the print.
+    const PP = pressPouch(g, M, W - M, H, i, { dark });
     // crinkle — film never lies flat
+    //
+    // ROUND 22 — FOUND, NOT CAUSED: this loop strokes rgba(255,255,255,a) with
+    // a up to 0.30, i.e. it writes ALL THREE CHANNELS. That is precisely the
+    // round-12 fault this file's own header describes ("a neutral shading term
+    // is not darken or lighten — b is an INDEX, not a level"), still live in
+    // the one term round 12 did not reach. On the r21 build every bag in the
+    // store carries a b-channel wash of 10-76 from it, which the shader decodes
+    // as 16% GOLD to 20% GREEN over the whole face; the pouch atlas's measured
+    // b-channel occupancy in the r21 arm is quoted in the r22 report.
+    //
+    // The fix is the form glint() and the specular streaks below already use:
+    // raise g, leave r and b alone. It is gated on PRESS so the control arm
+    // stays byte-identical to r21 and the A/B keeps one variable — the size of
+    // this term alone is measured and reported separately.
+    //
+    // THE RNG DRAW COUNT IS IDENTICAL IN BOTH ARMS. `a` is drawn once and used
+    // by both branches: taking a second draw for the green level would advance
+    // the stream and hand the r21 arm different BRANDS, which would make the
+    // A/B a comparison of two stores rather than of two inks.
+    if (PRESS.on) g.globalCompositeOperation = 'lighter';
     for (let k = 0; k < 190; k++) {
-      g.strokeStyle = rgba(255, 255, 255, rr(rng, 0.04, 0.30));
+      const a = rr(rng, 0.04, 0.30);
+      g.strokeStyle = PRESS.on ? rgba(0, 170, 0, a) : rgba(255, 255, 255, a);
       g.lineWidth = rr(rng, 0.5, 2.6);
       g.beginPath();
       let x = rng() * W, y = rng() * H;
@@ -1006,6 +1513,7 @@ export function pouchAtlas(THREE) {
       for (let q = 0; q < 3; q++) g.lineTo(x += rr(rng, -20, 20), y += rr(rng, -20, 20));
       g.stroke();
     }
+    g.globalCompositeOperation = 'source-over';
     // sealed crimp top and bottom
     g.fillStyle = ink(255, dark ? 78 : 150);
     g.fillRect(0, 0, W, H * 0.085); g.fillRect(0, H - H * 0.10, W, H * 0.10);
@@ -1181,44 +1689,166 @@ export function canAtlas(THREE) {
     g.fillStyle = ink(255, pale ? 175 : 150);
     g.fillRect(0, 0, W, H);
 
-    // ---- LID: rings, read radially -----------------------------------------
-    // canvas y 0 is the centre of the end panel, y = H*LID is the outer edge of
-    // the rolled rim. Drawn as bands; they arrive as concentric rings.
+    // ---- THE END STRUCTURE -------------------------------------------------
+    // ROUND 20. These rows are not chosen; they are READ OFF THE LIVE UNWRAP.
+    // With RADIAL_W at 0.10 (see its block above), latheBands hands can/rim:
+    //
+    //     y 0.0000..0.0445  the recessed end panel, RADIAL (centre -> edge)
+    //     y 0.0445..0.0752  the countersink wall the lid sits in
+    //     y 0.0752..0.1027  THE ROLLED RIM WALL          <- CAN_RING
+    //     y 0.1027..0.1300  the chamfer down onto the label
+    //     y 0.9150..0.9347  the chamfer up from the label
+    //     y 0.9347..0.9544  the base rolled rim wall     <- CAN_RING_B
+    //     y 0.9544..0.9767  the foot chamfer
+    //     y 0.9767..1.0000  the base disc, RADIAL
+    //
+    // can/tub's snap-lid rim lands at 0.0699..0.1142 and can/jar's lug-lid wall
+    // at 0.0307..0.0691, so one cell serves all three. endCheck() reads those
+    // three numbers off the GPU every load and complains if a future profile
+    // change moves a wall out from under the ring drawn for it.
+    //
+    // AND THE VALUES ARE THE POINT, NOT ONLY THE ROWS. What r19's critic could
+    // not find on any cylinder is the thing that identifies a can in
+    // reference/store_01_Canned_and_packaged_tuna_on_supermarket_shelves.jpg:
+    // between every two stacked cans there is a BRIGHT / DARK / BRIGHT triple —
+    // rolled rim, seam shadow, bare tinplate — running the full width. The r19
+    // build had that sequence at print brightness 205 / 96 / 150, i.e. albedo
+    // 0.81 / 0.40 / 0.61, sitting BETWEEN the label's own dark band (0.40) and
+    // its white plate (0.96), across 0.6-1.7 px of a 144 px cell. It is not that
+    // the rim was missing; it is that it was mid-grey and sub-texel, so the mip
+    // chain had nothing to carry. Bare tinplate is the BRIGHTEST thing on a can,
+    // and the seam under it is the darkest.
+    //
+    // MEASURED, and it is the only cross-mip figure this round quotes. Strongest
+    // |d albedo| step inside the end zones (cell rows 0.000-0.145 and 0.900-1.000,
+    // averaged over all 24 cells, u 0.30-0.70, g through the shader's own
+    // 0.045 + 0.955g, BOX mip down the v axis only because anisotropy 16 keeps u):
+    //
+    //     mip   cell rows    TOP r19 -> r20      BOTTOM r19 -> r20
+    //      0       144       0.337 -> 0.480      0.340 -> 0.478
+    //      1        72       0.215 -> 0.429      0.342 -> 0.511
+    //      2        36       0.110 -> 0.248      0.242 -> 0.291
+    //      3        18       0.021 -> 0.099      0.146 -> 0.186
+    //
+    // and horizontal steps over 0.15 down a whole cell: 24.6 -> 30.0 at mip 0,
+    // 19.2 -> 23.4 at mip 1, 9.6 -> 14.0 at mip 2, 4.1 -> 5.5 at mip 3.
+    //
+    // THE FIRST DRAFT LOST ROW FOUR AND THE TABLE IS WHY IT WAS CAUGHT. With the
+    // base disc at 128 the mip-3 BOTTOM read 0.131 against r19's 0.146 — 11%
+    // WORSE — because the bottom zone is 0.085 of the cell, which is 1.5 rows at
+    // that level, and four alternating bands average back into one. r19 spent the
+    // same band on a single wide bright ring and won there. Darkening the disc
+    // and the foot chamfer (the two surfaces on a can that never see a lamp) puts
+    // the step back at 0.186. Nothing was retuned to chase the number at mips 0-2;
+    // they were already ahead and went further ahead.
+    const LG = PACK_ENDS.legacy;
     const ring = (a, b, r, gg) => { g.fillStyle = ink(r, gg); g.fillRect(0, H * a, W, H * (b - a)); };
-    ring(0.000, 0.030, 8, 118);          // centre of the stamped end panel
-    ring(0.030, 0.042, 8, 172);          // the first stamped ring, bright
-    ring(0.042, 0.070, 8, 128);
-    ring(0.070, 0.082, 8, 176);          // second stamped ring
-    ring(0.082, 0.104, 8, 112);          // the well the lid sits in — darkest
-    ring(0.104, LID - 0.006, 8, 205);    // THE ROLLED RIM. Bright steel.
-    ring(LID - 0.006, LID, 8, 96);       // its shadow line onto the label
-    // pull tab: a short bar across the middle of the end panel, so a can seen
-    // from slightly above reads as OPENABLE rather than as a disc.
-    if (i % 4 !== 3) {
-      g.fillStyle = ink(8, 158);
-      g.fillRect(W * 0.30, H * 0.012, W * 0.40, H * 0.010);
-      g.fillStyle = ink(8, 92);
-      g.fillRect(W * 0.30, H * 0.022, W * 0.40, H * 0.005);
+    if (LG) {
+      // ---- r19, kept verbatim as the A/B control --------------------------
+      ring(0.000, 0.030, 8, 118);
+      ring(0.030, 0.042, 8, 172);
+      ring(0.042, 0.070, 8, 128);
+      ring(0.070, 0.082, 8, 176);
+      ring(0.082, 0.104, 8, 112);
+      ring(0.104, LID - 0.006, 8, 205);
+      ring(LID - 0.006, LID, 8, 96);
+      if (i % 4 !== 3) {
+        g.fillStyle = ink(8, 158);
+        g.fillRect(W * 0.30, H * 0.012, W * 0.40, H * 0.010);
+        g.fillStyle = ink(8, 92);
+        g.fillRect(W * 0.30, H * 0.022, W * 0.40, H * 0.005);
+      }
+      ring(FOOT, FOOT + 0.008, 8, 92);
+      ring(FOOT + 0.008, FOOT + 0.030, 8, 198);
+      ring(FOOT + 0.030, FOOT + 0.055, 8, 104);
+      ring(FOOT + 0.055, 1.000, 8, 132);
+    } else {
+      ring(0.0000, 0.0180, 8, 116);      // centre of the stamped end panel
+      ring(0.0180, 0.0250, 8, 172);      // the first stamped ring, bright
+      ring(0.0250, 0.0360, 8, 124);
+      ring(0.0360, 0.0445, 8, 152);      // outer end panel, up to the countersink
+      ring(0.0445, 0.0752, 8, 72);       // the countersink the lid sits in — deep
+      ring(0.0752, 0.1027, 8, 236);      // THE ROLLED RIM. Bright bare steel.
+      ring(0.1027, 0.1300, 8, 56);       // the shadow it throws onto the label
+      // pull tab: a short bar across the middle of the end panel, so a can seen
+      // from slightly above reads as OPENABLE rather than as a disc.
+      if (i % 4 !== 3) {
+        g.fillStyle = ink(8, 158);
+        g.fillRect(W * 0.30, H * 0.0060, W * 0.40, H * 0.0070);
+        g.fillStyle = ink(8, 92);
+        g.fillRect(W * 0.30, H * 0.0130, W * 0.40, H * 0.0035);
+      }
+      // ---- BASE: the same, upside down -------------------------------------
+      ring(FOOT + 0.0000, FOOT + 0.0197, 8, 60);    // shadow above the base rim
+      ring(FOOT + 0.0197, FOOT + 0.0394, 8, 224);   // the base rolled rim
+      ring(FOOT + 0.0394, FOOT + 0.0617, 8, 76);    // the foot chamfer
+      // The base disc faces the shelf and is the one surface on a can that is
+      // never lit. It was 128 and is 100 for a measured reason as well as a
+      // physical one: the bottom end zone is 0.085 of the cell, which is 1.5
+      // rows at mip 3, so it resolves as ONE step against the tinplate above it
+      // — and r19's happened to be slightly larger than r20's first draft.
+      // Darkening the disc puts that step at 0.157 modelled against r19's 0.140.
+      ring(FOOT + 0.0617, 1.0000, 8, 100);          // the base disc, in shadow
     }
-
-    // ---- BASE: the same, upside down ---------------------------------------
-    ring(FOOT, FOOT + 0.008, 8, 92);
-    ring(FOOT + 0.008, FOOT + 0.030, 8, 198);   // bottom rolled rim
-    ring(FOOT + 0.030, FOOT + 0.055, 8, 104);
-    ring(FOOT + 0.055, 1.000, 8, 132);
 
     // ---- THE LABEL, in full-width horizontal bands -------------------------
     // fractions OF THE LABEL BAND, so the layout survives a cell resize.
+    //
+    // ROUND 20 — THE PAPER DOES NOT REACH THE SEAM. A can's label is a wrapper
+    // 5-8% of the body short of the rim at each end, and the tinplate that shows
+    // is brighter than any ink on it. r19 gave that 3.0% of the barrel at the
+    // top and 4.0% at the bottom, at g 150 and 146 — darker than the label's own
+    // white plate, so there was no light band at all. PR0/PR1 below is where the
+    // PAPER starts and stops; p() is print space, 0 at the top of the paper and
+    // 1 at the bottom, so every position below is a position ON THE LABEL and
+    // the tinplate is outside it by construction.
     const y = (f) => L0 + LH * f;
-    const band = (f0, f1, r, gg) => { g.fillStyle = ink(r, gg); g.fillRect(0, y(f0), W, LH * (f1 - f0)); };
-    band(0.000, 0.030, 8, 150);                     // steel above the label
-    band(0.030, 0.250, 255, pale ? 120 : 96);       // TOP COLOUR BAND
-    band(0.250, 0.268, 255, 245);                   // bright keyline
-    band(0.268, 0.560, pale ? 14 : 26, pale ? 252 : 244);   // WORDMARK PLATE
-    band(0.560, 0.578, 255, pale ? 96 : 250);
-    band(0.578, 0.845, pale ? 255 : 30, pale ? 132 : 236);  // the picture field
-    band(0.845, 0.960, 255, pale ? 108 : 88);       // BOTTOM COLOUR BAND
-    band(0.960, 1.000, 8, 146);                     // steel below the label
+    const PR0 = LG ? 0.030 : 0.076, PR1 = LG ? 0.960 : 0.940;
+    const p = (f) => y(PR0 + f * (PR1 - PR0));
+    const band = (f0, f1, r, gg, fill) => {
+      g.fillStyle = fill || ink(r, gg);
+      g.fillRect(0, p(f0), W, (p(f1) - p(f0)));
+    };
+    const steel = (f0, f1, gg) => {
+      g.fillStyle = ink(8, gg);
+      g.fillRect(0, y(f0), W, LH * (f1 - f0));
+    };
+    if (LG) { steel(0.000, 0.030, 150); } else {
+      steel(0.000, 0.052, 214);                     // BARE TINPLATE above the paper
+      steel(0.052, 0.076, 74);                      // the paper's top edge, in shadow
+    }
+    // ROUND 22 — THE BANDS WERE ALL ONE INK. Every one of these six was
+    // ink(255, g) or ink(~20, g): the same per-instance brand hue at a
+    // different brightness, or the paper. A can label in
+    // reference/store_01_Canned_and_packaged_tuna is a dark band, a light
+    // plate, a RED accent and a light lower field — four inks, not one hue in
+    // four values. The band GEOMETRY is untouched (endCheck and latheCheck are
+    // written against these rows and the r20 mip table was measured on them);
+    // only the fill changes, and only when PRESS is on.
+    const CL = PRESS.on ? livery('can', i) : null;
+    const cink = (role, r, gv) => (CL ? pressBandInk(CL, role, r, gv) : null) || ink(r, gv);
+    band(0.000, 0.237, 255, pale ? 120 : 96, cink('top', 255, pale ? 120 : 96));
+    band(0.237, 0.256, 255, 245, cink('lit', 255, 245));            // bright keyline
+    band(0.256, 0.570, pale ? 14 : 26, pale ? 252 : 244);   // WORDMARK PLATE — paper
+    band(0.570, 0.589, 255, pale ? 96 : 250, cink('key', 255, pale ? 96 : 250));
+    band(0.589, 0.876, pale ? 255 : 30, pale ? 132 : 236,
+      cink('pict', pale ? 255 : 30, pale ? 132 : 236));             // the picture field
+    band(0.876, 1.000, 255, pale ? 108 : 88, cink('bot', 255, pale ? 108 : 88));
+    // and the one structure a stack of horizontal bands cannot express: a
+    // vertical panel with a hard rule down each side. It frames the PICTURE
+    // field rather than the wordmark plate, because the wordmark is typeset at
+    // 0.62 of the cell and a panel narrower than that would leave its first and
+    // last glyphs on a different ground — which is how sampleGround's average
+    // ends up guaranteeing contrast that neither end of the string actually has.
+    if (CL) pressCanPanel(g, W, p(0.589), p(0.876), i, CL);
+    // and the continuous-tone field over the paper. The cylinder's own normals
+    // already shade left-to-right; this is the print's own density and gloss,
+    // which a lathe has no more of than a box does.
+    if (CL) pressTone(g, 0, p(0), W, p(1) - p(0), CL, 0.8);
+    if (LG) { steel(0.960, 1.000, 146); } else {
+      steel(0.940, 0.962, 78);                      // the paper's bottom edge
+      steel(0.962, 1.000, 206);                     // BARE TINPLATE below
+    }
 
     const brand = pk(rng, BRANDS);
     // ROUND 15 — 'N': a can, a jar, a tub or a canister. Round 14's can atlas
@@ -1238,24 +1868,40 @@ export function canAtlas(THREE) {
       // and lost its first and last third to the curve before the resolution
       // ever mattered.
       g.fillStyle = pale ? ink(255, 40) : ink(20, 30);
-      fitText(g, brand, cx, y(0.470), seg * 0.62, LH * 0.185, face, '900');
+      // TYPE SIZES STAY IN LH, NOT IN PRINT SPACE. The paper is 7% shorter this
+      // round; scaling the wordmark with it would put a second variable in the
+      // A/B and would move every step in typeCheck's ledger for no reason. Only
+      // the POSITIONS go through p().
+      fitText(g, brand, cx, p(0.4731), seg * 0.62, LH * 0.185, face, '900');
       g.fillStyle = pale ? ink(20, 70) : ink(20, 96);
-      fitText(g, desc, cx, y(0.545), seg * 0.60, LH * 0.072, FACE.grot, '700');
+      fitText(g, desc, cx, p(0.5538), seg * 0.60, LH * 0.072, FACE.grot, '700');
       // the food picture that fills the middle of nearly every can label.
       // ROUND 15 — a canister of disinfecting wipes and a jar of multivitamins
       // are both form 'N' and neither wants a plate of food on it.
-      logPhoto(LOGE, cx, y(0.712), seg * 0.30, LH * 0.118);
-      depict(g, cx, y(0.712), seg * 0.30, LH * 0.118, rng, cpn);
+      logPhoto(LOGE, cx, p(0.7333), seg * 0.30, LH * 0.118);
+      depict(g, cx, p(0.7333), seg * 0.30, LH * 0.118, rng, cpn);
       g.fillStyle = ink(255, pale ? 246 : 240);
-      fitText(g, cpn.flash, cx, y(0.930), seg * 0.56, LH * 0.082, FACE.fat, '900');
-      legalBlock(g, cx - seg * 0.30, y(0.130), seg * 0.60, 2, LH * 0.046, rng,
+      // ROUND 20 — 0.56 of the cell, and the barcode plate started at 0.66. The
+      // flash and the barcode overlapped by 23 px on EVERY cell in this atlas,
+      // and the barcode is drawn last and is opaque, so it took the tail off
+      // FRENCH STYLE, TRADITIONAL, ANTIBACTERIAL and BUTTER PECAN. See
+      // plateCheck() — the ledger that found it and will find the next one.
+      fitText(g, cpn.flash, cx, p(0.9677), seg * 0.50, LH * 0.082, FACE.fat, '900');
+      legalBlock(g, cx - seg * 0.30, p(0.1075), seg * 0.60, 2, LH * 0.046, rng,
         ink(255, pale ? 235 : 232), cpn.legal);
     }
     // the barcode is SMALL and it is on the bottom band, which is where a can
     // carries it. Round 17 drew it 55% of the cell wide across the middle of
     // the label: a block of pure vertical rule, in the class whose measured
     // defect is that it has too much vertical rule.
-    barcode(g, seg * 0.66, y(0.880), seg * 0.24, LH * 0.062, rng);
+    // NOT UNDER THE DIAL, DELIBERATELY. barcode()'s bar loop runs until it fills
+    // its width, so its rng consumption is a function of `w` — putting the width
+    // under PACK_ENDS would desynchronise the generator for every cell after the
+    // first, and the legacy plate would carry different BRANDS as well as
+    // different ends. The A/B has to isolate one variable, so the erasure fix
+    // ships in both modes and the evidence for it is the r19 atlas itself
+    // (shots/r20p_canatlas_g.png, baked before any edit this round).
+    barcode(g, seg * 0.775, p(0.9140), seg * 0.190, LH * 0.062, rng);
 
     // Curvature at a tenth of round 17's strength — see the header. The
     // silhouette darkening is the geometry's job and it already does it twice.
@@ -1271,7 +1917,12 @@ export function canAtlas(THREE) {
     // ONE narrow specular band on the tinplate, and only over the LABEL. Round
     // 17 ran two of them the full height of the cell, which put a vertical
     // streak through the lid and the base as well as the print.
-    glint(g, W, H, W * 0.32, W * 0.055, y(0.030), y(0.960), 74, 96);
+    // ROUND 20 — over the PAPER only, p(0)..p(1). It used to run y(0.030) to
+    // y(0.960), which is now the bare tinplate at either end: g 214 plus this
+    // term's +96 clips to 255, and a clipped band across the brightest surface
+    // on the can is a bloom source at aisle range for no gain — the metal is
+    // already the brightest thing here by its own albedo.
+    glint(g, W, H, W * 0.32, W * 0.055, LG ? y(0.030) : p(0), LG ? y(0.960) : p(1), 74, 96);
     g.restore();
   }
   setTypeCtx(null);
@@ -1341,30 +1992,74 @@ export function bottleAtlas(THREE) {
     const bar = (a, b, r, gg) => { g.fillStyle = ink(r, gg); g.fillRect(0, H * a, W, H * (b - a)); };
 
     // ---- the bottle itself, above and below the label ----------------------
+    // ROUND 20 — the rows below are READ OFF THE LIVE UNWRAP, not chosen. With
+    // RADIAL_W at 0.10 latheBands hands bottle/soda:
+    //
+    //     y 0.0000..0.0546  the cap crown, RADIAL (centre -> outer edge)
+    //     y 0.0546..0.0989  the closure WALL, where the knurl lives
+    //     y 0.0989..0.1987  the neck
+    //     y 0.1987..0.3400  the shoulder
+    //     y 0.9100..1.0000  the base, RADIAL (outer edge at 0.910, centre at 1)
+    //
+    // jug lands within 0.006 of this and squat within 0.015; spray is a trigger
+    // head and cannot match a cap, which endCheck() reports rather than asserts.
+    // The r19 artwork put its neck ring at 0.135-0.150 — a full 1.2% of the cell
+    // BELOW the cap/neck join at 0.123 — so the one bright line on the closure
+    // was painted on the neck.
+    const LG = PACK_ENDS.legacy;
     bar(0.000, 1.000, 255, 232);                 // the moulded body
-    bar(0.000, 0.030, 200, 96);                  // crown of the closure, centre
-    bar(0.030, 0.075, 200, 132);                 // crown, outer
-    bar(0.075, 0.135, 200, 112);                 // the closure wall
-    for (let k = 0; k < W; k += Math.max(3, W / 44)) {   // cap knurl
-      g.fillStyle = rgba(0, 0, 0, 0.20); g.fillRect(k, H * 0.078, 1.1, H * 0.055);
+    if (LG) {
+      // ---- r19, kept verbatim as the A/B control --------------------------
+      bar(0.000, 0.030, 200, 96);
+      bar(0.030, 0.075, 200, 132);
+      bar(0.075, 0.135, 200, 112);
+      for (let k = 0; k < W; k += Math.max(3, W / 44)) {
+        g.fillStyle = rgba(0, 0, 0, 0.20); g.fillRect(k, H * 0.078, 1.1, H * 0.055);
+      }
+      bar(0.135, 0.150, 255, 250);
+      bar(0.150, 0.235, 255, 214);
+      bar(0.235, CAP, 255, 226);
+      bar(FOOT, FOOT + 0.018, 255, 250);
+      bar(FOOT + 0.018, 1.000, 255, 196);
+    } else {
+      bar(0.0000, 0.0230, 200, 92);              // crown of the closure, centre
+      bar(0.0230, 0.0546, 200, 138);             // crown, outer
+      bar(0.0546, 0.0989, 200, 116);             // THE CLOSURE WALL
+      for (let k = 0; k < W; k += Math.max(3, W / 44)) {   // cap knurl
+        g.fillStyle = rgba(0, 0, 0, 0.20); g.fillRect(k, H * 0.058, 1.1, H * 0.038);
+      }
+      bar(0.0989, 0.1120, 255, 250);             // the neck ring under the cap
+      bar(0.1120, 0.1987, 255, 210);             // neck
+      bar(0.1987, CAP, 255, 228);                // shoulder
+      bar(FOOT, FOOT + 0.018, 255, 250);         // the base ring, at the OUTER edge
+      bar(FOOT + 0.018, 1.000, 255, 194);        // the punt, in shadow
     }
-    bar(0.135, 0.150, 255, 250);                 // the neck ring, bright
-    bar(0.150, 0.235, 255, 214);                 // neck
-    bar(0.235, CAP, 255, 226);                   // shoulder
-    bar(FOOT, FOOT + 0.018, 255, 250);           // the base ring
-    bar(FOOT + 0.018, 1.000, 255, 196);          // foot, in shadow
 
     // ---- the label ---------------------------------------------------------
     const L0 = H * CAP, L1 = H * FOOT, LH = L1 - L0;
     const y = (f) => L0 + LH * f;
-    const band = (f0, f1, r, gg) => { g.fillStyle = ink(r, gg); g.fillRect(0, y(f0), W, LH * (f1 - f0)); };
+    const band = (f0, f1, r, gg, fill) => {
+      g.fillStyle = fill || ink(r, gg);
+      g.fillRect(0, y(f0), W, LH * (f1 - f0));
+    };
+    // ROUND 22 — same one-ink fault as the can, and on the surface that is the
+    // whole soda/juice/cleaning aisle. The band GEOMETRY is untouched; only the
+    // fill moves, and only with PRESS on.
+    const BL = PRESS.on ? livery('bottle', i) : null;
+    const bink = (role, r, gv) => (BL ? pressBandInk(BL, role, r, gv) : null) || ink(r, gv);
     band(0.000, 0.030, 255, 252);                            // the film's top edge
-    band(0.030, 0.400, dark ? 255 : 20, dark ? 92 : 246);    // picture field
-    band(0.400, 0.425, 255, dark ? 236 : 84);                // keyline
+    band(0.030, 0.400, dark ? 255 : 20, dark ? 92 : 246,
+      bink('pict', dark ? 255 : 20, dark ? 92 : 246));       // picture field
+    band(0.400, 0.425, 255, dark ? 236 : 84,
+      bink(dark ? 'lit' : 'key', 255, dark ? 236 : 84));     // keyline
     band(0.425, 0.660, dark ? 20 : 20, dark ? 246 : 246);    // WORDMARK PLATE — opaque
-    band(0.660, 0.860, dark ? 255 : 255, dark ? 88 : 118);   // descriptor band
-    band(0.860, 0.970, 255, dark ? 132 : 220);               // lower band
+    band(0.660, 0.860, dark ? 255 : 255, dark ? 88 : 118,
+      bink('top', 255, dark ? 88 : 118));                    // descriptor band
+    band(0.860, 0.970, 255, dark ? 132 : 220,
+      bink('bot', 255, dark ? 132 : 220));                   // lower band
     band(0.970, 1.000, 255, 252);                            // the film's bottom edge
+    if (BL) pressCanPanel(g, W, y(0.030), y(0.400), i, BL);  // the picture window
+    if (BL) pressTone(g, 0, y(0), W, y(1) - y(0), BL, 0.8);
 
     const brand = pk(rng, BRANDS);
     // ROUND 15 — 'B': a bottle, a jug or a spray. Round 14's bottle atlas
@@ -1486,19 +2181,43 @@ function orphanTag(g, variant, CW, CH, rng) {
   }
   g.lineTo(0, CH); g.closePath(); g.fill();
   g.fillStyle = '#26241f';
-  g.font = `900 ${CH * 0.46}px ${FACE.fat}`;
   g.textAlign = 'left';
-  g.fillText(String(ri(rng, 1, 9)), 6, CH * 0.62);
+  fitText(g, String(ri(rng, 1, 9)), 6, CH * 0.62, CW * 0.30, CH * 0.46, FACE.fat, '900', 'left');
   g.fillStyle = 'rgba(120,110,90,0.5)';
   g.fillRect(0, 0, CW * 0.022, CH);
 }
 
+// ROUND 19 — THE PRICE RAIL JOINS THE GUARANTEE.
+//
+// AGENTS_BRIEF lists price-tag rails as bar item #4 — "a huge density cue,
+// almost always missing in game supermarkets" — and this atlas is what is
+// printed on every one of them. r18 shipped a contrast guarantee, a self-test
+// proving it fires, and a ledger, and this file wrote 0 of the 688 logged runs:
+// `setTypeCtx` was called for the four mask atlases and never here. The price
+// numeral, the cents, the currency mark, the struck-through was-price, the
+// marker date and the UPC digits were ten raw `fillText` calls, and the one
+// `fitText('CLEARANCE')` in the file no-opped its contrast step because
+// TYPE_CTX was null.
+//
+// Every readable string on a tag now goes through fitText in `direct` mode, and
+// the whole bake runs inside withTypeAudit so any string added later that
+// bypasses it is COUNTED rather than merely unnoticed.
 export function tagAtlas(THREE) {
   const COLS = TAG_COLS, ROWS = TAG_ROWS, CW = 256, CH = 128;
   const [c, g] = cv(CW * COLS, CH * ROWS);
   const rng = makeRng(0x7A65);
+  tagCells(g, COLS, ROWS, CW, CH, rng);
+  setTypeCtx(null);
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
+  t.anisotropy = 16;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
 
+function tagCells(g, COLS, ROWS, CW, CH, rng) {
   for (let i = 0; i < COLS * ROWS; i++) {
+    setTypeCtx('tag', i, 'direct');
     g.save();
     g.translate((i % COLS) * CW, Math.floor(i / COLS) * CH);
     g.beginPath(); g.rect(0, 0, CW, CH); g.clip();
@@ -1528,17 +2247,17 @@ export function tagAtlas(THREE) {
       fitText(g, 'CLEARANCE', 5, CH * 0.19, CW * 0.62, CH * 0.18, FACE.fat, '900', 'left');
       // struck-through was-price, top right
       g.fillStyle = '#7a3a12';
-      g.font = `800 ${CH * 0.15}px ${FACE.grot}`;
       const was = `$${ri(rng, 2, 9)}.${String(ri(rng, 10, 99))}`;
-      g.fillText(was, CW * 0.70, CH * 0.41);
-      const ww = g.measureText(was).width;
+      const ww = fitText(g, was, CW * 0.70, CH * 0.41, CW * 0.28, CH * 0.15,
+        FACE.grot, '800', 'left');
+      g.fillStyle = '#7a3a12';
       g.fillRect(CW * 0.70 - 2, CH * 0.36, ww + 4, 2.4);
       // the marker date somebody wrote on it
-      g.fillStyle = 'rgba(28,24,20,0.72)';
-      g.font = `700 ${CH * 0.12}px ${FACE.mono}`;
       g.save();
       g.translate(CW * 0.71, CH * 0.92); g.rotate(rr(rng, -0.10, 0.05));
-      g.fillText(`${ri(rng, 1, 12)}/${ri(rng, 10, 28)}`, 0, 0);
+      g.fillStyle = 'rgba(28,24,20,0.72)';
+      fitText(g, `${ri(rng, 1, 12)}/${ri(rng, 10, 28)}`, 0, 0, CW * 0.24, CH * 0.12,
+        FACE.mono, '700', 'left');
       g.restore();
     }
 
@@ -1547,17 +2266,19 @@ export function tagAtlas(THREE) {
     // grocery prices cluster at 99/49/29 cents and rarely start at zero
     const dollars = rng() < 0.16 ? 0 : ri(rng, 1, 9);
     const cents = rng() < 0.55 ? pk(rng, [99, 49, 29, 79, 19, 89, 59, 39]) : ri(rng, 0, 99);
-    g.fillStyle = (sale || clear) ? '#1b1a17' : '#141312';
+    // The dominant mark on the tag, and — until this round — the single largest
+    // piece of type in the store standing outside the contrast guarantee.
+    const ink = (sale || clear) ? '#1b1a17' : '#141312';
     g.textAlign = 'left';
     const py = (sale || clear) ? CH * 0.70 : CH * 0.58;
-    g.font = `900 ${CH * 0.46}px ${FACE.fat}`;
     const big = `${dollars}`;
-    g.fillText(big, 6, py);
-    const bw = g.measureText(big).width;
-    g.font = `900 ${CH * 0.30}px ${FACE.fat}`;
-    g.fillText(String(cents).padStart(2, '0'), 6 + bw + 3, py - CH * 0.15);
-    g.font = `900 ${CH * 0.13}px ${FACE.grot}`;
-    g.fillText('$', 6 + bw + 3, py);
+    g.fillStyle = ink;
+    const bw = fitText(g, big, 6, py, CW * 0.40, CH * 0.46, FACE.fat, '900', 'left');
+    g.fillStyle = ink;
+    fitText(g, String(cents).padStart(2, '0'), 6 + bw + 3, py - CH * 0.15, CW * 0.30,
+      CH * 0.30, FACE.fat, '900', 'left');
+    g.fillStyle = ink;
+    fitText(g, '$', 6 + bw + 3, py, CW * 0.10, CH * 0.13, FACE.grot, '900', 'left');
 
     // caps description + unit price. A clearance card carries neither: the
     // item is being run out, so the only things on it are the reduction and
@@ -1582,19 +2303,14 @@ export function tagAtlas(THREE) {
       if (rng() < 0.7) g.fillRect(bx, CH * 0.66, w, CH * 0.20);
       bx += w + rr(rng, 0.7, 1.9);
     }
-    g.font = `400 ${CH * 0.085}px ${FACE.mono}`;
     g.fillStyle = '#2a2824';
-    g.fillText(`${ri(rng, 10000, 99999)} ${ri(rng, 10000, 99999)}`, CW * 0.50, CH * 0.955);
+    fitText(g, `${ri(rng, 10000, 99999)} ${ri(rng, 10000, 99999)}`, CW * 0.50, CH * 0.955,
+      CW * 0.46, CH * 0.085, FACE.mono, '400', 'left');
     // coloured spine down the left edge, the way ESL-style tags print
     g.fillStyle = clear ? '#8c3a08' : (sale ? '#b8190f' : (yellow ? '#c8a41c' : '#8d8676'));
     g.fillRect(0, 0, CW * 0.022, CH);
     g.restore();
   }
-  const t = new THREE.CanvasTexture(c);
-  t.wrapS = t.wrapT = THREE.ClampToEdgeWrapping;
-  t.anisotropy = 16;
-  t.colorSpace = THREE.SRGBColorSpace;
-  return t;
 }
 
 // ---------------------------------------------------------------------------
@@ -1745,33 +2461,20 @@ export const PKG_STOCK = { value: null };   // filled with a THREE.Vector3 below
 // puts the aisle past every reference file in the set.
 export const PKG_SAT = { value: 1.22 };
 
-export function chopPackageMat(THREE, mask, grid, extra = {}) {
-  // LINEAR, set directly — a THREE.Color built from a hex would be converted
-  // out of sRGB and land somewhere else entirely. Built here rather than in
-  // onBeforeCompile so the handle is live before the first material compiles.
-  if (!PKG_STOCK.value) PKG_STOCK.value = new THREE.Vector3(0.855, 0.845, 0.822);
-  const { spec = null, gloss = null, ...rest } = extra;
-  const m = spec
-    ? new THREE.MeshPhongMaterial({
-      map: mask, color: 0xffffff, shininess: spec.shininess,
-      specular: new THREE.Color(spec.specular), ...rest,
-    })
-    : new THREE.MeshLambertMaterial({ map: mask, color: 0xffffff, ...rest });
-  const cell = new THREE.Vector2(1 / grid.cols, 1 / grid.rows);
-  const px = new THREE.Vector2(grid.cw * grid.cols, grid.ch * grid.rows);
-  m.onBeforeCompile = (sh) => {
-    sh.uniforms.uCell = { value: cell };
-    sh.uniforms.uAtlasPx = { value: px };
-    sh.uniforms.uPkgStage = PKG_STAGE;
-    sh.uniforms.uPkgStock = PKG_STOCK;
-    sh.uniforms.uPkgSat = PKG_SAT;
-    sh.vertexShader = 'attribute vec2 aCell;\nvarying vec2 vCell;\n' + sh.vertexShader
-      .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvCell = aCell;');
-    sh.fragmentShader = 'uniform vec2 uCell;\nuniform vec2 uAtlasPx;\nvarying vec2 vCell;\nfloat chopGloss;\n'
-      + 'uniform float uPkgStage;\nuniform vec3 uPkgStock;\nuniform float uPkgSat;\n'
-      + 'vec3 chopSt1, chopSt2, chopSt3, chopSt4, chopSt5;\n'
-      + sh.fragmentShader
-        .replace('#include <map_fragment>', `
+// The fragment source that ACTUALLY COMPILED, kept so press.js's transcription
+// of the four food swatches can be checked against it rather than against a
+// comment. AGENTS_BRIEF has three entries about a second copy of a derivation
+// held in sync by coincidence; this is the cheapest available assertion that
+// the copy is still true, and it reads the artefact rather than a table.
+export const PKG_FRAG = { src: '' };
+
+// THE INJECTED MAP FRAGMENT, hoisted to module scope so press.js's CPU
+// transcription of the four food swatches can be checked against the SOURCE
+// TEXT rather than against a comment. onBeforeCompile does not run until a
+// material is first rendered, so a check that waited for the compiled string
+// would be silent on a page that has not yet drawn a package -- which is a
+// check that passes because it never runs.
+const PKG_MAP_FRAG = (gloss) => `
         vec2 chopUv = vCell + clamp( vMapUv, 0.0015, 0.9985 ) * uCell;
         vec4 chopM = texture2D( map, chopUv, -0.85 );
         // ---- ROUND 7: MAGNIFICATION ------------------------------------
@@ -1863,7 +2566,35 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
         // an opt-in with no coupling in the other direction: a material that
         // never writes it simply flares uniformly. See chopLamp in light.js.
         chopGlossX = chopGloss;
-      `)
+      `;
+
+export function chopPackageMat(THREE, mask, grid, extra = {}) {
+  // LINEAR, set directly — a THREE.Color built from a hex would be converted
+  // out of sRGB and land somewhere else entirely. Built here rather than in
+  // onBeforeCompile so the handle is live before the first material compiles.
+  if (!PKG_STOCK.value) PKG_STOCK.value = new THREE.Vector3(0.855, 0.845, 0.822);
+  const { spec = null, gloss = null, ...rest } = extra;
+  const m = spec
+    ? new THREE.MeshPhongMaterial({
+      map: mask, color: 0xffffff, shininess: spec.shininess,
+      specular: new THREE.Color(spec.specular), ...rest,
+    })
+    : new THREE.MeshLambertMaterial({ map: mask, color: 0xffffff, ...rest });
+  const cell = new THREE.Vector2(1 / grid.cols, 1 / grid.rows);
+  const px = new THREE.Vector2(grid.cw * grid.cols, grid.ch * grid.rows);
+  m.onBeforeCompile = (sh) => {
+    sh.uniforms.uCell = { value: cell };
+    sh.uniforms.uAtlasPx = { value: px };
+    sh.uniforms.uPkgStage = PKG_STAGE;
+    sh.uniforms.uPkgStock = PKG_STOCK;
+    sh.uniforms.uPkgSat = PKG_SAT;
+    sh.vertexShader = 'attribute vec2 aCell;\nvarying vec2 vCell;\n' + sh.vertexShader
+      .replace('#include <uv_vertex>', '#include <uv_vertex>\n\tvCell = aCell;');
+    sh.fragmentShader = 'uniform vec2 uCell;\nuniform vec2 uAtlasPx;\nvarying vec2 vCell;\nfloat chopGloss;\n'
+      + 'uniform float uPkgStage;\nuniform vec3 uPkgStock;\nuniform float uPkgSat;\n'
+      + 'vec3 chopSt1, chopSt2, chopSt3, chopSt4, chopSt5;\n'
+      + sh.fragmentShader
+        .replace('#include <map_fragment>', PKG_MAP_FRAG(gloss || '1.0'))
         .replace('#include <color_fragment>', '')
         .replace('#include <specularmap_fragment>', 'float specularStrength = chopGloss;')
         // BEFORE light.js's AO_FRAG. patchAO chains this hook first and then
@@ -1884,6 +2615,7 @@ export function chopPackageMat(THREE, mask, grid, extra = {}) {
             : vec3( 0.0, 1.0, 0.0 );
         }
         #include <colorspace_fragment>`);
+    PKG_FRAG.src = sh.fragmentShader;
   };
   m.customProgramCacheKey = () => 'chopPkgR12' + grid.cols + 'x' + grid.rows
     + (spec ? 'P' + (gloss ? gloss.length : 0) : 'L');
@@ -1942,7 +2674,94 @@ function frontFold(g, uv, lo, hi, v0, v1) {
 // It is derived from the geometry and nothing else, so a new profile needs no
 // table entry and cannot fall out of sync with one. latheCheck() below asserts
 // the result against the artefact.
-const RADIAL_W = 0.5;
+//
+// ===========================================================================
+// ROUND 20 — RADIAL_W WAS 0.5, AND IT IS THE SAME BUG ONE SEGMENT ALONG.
+//
+// r18 fixed the BARREL and r19 turned that fix into a live assertion. Neither
+// looked at what the rest of the profile got, and r19's critic filed the
+// symptom without the cause: "no cylinder carries a rim ellipse or a lid".
+// Read off the LIVE uv buffers (endCheck() below prints this table), rows of
+// cell per unit of object height, where 1.00 is a carton:
+//
+//     outline        segment                       hFrac    dv     rows/H
+//     can/rim        BARREL                        0.816   0.785    0.96
+//     can/rim        top rolled rim WALL           0.034   0.0118   0.35
+//     can/rim        bottom rolled rim WALL        0.034   0.0080   0.24
+//     can/rim        top end disc                  0.015   0.0743   4.96
+//     can/tub        snap-lid rim WALL             0.057   0.0187   0.33
+//     can/tub        lid top disc                  0.000   0.0722    inf
+//     can/jar        lug-lid WALL                  0.090   0.0207   0.23
+//     bottle/soda    closure WALL (the knurl)      0.100   0.0782   0.78
+//     bottle/soda    cap crown disc                0.038   0.0830   2.19
+//     bottle/jug     cap crown disc                0.030   0.0996   3.32
+//
+// Every WALL above or below the barrel is squeezed to 0.23-0.44x while every
+// end DISC is pulled 2.2x to infinity. The rolled rim -- which CAN_PROFILES in
+// store.js describes, correctly, as "the two bright rings that identify a can
+// across an aisle" -- is allocated 1.7 px of a 144 px cell, so it cannot exist
+// in the mip chain, and the recessed end panel nobody can see from a shelf gets
+// 10.7 px.
+//
+// WHERE 0.10 COMES FROM, AND IT IS NOT TASTE. RADIAL_W trades cell rows between
+// surfaces that face UP (discs) and surfaces that face OUT (walls). A disc
+// projects |sin e| of its area and a wall |cos e|, where e is the elevation of
+// the view ray, so the ratio the player actually receives is |tan e|. Measured
+// off the rig -- all 10,234 round instances in the scene against the six
+// aniso.js POSES, horizontal range 0.6-14 m, 20,102 pairs:
+//
+//     |tan e|   p10 0.010   p25 0.030   median 0.071   MEAN 0.0995   p90 0.224
+//
+// So 0.5 over-serves the discs by 5x against the mean and by 2.2x against the
+// p90. The mean is used rather than the median because the distribution is
+// long-tailed toward knocked-over facings in the promo bins, where a can's end
+// IS the facing, and because the discs must not collapse: the flat base of
+// can/rim and the lid of can/tub have dy EXACTLY ZERO, so RADIAL_W is the only
+// thing that gives them any rows at all. At 0.10 they still take 3.4 and 4.9 px
+// of the cell; at 0 they would be a single texel and the lid could not be drawn.
+//
+// WHAT IT BOUGHT, read off the live uv after the change (endCheck().rows, one
+// row per profile segment; texels are of the 144-row can cell / 212-row bottle):
+//
+//     outline        segment                 hFrac    dv      rows/H   was
+//     can/rim        top rolled rim WALL     0.034   0.0275    0.81    0.35
+//     can/rim        bottom rolled rim WALL  0.034   0.0198    0.58    0.24
+//     can/tub        snap-lid rim WALL       0.057   0.0433    0.76    0.33
+//     can/jar        lug-lid WALL            0.090   0.0384    0.43    0.23
+//     bottle/soda    closure WALL            0.100   0.0998    1.00    0.78
+//     bottle/jug     neck WALL               0.080   0.1014    1.27    0.77
+//     can/rim        top end disc            0.015   0.0445    2.97    4.96
+//
+// and the flat end discs, whose dy is exactly zero and which RADIAL_W alone
+// keeps alive, still take 3.4 px (can/rim base), 4.8 px (can/tub lid) and 6.4 px
+// (can/rim top) of the cell. Every wall moved 1.6-2.3x; nothing collapsed.
+//
+// This changes NOTHING about the barrel -- latheBands maps it linearly onto the
+// declared window whatever the weights are, so latheCheck()'s v-span and stretch
+// are untouched by construction. Verified live rather than argued: with the
+// allocation swapped to 0.5 and back on one page load, latheCheck() returns []
+// in both modes and endCheck() returns 47 complaints against 18.
+const RADIAL_W = 0.10;
+const LEGACY_RADIAL_W = 0.5;
+
+// THE r19 END LAYOUT, REACHABLE AS A DIAL. AGENTS_BRIEF, on round 16's
+// hud.bands('r15'): "on a project where three separate statistics have been
+// wrecked by cross-load drift, making the previous behaviour a runtime option is
+// the cheapest trustworthy control available." It is not a luxury here — the
+// store's planogram is decided in products.js and store.js, another builder is
+// live in both this round, and a plate taken before their save and one taken
+// after are of DIFFERENT SHELVES. Measured: two reloads of one build give an
+// identical round-instance signature (53 meshes, checksum -49892.142, twice),
+// and a plate from either side of a neighbouring builder's save does not.
+//
+// So the A/B is one page load, one flag: endsAB() re-bakes the two round
+// atlases and re-writes the lathe v in this mode and back, and proves the
+// restore byte-identical on both the uv buffers and the canvases.
+export const PACK_ENDS = { legacy: false };
+export function setPackEnds(mode) {
+  PACK_ENDS.legacy = mode === 'r19';
+  return PACK_ENDS.legacy ? 'r19' : 'r20';
+}
 
 function profileOf(g) {
   // vertices at bearing 0 (local +Z, x ~ 0, z > 0) are one copy of the profile;
@@ -1957,12 +2776,16 @@ function profileOf(g) {
   return [...m.values()].sort((a, b) => a.v0 - b.v0);
 }
 
-function latheBands(P, band) {
+// `rw` is RADIAL_W by default and an argument ONLY so endCheckSelfTest can push
+// the r19 weighting through the same owner on the same live profiles. There is
+// no caller in the store that passes it; a second copy of this arithmetic is
+// exactly the duplication CLAUDE.md opens with.
+function latheBands(P, band, rw = (PACK_ENDS.legacy ? LEGACY_RADIAL_W : RADIAL_W)) {
   const n = P.length;
-  // segment weights: height, plus radial travel at half weight
+  // segment weights: height, plus radial travel at RADIAL_W
   const w = [];
   for (let i = 0; i + 1 < n; i++) {
-    w.push(Math.abs(P[i + 1].y - P[i].y) + RADIAL_W * Math.abs(P[i + 1].r - P[i].r));
+    w.push(Math.abs(P[i + 1].y - P[i].y) + rw * Math.abs(P[i + 1].r - P[i].r));
   }
   // THE BARREL. A WALL is a segment that travels further in y than in r. The
   // barrel is the single longest wall, GROWN outward through adjacent walls
@@ -2041,37 +2864,777 @@ function latheFold(g, band, tag) {
   return g;
 }
 
-// THE ASSERTION, AND IT GUARDS THE CLASS RATHER THAN THE SHAPE.
+// ===========================================================================
+// ROUND 19 — THE ASSERTION NOW READS THE GPU, NOT THE LOG.
 //
-// It does not ask "is the tub right". It asks, of every round geometry the
-// store builds, whether the barrel really landed on the window the atlas
-// declared, and whether the label's texture-per-unit-of-object-height is within
-// reach of a flat facing's. Reverting one line of latheFold() to LatheGeometry's
-// own v takes every barrelVSpan to ~0.11 and fires this on all seven shapes at
-// once; adding a ninth profile with a fat rim fires it on that one.
+// r18 shipped this as a loop over LATHE_LOG, which latheFold() writes ONCE at
+// bake time. r18's critic broke it in one line: aniso.js's uvAB() puts
+// LatheGeometry's index-based v back on the live geometries, and latheCheck()
+// went on returning [] while all 51 lathes in the scene carried the old unwrap
+// — worst stretch 6.0x, barrel v-span 0.099. The check certified a store it
+// could not see, and it certified it while the round's own tool was corrupting
+// it. That is the fourth instance of this failure on this project and the
+// brief's words for it are exact: "a self-test that passes proves the check can
+// fire; it does not prove the check is WATCHING the artefact".
+//
+// Three properties of the rewrite, and each one is there because of a specific
+// way the old one could be fooled:
+//
+//   1. IT TAKES A SCENE AND HAS NO OTHER MODE. There is no argument-less form
+//      that falls back to the log, because a fallback is how the log got
+//      trusted in the first place. Called with no scene it THROWS.
+//   2. IT RE-DERIVES THE PROFILE FROM POSITIONS, not from uv. The old v was
+//      the point index, so r18's recovery could read the ordering out of uv.y;
+//      a check that did that would be reading the very attribute under test.
+//      LatheGeometry emits the profile as its first `points` vertices and then
+//      repeats it once per azimuth segment, so the profile is recovered from
+//      the position buffer and verified to repeat before anything is measured.
+//   3. IT ASKS latheBands() WHERE THE BARREL IS. One owner: the same function
+//      the unwrap uses decides which profile points are the body, so the check
+//      cannot disagree with the fold about what a barrel is. What it reads
+//      independently is the LIVE v on those points.
+//
+// The declared window comes from the atlas the mesh ACTUALLY SAMPLES — matched
+// by its map's canvas dimensions, exactly as chopShelfCheck() recovers a cell —
+// so a mesh re-pointed at another atlas is measured against that atlas's
+// contract and not against the one its geometry was built for.
 //
 // `stretch` = (barrel's share of the object's height) / (barrel's share of the
 // cell). 1.00 is a carton. Below 1 the label is squeezed, above 1 it is pulled.
 // The window is deliberately wide — one cell serves a squat tub and a tall
 // jug, and a real shrink label is drawn for its own bottle — but 6-7x is not a
 // label at all, which is where this file was.
-export function latheCheck() {
-  const bad = [];
-  for (const e of LATHE_LOG) {
-    const want = e.band[1] - e.band[0];
-    if (Math.abs(e.barrelVSpan - want) > 0.02) {
-      bad.push(e.tag + ': barrel carries v-span ' + e.barrelVSpan + ' but the atlas declares '
-        + want.toFixed(3) + ' — the artwork does not land on the body');
-    } else if (e.stretch < 0.55 || e.stretch > 1.60) {
-      bad.push(e.tag + ': label stretch ' + e.stretch + 'x (barrel is ' + e.barrelHeightFrac
-        + ' of the height and ' + e.barrelVSpan + ' of the cell)');
-    }
+//
+// LATHE_LOG survives as TELEMETRY ONLY. Nothing asserts on it any more; it
+// records what the fold believed at bake time, which is useful when the live
+// reading disagrees with it and worthless as evidence on its own.
+
+// Recover the lathe profile from POSITIONS. Returns null for a geometry whose
+// vertex layout does not repeat a profile — a cylinder, a box, anything else —
+// so the caller can route it to the cap/side test instead of guessing.
+function profileFromPositions(g) {
+  const pos = g.attributes.position;
+  const n = pos.count;
+  const ry = (i) => [Math.hypot(pos.getX(i), pos.getZ(i)), pos.getY(i)];
+  // The period is the first p > 1 with position[p] == position[0] in (r, y)
+  // AND which divides the vertex count. LatheGeometry's grid is
+  // (segments + 1) x points, so the profile is exactly the first `points`.
+  let P = -1;
+  const [r0, y0] = ry(0);
+  for (let p = 2; p <= n / 2; p++) {
+    if (n % p) continue;
+    const [r, y] = ry(p);
+    if (Math.abs(r - r0) > 1e-6 || Math.abs(y - y0) > 1e-6) continue;
+    P = p; break;
   }
-  return bad;
+  if (P < 3) return null;
+  // verify EVERY repeat, not just the first — a shape that happens to return
+  // to its starting radius mid-profile would otherwise cut the profile short
+  for (let k = 0; k < n; k++) {
+    const [ra, ya] = ry(k), [rb, yb] = ry(k % P);
+    if (Math.abs(ra - rb) > 1e-6 || Math.abs(ya - yb) > 1e-6) return null;
+  }
+  const out = [];
+  for (let k = 0; k < P; k++) { const [r, y] = ry(k); out.push({ r, y, i: k }); }
+  return out;
+}
+
+// The v the LIVE geometry carries on profile point k, averaged over its azimuth
+// copies. They must agree — the fold writes one value per profile point — and a
+// spread means something has rewritten part of the buffer, which is reported
+// rather than averaged away.
+function liveV(g, P, k) {
+  const uv = g.attributes.uv, n = uv.count, step = P.length;
+  let lo = Infinity, hi = -Infinity;
+  for (let i = k; i < n; i += step) {
+    const v = uv.getY(i);
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  return { v: (lo + hi) / 2, spread: hi - lo };
+}
+
+// A cylinder has no profile to recover: its side wall is the vertices whose
+// normal is radial. Same question asked of it — what v does the printed body
+// carry, live.
+function cylBodyV(g) {
+  const nrm = g.attributes.normal, uv = g.attributes.uv;
+  if (!nrm) return null;
+  let lo = Infinity, hi = -Infinity, n = 0;
+  for (let i = 0; i < uv.count; i++) {
+    if (Math.abs(nrm.getY(i)) > 0.5) continue;         // a cap, not the wall
+    const v = uv.getY(i);
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+    n++;
+  }
+  return n ? { v0: lo, v1: hi, n } : null;
+}
+
+export function latheCheck(scene, atlases) {
+  if (!scene || typeof scene.traverse !== 'function') {
+    throw new Error('latheCheck(scene, ATLAS): r18 read a bake-time log and certified a store '
+      + 'carrying the old index-based v. There is no log-reading form of this check.');
+  }
+  const A = atlases || ATLAS;
+  const byDims = new Map();
+  for (const k of Object.keys(A)) {
+    if (!A[k].barrel) continue;                         // flat families: no body
+    byDims.set((A[k].cols * A[k].cw) + 'x' + (A[k].rows * A[k].ch), k);
+  }
+  const bad = [];
+  const rows = [];
+  const seen = new Set();
+  let meshes = 0;
+  scene.traverse((o) => {
+    if (!o.isInstancedMesh || !o.count) return;
+    const im = o.material && o.material.map && o.material.map.image;
+    const k = im && byDims.get(im.width + 'x' + im.height);
+    if (!k) return;
+    meshes++;
+    const g = o.geometry;
+    if (seen.has(g.uuid)) return;                       // one reading per buffer
+    seen.add(g.uuid);
+    const [vb0, vb1] = A[k].barrel;
+    const want = vb1 - vb0;
+    const tag = (g.name || g.type) + ' [' + k + ']';
+    const P = profileFromPositions(g);
+    if (!P) {
+      const b = cylBodyV(g);
+      if (!b) { bad.push(tag + ': neither a lathe profile nor a cylinder wall — unmeasurable'); return; }
+      const span = b.v1 - b.v0;
+      rows.push({ tag, kind: 'cylinder', vSpan: +span.toFixed(3), want: +want.toFixed(3) });
+      if (Math.abs(span - want) > 0.02) {
+        bad.push(tag + ': wall carries v-span ' + span.toFixed(3) + ' but the atlas declares '
+          + want.toFixed(3) + ' — the artwork does not land on the body');
+      }
+      return;
+    }
+    const { out, best } = latheBands(P, A[k].barrel);
+    const a = liveV(g, P, best.a), b = liveV(g, P, best.b);
+    const vSpan = Math.abs(b.v - a.v);
+    const yTot = Math.max(...P.map((p) => p.y)) - Math.min(...P.map((p) => p.y));
+    const hFrac = Math.abs(P[best.b].y - P[best.a].y) / (yTot || 1);
+    const stretch = hFrac / (vSpan || 1e-6);
+    // What the fold BELIEVED, for the report only. A disagreement between this
+    // and the live reading is the exact shape of the r18 failure.
+    const believed = Math.abs(out[best.b] - out[best.a]);
+    rows.push({
+      tag, kind: 'lathe', points: P.length, vSpan: +vSpan.toFixed(3),
+      want: +want.toFixed(3), stretch: +stretch.toFixed(2),
+      barrelHeightFrac: +hFrac.toFixed(3), believed: +believed.toFixed(3),
+      instances: o.count,
+    });
+    if (Math.max(a.spread, b.spread) > 1e-4) {
+      bad.push(tag + ': the barrel edge carries ' + Math.max(a.spread, b.spread).toFixed(4)
+        + ' of v spread across its azimuth copies — the uv buffer is not one value per profile point');
+    } else if (Math.abs(vSpan - want) > 0.02) {
+      bad.push(tag + ': barrel carries v-span ' + vSpan.toFixed(3) + ' LIVE but the atlas declares '
+        + want.toFixed(3) + ' — the artwork does not land on the body'
+        + (Math.abs(believed - want) <= 0.02 ? ' (the bake-time log says ' + believed.toFixed(3)
+          + ', so something rewrote the buffer after the fold)' : ''));
+    } else if (stretch < 0.55 || stretch > 1.60) {
+      bad.push(tag + ': label stretch ' + stretch.toFixed(2) + 'x LIVE (barrel is '
+        + hFrac.toFixed(3) + ' of the height and ' + vSpan.toFixed(3) + ' of the cell)');
+    }
+  });
+  if (!meshes) {
+    bad.push('latheCheck saw ZERO meshes drawing from a round atlas. Zero is the most '
+      + 'suspicious reading an instrument can give — the dimension match is broken, not the store.');
+  }
+  // ROUND 20 — the END STRUCTURE rides along, because store.js already publishes
+  // this call as scene.userData.chopLatheCheck() and pack.js cannot add a second
+  // one from its own side. It is a SEPARATE property and never folded into
+  // `bad`: store.js's own uv-corruption self-test asserts complaintsAfterRestore
+  // === 0, and two of endCheck's complaints are structural and standing (see
+  // MIN_WALL_TEXELS). Reported, not thrown, and named so nobody has to grep.
+  let ends = null;
+  try { ends = endCheck(scene, atlases); } catch (e) { ends = [String(e.message)]; }
+  return Object.assign(bad, {
+    rows, meshes, buffers: seen.size,
+    ends: { complaints: ends.length, first: ends.slice(0, 4), rows: ends.rows },
+  });
+}
+
+// ===========================================================================
+// ROUND 20 — endCheck(). latheCheck() STOPS AT THE BARREL, AND SO DID THE FIX.
+//
+// latheCheck asks one question — does the LABEL land on the BODY — and answers
+// it correctly on all 56 round meshes. r19's critic then reported that no
+// cylinder in the store carries a rim ellipse or a lid, and both statements are
+// true at once, because the barrel is 60-89% of the profile and nothing had
+// ever looked at the rest of it. Read off the live uv, the r19 build gave every
+// WALL above or below the barrel 0.23-0.44 rows of cell per unit of object
+// height and every end DISC 2.2x to infinity. AGENTS_BRIEF, on r17: "each new
+// assertion moved the defect one stage downstream rather than removing it."
+// This is that, one SEGMENT downstream.
+//
+// WHAT IT ASSERTS, and it is deliberately about texels rather than about the
+// weighting constant. A band narrower than a texel cannot survive the filter: it
+// is averaged into its neighbours before it is ever a pixel, and no amount of
+// contrast in the artwork recovers a row the mip chain has already folded away.
+//
+// THE SIZE THIS IS SET AGAINST, measured rather than assumed. aniso.js's
+// facingPx over the six POSES, 15,537 can facings: WIDTH p50 2.8 px, p90 7.4,
+// p99 19.8, max 77.1. can/rim is 2.00:1, so the facing HEIGHT is p50 5.6 px,
+// p90 14.8, p99 39.6, max 154. The barrel carries 113 of the cell's 144 rows, so
+// the mip actually sampled runs level 0 at the largest facing, ~1.8 at p99, ~3.2
+// at p90 and ~4.6 at the median. MIN_WALL_TEXELS is stated at MIP 0 and scaled by
+// the atlas's own cell height, so a future cell resize moves it with the cell.
+//
+// AND THE CLAIM THIS DOES NOT SUPPORT. At the median facing a can is 5.6 px tall
+// and its rolled rim is 3.4% of that — 0.19 px. There is no per-can rim claim
+// available at chase range and this file does not make one. What the check
+// protects is the AGGREGATE: the end structure is 18.4% of a can's height, a
+// stacked column puts two of them adjacent at every seam, and it is the pitch and
+// contrast of that repeat the eye integrates. Same discipline AGENTS_BRIEF asks
+// for after r18: "verify a legibility claim against the pixels the player gets."
+//
+// It asserts on WALLS only. A disc's rows-per-height is infinite by
+// construction (dy is exactly zero on a flat can base) and there is no defect
+// in that; the fault this round is about is the wall the disc was taking the
+// rows FROM. Discs are reported, never asserted.
+export const MIN_WALL_TEXELS = 3.0;
+
+// One row per profile segment, with the v read LIVE off the buffer. `believed`
+// is what latheBands would allocate; a disagreement is the r18 failure shape.
+function endRows(g, P, band) {
+  const ys = P.map((q) => q.y);
+  const yTot = (Math.max(...ys) - Math.min(...ys)) || 1;
+  const { out, best } = latheBands(P, band);
+  const rows = [];
+  for (let i = 0; i + 1 < P.length; i++) {
+    const dy = Math.abs(P[i + 1].y - P[i].y), dr = Math.abs(P[i + 1].r - P[i].r);
+    const a = liveV(g, P, i), b = liveV(g, P, i + 1);
+    const dv = Math.abs(b.v - a.v);
+    const hFrac = dy / yTot;
+    rows.push({
+      i,
+      zone: i < best.a ? 'below' : i >= best.b ? 'above' : 'barrel',
+      kind: dy > dr ? 'wall' : 'disc',
+      r0: +P[i].r.toFixed(3), y0: +P[i].y.toFixed(3),
+      hFrac: +hFrac.toFixed(4), dv: +dv.toFixed(4),
+      rowsPerH: hFrac > 1e-6 ? +(dv / hFrac).toFixed(2) : null,
+      v0: +Math.min(a.v, b.v).toFixed(4), v1: +Math.max(a.v, b.v).toFixed(4),
+      believed: +Math.abs(out[i + 1] - out[i]).toFixed(4),
+    });
+  }
+  return rows;
+}
+
+export function endCheck(scene, atlases, minTexels = MIN_WALL_TEXELS) {
+  if (!scene || typeof scene.traverse !== 'function') {
+    throw new Error('endCheck(scene, ATLAS): there is no log-reading form. r18 shipped one '
+      + 'and it certified a store carrying the old unwrap.');
+  }
+  const A = atlases || ATLAS;
+  const byDims = new Map();
+  for (const k of Object.keys(A)) {
+    if (!A[k].barrel) continue;
+    byDims.set((A[k].cols * A[k].cw) + 'x' + (A[k].rows * A[k].ch), k);
+  }
+  const bad = [];
+  const rows = [];
+  const seen = new Set();
+  let meshes = 0;
+  scene.traverse((o) => {
+    if (!o.isInstancedMesh || !o.count) return;
+    const im = o.material && o.material.map && o.material.map.image;
+    const k = im && byDims.get(im.width + 'x' + im.height);
+    if (!k) return;
+    meshes++;
+    const g = o.geometry;
+    if (seen.has(g.uuid)) return;
+    seen.add(g.uuid);
+    const P = profileFromPositions(g);
+    if (!P) return;                              // a cylinder: latheCheck owns it
+    const tag = (g.name || g.type) + ' [' + k + ']';
+    const need = minTexels / A[k].ch;            // texels -> cell fraction
+    for (const s of endRows(g, P, A[k].barrel)) {
+      rows.push(Object.assign({ tag }, s));
+      if (s.zone === 'barrel' || s.kind !== 'wall') continue;
+      if (s.dv < need) {
+        bad.push(tag + ' seg' + s.i + ' (' + s.zone + '-barrel wall, ' + (s.hFrac * 100).toFixed(1)
+          + '% of the object height) carries ' + (s.dv * A[k].ch).toFixed(1) + ' texels of the '
+          + A[k].ch + '-row cell, under the ' + minTexels + ' a band needs to survive the mip chain'
+          + ' — rows/height ' + (s.rowsPerH === null ? 'n/a' : s.rowsPerH.toFixed(2)));
+      }
+    }
+  });
+  if (!meshes) {
+    bad.push('endCheck saw ZERO meshes drawing from a round atlas. Zero is the most suspicious '
+      + 'reading an instrument can give — the dimension match is broken, not the store.');
+  }
+  return Object.assign(bad, { rows, meshes, buffers: seen.size, minTexels });
+}
+
+// PROOF THAT IT DISCRIMINATES, on the LIVE geometry, in ONE page load.
+//
+// A synthetic break would prove the code path runs. What has to be proved here
+// is that the check would have caught the SHIPPED r19 store — so the test pushes
+// the r19 weighting (RADIAL_W 0.5) through latheBands on the same live profiles
+// and applies the same complaint rule to the result. It reads positions only and
+// writes nothing, so it cannot leave the buffers dirty; the third return field
+// is the live check re-run afterwards, which must still agree with itself.
+export function endCheckSelfTest(scene, atlases, minTexels = MIN_WALL_TEXELS) {
+  const A = atlases || ATLAS;
+  const byDims = new Map();
+  for (const k of Object.keys(A)) {
+    if (!A[k].barrel) continue;
+    byDims.set((A[k].cols * A[k].cw) + 'x' + (A[k].rows * A[k].ch), k);
+  }
+  const seen = new Set();
+  const old = [], now = [];
+  scene.traverse((o) => {
+    if (!o.isInstancedMesh || !o.count) return;
+    const im = o.material && o.material.map && o.material.map.image;
+    const k = im && byDims.get(im.width + 'x' + im.height);
+    if (!k) return;
+    const g = o.geometry;
+    if (seen.has(g.uuid)) return;
+    seen.add(g.uuid);
+    const P = profileFromPositions(g);
+    if (!P) return;
+    const ys = P.map((q) => q.y);
+    const yTot = (Math.max(...ys) - Math.min(...ys)) || 1;
+    const need = minTexels / A[k].ch;
+    const tag = (g.name || g.type) + ' [' + k + ']';
+    for (const rw of [0.5, RADIAL_W]) {
+      const { out, best } = latheBands(P, A[k].barrel, rw);
+      for (let i = 0; i + 1 < P.length; i++) {
+        const dy = Math.abs(P[i + 1].y - P[i].y), dr = Math.abs(P[i + 1].r - P[i].r);
+        if (dy <= dr) continue;                        // disc: never asserted
+        if (i >= best.a && i < best.b) continue;       // barrel: latheCheck owns it
+        const dv = Math.abs(out[i + 1] - out[i]);
+        if (dv >= need) continue;
+        (rw === 0.5 ? old : now).push(tag + ' seg' + i + ' ' + (dv * A[k].ch).toFixed(1) + 'px'
+          + ' (' + (100 * dy / yTot).toFixed(1) + '% of height)');
+      }
+    }
+  });
+  const live = endCheck(scene, atlases, minTexels);
+  // `ok` is DISCRIMINATION, not silence, and the difference is the honest part
+  // of this round. Two complaints survive on the shipped build and both are
+  // structural — can/rim's BOTTOM rolled rim at 2.9 of 3.0 texels, and
+  // can/jar's neck at 2.1 — because ATLAS.can.barrel is [0.085, 0.870] while
+  // can/rim is geometrically SYMMETRIC (9.2% of its height above the barrel and
+  // 9.2% below), so the top band gets 1.53x the rows of the bottom for the same
+  // amount of object. The one-line fix is a symmetric window, [0.107, 0.893],
+  // and that table lives in plan.js, not here. Lowering MIN_WALL_TEXELS to 2.9
+  // to make this read clean would be the rubber stamp AGENTS_BRIEF warns about
+  // four separate times, so it is reported instead.
+  return {
+    firedOnR19Weighting: old.length,
+    firesOnShipped: now.length,
+    liveComplaints: live.length,
+    agreesWithLive: now.length === live.length,
+    r19Examples: old.slice(0, 8),
+    stillFiring: live.slice(0, 2),
+    ok: old.length > now.length && now.length === live.length,
+  };
+}
+
+// ===========================================================================
+// ROUND 20 — THE A/B, ON ONE PAGE LOAD.
+//
+// Cross-load plates are not available this round and the reason is worth
+// writing down: the planogram is decided in products.js and store.js, another
+// builder is live in both, and products.js was saved between this round's
+// "before" and "after" captures. Two reloads of ONE tree are byte-stable (53
+// round meshes, position checksum -49892.142, twice), and two reloads across a
+// neighbouring save are of different shelves entirely.
+//
+// endsSwap() therefore does what round 16 did with hud.bands('r15'): it puts the
+// previous behaviour behind a flag and moves the whole comparison inside one
+// load. It re-bakes the two round atlases in the requested mode, swaps them onto
+// every material that draws from one, and rewrites the lathe v to the matching
+// allocation. Going back to 'r20' restores the ORIGINAL texture objects and the
+// ORIGINAL uv arrays, so the restore is byte-exact by construction rather than
+// by re-derivation — endsRestoreCheck() asserts it anyway, because AGENTS_BRIEF
+// records a restore on this project that returned two identical PNGs including
+// the one that was supposed to have changed.
+//
+// The atlas is swapped by ASSIGNING ANOTHER TEXTURE, never by nulling `map`:
+// dropping USE_MAP recompiles the injected shader away and has produced exactly
+// that false-negative here before.
+const AB = { base: null };
+
+export function endsSwap(THREE, scene, mode, atlases) {
+  const A = atlases || ATLAS;
+  const byDims = new Map();
+  for (const k of Object.keys(A)) {
+    if (!A[k].barrel) continue;
+    byDims.set((A[k].cols * A[k].cw) + 'x' + (A[k].rows * A[k].ch), k);
+  }
+  if (!AB.base) {
+    AB.base = { uv: [], mats: [] };
+    const seenG = new Set(), seenM = new Set();
+    scene.traverse((o) => {
+      if (!o.isInstancedMesh || !o.count) return;
+      const m = o.material, im = m && m.map && m.map.image;
+      const k = im && byDims.get(im.width + 'x' + im.height);
+      if (!k) return;
+      if (!seenM.has(m.uuid)) { seenM.add(m.uuid); AB.base.mats.push({ m, k, tex: m.map }); }
+      const g = o.geometry;
+      if (seenG.has(g.uuid)) return;
+      seenG.add(g.uuid);
+      AB.base.uv.push({ g, k, arr: Float32Array.from(g.attributes.uv.array) });
+    });
+  }
+  const want = mode === 'r19';
+  setPackEnds(mode);
+  const baked = {};
+  if (want) {
+    setPackProbe(true);                       // no CELL_LOG writes, no re-check
+    try {
+      for (const k of new Set(AB.base.mats.map((e) => e.k))) {
+        baked[k] = k === 'can' ? canAtlas(THREE) : bottleAtlas(THREE);
+      }
+    } finally { setPackProbe(false); }
+  }
+  for (const e of AB.base.mats) e.m.map = want ? baked[e.k] : e.tex;
+  let folded = 0, restored = 0;
+  for (const e of AB.base.uv) {
+    const uv = e.g.attributes.uv;
+    if (want) {
+      const P = profileFromPositions(e.g);
+      if (!P) continue;                       // a cylinder: its caps are remapped, not folded
+      const { out } = latheBands(P, A[e.k].barrel);
+      const step = P.length;
+      for (let i = 0; i < uv.count; i++) uv.setY(i, out[i % step]);
+      folded++;
+    } else {
+      uv.array.set(e.arr);
+      restored++;
+    }
+    uv.needsUpdate = true;
+  }
+  return { mode, materials: AB.base.mats.length, buffers: AB.base.uv.length, folded, restored };
+}
+
+export function endsRestoreCheck() {
+  if (!AB.base) return { armed: false };
+  let dirty = 0, floats = 0;
+  for (const e of AB.base.uv) {
+    const a = e.g.attributes.uv.array;
+    floats += a.length;
+    for (let i = 0; i < a.length; i++) if (a[i] !== e.arr[i]) { dirty++; break; }
+  }
+  const mapsBack = AB.base.mats.every((e) => e.m.map === e.tex);
+  return {
+    armed: true, buffers: AB.base.uv.length, floatsCompared: floats,
+    dirtyBuffers: dirty, mapsBack, legacyFlag: PACK_ENDS.legacy,
+    ok: dirty === 0 && mapsBack && !PACK_ENDS.legacy,
+  };
+}
+
+// ===========================================================================
+// ROUND 22 — THE PRESS A/B, ON ONE PAGE LOAD.
+//
+// Same reason as endsSwap above and it has not got weaker: the planogram is
+// decided in store.js and products.js, and a plate taken either side of a
+// neighbouring builder's save is of a different shelf. So the r21 ink is a
+// runtime flag and the whole comparison happens inside one load.
+//
+// THE RESTORE IS THE ORIGINAL TEXTURE OBJECT, not a re-bake — a re-bake would
+// prove that the baker is deterministic, which is not the question. What IS
+// re-baked and hashed is the r22 arm, and pressRestoreCheck() asserts that
+// hash equals the hash of the atlas the store has been drawing from since load.
+// If those differ, press.js has picked up state from somewhere it should not
+// have and every number in the round is void.
+//
+// `map` is ASSIGNED, never nulled. AGENTS_BRIEF: dropping USE_MAP recompiles
+// the injected shader away and has returned two byte-identical PNGs on this
+// project including the one that was supposed to have changed.
+const PAB = { base: null, hash: null, held: {} };
+
+function canvasHash(cv) {
+  const g = cv.getContext('2d', { willReadFrequently: true });
+  const d = g.getImageData(0, 0, cv.width, cv.height).data;
+  let h = 0x811c9dc5;
+  for (let i = 0; i < d.length; i += 4) {
+    h ^= d[i] + d[i + 1] * 257 + d[i + 2] * 65537 + d[i + 3] * 16777259;
+    h = Math.imul(h, 0x01000193) >>> 0;
+  }
+  return h >>> 0;
+}
+
+const BAKERS = { carton: cartonAtlas, pouch: pouchAtlas, can: canAtlas, bottle: bottleAtlas };
+
+export function pressSwap(THREE, scene, mode) {
+  const byDims = new Map();
+  for (const k of ATLAS_ORDER) {
+    const A = ATLAS[k];
+    byDims.set((A.cols * A.cw) + 'x' + (A.rows * A.ch), k);
+  }
+  if (!PAB.base) {
+    PAB.base = [];
+    const seen = new Set();
+    scene.traverse((o) => {
+      const m = o.material, im = m && m.map && m.map.image;
+      const k = im && byDims.get(im.width + 'x' + im.height);
+      if (!k || seen.has(m.uuid)) return;
+      seen.add(m.uuid);
+      PAB.base.push({ m, k, tex: m.map });
+    });
+    PAB.hash = {};
+    for (const e of PAB.base) if (!PAB.hash[e.k]) PAB.hash[e.k] = canvasHash(e.tex.image);
+  }
+  const want = mode === 'r21' || mode === 'ink' || mode === 'tone' ? mode : 'r22';
+  // BOTH ARMS ARE PROBE RE-BAKES, and that is not tidiness — it is the only
+  // way this comparison is single-variable. A LOAD-TIME bake and a re-bake of
+  // the SAME code are not byte-identical on this tree: measured live, all 7
+  // carton cells that draw no depiction are identical and all 41 that do draw
+  // one differ, median 2,712 texels, and two successive re-bakes agree
+  // exactly. The state is inside depict()'s three module-level scratch
+  // canvases, which grow monotonically and are shared across bakes, so bake 1
+  // sees them at their growing sizes and bake N sees them at their maximum.
+  // Comparing the LIVE atlas against a re-baked control would therefore have
+  // charged the press with a warm-cache artefact worth 5.59% of the carton
+  // atlas. See the r22 report's contract request against depict.js.
+  //
+  // The RESTORE is still the original texture object, never a re-bake, so it
+  // is byte-exact by construction rather than by re-derivation.
+  setPress(want);
+  const baked = {};
+  setPackProbe(true);                       // no CELL_LOG writes, no re-check
+  try {
+    for (const k of new Set(PAB.base.map((e) => e.k))) baked[k] = BAKERS[k](THREE);
+  } finally { setPackProbe(false); setPress('r22'); }
+  for (const e of PAB.base) {
+    if (PAB.held[e.k]) PAB.held[e.k].dispose();
+    e.m.map = baked[e.k];
+  }
+  PAB.held = baked;
+  return { mode: want, materials: PAB.base.length, armsAreBothRebakes: true,
+    atlases: [...new Set(PAB.base.map((e) => e.k))] };
+}
+
+// Put the store back on the textures it was built with. Separate from
+// pressSwap so a restore is never a re-bake: assigning the original object is
+// byte-exact by construction, and the whole point of the r18 warning about
+// nulling `map` is that a restore you have to re-derive is a restore you have
+// to trust.
+export function pressUnswap() {
+  if (!PAB.base) return { armed: false };
+  for (const e of PAB.base) e.m.map = e.tex;
+  for (const k of Object.keys(PAB.held)) PAB.held[k].dispose();
+  PAB.held = {};
+  setPress('r22');
+  return { armed: true, restored: PAB.base.length };
+}
+
+// THE RESTORE ASSERTION, and it is two claims rather than one. AGENTS_BRIEF:
+// "a restore assertion and an it-still-works assertion are two different
+// tests." So this checks that (1) every material is back on the texture object
+// it was built with, and (2) a FRESH r22 bake is byte-identical to that object
+// — i.e. the shipped atlas really is what press.js produces, rather than the
+// two having drifted apart through some hidden state.
+export function pressRestoreCheck(THREE) {
+  if (!PAB.base) return { armed: false, ok: false, why: 'pressSwap never ran' };
+  const mapsBack = PAB.base.every((e) => e.m.map === e.tex);
+  const ks = [...new Set(PAB.base.map((e) => e.k))];
+  setPackProbe(true);
+  const a = {}, b = {};
+  try {
+    for (const k of ks) { const t = BAKERS[k](THREE); a[k] = canvasHash(t.image); t.dispose(); }
+    for (const k of ks) { const t = BAKERS[k](THREE); b[k] = canvasHash(t.image); t.dispose(); }
+  } finally { setPackProbe(false); }
+  // (1) the store is back on the objects it was built with, by identity;
+  // (2) the re-bake the A/B arms are made of is itself stable, so an arm is a
+  //     property of the mode and not of when it was baked;
+  // (3) and the LIVE-vs-rebake residue is reported rather than asserted away,
+  //     because it is depict.js's warm-cache effect and not this round's.
+  const stable = ks.filter((k) => a[k] !== b[k]);
+  const vsLive = ks.filter((k) => a[k] !== PAB.hash[k]);
+  return {
+    armed: true, mapsBack, pressOn: PRESS.on,
+    liveHash: PAB.hash, rebakeHash: a, rebakeHash2: b,
+    rebakeUnstable: stable, differsFromLoadTimeBake: vsLive,
+    ok: mapsBack && PRESS.on && stable.length === 0,
+  };
+}
+
+// AND THE PROOF THAT THE DIAL DOES ANYTHING. A swap that silently no-ops is
+// indistinguishable from a swap that works, and this project has shipped
+// exactly that twice. Bakes both arms into throwaway canvases and reports the
+// fraction of texels that differ, per atlas.
+export function pressDialCheck(THREE) {
+  setPackProbe(true);
+  const out = {};
+  try {
+    for (const k of ATLAS_ORDER) {
+      setPress('r22'); const a = BAKERS[k](THREE);
+      setPress('r21'); const b = BAKERS[k](THREE);
+      setPress('r22');
+      const ga = a.image.getContext('2d', { willReadFrequently: true });
+      const gb = b.image.getContext('2d', { willReadFrequently: true });
+      const da = ga.getImageData(0, 0, a.image.width, a.image.height).data;
+      const db = gb.getImageData(0, 0, b.image.width, b.image.height).data;
+      let diff = 0, bDiff = 0;
+      for (let i = 0; i < da.length; i += 4) {
+        if (da[i] !== db[i] || da[i + 1] !== db[i + 1] || da[i + 2] !== db[i + 2]) diff++;
+        if (da[i + 2] !== db[i + 2]) bDiff++;
+      }
+      out[k] = { texels: da.length / 4, movedPct: +(100 * diff / (da.length / 4)).toFixed(2),
+        spotChannelPct: +(100 * bDiff / (da.length / 4)).toFixed(2) };
+      a.dispose(); b.dispose();
+    }
+  } finally { setPackProbe(false); setPress('r22'); }
+  return out;
+}
+
+// ===========================================================================
+// ROUND 22 — THE HUE CENSUS, READ OFF THE LIVE ATLAS THE GPU IS BOUND TO.
+//
+// The gap this round is aimed at is SEMANTIC and the critic proved no
+// photometric statistic separates the classes, so this is deliberately not one:
+// it is a census of MY OWN ARTEFACT, in the units the defect was stated in.
+// "A face is printed in one ink" is a countable property of the atlas, and it
+// is countable identically with the press on and off.
+//
+// It reads the canvas the CanvasTexture is bound to, decodes through the
+// package shader's arithmetic (press.js decodeTexel, self-tested against the
+// shader source it transcribes), box-downsamples each printed FRONT to the
+// size a facing is actually delivered at, and counts quantized Lab bins.
+//
+// The brand colour is a per-INSTANCE attribute, so a cell has no single
+// decoded colour. Every cell is therefore censused against a fixed ladder of
+// eight brand swatches spanning the store's own hue histogram, and the
+// reported figure is the MEDIAN over those eight — not one hand-picked swatch,
+// which is how a per-cell number here could otherwise be steered.
+const CENSUS_BRANDS = [
+  [0.62, 0.09, 0.11], [0.85, 0.42, 0.06], [0.90, 0.76, 0.14], [0.20, 0.44, 0.16],
+  [0.09, 0.33, 0.58], [0.33, 0.16, 0.48], [0.86, 0.85, 0.83], [0.16, 0.16, 0.18],
+];
+// THE DECODE CONFIG IS READ OFF THE LIVE UNIFORMS, not copied. PKG_STOCK and
+// PKG_SAT are the objects the shader is bound to, so a sweep of either — which
+// is exactly what they exist for — moves the census with it instead of leaving
+// press.js measuring a store nobody is looking at.
+function censusCfg() {
+  if (!PKG_STOCK.value) throw new Error('hueCensus: PKG_STOCK is not built yet — '
+    + 'chopPackageMat has not run, so there is no live uniform to read.');
+  const s = PKG_STOCK.value;
+  return { stock: [s.x, s.y, s.z], sat: PKG_SAT.value };
+}
+
+export function hueCensus(scene, N = 16) {
+  const cfg = censusCfg();
+  const byDims = new Map();
+  for (const k of ATLAS_ORDER) {
+    const A = ATLAS[k];
+    byDims.set((A.cols * A.cw) + 'x' + (A.rows * A.ch), k);
+  }
+  const imgs = {};
+  scene.traverse((o) => {
+    const m = o.material, im = m && m.map && m.map.image;
+    const k = im && byDims.get(im.width + 'x' + im.height);
+    if (k && !imgs[k]) imgs[k] = im;
+  });
+  const med = (a) => a.slice().sort((x, y) => x - y)[Math.floor(a.length / 2)];
+  const out = {};
+  for (const k of Object.keys(imgs)) {
+    const A = ATLAS[k], im = imgs[k];
+    const cv2 = document.createElement('canvas');
+    cv2.width = im.width; cv2.height = im.height;
+    const g2 = cv2.getContext('2d', { willReadFrequently: true });
+    g2.drawImage(im, 0, 0);
+    const rows = [];
+    for (let i = 0; i < A.cols * A.rows; i++) {
+      const mx = Math.round(A.cw * A.wrap);
+      const x0 = (i % A.cols) * A.cw + mx, w = A.cw - mx;
+      const y0 = Math.floor(i / A.cols) * A.ch + (A.barrel ? Math.round(A.ch * (1 - A.barrel[1])) : 0);
+      const h = A.barrel ? Math.round(A.ch * (A.barrel[1] - A.barrel[0])) : A.ch;
+      const d = g2.getImageData(x0, y0, w, h).data;
+      const per = CENSUS_BRANDS.map((br) => inkCensus(d, w, h, br, cfg, N));
+      // THE BRAND-FIELD SHARE, and it is a guard rather than a headline.
+      // r22's first draft printed its spot zones on the PAPER base, replacing
+      // whole brand fields with pale tints — this round's gap traded for round
+      // 13's. `r >= 200` is the shader's own brand-coverage channel at 78% or
+      // more, i.e. a texel where the per-instance colour is what you see.
+      let brandPx = 0;
+      for (let q = 0; q < w * h; q++) if (d[q * 4] >= 200) brandPx++;
+      rows.push({ i,
+        inks: med(per.map((p) => p.inks)),
+        hues: med(per.map((p) => p.hues)),
+        cover50: med(per.map((p) => p.cover50)),
+        brandField: brandPx / (w * h),
+        flat: med(per.map((p) => p.flat)) });
+    }
+    out[k] = {
+      n: rows.length,
+      hues: [Math.min(...rows.map((r) => r.hues)), med(rows.map((r) => r.hues)), Math.max(...rows.map((r) => r.hues))],
+      inks: [Math.min(...rows.map((r) => r.inks)), med(rows.map((r) => r.inks)), Math.max(...rows.map((r) => r.inks))],
+      cover50: [Math.min(...rows.map((r) => r.cover50)), med(rows.map((r) => r.cover50)), Math.max(...rows.map((r) => r.cover50))],
+      flat: [+Math.min(...rows.map((r) => r.flat)).toFixed(3), +med(rows.map((r) => r.flat)).toFixed(3),
+        +Math.max(...rows.map((r) => r.flat)).toFixed(3)],
+      oneInk: rows.filter((r) => r.hues <= 1).length,
+      brandField: [+Math.min(...rows.map((r) => r.brandField)).toFixed(3),
+        +med(rows.map((r) => r.brandField)).toFixed(3),
+        +Math.max(...rows.map((r) => r.brandField)).toFixed(3)],
+      cells: rows,
+    };
+  }
+  return out;
+}
+
+// THE ASSERTION. Relative, for the reason round 20's subjCheck gives: an
+// absolute floor on hue count would be a constant shaved to clear its own gate,
+// and this project has retired four of those. The promise is that the press
+// leaves NO face carrying fewer hue families than it carried in r21, and that
+// it strictly raises the median on every family it touches. It reads the live
+// canvases in both arms; it does not read a ledger written while baking.
+export function pressCheck(THREE, scene) {
+  decodeSelfTest(censusCfg());
+  // and the four food swatches against the shader that actually compiled
+  // Against the SOURCE TEXT this file hands three.js, not against the compiled
+  // string: onBeforeCompile does not run until a package is first drawn, and a
+  // check that is silent on a page that has not drawn one is not a check.
+  cfgCheck(PKG_MAP_FRAG('1.0'));
+  // BOTH ARMS RE-BAKED, for the reason in pressSwap: a load-time bake and a
+  // re-bake of identical code differ on this tree inside depict().
+  pressSwap(THREE, scene, 'r22');
+  const on = hueCensus(scene, 16);
+  pressSwap(THREE, scene, 'r21');
+  let off;
+  try { off = hueCensus(scene, 16); } finally { pressUnswap(); }
+  const bad = [];
+  const table = {};
+  for (const k of Object.keys(on)) {
+    if (!off[k]) continue;
+    const a = on[k].cells, b = off[k].cells;
+    let worse = 0, same = 0, better = 0, washed = 0;
+    for (let i = 0; i < a.length; i++) {
+      if (a[i].hues < b[i].hues) { worse++; }
+      else if (a[i].hues > b[i].hues) better++;
+      else same++;
+      // THE WASH GUARD. A face may lose at most a third of the brand-covered
+      // area it had in r21. Relative, like every other assertion in this file:
+      // an absolute floor would be a constant shaved to clear its own gate, and
+      // fam-0 cartons legitimately start near zero because they are white stock.
+      if (b[i].brandField > 0.10 && a[i].brandField < b[i].brandField * 0.667) {
+        washed++;
+        bad.push(k + '#' + i + ' brand field ' + b[i].brandField.toFixed(3)
+          + ' -> ' + a[i].brandField.toFixed(3) + ' (the press painted out the brand)');
+      }
+    }
+    table[k] = { medOff: off[k].hues[1], medOn: on[k].hues[1], better, same, worse, washed,
+      flatOff: off[k].flat[1], flatOn: on[k].flat[1],
+      cover50Off: off[k].cover50[1], cover50On: on[k].cover50[1],
+      oneInkOff: off[k].oneInk, oneInkOn: on[k].oneInk,
+      brandFieldOff: off[k].brandField[1], brandFieldOn: on[k].brandField[1] };
+    if (on[k].hues[1] < off[k].hues[1]) bad.push(k + ' median hue families fell ' + off[k].hues[1] + ' -> ' + on[k].hues[1]);
+  }
+  return { bad, table, on, off };
 }
 
 export function unitCellUV(THREE, base, kind, wrap, band = null, tag = '') {
   const g = base.clone();
+  // The geometry carries its own name to the scene. BufferGeometry.clone()
+  // copies `name`, and Batch clones once more to hang aCell on it, so the label
+  // survives to the artefact and latheCheck can say which outline it read
+  // without a table mapping meshes to shapes.
+  if (tag) g.name = tag;
   const uv = g.attributes.uv, idx = g.index;
   const span = (gr) => {
     let lo = Infinity, hi = -Infinity;

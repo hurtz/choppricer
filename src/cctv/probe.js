@@ -627,11 +627,110 @@ export function makeProbe(CHOP) {
   // lamp, which is a real hole and is why this reports the measured BLADE
   // minimum next to the theoretical floor rather than instead of it.
   //
+  // ---- THE BLADE FLOOR AT ONE POSE, WITHOUT BUILDING NINE CLASS PROFILES ---
+  // ROUND 15. lampWarm() has to visit 64 poses now (below), and warmStat()
+  // allocates a [L, chroma] pair per texel per class and sorts nine of them —
+  // 780 ms a pose, 50 s a sweep. The guard only ever reads three numbers off
+  // BLADE, so this computes exactly those three in one pass with no allocation.
+  //
+  // IT IS NOT A SECOND DEFINITION OF THE STATISTIC — that is the CLAUDE.md
+  // hazard and this project has paid for it twice. `warmFloorSelfTest()` below
+  // asserts this and warmStat() agree to the last printed decimal on the pose
+  // that decides the guard, and lampWarm() runs it before it trusts its own
+  // sweep. If the two ever disagree the guard says so instead of reporting the
+  // faster number.
+  function bladeFloor(pose, LT, CT) {
+    const cm = classMap(pose).pin;
+    renderPose(pose);
+    const r = cctv.probeFloorRaw();
+    const BLADE = CLASSES.indexOf('BLADE');
+    let n = 0, selN = 0, cMin = Infinity, below = 0;
+    for (let by = 0; by < r.h; by++) {
+      const py = Math.min(H - 1, Math.floor((r.h - 1 - by) / r.ss));
+      const row = py * W;
+      for (let bx = 0; bx < r.w; bx++) {
+        const px = Math.min(W - 1, Math.floor(bx / r.ss));
+        if (cm[row + px] !== BLADE) continue;
+        n++;
+        const i = (by * r.w + bx) * 4;
+        const R0 = r.data[i], G0 = r.data[i + 1], B0 = r.data[i + 2];
+        const Y = 0.2126 * R0 + 0.7152 * G0 + 0.0722 * B0;
+        if (Y < LT) continue;
+        selN++;
+        const ch = (R0 - B0) / Math.max(Y, 1e-4);
+        if (ch < cMin) cMin = ch;
+        if (ch < CT) below++;
+      }
+    }
+    return { n, selN, cMin: selN ? +cMin.toFixed(4) : null, below };
+  }
+
+  // The two-owner assertion for the line above. Runs both definitions on one
+  // pose and throws if they part company. Cheap enough to run inside the guard.
+  //
+  // AND IT REFUSES AN EMPTY POSE. The first draft of this ran on the LAST pose
+  // in the sweep list, which is a7z9 — a pose with zero blade texels in the
+  // luma gate — so it compared null to null and reported `agree: true` having
+  // compared nothing. That is the vacuous assertion AGENTS_BRIEF logs six times,
+  // committed inside the guard written to answer it. lampWarm() now runs this
+  // on the pose that DECIDED the verdict, after the sweep has found it.
+  function warmFloorSelfTest(pose = POSES[3], LT = null, CT = null) {
+    const fp = cctv.params.floor;
+    const lt = LT != null ? LT : fp.bloomThr;
+    const ct = CT != null ? CT : (fp.bloomWarm != null ? fp.bloomWarm : 9.0);
+    const fast = bladeFloor(pose, lt, ct);
+    const slow = warmStat(pose, lt, ct).stat.BLADE;
+    const sN = slow ? slow.selN : 0, sMin = slow ? slow.cMin : null;
+    if (!fast.selN && !sN) {
+      throw new Error('[probe] warmFloorSelfTest ran on ' + pose.name + ', which has ZERO '
+        + 'blade texels in the luma gate. Both definitions returned null and agreeing '
+        + 'about nothing is not a self-test. Pick a pose with a blade in the gate — '
+        + 'lampWarm() uses the pose that decided its own verdict.');
+    }
+    const ok = fast.selN === sN && fast.cMin === sMin;
+    if (!ok) {
+      throw new Error('[probe] bladeFloor() and warmStat() disagree at ' + pose.name
+        + ': fast selN ' + fast.selN + ' cMin ' + fast.cMin
+        + ' vs slow selN ' + sN + ' cMin ' + sMin
+        + '. Two copies of one derivation have drifted — fix bladeFloor(), do not '
+        + 'quote either number until they agree.');
+    }
+    return { pose: pose.name, selN: fast.selN, cMin: fast.cMin, agree: true };
+  }
+
+  // THE AISLES THE BAND SWEEP VISITS. Four of eight, matching every four-aisle
+  // regression table this file publishes, crossed with AISLE_Z — the same
+  // reachable z band round 13 established the camera really traverses. 64 poses.
+  const WARM_AISLES = [0, 2, 4, 6];
+
   // THIS THROWS. An assertion that returns a number is an assertion nobody
   // reads — see the round-12 exactness audit that read 54% for a year while
   // being right. If a store round warms or cools the lamps past the cut, the
   // next person to call this gets an exception naming both numbers.
-  function lampWarm(pose = POSES[1]) {
+  //
+  // ROUND 15 — AND IT SWEEPS THE BAND, BECAUSE THE POSE IT USED TO SAMPLE IS
+  // NOT THE POSE NEAREST THE CUT. Until this round the default was POSES[1]
+  // (aisle 3, z −11.6), where BLADE cMin is 0.1625 and the printed margin is
+  // 0.0125. Over the 4-aisle x 16-z grid the minimum is 0.1548 at AISLE 7,
+  // z = 0 — margin 0.0048, 2.6x tighter — and the old default would not have
+  // fired on the pose actually closest to the cut. A guard is only as good as
+  // its sample (AGENTS_BRIEF), and the axis to sweep is the one the constant
+  // was validated over.
+  //
+  // Coverage is REPORTED, not assumed. 19 of the 64 poses have no blade texel
+  // in the luma gate at all — every one of aisle 1's sixteen, plus z = +9 on
+  // the other three — and a pose with nothing in the selector says nothing
+  // about the selector. If the whole sweep comes back empty this throws too:
+  // a guard measuring an empty population is the vacuous-assertion failure
+  // AGENTS_BRIEF logs six times, and zero is the most suspicious reading an
+  // instrument can give.
+  //
+  //   lampWarm()                      the 64-pose band sweep, ~14 s
+  //   lampWarm({ aisles:[6], zs:[0] })  narrow it, and `coverage` shows you did
+  //   lampWarm(POSES[1])              legacy single pose, still works, and the
+  //                                   result is labelled posesSwept 1 so nobody
+  //                                   can quote it as a band figure by accident
+  function lampWarm(opts = {}) {
     const cf = scene.userData.chopField;
     if (!cf || !cf.uniforms || !cf.uniforms.uLampCol) {
       throw new Error('[probe] scene.userData.chopField.uniforms.uLampCol is gone — '
@@ -642,26 +741,70 @@ export function makeProbe(CHOP) {
     const L = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
     const lampWarmth = (c.r - c.b) / Math.max(L, 1e-4);
     const cut = cctv.params.floor.bloomWarm != null ? cctv.params.floor.bloomWarm : 9.0;
+    const thr = cctv.params.floor.bloomThr;
     // THE OFF SENTINEL IS NOT A FAILURE. bloomWarm >= 1.0 cannot be reached by
     // any real surface, which is what makes it the ablation lever; a check that
     // threw there would cry wolf on every A/B control run. It still reports the
     // live illuminant, because knowing what the cut WOULD have to clear is the
     // reason to call this with the gate off.
     const enabled = cut < 1.0;
-    const w = warmStat(pose);
-    const B = w.stat.BLADE, LN = w.stat.LENS;
+
+    // Build the pose list. A bare pose object is the legacy call.
+    const single = opts && opts.pos ? opts : (opts && opts.pose) || null;
+    const poses = single ? [single] : [];
+    if (!single) {
+      const aisles = (opts && opts.aisles) || WARM_AISLES;
+      const zs = (opts && opts.zs) || AISLE_Z;
+      for (const a of aisles) for (const z of zs) poses.push(poseFor('a' + (a + 1) + 'z' + z, a, z));
+    }
+
+    const rows = [], empty = [];
+    let worst = null, violators = 0;
+    for (const p of poses) {
+      const f = bladeFloor(p, thr, cut);
+      if (!f.selN) { empty.push(p.name); continue; }
+      rows.push({ pose: p.name, selN: f.selN, cMin: f.cMin, below: f.below });
+      if (f.below > 0) violators++;
+      if (!worst || f.cMin < worst.cMin) worst = { pose: p.name, selN: f.selN, cMin: f.cMin, below: f.below };
+    }
+    rows.sort((a, b) => a.cMin - b.cMin);
+
+    // ONE OWNER FOR THE STATISTIC, PROVEN ON THE POSE THAT DECIDED. Not on a
+    // convenient pose, and never on an empty one — see warmFloorSelfTest.
+    const selfTest = worst
+      ? warmFloorSelfTest(poses.find((p) => p.name === worst.pose), thr, cut)
+      : null;
+
+    const LN = warmStat(worst ? poses.find((p) => p.name === worst.pose) : poses[0]).stat.LENS;
     const out = {
       lampLinear: [+c.r.toFixed(4), +c.g.toFixed(4), +c.b.toFixed(4)],
       lampHexApprox: '#' + [c.r, c.g, c.b].map((v) => Math.round(255 * Math.pow(Math.max(0, Math.min(1, v)), 1 / 2.2)).toString(16).padStart(2, '0')).join(''),
       lampWarmth: +lampWarmth.toFixed(4),
-      warmCut: cut,
+      warmCut: cut, lumaThr: thr, enabled,
       // how far under the illuminant the cut sits. A white reflector cannot get
-      // below lampWarmth, so this is the design margin.
+      // below lampWarmth, so this is the design margin — and it is NOT the
+      // operative one here, because this store's print is cool-pigmented and
+      // already sits below its own illuminant. The empirical margin is the
+      // next field down and it is the one the constant actually rests on.
       marginBelowIlluminant: +(lampWarmth - cut).toFixed(4),
-      pose: pose.name, enabled,
-      bladeSelN: B ? B.selN : 0, bladeCMin: B ? B.cMin : null,
+      // COVERAGE, next to the verdict. AGENTS_BRIEF: guard the guard's sample.
+      coverage: {
+        posesSwept: poses.length,
+        posesWithBladeInGate: rows.length,
+        posesEmpty: empty.length,
+        empty,
+        selfTest,
+      },
+      // THE MINIMUM OVER THE BAND, and where it came from. `pose` used to be
+      // the pose that was sampled; it is now the pose that DECIDED.
+      pose: worst ? worst.pose : null,
+      bladeSelN: worst ? worst.selN : 0,
+      bladeCMin: worst ? worst.cMin : null,
+      marginBelowMeasuredBlade: worst ? +(worst.cMin - cut).toFixed(4) : null,
+      posesViolating: violators,
+      // the ten tightest, so the shape of the tail is visible and not just its end
+      tightest: rows.slice(0, 10),
       lensSelN: LN ? LN.selN : 0, lensCP50: LN ? LN.cP50 : null,
-      marginBelowMeasuredBlade: (B && B.cMin != null) ? +(B.cMin - cut).toFixed(4) : null,
     };
     if (enabled && out.marginBelowIlluminant <= 0) {
       throw new Error('[probe] THE WARM CUT IS AT OR ABOVE THIS STORE\'S ILLUMINANT. '
@@ -670,11 +813,20 @@ export function makeProbe(CHOP) {
         + 'round-11 defect with a different name. Move bloomWarm, or find out why '
         + 'the lamps changed colour.');
     }
+    if (enabled && rows.length === 0) {
+      throw new Error('[probe] THE WARM GUARD SWEPT ' + poses.length + ' POSES AND FOUND NO '
+        + 'BLADE TEXEL IN THE LUMA GATE ANYWHERE. It is certifying an empty '
+        + 'population, which is not a pass. Either bloomThr ' + thr + ' is now above '
+        + 'every printed card in the building, or the bladeSigns node has been renamed '
+        + 'and TAXONOMY no longer matches it. Check classMap() before touching bloomWarm.');
+    }
     if (enabled && out.bladeCMin != null && out.marginBelowMeasuredBlade <= 0) {
-      throw new Error('[probe] PRINTED CARD IS INSIDE THE WARM CUT at ' + pose.name
-        + ': BLADE minimum (R-B)/L in the luma gate is ' + out.bladeCMin
-        + ' against bloomWarm ' + cut + '. Something in the store is now printing '
-        + 'cool white, or the lamps cooled. Re-run warmSweep() before changing the cut.');
+      throw new Error('[probe] PRINTED CARD IS INSIDE THE WARM CUT at ' + out.pose
+        + ' (worst of ' + rows.length + ' poses with a blade in the gate, out of '
+        + poses.length + ' swept; ' + out.posesViolating + ' violating): BLADE minimum '
+        + '(R-B)/L in the luma gate is ' + out.bladeCMin + ' against bloomWarm ' + cut
+        + '. Something in the store is now printing cool white, or the lamps cooled. '
+        + 'Re-run warmSweep() before changing the cut.');
     }
     return out;
   }
@@ -751,6 +903,67 @@ export function makeProbe(CHOP) {
     const CUT = cut != null ? cut : (fp.bloomWarm != null ? fp.bloomWarm : 9.0);
     const r = gradeAB(pose, { bloomWarm: 9.0 }, { bloomWarm: CUT }, frames);
     return { pose: r.pose, cut: CUT, frames, off: r.a, on: r.b };
+  }
+
+  // ---- ROUND 15 — THE PER-POSE NULL, AND IT IS THE SAME FUNCTION ----------
+  // Round 14 published "whole-frame blown rises at 16 of 16, reversing two
+  // rounds of decline". Two things are wrong with that sentence and only one of
+  // them is arithmetic.
+  //
+  //   * It is 15 of 16. z = +9 has ZERO blown pixels on this build and both
+  //     published tables print 15 rows while the prose above them says 16.
+  //     Count the rows you printed.
+  //   * The comparison had no null. An in-load control — the SAME patch on both
+  //     sides of gradeAB, same code path, same restore, same majority filter —
+  //     drifts by a per-pose amount, and that amount is not one number: it runs
+  //     0.5% to 6.0% relative depending on where the camera is. A pose whose
+  //     null is 6% cannot support a claim about a 3% move, and a pose whose
+  //     null is 0.5% supports one easily. A single global null hides both.
+  //
+  // So the null is measured AT EVERY POSE, with the identical instrument, and
+  // it is literally gradeAB(pose, patchA, patchA) — if the null needed its own
+  // code path it would not be a null. The verdict per pose is the signed
+  // relative change against that pose's own null, and the LABEL (which class
+  // owns the largest blown blob) is carried alongside because AGENTS_BRIEF
+  // measured it stable at every repeated pose while the percentage was not.
+  // The bar is written in the label.
+  function nettedAB(pose, patchA, patchB, frames = 5) {
+    const ab = gradeAB(pose, patchA, patchB, frames);
+    const nl = gradeAB(pose, patchA, patchA, frames);
+    const rel = (x, y) => (x === 0 ? null : +(100 * (y - x) / x).toFixed(2));
+    const a = ab.a, b = ab.b;
+    const nullRel = rel(nl.a.blownPct, nl.b.blownPct);
+    const dRel = rel(a.blownPct, b.blownPct);
+    const lab = (s) => (s.largestBlob ? s.largestBlob.cls : 'NONE');
+    return {
+      pose: pose.name, frames,
+      blownA: a.blownPct, blownB: b.blownPct,
+      deltaRelPct: dRel,
+      nullRelPct: nullRel,
+      // |signal| / |null| at THIS pose. Under 1 the move is inside the pose's
+      // own noise and must not be counted in an "N of N".
+      snr: (dRel != null && nullRel != null && nullRel !== 0) ? +Math.abs(dRel / nullRel).toFixed(2) : null,
+      dir: dRel == null ? 'empty' : (dRel > 0 ? 'up' : dRel < 0 ? 'down' : 'flat'),
+      // the statistic the bar is actually written in
+      labelA: lab(a), labelB: lab(b), labelNullA: lab(nl.a), labelNullB: lab(nl.b),
+      labelStable: lab(nl.a) === lab(nl.b),
+      labelFlipped: lab(a) !== lab(b),
+      blobA: a.largestBlob ? a.largestBlob.n : 0, blobB: b.largestBlob ? b.largestBlob.n : 0,
+      blobNullRelPct: (nl.a.largestBlob && nl.b.largestBlob && nl.a.largestBlob.n)
+        ? +(100 * (nl.b.largestBlob.n - nl.a.largestBlob.n) / nl.a.largestBlob.n).toFixed(2) : null,
+      signShareA: a.signShare, signShareB: b.signShare,
+      lampShareA: a.lampShare, lampShareB: b.lampShare,
+    };
+  }
+
+  // The r13 -> r14 netting, over the same band and aisles every table here uses.
+  // patchA is the r13 build's two dials, patchB is the shipped ones — both named
+  // explicitly rather than inherited from the live preset, so this reads the
+  // same on any build that comes after it.
+  const R13 = { bloomThr: 1.27, bloomWarm: 9.0 };
+  const R14 = { bloomThr: 1.15, bloomWarm: 0.15 };
+  function nettedSweep(aisleIdx = 2, zs = AISLE_Z, frames = 5, A = R13, B = R14) {
+    return zs.map((z) => nettedAB(poseFor('a' + (aisleIdx + 1) + 'z' + z, aisleIdx, z), A, B, frames));
   }
 
   // THE STRUCTURAL LIMIT, PROVED BY ABLATING TO ZERO RATHER THAN BY COMPARING
@@ -874,8 +1087,17 @@ export function makeProbe(CHOP) {
       const bl = cctv.params.wall.bloom;
       const mult = (L) => +(1 + bl * Math.min(1, Math.max(0, (L - thr) / 0.65)) ** 2
         * (3 - 2 * Math.min(1, Math.max(0, (L - thr) / 0.65)))).toFixed(4);
-      const mults = {};
-      for (const k in st) mults[k] = mult(st[k].p90);
+      // ROUND 15 — MATCHED QUANTILES, BECAUSE THE ROUND-14 WRITE-UP MIXED THEM.
+      // It compared "printed BLADE x2.024-2.060" — BLADE at p90 and at max —
+      // against "daylight x1.684", which is CH09's brightest class at MAX only.
+      // p90-vs-max is not a comparison. Every class now reports its multiply at
+      // BOTH quantiles under names that say which is which, so a reader cannot
+      // pair a p90 with a max by accident. (The conclusion survives the fix:
+      // matched at max the printed card still multiplies harder, and matched at
+      // p90 the daylight's multiply is exactly 1.000 because its p90 sits under
+      // the threshold. What does not survive is the quoted RANGE — see cctv.js.)
+      const mults = {}, multsMax = {};
+      for (const k in st) { mults[k] = mult(st[k].p90); multsMax[k] = mult(st[k].max); }
       // ...and the class actually carrying the feed's brightest surface, by
       // measurement rather than by eye. CH09's blown daylight has been
       // attributed in this file's comments to FRONT (the storefront glazing);
@@ -892,7 +1114,13 @@ export function makeProbe(CHOP) {
         brightestMult: mults[topK] != null ? mults[topK] : null,
         largestClass: biggestK, largestClassPct: +(100 * biggestN / totalN).toFixed(1),
         bladeMult: st.BLADE ? mults.BLADE : null,
-        mults,
+        bladeMultMax: st.BLADE ? multsMax.BLADE : null,
+        brightestMultMax: multsMax[topK] != null ? multsMax[topK] : null,
+        mults, multsMax,
+        // the raw probe buffer this feed was measured in. NOT the 142x80 decoded
+        // panel — see the round-15 note in cctv.js. Published per feed because
+        // it is not the same for all nine.
+        rawW: raw.w, rawH: raw.h,
         lensN: st.LENS ? st.LENS.n : 0,
         bladeN: st.BLADE ? st.BLADE.n : 0, bladeP90: st.BLADE ? st.BLADE.p90 : null,
         bladeClearsPct: st.BLADE ? st.BLADE.clears : null,
@@ -1059,7 +1287,8 @@ export function makeProbe(CHOP) {
   return { POSES, CLASSES, PALETTE, setPose, renderPose, classOf, classMap, gradedY,
     alignShift, measure, majorityMask, blobs, rollCycle, bloomSeparation,
     sweepDistance, flatGain, wallClassRaw, wallSeparation,
-    warmStat, warmSweep, lampWarm, gradeAB, warmAB, bloomOffBlobs, poseFor, AISLE_Z,
+    warmStat, warmSweep, lampWarm, bladeFloor, warmFloorSelfTest, WARM_AISLES,
+    gradeAB, warmAB, nettedAB, nettedSweep, bloomOffBlobs, poseFor, AISLE_Z,
     flatProfile,
     numeralBox, numeral, get cam() { return grabCam(); } };
 }
