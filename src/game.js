@@ -253,6 +253,125 @@ const QUIET_AT = 6.0;
 // reach of both bench bots that touch this button and reachable in about four
 // minutes by a man who has decided to work the handset instead of the wall.
 const DALE_AT = 9;
+// ===========================================================================
+// ROUND 13 — WHAT A YELL COSTS, NOW THAT EVERYBODY DOES IT
+// ===========================================================================
+// agents.js used to keep its harassment branch inside `else if (!s.guilty)`,
+// and its react/bolt trigger needs `drift` or `stole`. So a thief who had not
+// concealed anything yet did NEITHER, and walking up to a body read out three
+// ways: they yell = innocent, they bolt = guilty and already stolen, and
+// NOTHING HAPPENS = a thief who has not done it yet. The first two are
+// published confessions that cost the player something. The third was free.
+//
+// Measured before and after on two servers running two trees whose only
+// difference was that block — n=70 per arm, difficulty pinned at 1, uniform
+// body, coin-flip guilt, identical walk-in (./game/eval.js probeWalkUp):
+//
+//                   yell / bolt / nothing        LR for guilt
+//     BEFORE  inn     100 /  0  /   0
+//             cold      0 /  0  / 100            nothing = 139 (unsmoothed: inf)
+//             hot       0 / 100 /   0            bolt    = 139
+//     AFTER   inn     100 /  0  /   0
+//             cold    100 /  0  /   0            nothing = 1.00, yell = 1.00
+//             hot       0 / 100 /   0            bolt    = 136.94
+//
+// (AFTER re-run on the SHIPPED build, i.e. with the decay lifted out of the
+// gate and TUNING.angryFuse in: 68/68 reached in both ambiguous arms and every
+// cell identical to the digit.)
+//
+// The "nothing happens" cell does not exist any more in either population. The
+// hot row is the positive control and did not move, so the flat cold row is a
+// null and not a dead code path. And the leak stated as a scene rather than a
+// ratio: BEFORE, the cold arm's median closest approach was 0.80 m with 7.4 s
+// spent inside the suspicion radius — the cop stood under a metre from an
+// un-concealed thief for the whole trial and the body never looked up.
+//
+// ---------------------------------------------------------------------------
+// AND THE PRICE OF IT, WHICH IS THIS FILE'S HALF
+// ---------------------------------------------------------------------------
+// The obvious worry is that bodies which used to be silent now yell, a yell can
+// become a complaint, and three complaints is a demotion — so the shift gets
+// harder in a way nobody asked for. IT DOES NOT, and the reason is that rounds
+// 2 and 7 had already priced this correctly without knowing it:
+//
+//     a yell only becomes a complaint if the man yelling is the man your
+//     RETICLE IS ON (FIX.harass, round 2) and you are still in his face
+//     HARASS_GRACE later (round 7).
+//
+// The extra yells fail the first test almost always and the second test often,
+// so they land in `G.dbg.blocked` rather than on the scoreboard. Measured, 20
+// shifts x 240 s, seed 7717, four policies, both builds:
+//
+//                    complaints/shift        demotions/shift
+//     observer            0    -> 0              0   ->  0
+//     reader           0.05    -> 0.05           0   ->  0
+//     random           5.70    -> 6.25         1.40  -> 1.65
+//     camper              0    -> 0              0   ->  0
+//
+// `reader` is the bot round 7 says the demotion economy has to be survivable
+// for — a competent player who acts on 35% of the red flags he cannot explain.
+// He files 0.05 a shift in BOTH builds, i.e. one complaint in twenty shifts,
+// unchanged. `random`, which reads nothing and walks at whatever is flashing,
+// pays +0.55 complaints and +0.25 demotions a shift, and he is supposed to lose.
+//
+// CATCH RATE AND POINTS DID NOT MOVE EITHER, and this needed a sweep rather than
+// a comparison to say honestly. Seed 7717 alone reads observer 51.6% -> 34.1%,
+// which looks like a collapse. It is not, and the sweep is the only honest way
+// to say so — 20 shifts x 240 s per cell, observer:
+//
+//     seed        7717    1234     555    8888        range
+//     before      51.6    37.0    60.7    49.5     37.0-60.7
+//     after       34.1    41.2    51.8    40.0     34.1-51.8
+//
+// The two builds' seed ranges OVERLAP almost entirely; a 23.7-point spread on one
+// unchanged build from the seed alone, at n=83-101 thieves, is larger than the
+// difference between the builds. `reader` reads 34.6-46.3 before against
+// 30.7-46.6 after — means 39.4 and 37.3, i.e. two points on a spread of twelve.
+//
+// Stated with the precision the numbers support rather than more: `reader`, the
+// competent player, is unmoved. `observer`'s four-seed mean falls 49.7 -> 41.8,
+// which is about 1.6 standard errors at n=4 and is NOT a result — but it is also
+// not a zero, and if a later round wants to claim either way it needs more seeds
+// than this, not a rerun of one. Removing two Math.random() draws per
+// arming (see armThief) moves the whole game-side stream, so before and after are
+// different draws of the same process and NOT a paired measurement — which is
+// why the sweep exists rather than a single before/after column. Nothing here
+// moved the economy; scoring, rank and the demotion rule are untouched, and the
+// only quantity that reliably differs between the builds is the one this round
+// was for.
+//
+// SO NOTHING IS REPRICED. No new constant, no change to HARASS_GRACE,
+// HARASS_CLEAR or harassCool. The design call is that crowding an un-concealed
+// thief SHOULD cost exactly what crowding a guest costs, because from inside
+// the fiction it is the same act — you have walked up to a man who has done
+// nothing, and loss prevention cannot detain on suspicion. The mechanic and the
+// fiction agree, and the number says the player can afford it.
+//
+// The lever if a later round needs one is HARASS_GRACE, not a discount: it buys
+// survivability by widening the skill window rather than by removing the
+// punishment, which is round 7's own argument, and it is guilt-blind by
+// construction. A branch on `s.guilty` in here would rebuild the leak.
+//
+// ---------------------------------------------------------------------------
+// THE RULE THIS FILE NOW HOLDS TO, AND IT IS CHECKABLE BY GREP
+// ---------------------------------------------------------------------------
+// `s.stole` is the PUBLISHED line. A man who has put something in his coat is
+// supposed to be readable — BEHAVIOUR_GUILTY says so on the roster, the drift to
+// the door says so on the floor, and the bolt says so at 100%. Reading `s.stole`
+// is allowed anywhere.
+//
+// `s.guilty` before `s.stole` is the leak. After this round there is no read of
+// `s.guilty` in this file that changes ANYTHING a player can observe about a man
+// who has not concealed yet. Every survivor is either paired with `s.stole`
+// (pickLine, the concealment tell), or paired with `bolt`/`react`/`drift` (which
+// only a concealed man can be in — targetShopper's chase branch, stallWatch), or
+// purely internal bookkeeping the screen never sees (armThief's pool, the live
+// count, stagger, putBack). The two that were NOT are gone: pickLine's private
+// GUILTY_PRE pool and armThief's `r.trap = false`.
+//
+// If a later round adds one, the instrument that catches it is `lines` on every
+// ./game/eval.js result — `perfectStrings` must be 0 and `flagPct.cold` must sit
+// on top of `flagPct.innocent`.
 // ---- ROUND 7: THE BEAT BEFORE A COMPLAINT ---------------------------------
 // Measured, and it is the number that made this round necessary: a competent
 // player who occasionally acts on an unexplained red flag — `reader` in
@@ -2399,7 +2518,28 @@ export function createGame(hudEl, deps = {}) {
   function pickLine(s, r) {
     r.lineT = rr(3.2, 6.4);
     if (s.guilty && s.stole) { r.line = L.pick(L.BEHAVIOUR_GUILTY); r.flagged = true; return; }
-    if (s.guilty) { r.line = L.pick(L.BEHAVIOUR_GUILTY_PRE); r.flagged = false; return; }
+    // ---- ROUND 13: THE LINE ABOVE THIS ONE USED TO BE A SECOND ORACLE ------
+    // It read `if (s.guilty) { r.line = L.pick(L.BEHAVIOUR_GUILTY_PRE);
+    // r.flagged = false; return; }` — a private four-string pool for a thief
+    // who had not concealed yet, three of whose strings appeared nowhere else.
+    // Measured over 20 shifts x 240 s on each of four policies: it identified an
+    // un-concealed thief with CERTAINTY on 68.3-73.2% of the lines the terminal
+    // printed above one, from the desk, for free, at a likelihood ratio of
+    // 5265-5695 (unsmoothed: infinite). After: 0 such strings, worst LR 1.44-2.39
+    // and the residual is a DIFFERENT string in every policy, which is noise and
+    // not a channel. See the retirement note in ./game/lines.js.
+    //
+    // The flag was the other half and it had the sign flipped: P(flagged) read
+    // innocent 13.2-14.6% and cold thief 0.0% in all four policies, because
+    // armThief cleared `r.trap`. "This row has never gone red" was a tell on its
+    // own. It now reads 12.3-15.8% against 13.4-18.6%.
+    //
+    // It is gone rather than rebalanced, and the distinction matters: adding
+    // more strings to the pool would have lowered the ratio without removing
+    // the channel, and the channel is the bug. A body with nothing in his coat
+    // now runs the identical two lines below that everybody else does, and the
+    // only `s.guilty` left in this function is the one above it — the
+    // concealment tell, which is published, and which is the only one.
     if (r.trap && Math.random() < trapRate()) {
       r.line = L.pick(L.BEHAVIOUR_TRAP); r.flagged = true;
       return;
@@ -3167,8 +3307,25 @@ export function createGame(hudEl, deps = {}) {
     s.concealT = rr(10, 22); s.state = 'walk'; s.timer = rr(1, 3);
     s.path = []; s.target = null; s.held.visible = false;
     const r = recOf(s);
-    r.announced = false; r.trap = false; r.item = L.pick(L.ITEMS);
-    newLine(s, r);
+    // ---- ROUND 13: ARMING IS NOW INVISIBLE ON THE ROSTER ------------------
+    // This used to be `r.announced = false; r.trap = false; ...; newLine(s, r)`
+    // and both of the deleted halves were channels.
+    //
+    // `r.trap = false` meant a body could never be flagged again once it had
+    // been armed — so with the GUILTY_PRE pool gone, "this row has never gone
+    // red" would have become the tell that replaced it, with the sign flipped.
+    // The trap coin is rolled once per body in recOf() and is independent of
+    // who the tournament above picks, which is exactly what makes a flag
+    // ambiguous; clearing it here was throwing that away.
+    //
+    // `newLine()` re-rolled his behaviour line ON THE FRAME HE WAS ARMED. With
+    // a private pool that was the point. Without one it is an off-cadence
+    // roster event — every other row re-rolls on its own 3.2-6.4 s timer — and
+    // a re-roll can stamp a flag, which BLINKS (see FLAG_BLINK). A player
+    // watching the wall would have been shown a blink at the instant a thief
+    // was created. He now keeps whatever line he had until his own timer runs
+    // out, and arming makes no mark on any screen at all.
+    r.announced = false; r.item = L.pick(L.ITEMS);
   }
   // ROUND 2: agents.js rebuilt its navigation on an occupancy grid flooded from
   // the real collider set, and the wedge it used to compensate for is gone. The
@@ -3233,7 +3390,13 @@ export function createGame(hudEl, deps = {}) {
     list.filter((s) => s.guilty && !s.stole).forEach((s, i) => {
       if (i < budget || !FIX.pace) { s.concealT = 7 + i * 24 + rr(0, 5); return; }
       s.guilty = false; s.concealT = 0;
-      const r = recOf(s); r.announced = false; newLine(s, r);
+      // ROUND 13 — and no newLine() here either, for the reason in armThief().
+      // These men have not concealed anything, so the line they are carrying is
+      // already a benign or trap line drawn from the same pools as everybody
+      // else's; re-rolling it would put an off-cadence roster event on exactly
+      // the bodies that were briefly guilty, which is the channel this round
+      // closed one screen over. Un-arming is as invisible as arming.
+      const r = recOf(s); r.announced = false;
     });
     rearmT = Math.max(rearmT, armGap(0.8));
   }
@@ -4178,7 +4341,7 @@ export function createGame(hudEl, deps = {}) {
       // feedback, and it is the only warning the player gets. The FORM does not
       // exist yet; see settleHarass(). If the player steps out of his face
       // inside HARASS_GRACE, it never will.
-      say(`${r.name} — GUEST`, L.pick(L.INNOCENT), true, 2.4, s.id);
+      say(`${r.name} — GUEST`, L.pick(L.CROWDED), true, 2.4, s.id);
       if (!FIX.grace) {
         r.complained = true;
         G.dbg.harass[G.floor.tgtWhy || 'zone']++;
@@ -4567,6 +4730,19 @@ export function createGame(hudEl, deps = {}) {
     async _eval(opts) {
       const m = await import('./game/eval.js');
       return m.run({ game: this, ...ext() }, opts);
+    },
+    // ROUND 13. The guilt probe — see ./game/eval.js. Separate entry point
+    // because it is not a shift: it drives the cop into a randomised sample of
+    // bodies and reports what they DID, which is the one thing a shift bench
+    // cannot isolate (guilt is not assigned at random in a shift).
+    async _probe(opts) {
+      const m = await import('./game/eval.js');
+      return m.probeWalkUp({ game: this, ...ext() }, opts);
+    },
+    // ROUND 13. The annHuff ablation — see ./game/eval.js.
+    async _probeAnn(opts) {
+      const m = await import('./game/eval.js');
+      return m.probeAnn({ game: this, ...ext() }, opts);
     },
   };
 }

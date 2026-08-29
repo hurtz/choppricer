@@ -8,6 +8,10 @@ export const BEHAVIOUR_BENIGN = [
   'DWELL 04:12 — CATEGORY: SOUP',
   'READING A LABEL. STILL READING IT.',
   'CART PRESENT. CART EMPTY.',
+  // ROUND 13 — REPATRIATED FROM BEHAVIOUR_GUILTY_PRE. See the note where that
+  // pool used to be. These two were only ever printed above a thief.
+  'BROWSING. UNREMARKABLE.',
+  'DWELL 01:04 — CATEGORY: MEAT',
   'PICKED UP ITEM / PUT IT BACK / x6',
   'COMPARING TWO (2) IDENTICAL ITEMS',
   'STANDING VERY STILL',
@@ -34,14 +38,38 @@ export const BEHAVIOUR_TRAP = [
   'DID NOT TAKE A BASKET',
   'WEARING SUNGLASSES (WEATHER: RAIN)',
   'LEFT AISLE. RETURNED. LEFT AGAIN.',
-];
-// Guilty, pre-concealment. Reads normal on purpose.
-export const BEHAVIOUR_GUILTY_PRE = [
-  'BROWSING. UNREMARKABLE.',
-  'DWELL 01:04 — CATEGORY: MEAT',
-  'CART PRESENT. CART EMPTY.',
+  // ROUND 13 — ALSO REPATRIATED, and to the TRAP pool rather than the benign
+  // one, because it is the one of the four that genuinely reads suspicious.
+  // A shoulder check above an innocent is worth more to this game than a
+  // shoulder check above a thief: it is a red row you have to resolve by
+  // watching him, which is the entire design.
   'SHOULDER CHECK x2',
 ];
+// ===========================================================================
+// RETIRED IN ROUND 13 — BEHAVIOUR_GUILTY_PRE, AND IT WAS A PERFECT CLASSIFIER
+// ===========================================================================
+// Four strings, drawn by game.js's pickLine() for a thief who had not concealed
+// yet, under a comment that said "Reads normal on purpose." It did not. THREE
+// OF THE FOUR APPEARED IN NO OTHER POOL:
+//
+//     BROWSING. UNREMARKABLE.          guilty only
+//     DWELL 01:04 — CATEGORY: MEAT     guilty only (BENIGN's dwell is SOUP)
+//     SHOULDER CHECK x2                guilty only
+//     CART PRESENT. CART EMPTY.        the only one shared with BENIGN
+//
+// So reading one roster row identified an un-concealed thief with certainty
+// three times in four — from the desk, for free, with no walk down any aisle
+// and nothing at risk. It is the same leak the round-13 walk-up fix closed in
+// agents.js, one screen over, and it was worse: the walk-up at least cost you a
+// walk. This is printed on the screen the game tells you to read.
+//
+// The lines were good and are kept; what is deleted is the POOL, so they are
+// now drawn by the same code path, from the same two pools, as everybody
+// else's. game.js's pickLine() no longer branches on `s.guilty` at all before
+// the concealment. BEHAVIOUR_GUILTY below is untouched: a man who has already
+// put something in his coat is SUPPOSED to be readable, that tell is published,
+// and it is the only one.
+// ===========================================================================
 // Guilty, post-concealment. This is the tell. It is the only real tell.
 export const BEHAVIOUR_GUILTY = [
   'ITEM LEFT FRAME / NOT IN CART',
@@ -89,9 +117,24 @@ const LAST = ['HOLCOMB', 'PRICE', 'VANDERWAL', 'SEELEY', 'MCKINNEY', 'DOTSON',
 // ends up being the same person, which they very nearly are anyway.
 export const name = (r) => `${LAST[(r * 3 + 1) % LAST.length]}, ${FIRST[(r * 5 + 2) % FIRST.length]}`;
 
-// -------------------------------------------------- innocent shopper, harassed
-// He got it wrong. They are not scared of him. That is the humiliation.
-export const INNOCENT = [
+// ------------------------------------------------------ a shopper, crowded
+// They are not scared of him. That is the humiliation, and it is the same
+// humiliation whether or not he happened to be right.
+// ROUND 13 — RENAMED FROM `INNOCENT`, AND THE NAME WAS THE BUG WAITING TO
+// HAPPEN. This is what a body says when the cop crowds him, and since round 13
+// it is said by BOTH POPULATIONS off one code path in game.js's onHarass — a
+// thief who has not concealed anything yet is indistinguishable from a guest
+// and now sounds like one, because he IS one until he does something. Every
+// line below already worked for both ("I have a receipt. I haven't bought
+// anything yet. But I have a receipt." is funnier from a man about to steal),
+// so nothing here changed except what it is called.
+//
+// The name mattered anyway: a pool called INNOCENT is an invitation to the next
+// person to write a line that only a guest could say, and one adjective that
+// only fits one population hands the whole ambiguity back. This project has now
+// lost that fight twice in two rounds in two different files. See
+// BEHAVIOUR_GUILTY_PRE's retirement note above for the other one.
+export const CROWDED = [
   ["I'm shopping. For my family."],
   ['Do you follow everybody around like this?'],
   ["I'd like to speak to your supervisor.", 'Do you even have a supervisor?'],
