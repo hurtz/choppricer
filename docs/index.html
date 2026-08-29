@@ -92454,9 +92454,25 @@ const M_src_agents_figures_js = (() => {
 //   elbowOf(side)           read it back.
 //   handRig(side, AL, out)  where that hand IS, in rig-local metres — the one
 //                           owner, called by agents.js's prop solve AND its
-//                           grasp query. `AL` is the caller's own arm length so
-//                           the straight-stick term is preserved exactly and
-//                           the joint contributes a pure displacement.
+//                           grasp query. `AL` is the caller's own arm length,
+//                           measured down the arm's own -Y from the shoulder
+//                           pivot, and the point it names is WELDED TO THE
+//                           FOREARM: at flex 0 it is exactly (0, -AL, 0) off
+//                           the pivot, which is what every clip in decoy.js was
+//                           authored against, and under flex it turns with the
+//                           hand instead of with the humerus. ROUND 6 also made
+//                           it walk the real node chain (arm -> chest -> hips)
+//                           instead of adding a constant hipY. Both halves are
+//                           written up over handRigOf, and handCheck() is the
+//                           assertion that the answer is the hand the renderer
+//                           draws — 0.000 mm on the shipped rig, 14 of 19
+//                           falsifiers firing.
+//                           IT IS NOT THE FINGERTIP. `AL` counts from the
+//                           pivot down -Y and the authored fingertip is 12.8 mm
+//                           off that axis, so handRig(|tip0|) misses it by
+//                           exactly that much, on every body, for ever. The
+//                           first cut of handCheck asserted otherwise and read
+//                           red on a correct rig at every pose.
 // `armL`/`armR` still name the SHOULDER PIVOT, so every clip, idle and gait
 // channel that writes armR.rotation.x is untouched. See the ROUND 5 block under
 // SH_ARM for what the joint does and why it is built the way it is.
@@ -94378,9 +94394,15 @@ function makeArm(THREE, layers, x, y, z, sx, sy, solve) {
   const ax = new THREE.Vector3(solve.axis[0], solve.axis[1], solve.axis[2]);
   const tip0 = new THREE.Vector3(solve.tip[0] * sx, solve.tip[1] * sy, solve.tip[2] * sx);
   const d = new THREE.Vector3(), _t = new THREE.Vector3();
+  const rot = new THREE.Quaternion();
   const A = solve.A, B = solve.B;
   const arm = {
     piv, shg, elb, hand, th: solve.theta0, d, solve, corr: 0,
+    // ROUND 6 (character). `tip0` is where the straight stick's fingertip is, in
+    // the pivot's own frame and already scaled; `rot` is the total rotation the
+    // two joint nodes apply to the forearm. Together they are what turns "AL
+    // metres down the arm" from a humerus-frame quantity into a hand-frame one.
+    tip0, rot,
     // Set the interior elbow angle, in radians. Returns the angle actually
     // used, which is the CLAMPED one — an author who writes 0.2 gets ELB_MIN
     // and gets told so rather than getting a forearm through a bicep.
@@ -94399,6 +94421,13 @@ function makeArm(THREE, layers, x, y, z, sx, sy, solve) {
       _t.copy(w).applyQuaternion(elb.quaternion).add(elb.position)
         .applyQuaternion(shg.quaternion).add(shg.position);
       d.copy(_t).sub(tip0);
+      // ROUND 6 (character) — AND THE ROTATION OF THE FOREARM ITSELF, which is
+      // the frame the hand is welded to. Both nodes are rotations about the same
+      // axis, so this is one quaternion and it is the only new state on the arm.
+      // handRigOf needs it: `AL` asks for a point PAST the fingertip, and a
+      // point past the fingertip is on the hand, so it has to turn with the hand
+      // and not with the humerus. See the note there.
+      rot.copy(shg.quaternion).multiply(elb.quaternion);
       return t;
     },
   };
@@ -94406,21 +94435,87 @@ function makeArm(THREE, layers, x, y, z, sx, sy, solve) {
 }
 // Where a hand actually is, in RIG-LOCAL metres — the one owner, called by
 // agents.js's prop solve AND its grasp query, which are the same question.
-// `AL` is the caller's own arm length (it carries a deliberate 60 mm fudge past
-// the fingertip, plus K.grabOut on the grasp), so the straight-stick term is
-// preserved EXACTLY and the joint contributes a pure displacement. At flex 0
-// `d` is zero and this is the identical arithmetic agents.js had inline.
+// `AL` is the caller's own arm length; it carries a deliberate ~60 mm fudge
+// PAST the fingertip (plus K.grabOut on the grasp), because a held box's centre
+// is beyond the fingers and a grasp reaches into a shelf rather than stopping
+// at the skin.
 //
-// It ignores `chest` rotation, which the inline version also did. That is a
-// real approximation — a body leaning 0.16 rad moves its hand ~50 mm — and it
-// is left in place deliberately: changing it in the same round as the elbow
-// would put two effects in one measurement.
-function handRigOf(arm, hipY, AL, out) {
+// ===========================================================================
+// ROUND 6 (character) — IT WAS ANSWERING IN THE WRONG FRAME, TWICE
+// ===========================================================================
+// Round 5 wrote "at flex 0 `d` is zero and this is the identical arithmetic
+// agents.js had inline", and then it left the joint in. The identical
+// arithmetic was right for a rigid stick and wrong for an arm, in two separate
+// places, and the second one was flagged by round 5 against itself:
+//
+//   1. THE FUDGE RODE THE HUMERUS. `(0, -AL, 0)` is a point in the SHOULDER
+//      pivot's frame — 60 mm past the fingertip down the upper arm's own -Y.
+//      That is where the hand is only while shoulder and hand are the same
+//      bearing, i.e. only while the arm is straight. Bend the elbow to 64
+//      degrees, as `conceal` now does, and the humerus and the forearm are 49
+//      degrees apart, so the prop is placed 60 mm off in a direction that has
+//      nothing to do with where the fingers are pointing. MEASURED, against the
+//      fist carryCheck already asserts (fore.at(0.986)): the item ends up
+//      143 mm from the hand at the deepest beat of a concealment, on a box
+//      whose own half-diagonal is 129 — the box and the fist do not intersect.
+//      Round 5 re-authored six clips' `off.z` to compensate and checked the
+//      result BY EYE; the offsets were never the problem and shrinking them
+//      could not have been the fix.
+//      The point past the fingertip is ON THE HAND, so it is now welded to the
+//      forearm: `rot` is the joint's own rotation and the whole fudge turns with
+//      it. AT FLEX 0 `rot` IS IDENTITY AND THIS RETURNS `(0, -AL, 0)` EXACTLY,
+//      so elbLock(true) still renders the pre-elbow build to the byte.
+//
+//   2. IT STOPPED AT THE ARM PIVOT. The old body added a CONSTANT hipY and
+//      nothing else, so three transforms between the arm and the root were
+//      simply not in the answer: the chest's rotation (round 5 named this one
+//      and guessed 50 mm at 0.16 rad — the marginal cost is 13 mm; see the
+//      report), the hips' rotation, and the hips' vertical bob, which is the
+//      biggest of the three because hipY was a constant and the walk moves it.
+//      `chain` is every node between the arm pivot and the rig root, in order,
+//      handed over by the rig that built those nodes. It is not a walk of
+//      .parent — that is a pointer chase per body per frame for a shape that
+//      never changes — and it is not a second copy of the hierarchy either,
+//      because the array is built in the same three lines that add the groups.
+//
+// The two together were 21 mm at the median with the body standing still and
+// 102 mm at p90 over ordinary play. See handLock() for the dial that puts both
+// back, and errSplit() in shots/_probe_fig_r6.js for the ablation.
+//
+// ---- THE DIAL, AND IT IS A DEBUG HANDLE -----------------------------------
+// Same discipline as elbLock: one obvious module global, OFF by default,
+// nothing in the game writes it, read once per call, and any measurement taken
+// with it on says so. It restores round 5's answer exactly — humerus-frame
+// fudge, constant hipY, no chest — so this round's change can be ablated on one
+// page load instead of by comparing two builds.
+let HAND_LEGACY = false;
+function handLock(on) { HAND_LEGACY = !!on; return HAND_LEGACY; }
+function handLocked() { return HAND_LEGACY; }
+function handRigOf(arm, chain, hipY, AL, out) {
   const piv = arm.piv;
-  out.set(arm.d.x, arm.d.y - AL, arm.d.z).applyQuaternion(piv.quaternion);
-  out.x += piv.position.x;
-  out.y += hipY + piv.position.y;
-  out.z += piv.position.z;
+  if (HAND_LEGACY) {
+    out.set(arm.d.x, arm.d.y - AL, arm.d.z).applyQuaternion(piv.quaternion);
+    out.x += piv.position.x;
+    out.y += hipY + piv.position.y;
+    out.z += piv.position.z;
+    return out;
+  }
+  // The fingertip, plus the fudge past it TURNED WITH THE FOREARM.
+  const t = arm.tip0;
+  out.set(-t.x, -AL - t.y, -t.z).applyQuaternion(arm.rot);
+  out.x += t.x + arm.d.x;
+  out.y += t.y + arm.d.y;
+  out.z += t.z + arm.d.z;
+  // ...and then up the graph. Scale before rotation before translation, which
+  // is three.js's own composition order; `chest.scale.y` is the breathing lerp
+  // and it is small, but a hand solve that is exact except for one node is the
+  // same defect one node further out.
+  for (let i = 0; i < chain.length; i++) {
+    const n = chain[i];
+    out.x *= n.scale.x; out.y *= n.scale.y; out.z *= n.scale.z;
+    out.applyQuaternion(n.quaternion);
+    out.x += n.position.x; out.y += n.position.y; out.z += n.position.z;
+  }
   return out;
 }
 
@@ -96227,6 +96322,252 @@ function carrySelfTest(F) {
   return { ok: bad.length === 0, bad, rows };
 }
 
+// ---------------------------------------------------------------------------
+// handCheck(THREE, F, inj) — DOES handRig() AGREE WITH THE HAND THE RENDERER
+// DRAWS?
+// ---------------------------------------------------------------------------
+// CLAUDE.md: "exactly one piece of code owns a derivation, and everyone else
+// calls it. If a second copy is genuinely unavoidable, it needs an assertion
+// that fails loudly when the two disagree." handRig IS a second copy — three.js
+// composes these transforms every frame to draw the arm, and handRigOf composes
+// them again in a loop because a hand solve cannot afford a matrix inverse per
+// body per frame. So the two are made to say so out loud.
+//
+// THE FIRST VERSION OF THIS CHECK TESTED A FALSE PROPOSITION, AND IT IS KEPT
+// HERE BECAUSE IT IS THE SAME MISTAKE THE FILE KEEPS FINDING. It asserted
+// "handRig(AL = |tip0|) IS the drawn fingertip", which sounds obviously true
+// and is not: `AL` has always been a distance down the arm's own -Y, and the
+// authored fingertip is 12.8 mm OFF that axis (-0.008, -0.660, +0.010). So the
+// clause read a constant 12.16 mm on a correct rig, on every pose, invariant to
+// every injection — a checker that is red before you start tells you nothing
+// about anything. Two clauses replace it and neither restates the formula:
+//
+//   RIGID   handRig's answer, expressed IN THE DRAWN FOREARM'S OWN FRAME, must
+//           be the same three numbers at every pose. That is what "the hand is
+//           welded to the forearm" means, and it is the whole content of this
+//           round's fix. The frame is built from three points taken through
+//           elb.matrixWorld and back down root's inverse — three.js's matrix
+//           stack, not handRigOf's loop — so a disagreement is two derivations
+//           disagreeing rather than one of them talking to itself.
+//           The old humerus-frame solve fails this the moment an elbow bends,
+//           and a chain node left out of `chain` fails it the moment that node
+//           moves.
+//
+//   ANCHOR  at the identity pose — every group unrotated, the joint at ELB0 —
+//           handRig(AL) must be exactly (0, -AL, 0) off the arm pivot, plus the
+//           group offsets above it. That is the contract eleven clips, seven
+//           idles and both callers in agents.js were authored against, and it
+//           is what makes this change invisible to all of them. RIGID alone
+//           would be satisfied by an answer that is consistently in the wrong
+//           place; this pins it.
+//
+// FALSIFIERS. Each is a PAIR — a code defect and the pose that exposes it —
+// because that pairing is the thing round 4's two assertions got wrong: they
+// were run only in the pose where the bug they existed for is invisible. A
+// defect with the wrong pose must stay GREEN, and those rows are in the suite
+// too, since a check that goes red on everything is as useless as one that
+// never does. See handSelfTest().
+//   legacy     round 5's handRigOf, through handLock(true) — humerus-frame
+//              fudge, constant hipY, no chest. GREEN at rest, RED as soon as
+//              the elbow bends or the chest moves, which is the whole claim.
+//   dropChest  a node deleted from `chain`: "somebody adds a group above an arm
+//              and does not add it here". It is the failure mode of passing a
+//              chain at all, so it is the one that has to be tested.
+//   dropHips   the same, one node further up.
+//   noScale    the chain's scale term dropped (chest.scale.y is the breathing
+//              lerp, and it is the smallest term in here).
+//   tipDz      tip0 stale by 5 mm.
+//   staleRot   `rot` not refreshed when the joint moves.
+// ...each paired with `chest` / `hips` / `bob` / `scale` / `elb`, the poses.
+const HAND_RIGID_MM = 0.5;   // drift of the offset in the forearm's own frame
+const HAND_ANCHOR_MM = 0.05; // identity pose against the authored contract
+function handCheck(THREE, F, inj) {
+  const J = inj || {};
+  // A PRIVATE GENERATOR. Same argument frontend.js makes in four lines: this
+  // must not be able to walk agents.js's seeded stream, and "it is a different
+  // object" is checkable in ten seconds where "I was careful" is not.
+  let sd = 0x1F6A3C >>> 0;
+  const rnd = () => { sd ^= sd << 13; sd >>>= 0; sd ^= sd >> 17; sd ^= sd << 5; sd >>>= 0;
+    return sd / 4294967296; };
+  const rng = { rnd, rr: (a, b) => a + rnd() * (b - a),
+    ri: (a, b) => Math.floor(a + rnd() * (b - a + 1)),
+    pick: (a) => a[Math.floor(rnd() * a.length) % a.length] };
+  const bad = [], rows = [];
+  const inv = new THREE.Matrix4();
+  const got = new THREE.Vector3();
+  const F1 = new THREE.Vector3(), F2 = new THREE.Vector3(), F3 = new THREE.Vector3();
+  const va = new THREE.Vector3(), vb = new THREE.Vector3(), vc = new THREE.Vector3();
+  const vv = new THREE.Vector3();
+  // The authored arm-local point p, DRAWN: the fore geometry was translated by
+  // -el and its mesh carries (sx, sy, sx), so what three.js evaluates is
+  // elb.matrixWorld * (S (*) (p - el)). Taken back into root-local, which is the
+  // frame handRig answers in.
+  const drawn = (rig, arm, p, out) => {
+    out.set(p[0] - arm.solve.el[0], p[1] - arm.solve.el[1], p[2] - arm.solve.el[2])
+      .multiply(arm.hand.scale)
+      .applyMatrix4(arm.elb.matrixWorld)
+      .applyMatrix4(inv);
+    return out;
+  };
+  const nBody = J.fast ? 1 : 3;
+  for (let b = 0; b < nBody; b++) {
+    const desc = rollPerson(rng);
+    desc.kid = null;
+    const rig = makePerson(THREE, F, desc);
+    for (const side of (J.fast ? [-1] : [-1, 1])) {
+      const arm = side > 0 ? rig.armLbone : rig.armRbone;
+      const AL = rig.armLen;               // what placeProp actually asks for
+      // Poses. Every transform this check is about is ZERO in the rest pose, so
+      // a check run only there is a check that cannot fail — the exact defect
+      // CLAUDE.md records against gaitCheck. Index 0 IS the identity pose and
+      // it is the ANCHOR row; the rest are what the clips author.
+      const poses = J.restOnly ? [{ armX: 0, armZ: 0, elb: ELB0, id: 1 }] : [
+        { armX: 0, armZ: 0, elb: ELB0, id: 1 },
+        { armX: -0.95, armZ: -0.16, elb: 2.16 },
+        { armX: -1.55, armZ: 0.88, elb: 1.12 },
+        { armX: -2.05, armZ: 0.10, elb: 1.54 },
+        { armX: -2.44, armZ: -0.30, elb: 0.92 },
+      ];
+      const frameCoords = [];
+      for (const ps of poses) {
+        arm.piv.rotation.set(ps.armX, 0, ps.armZ);
+        arm.set(J.elb != null ? J.elb : ps.elb);
+        if (J.staleRot) arm.rot.identity();
+        // The identity row keeps every group unrotated whatever the injection
+        // asks for, because it is the row that pins the authored contract.
+        const idp = !!ps.id;
+        rig.chest.rotation.set(...((idp ? null : J.chest) || [0, 0, 0]));
+        rig.hips.rotation.set(...((idp ? null : J.hips) || [0, 0, 0]));
+        rig.hips.position.y = rig.hipY + (idp ? 0 : (J.bob || 0));
+        rig.chest.scale.set(1, 1 + (idp ? 0 : (J.scale || 0)), 1);
+        rig.root.updateMatrixWorld(true);
+        inv.copy(rig.root.matrixWorld).invert();
+        // The chain as the rig built it, and the doctored ones.
+        let chain = [arm.piv, rig.chest, rig.hips];
+        if (J.dropChest) chain = [arm.piv, rig.hips];
+        if (J.dropHips) chain = [arm.piv, rig.chest];
+        if (J.noScale) {
+          chain = chain.map((n) => ({ scale: { x: 1, y: 1, z: 1 },
+            quaternion: n.quaternion, position: n.position }));
+        }
+        if (J.tipDz) arm.tip0.z += J.tipDz;
+        handRigOf(arm, chain, rig.hipY, AL, got);
+        if (J.tipDz) arm.tip0.z -= J.tipDz;
+        // ---- RIGID: the offset from the drawn fingertip, in the drawn
+        // forearm's own orthonormal frame.
+        drawn(rig, arm, arm.solve.tip, F1);
+        drawn(rig, arm, [arm.solve.el[0] + (arm.solve.tip[0] - arm.solve.el[0]) * 0.5,
+          arm.solve.el[1] + (arm.solve.tip[1] - arm.solve.el[1]) * 0.5,
+          arm.solve.el[2] + (arm.solve.tip[2] - arm.solve.el[2]) * 0.5], F2);
+        // ...and a third point OFF the forearm axis, so the frame is a frame and
+        // not a line. 50 mm forward of the fingertip in arm-local z.
+        drawn(rig, arm, [arm.solve.tip[0], arm.solve.tip[1], arm.solve.tip[2] + 0.050], F3);
+        va.copy(F1).sub(F2).normalize();
+        vb.copy(F3).sub(F1); vb.addScaledVector(va, -vb.dot(va)).normalize();
+        vc.crossVectors(va, vb);
+        vv.copy(got).sub(F1);
+        frameCoords.push([vv.dot(va), vv.dot(vb), vv.dot(vc)]);
+        // ---- ANCHOR: the authored contract, on the identity row only.
+        if (idp) {
+          const ax = arm.piv.position.x + rig.chest.position.x + rig.hips.position.x;
+          const ay = -AL + arm.piv.position.y + rig.chest.position.y + rig.hips.position.y;
+          const az = arm.piv.position.z + rig.chest.position.z + rig.hips.position.z;
+          const anchorMM = Math.hypot(got.x - ax, got.y - ay, got.z - az) * 1000;
+          rows.push({ body: b, side, clause: 'anchor', anchorMM: +anchorMM.toFixed(3) });
+          if (!(anchorMM <= HAND_ANCHOR_MM)) {
+            bad.push('body ' + b + ' side ' + side + ': at the identity pose handRig('
+              + AL.toFixed(3) + ') is ' + anchorMM.toFixed(2) + ' mm off (0, -AL, 0) from '
+              + 'the arm pivot, which is the contract every clip in decoy.js was '
+              + 'authored against (tol ' + HAND_ANCHOR_MM + ')');
+          }
+        }
+      }
+      // Drift of those three numbers across the poses.
+      let drift = 0, at = 0;
+      for (let i = 1; i < frameCoords.length; i++) {
+        for (let k = 0; k < 3; k++) {
+          const dd = Math.abs(frameCoords[i][k] - frameCoords[0][k]) * 1000;
+          if (dd > drift) { drift = dd; at = i; }
+        }
+      }
+      rows.push({ body: b, side, clause: 'rigid', driftMM: +drift.toFixed(3),
+        atPose: at, rest: frameCoords[0].map((v) => +(v * 1000).toFixed(2)) });
+      if (frameCoords.length > 1 && !(drift <= HAND_RIGID_MM)) {
+        bad.push('body ' + b + ' side ' + side + ': handRig moves ' + drift.toFixed(1)
+          + ' mm IN THE DRAWN FOREARM\'S OWN FRAME between poses (tol ' + HAND_RIGID_MM
+          + '). A point on a hand does not slide along the hand when the elbow bends.');
+      }
+      arm.piv.rotation.set(0, 0, 0);
+      arm.set(ELB0);
+    }
+    rig.root.traverse((o) => { if (o.isMesh && o.material && o.material.dispose) o.material.dispose(); });
+  }
+  const dr = rows.filter((r) => r.clause === 'rigid').map((r) => r.driftMM);
+  const an = rows.filter((r) => r.clause === 'anchor').map((r) => r.anchorMM);
+  return { ok: bad.length === 0, bad, n: rows.length, rows,
+    worstDriftMM: dr.length ? +Math.max(...dr).toFixed(3) : null,
+    worstAnchorMM: an.length ? +Math.max(...an).toFixed(3) : null, inj: inj || null };
+}
+
+// Every input handCheck's docstring names, run, with the result of running it.
+// `legacy` is the shipped-before dial rather than an injection, so it goes
+// through handLock() and is restored in a `finally` — a falsifier that leaves a
+// global on is a worse bug than the one it was testing for.
+//
+// THE ROWS THAT MUST STAY GREEN ARE HALF THE SUITE. "legacy at rest" is the
+// byte-identity claim for round 5's build, and "a defect with the wrong pose"
+// is the shape of failure round 4's two assertions actually had.
+function handSelfTest(THREE, F) {
+  const cases = [
+    ['baseline (must PASS)', null, false],
+    ['legacy, IDENTITY POSE ONLY (must PASS — this is the byte-identity claim)',
+      { legacy: 1, restOnly: 1 }, false],
+    ['legacy + the five authored shoulder poses', { legacy: 1 }, true],
+    ['legacy + elbow pinned at 90 degrees', { legacy: 1, elb: 1.571 }, true],
+    ['legacy + chest pitched 0.16 rad', { legacy: 1, chest: [0.16, 0, 0] }, true],
+    ['legacy + chest pitched 0.44 / yawed -0.20', { legacy: 1, chest: [0.44, -0.20, 0] }, true],
+    ['legacy + hips yawed 0.08 rad', { legacy: 1, hips: [0, 0.08, 0] }, true],
+    ['legacy + hips bobbed 30 mm', { legacy: 1, bob: 0.030 }, true],
+    ['legacy + hips bobbed 3 mm', { legacy: 1, bob: 0.003 }, true],
+    ['chest dropped from the chain + chest pitched 0.16', { dropChest: 1, chest: [0.16, 0, 0] }, true],
+    ['chest dropped from the chain + chest yawed 0.02', { dropChest: 1, chest: [0, 0.02, 0] }, true],
+    ['hips dropped from the chain + hips yawed 0.08', { dropHips: 1, hips: [0, 0.08, 0] }, true],
+    ['hips dropped from the chain + hips bobbed 3 mm', { dropHips: 1, bob: 0.003 }, true],
+    ['chain scale ignored + chest.scale.y +1% (the breathing lerp)', { noScale: 1, scale: 0.010 }, true],
+    ['tip0 stale by 5 mm in z', { tipDz: 0.005 }, true],
+    ['`rot` not refreshed when the joint moves', { staleRot: 1 }, true],
+    // A DEFECT IN THE POSE THAT HIDES IT. Both of these are the same broken
+    // code as two rows above; the only thing that changed is that nothing
+    // moves the node they got wrong. They MUST stay green, and if they go red
+    // this check is firing on something other than what it claims to test.
+    ['chest dropped from the chain, chest AT REST (must PASS)', { dropChest: 1 }, false],
+    ['chain scale ignored, no breathing (must PASS)', { noScale: 1 }, false],
+    // The floor, published rather than hidden: the largest perturbation this
+    // does NOT catch. A check with no stated floor is a check nobody can size.
+    ['chest dropped from the chain + chest yawed 0.0004 (BELOW the floor, must pass)',
+      { dropChest: 1, chest: [0, 0.0004, 0] }, false],
+  ];
+  const rows = [], bad = [];
+  for (const [name, inj, wantRed] of cases) {
+    const J = { ...(inj || {}), fast: true };
+    const wasLegacy = handLocked();
+    if (J.legacy) handLock(true);
+    let r;
+    try { r = handCheck(THREE, F, J); } finally { handLock(wasLegacy); }
+    const red = !r.ok;
+    rows.push({ input: name, red, nBad: r.bad.length,
+      worstDriftMM: r.worstDriftMM, worstAnchorMM: r.worstAnchorMM,
+      first: r.bad[0] ? r.bad[0].slice(0, 120) : null });
+    if (red !== wantRed) {
+      bad.push('handCheck is BLIND to "' + name + '": it stayed '
+        + (red ? 'red' : 'GREEN') + ' when it should have gone '
+        + (wantRed ? 'red' : 'green') + '. An assertion that cannot fail on an '
+        + 'input its own docstring names is decoration — see AGENTS_BRIEF.');
+    }
+  }
+  return { ok: bad.length === 0, bad, rows };
+}
+
 // ===========================================================================
 // ROUND 9 — THE POSE PERSONALITY, AND WHY IT IS ROLLED HERE OF ALL PLACES
 // ===========================================================================
@@ -96680,6 +97021,8 @@ function makeChild(THREE, F, o) {
     -0.105, KID.shoulderY, 0, 1, 1, elbSolve(-1, 'kid'));
   const armL = armLb.piv, armR = armRb.piv;
   hips.add(legL); hips.add(legR); hips.add(armL); hips.add(armR);
+  // The nodes between an arm and the root, built where the edges are made.
+  const kidChainL = [armL, hips], kidChainR = [armR, hips];
 
   g.scale.setScalar(o.height);
   return {
@@ -96689,7 +97032,12 @@ function makeChild(THREE, F, o) {
     armLbone: armLb, armRbone: armRb, elbL: armLb.elb, elbR: armRb.elb,
     setElbow: (side, th) => (side > 0 ? armLb : armRb).set(th),
     elbowOf: (side) => (side > 0 ? armLb : armRb).th,
-    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb, KID.hipY, AL, out),
+    // ROUND 6 — the chain. `chest` IS `hips` on a child (see the note at the top
+    // of this function), so it appears once: listing it twice would apply the
+    // pelvis transform to a hand two times and the answer would be wrong in a
+    // way no assertion here would have caught.
+    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb,
+      side > 0 ? kidChainL : kidChainR, KID.hipY, AL, out),
     // Follow state, all of it driven by dt and the constants above. No rng
     // reaches this object after construction, which is what makes a child
     // replayable in a bench trial and unable to walk the seeded stream.
@@ -96856,6 +97204,10 @@ function makePerson(THREE, F, o) {
   // asking the question it looks like it is asking.
   const birdGeo = F.bird[o.sleeve ? 0 : 1];
   hips.add(legL); hips.add(legR); chest.add(armL); chest.add(armR);
+  // ROUND 6 — the nodes between an arm and the root, in order, built in the
+  // same line that makes the edges. handRigOf walks this instead of adding a
+  // constant hipY and calling the chest an approximation.
+  const chainL = [armL, chest, hips], chainR = [armR, chest, hips];
 
   // ROUND 9 — one mesh. It gets its OWN material rather than borrowing the
   // trousers, and the extra material is free where it matters: a material is
@@ -96988,7 +97340,8 @@ function makePerson(THREE, F, o) {
     armLbone: armLb, armRbone: armRb, elbL: armLb.elb, elbR: armRb.elb,
     setElbow: (side, th) => (side > 0 ? armLb : armRb).set(th),
     elbowOf: (side) => (side > 0 ? armLb : armRb).th,
-    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb, hipY, AL, out),
+    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb,
+      side > 0 ? chainL : chainR, hipY, AL, out),
     // ROUND 11 — ON THE RIG, because two things in agents.js used to read them
     // off the FIG constants and therefore assumed every body in the store was
     // the same one. `armLen` is the prop solve (a held item is placed from the
@@ -97124,6 +97477,10 @@ function makeCop(THREE, F) {
   -0.206, FIG.shoulderY + 0.012, 0, 1, 1, elbSolve(-1, 'cop'));
   const armL = armLb.piv, armR = armRb.piv;
   hips.add(legL); hips.add(legR); chest.add(armL); chest.add(armR);
+  // ROUND 6 — the nodes between an arm and the root, in order, built in the
+  // same line that makes the edges. handRigOf walks this instead of adding a
+  // constant hipY and calling the chest an approximation.
+  const chainL = [armL, chest, hips], chainR = [armR, chest, hips];
 
   g.scale.setScalar(1.04);
   return {
@@ -97147,12 +97504,13 @@ function makeCop(THREE, F) {
     armLbone: armLb, armRbone: armRb, elbL: armLb.elb, elbR: armRb.elb,
     setElbow: (side, th) => (side > 0 ? armLb : armRb).set(th),
     elbowOf: (side) => (side > 0 ? armLb : armRb).th,
-    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb, FIG.hipY, AL, out),
+    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb,
+      side > 0 ? chainL : chainR, FIG.hipY, AL, out),
   };
 }
 
 
-return { FIG, mergeParts, SKIN, HAIR, GREY, CLOTH, PANTS, ELB0, ELB_HANDLING, ELB_MIN, elbLock, elbLocked, elbSolve, elbReach, KID, KIDCLOTH, KIDPANTS, COP_ANKLE_Y, COP_KNEE_Y, buildFigureGeo, faceCheck, faceSelfTest, carryCheck, carrySelfTest, rollPerson, makeChild, makePerson, makeCop };
+return { FIG, mergeParts, SKIN, HAIR, GREY, CLOTH, PANTS, ELB0, ELB_HANDLING, ELB_MIN, elbLock, elbLocked, elbSolve, elbReach, handLock, handLocked, KID, KIDCLOTH, KIDPANTS, COP_ANKLE_Y, COP_KNEE_Y, buildFigureGeo, faceCheck, faceSelfTest, carryCheck, carrySelfTest, handCheck, handSelfTest, rollPerson, makeChild, makePerson, makeCop };
 })();
 
 /* ==== src/agents/frontend.js ==== */
@@ -97306,6 +97664,46 @@ const swing = (u) => ease(u < 0.5 ? u * 2 : (1 - u) * 2);
 // A future round that wants a cashier to hand something to a shopper should be
 // able to move a number from one file to the other and have it mean the same
 // thing.
+//
+// ===========================================================================
+// ROUND 6 (character) — AND THE ELBOW, WHICH IS THE WHOLE POINT OF THESE SEVEN
+// ===========================================================================
+// figures.js grew a real joint in round 5 and agents.js drove it on fourteen
+// shoppers and the cop. It did not reach here or the children, and round 5 said
+// so in its own close-out: "the child rig has the joint and nothing drives it
+// ... same for the front-end staff." So eleven bodies were left rendering at
+// ELB0 — 154.2 degrees, a straight arm — standing next to fifteen whose arms
+// bend. That is worse than before the joint existed, because a difference is
+// what the eye finds and a uniform stiffness is not.
+//
+// THESE SEVEN MATTER MORE THAN THEIR NUMBER SUGGESTS: they are the only people
+// in the game the player ever sees STANDING STILL AND DOING A JOB. Everybody
+// else is walking, and a walking arm can get away with being nearly straight.
+// A cashier's cannot — the reference set is unusually good on exactly this
+// posture, and unanimous:
+//
+//   ppl_00  the standing cashier in blue works with her forearms UP, the near
+//           one folded to somewhere around a right angle over the belt, and the
+//           second cashier at the register has both arms in about the same
+//           place on the keys.
+//   ppl_01  the seated cashier in orange, both forearms up over the counter,
+//           the working arm around 100 degrees and the other closer still.
+//   ppl_06  the child pushing the basket wagon is the counter-example and it is
+//           in here on purpose: HIS arms are nearly straight, because he is
+//           braced against something heavier than he is and his trunk is behind
+//           it. A round that bends every elbow it can find would have got that
+//           one backwards. Straight is right when a body is PUSHING.
+//
+// (Angles read off 2D photographs with foreshortening in them: the BAND is the
+// claim — everybody handling goods sits inside ELB_HANDLING's 60-110 — and no
+// single degree here is defended.)
+//
+// So every pose below authors both elbows, in the same units decoy.js uses:
+// interior angle in radians, smaller is more bent. The numbers are named
+// against agents.js's EL table where one fits, rather than being a third
+// private vocabulary. The numbers are NOT imported: this file's whole
+// construction argument is that it shares no mutable state with agents.js, and
+// a table of constants would be the first thread across. They are quoted.
 
 // SCANNING. The single most important animation in this file, because it is the
 // one the client asked for by name and the only one with a period short enough
@@ -97328,10 +97726,17 @@ function poseScan(r, p) {
   const lift = swing(clamp((u - 0.10) / 0.80, 0, 1));
   r.armR.rotation.x = -1.28 - lift * 0.34;
   r.armR.rotation.z = lerp(-0.62, 0.52, across);
+  // ROUND 6 — the working elbow, and it is the read. Out at the belt the arm is
+  // most open (100 deg); across the scanner and down into the bag well it folds
+  // to 74, which is where both reference cashiers sit. `lift` closes it a
+  // little further at the top of the arc, because you bring an item IN to pass
+  // it over the window rather than swinging it round on a straight arm.
+  r.setElbow(-1, lerp(1.75, 1.30, across) - lift * 0.10);
   // The left hand hovers at the belt, steadying the next item, and dips as the
   // right one comes back for it.
   r.armL.rotation.x = -1.05 - (1 - across) * 0.30;
   r.armL.rotation.z = 0.30 + (1 - across) * 0.16;
+  r.setElbow(1, lerp(1.44, 1.62, across));
   // Head follows the hand, but lags it — you look at the scanner, not at your
   // own arm — so the neck yaw uses `across` at 0.7 amplitude and a beat late.
   r.neck.rotation.y = lerp(0.34, -0.26, ease(clamp((u - 0.34) / 0.50, 0, 1)));
@@ -97353,6 +97758,12 @@ function posePay(r, p) {
   r.armR.rotation.z = lerp(-0.62, -0.10, k);
   r.armL.rotation.x = lerp(-1.05, -1.34, k);
   r.armL.rotation.z = lerp(0.30, 0.20, k);
+  // Hands off the belt and onto the keypad: both elbows come in and stay there
+  // for the length of the beat. This is the most closed either arm gets in the
+  // file and it is correct — a hand on a register keyboard is a hand held at
+  // the sternum. EL.read is 1.46 on the adults; the working arm goes past it.
+  r.setElbow(-1, lerp(1.75, 1.34, k));
+  r.setElbow(1, lerp(1.44, 1.40, k));
   // ...and he says something. A slow nod at 0.9 Hz, which at this distance is
   // "talking" and at any distance is not a machine.
   const nod = Math.sin(p * TAU * 2.4) * 0.06 * k;
@@ -97382,6 +97793,15 @@ function poseUnload(r, p) {
   r.armR.rotation.z = lerp(-0.36, 0.08, out);
   r.armL.rotation.x = lerp(-0.70, -1.10, out * 0.6) - dip * 0.30;
   r.armL.rotation.z = 0.28;
+  // ROUND 6 — AND THIS IS THE ONE THAT STAYS OPEN, which is why the whole file
+  // is not a single constant. Reaching DOWN into a trolley is the one moment at
+  // a checkout where an arm is near full stretch: the dip has him folded at the
+  // waist with the arm extended into the basket (2.28, i.e. 131 deg), and the
+  // elbow only closes as he lifts the item up onto the belt (1.55, 89). It is
+  // the reverse of the cashier's cycle and it is what makes the two bodies in a
+  // lane read as two different jobs rather than as one animation twice.
+  r.setElbow(-1, lerp(2.28, 1.55, out));
+  r.setElbow(1, lerp(2.32, 1.90, out * 0.6));
   r.neck.rotation.x = 0.18 + dip * 0.30 - out * 0.34;
   r.neck.rotation.y = lerp(-0.30, 0.22, out);
   r.chest.rotation.y = lerp(-0.12, 0.10, out);
@@ -97397,6 +97817,12 @@ function poseWait(r, p) {
   r.armR.rotation.z = lerp(-0.14, 0.06, reach);
   r.armL.rotation.x = -0.80;
   r.armL.rotation.z = 0.20;
+  // Fishing a card out and holding it up: the elbow closes to bring the hand to
+  // the body and then OPENS as the card goes across the counter, which is the
+  // opposite of what an arm-only version of this pose does. The idle arm hangs
+  // at the adults' EL.hang.
+  r.setElbow(-1, lerp(2.30, 1.62, reach));
+  r.setElbow(1, 2.52);
   r.neck.rotation.x = 0.06;
   r.neck.rotation.y = Math.sin(p * TAU * 0.6) * 0.16;
   r.chest.rotation.y = 0;
@@ -97412,6 +97838,13 @@ function poseBag(r, p) {
   r.armR.rotation.z = lerp(-0.28, 0.30, side);
   r.armL.rotation.x = -1.06 - d * 0.34;
   r.armL.rotation.z = lerp(0.34, -0.10, side);
+  // Both hands working in a bag well below the counter line: forearms down and
+  // in, elbows around 80-90 and closing on the dip, which is the moment the
+  // hands are deepest in the bag. A bagger is the most CLOSED body in the file
+  // and it is the pose the reference shows twice (ppl_00's bagged goods, ppl_01
+  // handing a loaf across).
+  r.setElbow(-1, 1.58 - d * 0.22);
+  r.setElbow(1, 1.50 - d * 0.20);
   r.neck.rotation.x = 0.34 - d * 0.08;
   r.neck.rotation.y = lerp(0.18, -0.20, side);
   r.chest.rotation.y = lerp(0.10, -0.10, side);
@@ -97430,6 +97863,14 @@ function poseClerk(r, p) {
   r.armR.rotation.z = lerp(-0.16, 0.10, hand);
   r.armL.rotation.x = -1.26 - type * 0.05;
   r.armL.rotation.z = 0.18;
+  // Typing is a folded arm — forearms level with the desk, elbows near a right
+  // angle — and the hand-over EXTENDS one of them across the counter, which is
+  // the only thing at that desk that changes a silhouette. The 6 Hz `type`
+  // wobble goes on the joint as well as the shoulder, at a tenth of the
+  // amplitude: at this distance it is the forearm that is visible and the
+  // upper arm that is not.
+  r.setElbow(-1, lerp(1.46 + type * 0.04, 2.10, hand));
+  r.setElbow(1, 1.42 - type * 0.04);
   r.neck.rotation.x = lerp(0.30, 0.02, hand);
   r.neck.rotation.y = lerp(-0.14, 0.10, hand);
   r.chest.rotation.y = hand * 0.10;
@@ -97453,6 +97894,16 @@ function poseQueue(r, p) {
   r.armR.rotation.z = -0.16 + r.rest.splayR;
   r.armL.rotation.x = -0.94 - shift * 0.05;
   r.armL.rotation.z = 0.16 + r.rest.splayL;
+  // ROUND 6 — the dullest elbow in the file, and PER BODY. Standing in a queue
+  // is a hanging arm (EL.hang, 150 deg), but seven hanging arms at one number
+  // is the identical clone tell this function's own note describes for the
+  // weight shift — and it is worse on the elbow, because a queue is the one
+  // place several of these bodies are in frame at once. `b.elbRest` is rolled
+  // once, off THIS FILE's private generator, so the variety costs agents.js no
+  // draw. The shift opens and closes them a few degrees out of phase with each
+  // other, which is what a bored body does.
+  r.setElbow(-1, r.feElbRest + shift * 0.10);
+  r.setElbow(1, r.feElbRest - 0.06 - shift * 0.08);
   r.neck.rotation.y = look * 0.40;
   r.neck.rotation.x = 0.06 - Math.max(0, look) * 0.10;
 }
@@ -97548,6 +97999,16 @@ function makeFrontEnd(THREE, scene, F, world, opt = {}) {
     // rather than being rolled away, which would move this stream instead.
     person.kid = null;
     const rig = makePerson(THREE, F, person);
+    // ROUND 6 — a resting elbow per body, rolled HERE. `rest` in figures.js
+    // carries this body's hip roll and arm splay and is rolled inside
+    // rollPerson, i.e. on whichever stream rolled the person; adding a field to
+    // it would have taken a draw off agents.js's shared seeded generator for
+    // every shopper in the store, and CLAUDE.md records that a single extra
+    // draw moved a published likelihood ratio from 1.95 to 2.33. So it is one
+    // more number off the private LCG, on the rig, written once.
+    // 2.44-2.62 rad is 140-150 degrees: a hanging arm, with the spread real
+    // people have and this file did not.
+    rig.feElbRest = rng.rr(2.44, 2.62);
     rig.root.position.set(anchor.x, 0, anchor.z);
     const f = anchor.face || [0, 1];
     rig.root.rotation.y = Math.atan2(f[0], f[1]);
@@ -97897,6 +98358,22 @@ const GESTURES = [
       // arm's receipt. With a 64-degree elbow the hand comes in on its own and
       // the offset shrinks to a token, so the prop ends up where round 5 put it
       // and the hand ends up where the prop is.
+      //
+      // ROUND 6 (character) — AND THESE TWO ARE RIGHT, WITH THE NUMBER.
+      // Round 5 set them from the geometry and checked the result by eye
+      // ("within ~80 mm of the fist"). Measured against the drawn fist and the
+      // drawn shirt on the last frame the box is visible: the box's own surface
+      // is 7 mm INSIDE the coat and its centre is 53 mm from the fist, on a prop
+      // whose half-diagonal is 129. It lands on the body at the frame it
+      // vanishes, which is what a concealment is. Nothing here changed.
+      //
+      // What DID change is underneath: `off` is a rig-local translation from
+      // handRig()'s answer, and handRig() was wrong in two ways (see
+      // figures.js's handRigOf). Before the fix, `prop - handRig` did not equal
+      // `off` at all — it read up to 95 mm in x and 126 mm in z on keyframes
+      // whose `off` is [0, 0, 0] — so any attempt to solve these six numbers
+      // was solving for two other bugs. It equals `off` to the millimetre now,
+      // which is the only condition under which authoring them means anything.
       kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, chest: 0.05, neck: 0.22, elbR: 2.30 }),
       kf(0.22, { vis: 1, armR: -1.92, armRz: -0.20, look: 0.72, neck: 0.10, elbR: 1.86 }),
       kf(0.42, { vis: 1, armR: -2.05, armRz: 0.10, look: -0.55, elbR: 1.54 }),
@@ -97909,11 +98386,54 @@ const GESTURES = [
     id: 'concealPocket', tell: 'steal', dur: 1.75, item: SMALL,
     // Low and quick. Never gets above the sternum, which is why it needs the
     // decoy `restash` to exist — that one is the same move and gives it back.
+    // ROUND 6 (character) — AND IT WAS PUTTING THE ITEM IN MID-AIR.
+    // Measured rather than looked at, with the prop against the nearest vertex
+    // of the trunk loft (shots/_probe_fig_r6.js, propFit): on the last frame the
+    // item is VISIBLE, the box's own surface was 114 mm clear of his hip, and
+    // the hand was 229 mm in front of the shirt. It disappeared into nothing,
+    // half a hand's width off the body, on the clip that IS the game.
+    //
+    // NO VALUE OF `off` FIXES THAT, and that is the useful half of the finding.
+    // `off` translates the prop away from the hand; pulling it 114 mm further
+    // back puts it outside the fist (the SMALL prop's half-diagonal is 84 mm)
+    // and trades a floating box for a box beside a hand. The hand has to come to
+    // the hip, so the SHOULDER moved and `off` stayed small:
+    //
+    //   armR at the two stash keys   -0.72 / -0.58  ->  -0.55 / -0.40
+    //   elbR                          1.36 / 1.24   ->   1.32 / 1.20
+    //   off.z                        -0.03 / -0.04  ->  -0.02 / -0.03
+    //
+    // Swept, at the deepest beat, gap between the box's own surface and the
+    // shirt (negative = pressed in), with `off.z` held at the shipped values:
+    //   armR -0.72/-0.58   +76 mm      grip 43 mm     <- what shipped
+    //        -0.62/-0.48   +41         grip 43
+    //        -0.55/-0.40   +12         grip 45
+    //        -0.48/-0.34   -12         grip 45
+    //        -0.44/-0.30   -27         grip 45
+    // then `off.z` swept on top of armR -0.55/-0.40, at 61 samples per clip
+    // rather than 21 — the coarse grid missed the deepest frame entirely and
+    // read -2 mm where the beat is really -42:
+    //   off.z -0.040/-0.060   pocket -42   restash -33   grip 44-45
+    //         -0.030/-0.045   pocket -27   restash -18   grip 42-44
+    //         -0.025/-0.035   pocket -18   restash  -9   grip 43-45
+    //         -0.020/-0.030   pocket -13   restash  -4   grip 46      <- taken
+    //         -0.015/-0.020   pocket  -3   restash  +6   grip 51
+    // Taken because it is the row where BOTH clips are in contact and neither
+    // is through — `conceal`, which needed no change at all, sits at -7 — and
+    // because the pair stays matched to 9 mm, which is what keeps the steal and
+    // its decoy the same move. Chosen for the smallest arm change that lands ON
+    // the body rather than through it, with the prop still well inside the fist
+    // (the SMALL prop's half-diagonal is 84 mm against a 46 mm grip).
+    //
+    // THE DECOY GETS THE IDENTICAL TREATMENT, in the same commit, for the
+    // reason at the top of this file: `restash` is this move given back, and a
+    // steal whose arm was tuned while its decoy's was not is the tell. The two
+    // still differ by the same small amounts they differed by before.
     keys: [
       kf(0.00, { vis: 1, armR: -1.45, armRz: -0.26, chest: 0.08, neck: 0.26, elbR: 2.28 }),
       kf(0.26, { vis: 1, armR: -1.70, armRz: -0.14, look: -0.62, elbR: 1.82 }),
-      kf(0.52, { vis: 1, armR: -0.72, armRz: 0.46, off: [0.0, 0.0, -0.03], look: 0.50, chest: 0.10, elbR: 1.36 }),
-      kf(0.60, { vis: 0, armR: -0.58, armRz: 0.44, off: [0.0, 0.0, -0.04], look: 0.34, elbR: 1.24 }),
+      kf(0.52, { vis: 1, armR: -0.55, armRz: 0.46, off: [0.0, 0.0, -0.02], look: 0.50, chest: 0.10, elbR: 1.32 }),
+      kf(0.60, { vis: 0, armR: -0.40, armRz: 0.44, off: [0.0, 0.0, -0.03], look: 0.34, elbR: 1.20 }),
       kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, elbR: 2.16 }),
     ],
   },
@@ -98055,8 +98575,10 @@ const GESTURES = [
     keys: [
       kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, neck: 0.22, elbR: 2.26 }),
       kf(0.18, { vis: 1, armR: -1.78, armRz: -0.10, look: -0.55, elbR: 1.84 }),
-      kf(0.34, { vis: 1, armR: -0.74, armRz: 0.48, off: [0.0, 0.0, -0.03], chest: 0.10, elbR: 1.34 }),
-      kf(0.40, { vis: 0, armR: -0.60, armRz: 0.44, off: [0.0, 0.0, -0.04], look: 0.40, elbR: 1.22 }),
+      // ROUND 6 — the same two numbers concealPocket moved, moved by the same
+      // amounts. See the note there; the pair is the whole ambiguity argument.
+      kf(0.34, { vis: 1, armR: -0.57, armRz: 0.48, off: [0.0, 0.0, -0.02], chest: 0.10, elbR: 1.30 }),
+      kf(0.40, { vis: 0, armR: -0.42, armRz: 0.44, off: [0.0, 0.0, -0.03], look: 0.40, elbR: 1.18 }),
       kf(0.58, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, elbR: 2.10 }),
       kf(0.66, { vis: 1, armR: -1.04, armRz: 0.18, elbR: 1.70 }),
       kf(0.84, { vis: 1, armR: -1.62, armRz: -0.06, neck: 0.18, elbR: 1.50 }),
@@ -99712,7 +100234,7 @@ const M_src_agents_js = (() => {
 const { TUNING, EXIT, EXIT2, aisleX, AISLE_LEN, AISLE_COUNT, AISLE_GAP, SHELF_W, STORE, FRONT_WALK_Z, SERVICE_DESK } = M_src_config_js;
 const { makeNav } = M_src_agents_nav_js;
 const { makeFrontEnd } = M_src_agents_frontend_js;
-const { mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG, KID, SKIN, HAIR, CLOTH, PANTS, COP_KNEE_Y, faceCheck, carryCheck, faceSelfTest, carrySelfTest, ELB0, ELB_MIN, ELB_HANDLING, elbReach, elbLock, elbLocked } = M_src_agents_figures_js;
+const { mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG, KID, SKIN, HAIR, CLOTH, PANTS, COP_KNEE_Y, faceCheck, carryCheck, faceSelfTest, carrySelfTest, ELB0, ELB_MIN, ELB_HANDLING, elbReach, elbLock, elbLocked, handLock, handLocked, handCheck, handSelfTest } = M_src_agents_figures_js;
 const { GESTURES, BY_ID, pickGesture, applyGesture, REACH_KEEP, REACH_PUT } = M_src_agents_decoy_js;
 const { solveGait, stepLength, dutyOf, attachFeet, footPose, footRest, gaitCheck } = M_src_agents_gait_js;
 const { cameraRig } = M_src_cctv_js;
@@ -106918,7 +107440,41 @@ function createAgents(THREE, scene, world) {
     return _G;
   }
 
+  // ROUND 6 (character) — THE PROP IS PLACED LAST, ON EVERY EXIT PATH.
+  // animateShopper has an early `return` in the clip branch and another in the
+  // cart branch, so "at the end of the function" is three places, and the next
+  // pose branch somebody writes would be a fourth. A wrapper is one place, and
+  // it cannot be forgotten. See the note at `r.propP` for why the ordering
+  // started mattering this round and not before.
   function animateShopper(s, dt, target) {
+    s.rig.propP = null;
+    animateShopperCore(s, dt, target);
+    settleProp(s, dt);
+  }
+  // Everything the frame does to the trunk is finished by the time this runs,
+  // so handRig() is being asked about the arm that will actually be drawn.
+  function settleProp(s, dt) {
+    const r = s.rig;
+    if (!s.held.visible || !r.propP) return;
+    placeProp(s, r, r.propP);
+    // ...and the box still comes OFF THE SHELF. For 0.28 s after a grasp the
+    // prop is lerped from where the facing actually was — the handle's own
+    // `at`, in world metres, brought back into rig space — toward the solved
+    // hand. Without it the item pops into being at arm's end and the one thing
+    // the client asked for reads as a spawn instead of as a removal.
+    if (s.facing && s.grabT > 0) {
+      s.grabT = Math.max(0, s.grabT - dt);
+      const k = clamp(s.grabT / 0.28, 0, 1);
+      const a = s.facing.at, sc = r.root.scale.x || 1;
+      const dx = a.x - s.position.x, dz = a.z - s.position.z;
+      const cy = Math.cos(-s.visYaw), sy = Math.sin(-s.visYaw);
+      const lx = (dx * cy + dz * sy) / sc, lz = (-dx * sy + dz * cy) / sc;
+      s.held.position.x = lerp(s.held.position.x, lx, k);
+      s.held.position.y = lerp(s.held.position.y, a.y / sc, k);
+      s.held.position.z = lerp(s.held.position.z, lz, k);
+    }
+  }
+  function animateShopperCore(s, dt, target) {
     const r = s.rig;
     const P = r.pose;
     const ed = (k) => 1 - Math.exp(-k * (dt || 0.016));
@@ -107330,7 +107886,19 @@ function createAgents(THREE, scene, world) {
       // and a short-armed body holds its bottle 40 mm past its own fingertips.
       // The shoulder was already read off the rig for exactly this reason and
       // the length was the half that got left behind.
-      placeProp(s, r, p);
+      // ROUND 6 (character) — DEFERRED, AND THE REASON IS THIS ROUND'S OWN
+      // CHANGE. handRig() now composes the chest and the hips, which is correct
+      // and which makes the prop's position ORDER-DEPENDENT INSIDE THE FRAME
+      // for the first time: everything below this line still writes the trunk —
+      // the turn bank, the lean, the pelvis roll, the walk bob, the foot re-pin,
+      // and the carry clamp's own setElbow — so a prop placed here is placed
+      // against an arm the frame has not finished moving. Measured before it was
+      // moved: prop-minus-handRig read up to 95 mm in x and 126 mm in z on a
+      // clip whose `off` is [0, 0, 0] for those keyframes, i.e. the offsets a
+      // report would have been "solving" were mostly this.
+      // So the clip records WHAT to place and settleProp() does it last. Nothing
+      // about `off` or the clip table changes; one call moves.
+      r.propP = p;
       // ---- ROUND 12: THE GRASP, AND IT IS ONE `if` IN THE WHOLE FILE --------
       // `vis` stepping 0 -> 1 on a REACH clip is the frame the shelf loses the
       // box. Nothing else in this game removes a facing; see takeAt(). The two
@@ -107383,17 +107951,9 @@ function createAgents(THREE, scene, world) {
         // into rig space — toward the solved hand. Without it the item pops
         // into being at arm's end and the one thing the client asked for reads
         // as a spawn instead of as a removal.
-        if (s.facing && s.grabT > 0) {
-          s.grabT = Math.max(0, s.grabT - dt);
-          const k = clamp(s.grabT / 0.28, 0, 1);
-          const a = s.facing.at, sc = r.root.scale.x || 1;
-          const dx = a.x - s.position.x, dz = a.z - s.position.z;
-          const cy = Math.cos(-s.visYaw), sy = Math.sin(-s.visYaw);
-          const lx = (dx * cy + dz * sy) / sc, lz = (-dx * sy + dz * cy) / sc;
-          s.held.position.x = lerp(s.held.position.x, lx, k);
-          s.held.position.y = lerp(s.held.position.y, a.y / sc, k);
-          s.held.position.z = lerp(s.held.position.z, lz, k);
-        }
+        // ROUND 6 — the lerp itself moved to settleProp with the placement it
+        // has to run AFTER. It was correct here only while placeProp ran on the
+        // line above it.
       }
       r.gestVis = !!p.vis;
       parkCart(s, P, true);
@@ -107653,7 +108213,7 @@ function createAgents(THREE, scene, world) {
       _P.armR = r.armR.rotation.x; _P.armRz = r.armR.rotation.z;
       _P.off[0] = 0; _P.off[1] = 0; _P.off[2] = 0;
       _P.item = ONE3;
-      placeProp(s, r, _P);
+      r.propP = _P;                       // ROUND 6 — see settleProp()
     } else if (!s.gest) {
       s.held.visible = false;
     }
@@ -107861,6 +108421,22 @@ function createAgents(THREE, scene, world) {
       k.legR.rotation.x = -0.22 - kick * 0.19;
       k.armL.rotation.x = -0.55 + sway * 0.18; k.armL.rotation.z = 0.30;
       k.armR.rotation.x = -0.52 - sway * 0.18; k.armR.rotation.z = -0.30;
+      // ROUND 6 (character) — AND THE ELBOWS, WHICH THIS RIG HAS HAD SINCE
+      // ROUND 5 WITH NOTHING DRIVING THEM. Round 5's own closing note: "the
+      // child rig has the joint and nothing drives it ... every kid still
+      // renders at ELB0". So four children and seven staff were the only bodies
+      // left in the building with a straight arm, next to fourteen shoppers and
+      // a cop whose arms bend — which is worse than before the joint landed,
+      // because the contrast is what the eye finds.
+      //
+      // A child in a cart seat has both hands ON THE BASKET RIM, which is at
+      // its own chest height, so the arms come forward and the elbows sit near
+      // a right angle. `sway` opens and closes them a little as the cart rocks:
+      // the arms are what stops a seated child reading as a doll strapped to a
+      // trolley. EL.cartBar/EL.read are agents.js's own vocabulary and this
+      // reads out of it rather than inventing a third set of numbers.
+      k.setElbow(1, EL.read + sway * 0.14);
+      k.setElbow(-1, EL.read - sway * 0.14);
       // The parent is behind the cart in cart-local -Z, i.e. straight ahead of a
       // child that was seated facing backwards. If the cart has been let go of,
       // he twists to find them.
@@ -107929,6 +108505,35 @@ function createAgents(THREE, scene, world) {
     k.armL.rotation.x = -sw * amp * 0.95 * k.spec.swing;
     k.armR.rotation.x = sw * amp * 0.95 * k.spec.swing;
     k.armL.rotation.z = 0.13 + g * 0.10; k.armR.rotation.z = -0.13 - g * 0.10;
+    // ROUND 6 — THE WALKING ELBOW, AND A CHILD'S IS NOT AN ADULT'S. An adult
+    // walks at EL.walk (134 deg) and runs at EL.run (87). A child's arms are
+    // shorter and their cadence is nearly double at the same ground speed (see
+    // the note above this block), and what that looks like is a MUCH more bent
+    // arm at any given pace — a scurrying four-year-old carries its forearms up
+    // near horizontal. So the same two anchors, pulled 20 degrees closed:
+    // 115 deg standing, 70 at a flat sprint, interpolated on `g`, which is the
+    // same 0..1 speed ramp the lean and the arm splay already ride.
+    //
+    // ...and the swing MODULATES it rather than replacing it: the arm going
+    // forward bends further and the one going back opens, which is what a bent
+    // arm does when it swings and is the one thing that reads at 20 px, because
+    // it changes the OUTLINE of the arm rather than its angle.
+    //
+    // BOUNDED BY CONSTRUCTION, and the first cut was not. It subtracted
+    // `0.30 * spec.swing` from the carriage angle, and `swing` rolls to 1.7, so
+    // the deepest bodies in the roster reached a DRAWN 39.9 degrees at a
+    // sprint — a forearm folded onto its own bicep, well past the 60 the
+    // reference band bottoms out at and past anything a running child does.
+    // A Math.max floor would have fixed the number and left the same trap for
+    // the next person to widen `swing` (see CLAUDE.md on bargeDump, whose
+    // Math.max never fired). So the swing LERPS BETWEEN TWO CARRIAGES instead:
+    // the personality scales how far along that lerp a body gets, and the floor
+    // is one of the two endpoints rather than a clamp bolted on afterwards.
+    const kelHi = lerp(2.00, 1.22, g);      // carriage at the back of the swing
+    const kelLo = lerp(1.72, 1.05, g);      // ...and at the front of it
+    const kw = clamp(k.spec.swing / 1.7, 0.4, 1);
+    k.setElbow(1, lerp(kelHi, kelLo, Math.max(0, -sw) * kw));
+    k.setElbow(-1, lerp(kelHi, kelLo, Math.max(0, sw) * kw));
     k.hips.rotation.y = sw * 0.075 * g;
     k.hips.rotation.z = sw * 0.045 * g;
     k.hips.position.y = k.hipY + (Math.abs(sw) - 0.5) * 0.030 * g;
@@ -107940,6 +108545,14 @@ function createAgents(THREE, scene, world) {
       k.neck.rotation.y = k.spec.side * 0.55;
       k.armL.rotation.x = -0.18; k.armR.rotation.x = -0.16;
       k.hips.rotation.x = 0.04;
+      // ROUND 6 — a child stopped dead in front of something is not standing to
+      // attention. The arms hang, but a small child's hanging arm is bent: the
+      // resting carrying angle at this age is nearer 150 than an adult's 154 and
+      // it closes the moment they start fiddling with something, which is what
+      // this state is. `phase` gives each one its own slow drift so four
+      // planted children are not one pose four times.
+      const idle = 2.34 + Math.sin(k.t * 0.7 + k.spec.phase) * 0.22;
+      k.setElbow(1, idle); k.setElbow(-1, idle - 0.10);
     } else {
       k.neck.rotation.x = -0.06 + g * 0.10;
       k.neck.rotation.y = Math.sin(k.t * 0.8 + k.spec.phase) * 0.34;
@@ -110282,6 +110895,16 @@ function createAgents(THREE, scene, world) {
     // broken, not that the geometry is.
     faceSelfTest: () => faceSelfTest(THREE, F),
     carrySelfTest: () => carrySelfTest(F),
+    // ROUND 6 (character) — the third one, and it is the CLAUDE.md rule applied
+    // to this round's own change: handRig() composes by hand what three.js
+    // composes to draw the arm, so the two are made to disagree out loud.
+    //   handCheck      is handRig() the hand the renderer draws, at the
+    //                  fingertip AND out along the fingers, over five shoulder
+    //                  poses on three rolled bodies?
+    //   handSelfTest   every input its docstring names, including round 5's own
+    //                  handRigOf through handLock(true).
+    handCheck: (inj) => handCheck(THREE, F, inj),
+    handSelfTest: () => handSelfTest(THREE, F),
     // The elbow, exposed so a probe can measure the distribution across
     // gestures without reaching into figures.js.
     // `lock(true)` pins every joint in the game at ELB0 — the build before this
@@ -110289,6 +110912,12 @@ function createAgents(THREE, scene, world) {
     // for every number in the round report and it must be left off.
     elbow: { ELB0, ELB_MIN, band: ELB_HANDLING, reach: elbReach,
       lock: elbLock, get locked() { return elbLocked(); } },
+    // ROUND 6 (character) — the same shape of dial for the hand solve.
+    // `lock(true)` restores round 5's handRigOf: the fudge past the fingertip
+    // rides the humerus again, hipY goes back to a constant, and the chest and
+    // the hips leave the answer. It is the control for every hand, prop and
+    // grasp number in this round's report and it must be left off.
+    hand: { lock: handLock, get locked() { return handLocked(); } },
     // How often a grasp actually finds something, and how far away it was. A
     // miss is ordinary — pallet stacks and cart loads are not takeable and the
     // search will not reach THROUGH a fixture — but a hit rate that collapsed
