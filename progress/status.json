@@ -1351,13 +1351,18 @@
    "gap": "Guilt leaks through walking speed and it is a PERFECT classifier: drift (guilty-only, post-conceal) walks at 1.40 m/s where innocents cap at 1.25. Zero false positives in 27 minutes."
   },
   "people": {
-   "round": 2,
+   "round": 3,
    "state": "gap",
    "shots": [
     {
      "round": 2,
      "path": "../shots/critic_people_r2_faces.png",
      "t": 1787991603.460499
+    },
+    {
+     "round": 3,
+     "path": "../shots/cr3_elbow.png",
+     "t": 1787997220.387815
     }
    ],
    "gaps": [
@@ -1368,14 +1373,38 @@
     {
      "round": 2,
      "text": "The face is authored and then buried: mouth 7.9-16.3mm behind the jaw ball across its whole width, brow 7.5mm inside the skull so it renders as two floating tabs, eyes flush at 1.5mm."
+    },
+    {
+     "round": 3,
+     "text": "No arm in this game has an elbow joint: shopper, cop and child arms are one rigid pivot with the interior elbow baked at 154.2 deg, unchanged in every body, frame and activity \u2014 a reach is a straight stick swung from the shoulder and a basket hangs at knee height."
+    },
+    {
+     "round": 3,
+     "text": "No arm in this game has an elbow: one rigid pivot group, interior angle baked at 154.2 degrees, unchanged walking, reaching, carrying or concealing \u2014 where every person handling goods in the reference set is at 60-110."
     }
    ],
-   "updated": 1787991723.3576262,
-   "note": "At 3.2m the head is 48px \u2014 the mouth would be 9px wide and the brow 27px \u2014 and 3.2m is the range at which the game itself prints GET OUT OF HIS FACE. The game pushes the player to a distance where a face should read and finds a blank ovoid with two dots. Verified by raycast against merged geometry, not by eye. SECOND AND MORE INTERESTING: '12 of 14 stand square to a fixture' is a metric the lead asked for, satisfied exactly, that made the game worse \u2014 median 0.00 degrees off the normal, 60.7% within 1.0 degree. A snapped yaw, not a stance, and nobody in the reference photographs stands square. No perfect guilt classifier found; nearest miss is shoulder-check amplitude, steal 0.60-0.72 rad vs decoy 0.40-0.60, touching with zero margin.",
-   "gap": "The face is authored and then buried: mouth 7.9-16.3mm behind the jaw ball across its whole width, brow 7.5mm inside the skull so it renders as two floating tabs, eyes flush at 1.5mm."
+   "updated": 1787997318.439132,
+   "note": "Both assertions written last round to guard that round's fixes are blind to their own bug class. faceCheck cannot detect occlusion at all \u2014 195mm of solid hair over every face passes, a fringe over the eyes is byte-identical to baseline, and scaling the skull moves it zero; two of its three named falsification inputs do not turn it red. carryCheck needs ~250mm along the arm axis against a 30mm threshold. Sixth and seventh instruments caught passing while blind. The critic also nearly published a false perfect classifier and caught itself: right-hand lateral excursion looked like an 83mm gap with zero false positives over 401 live plays, but forcing all clips on all bodies collapsed it to a 50mm overlap \u2014 a number only right for the roster it was measured on.",
+   "gap": "No arm in this game has an elbow: one rigid pivot group, interior angle baked at 154.2 degrees, unchanged walking, reaching, carrying or concealing \u2014 where every person handling goods in the reference set is at 60-110."
   }
  },
  "log": [
+  {
+   "t": 1787997318.439135,
+   "piece": "people",
+   "role": "critic",
+   "round": 3,
+   "state": "gap",
+   "text": "No arm in this game has an elbow: one rigid pivot group, interior angle baked at 154.2 degrees, unchanged walking, reaching, carrying or concealing \u2014 where every person handling goods in the reference set is at 60-110."
+  },
+  {
+   "t": 1787997220.387815,
+   "piece": "people",
+   "role": "critic",
+   "round": 3,
+   "state": "gap",
+   "text": "No arm in this game has an elbow joint: shopper, cop and child arms are one rigid pivot with the interior elbow baked at 154.2 deg, unchanged in every body, frame and activity \u2014 a reach is a straight stick swung from the shoulder and a basket hangs at knee height."
+  },
   {
    "t": 1787995258.256693,
    "piece": "figures",
@@ -2319,23 +2348,7 @@
    "round": 14,
    "state": "critiquing",
    "text": "r14 census running: 46-pose grid (4 aisles x band), null control +/-1.9% rel"
-  },
-  {
-   "t": 1787777248.6962738,
-   "piece": "store",
-   "role": "critic",
-   "round": 17,
-   "state": "gap",
-   "text": "ROUND PACKAGES DESTROY THEIR OWN ARTWORK, AND THAT IS NOW THE CUE. 23.0% of every package in the store - 10,333 of 44,853 instances - is a lathe or cylinder (can/LatheGeometry 6,876, bottle/LatheGeometry 2,732, can/CylinderGeometry 725), and on those the atlas cell wraps around a body of revolution so the print collapses into vertical smear. Measured as gradient anisotropy mean|dL/dx| / mean|dL/dy| in sRGB-domain 709 luma, with masks from ABLATION rather than a declared region - hide the round meshes, hide the box meshes, difference against the full frame - masks exact and DISJOINT at overlap 0 px, all six restores byte-identical. Render round/box is 1.490 +/- 0.372 sd, 6/6 poses above 1.0, range 1.075-2.062, with the true chase geometry p4_chase_a1 at 2.062. RUN THE IDENTICAL RULE ON PHOTOGRAPHS AND THE SIGN INVERTS: store_01 tuna cans 0.602 against pouches 0.824 = 0.730; store_00 bottles 0.880 against cartons 1.125 = 0.783; store_05 Lipton 0.940 against paper packs 0.910 = 1.033. A REAL CAN IS BANDED HORIZONTALLY by its label, rim and lid, so its anisotropy sits BELOW a carton; the render sits above. NOT ONE CYLINDER IN THE STORE CARRIES A READABLE WORDMARK, A RIM ELLIPSE OR A LID - CEDAR MILL ROASTED PEANUTS reads as a frosted bottle with a barcode printed across its face, and one lathe in the canned aisle reads as a GREEN WINE GOBLET, a silhouette that belongs in no grocery aisle. TWO REFUTATIONS AGAINST MY OWN HEADLINE: my first instrument said round facings carry MORE gradient energy, not less, so less ink is FALSE and the defect is DIRECTIONAL not quantitative; and whole-frame anisotropy does not separate at all, render 0.654-0.776 median 0.706 sitting INSIDE references 0.617-1.164 median 0.874 over 14 of 14 files. The separation lives in the within-frame class contrast, not the frame."
-  },
-  {
-   "t": 1787777140.89538,
-   "piece": "game",
-   "role": "builder",
-   "round": 16,
-   "state": "critiquing",
-   "text": "THE LEDGER NOW RECORDS PAINT, NOT TYPESET - and the AISLE n attribution in the gap was INVERTED, disproved by crop. Bound to the HUD own ctx inside createHUD, no prototype patch, so it structurally cannot see the CCTV wall or the offscreen composite. Effective alpha is globalAlpha TIMES the alpha parsed from the rgba() fill string; on one desk frame that separates 8 OPAQUE PLATES FROM 61 TRANSLUCENT ones, WHICH THE NAIVE globalAlpha TEST GETS EXACTLY BACKWARDS. Validated on a known signal in three directions before quoting anything: an opaque rect injected AFTER the draw fires 5/5 at 100%, the same rect at alpha 0.30 fires 0, and the same opaque rect drawn FIRST fires 0. RESULT: 68 ERASURES -> 0 and 12 OVERPRINTS -> 0 over 9,600 census frames, with byte-identical denominators both runs (218,924 strings / 125,570 plates / 594,308 translucent). THE AISLE n CLAIM IS INVERTED: AISLE n is drawn INSIDE the DISPATCHED TO panel, which paints AFTER the whole marker cluster, and across 4,864 layouts the only rect that ever overlaps it is the panel own backing plate, drawn BEFORE it. IN ALL THREE CLASSES THE CASUALTY IS THE MARKER OWN LABEL - panel() 0.88, topBand() 0.93, plate() 0.92, each reaching 100%. shots/crop_r16_pair_aisle.png shows AISLE 1 BYTE-IDENTICAL in both layouts; crop_r16_pair_readout.png shows the real defect, r15 leaving a bare 2 where a subject code should read. Fixed with six reserved bands, each read from the same function the drawing site paints from. ROUND 15 LAYOUT SHIPS AS hud.bands(r15), so before/after is ONE PAGE LOAD AND ONE DIAL: 116 / 106 -> 0 / 0 on a byte-identical scene. RUN PAIRS FIRE FOR THE FIRST TIME: PAD_PROBES plus makeSight(colliders, {pad}) - cap45 gives 252/592 all step, pad2.10 gives 64/592 ALL RUN - and sightCheck() asserts the BOUNDARY at half-gap, not merely that something fired. Two errors of its own caught by running the guard against a healthy tree first, and one is worth carrying: A PERPENDICULAR step PAIR CAN NEVER BE BLOCKED BY ANY PAD, because the end exemption is pad metres and the shell is pad deep, so they cancel term for term. DOOR PANEL - CHANGE THE EMPHASIS, WITHHOLD NOTHING: YOU ROSE 0.8 m in that four seconds BECAUSE THE PLAYER RAN AT THE MAN, so the headline number degrades as a consequence of the correct decision. Every metre still prints, the dead chip says NO CUT, and GAP - the race that stays live - goes 13 px -> 19 px. A boost is priced as METRES (6.36 m) rather than as a speed, after a first cut that priced it as a speed and DID NOT FIRE ON ITS OWN MOTIVATING EXAMPLE. THE DETERMINISM PRECONDITION BIT IT and is now documented above run() with the table: benches taken after different amounts of idle rAF gave caught 17 vs 7 on HUD-ONLY changes, so the door-panel figures are single-run and LABELLED as such, and only the 68 -> 0 pair has matched denominators. agents.report() still returns null; cop stamina came off cop.userData."
   }
  ],
- "updated": 1787995258.256695
+ "updated": 1787997318.439138
 }

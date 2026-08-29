@@ -113,6 +113,17 @@ Keep this list; every entry cost a round or a false report.
   "crowd shown". One explicit render is stable to the call.
 - **Wall-clock frame timers**, repeatedly: a 3x spread on an unchanged build, and
   a ranged arm timing *below* its own no-op baseline.
+- **An assertion blind to the bug it was written for.** `faceCheck` was written to
+  catch buried and occluded face features. It computed
+  `frontmost_hit_z − feature_pole_z`, so **anything in front of a feature makes the
+  number positive**: 195 mm of solid hair over every face passed, a fringe dropped
+  over the eyes was byte-identical to baseline, and scaling the skull — an input
+  its own text names — moved it zero. `carryCheck` was blind along the arm axis,
+  needing ~250 mm against a 30 mm threshold, so changing the one constant its
+  docstring names could not turn it red.
+  **Rule: for every input an assertion names as a hazard, show it failing on that
+  input.** Both of these were wired and both ran; neither tested its own
+  proposition.
 - **A metric satisfied exactly, in the wrong way.** A round was asked to get
   shoppers off the aisle centre line and up against the shelf. It did; the metric
   passed; it shipped. A later critic measured *how* square: **0.00 degrees off the
