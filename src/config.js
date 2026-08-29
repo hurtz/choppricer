@@ -284,6 +284,24 @@ export const TUNING = {
   shelfNear: 1.05, shelfFar: 1.38, shelfOdds: 0.82,
   reachLo: 2.2, reachHi: 6.0, reachDur: 3.10,
   grabR: 0.75, grabOut: 0.10, reachPut: 0.45,
+
+  // --- Round 13: the fuse waits for a browse-reach ---
+  // An armed body used to browse-reach ~7x less than an innocent one, so seeing
+  // somebody pick something up made them ~8x less likely to be the thief. That
+  // cannot convict, but it lets a player ELIMINATE most of the roster on sight,
+  // which in a game whose premise is that you cannot tell is nearly as bad.
+  // concealT now does not tick until the body has completed one ordinary
+  // browse-reach. LR(take rate) 0.119 -> 0.885 desk, 0.152 -> 0.723 door.
+  //
+  // Gated on reachDone (incremented at the one call site that removes a
+  // facing), NOT on reachN: reachN counts CLOCK FIRINGS, and the clock fires
+  // whether or not the body is anywhere near a shelf, so gating on it delays a
+  // theft by one interval and leaves the rate exactly where it was.
+  //
+  // reachArm: 0 restores round 12 to the digit and is how that round's
+  // sim-neutrality was proved rather than asserted. Costs about one theft per
+  // four-minute shift.
+  reachArm: 1,
 };
 
 // CHANNEL LINEUP — what the channels ARE. Ids, labels, and which aisle each covers.

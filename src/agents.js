@@ -2345,6 +2345,25 @@ const K = {
   // constant, hashed the same for every body, and it is not the put-back
   // LR(putback) measures (that one is the PA answer, and it is untouched).
   get reachPut()      { return t('reachPut', 0.45); },
+  // ---- ROUND 2 (character): THE FUSE DOES NOT START UNTIL HE HAS SHOPPED ---
+  // How many ORDINARY BROWSE-REACHES a body must complete before `concealT` is
+  // allowed to burn at all. 0 restores round 12 exactly, which is what the
+  // before-column of this round's benches is taken at.
+  //
+  // This is the fix round 12 identified, measured and correctly declined to
+  // ship blind. Its own words: it "moves the bolt and every LR in the file."
+  // See the block over the fuse in tick() for what it closed and what it opened.
+  //
+  // A NOTE ON THE NAME IN THE HANDOVER. Round 12 wrote the fix down as
+  // `reachN >= 1`, and `reachN` is not the counter that sentence wants: it
+  // counts CLOCK FIRINGS, and the clock fires every 2.2-6.0 s whether or not
+  // the body was anywhere near a shelf. Gating on it delays a theft by one
+  // reach interval and leaves the take rate where it was — the prose said
+  // "complete a browse-reach" and the identifier said "the clock ticked". The
+  // counter this reads, `reachDone`, is incremented at the one place in the
+  // game that removes a facing, so it means what the sentence meant. Both were
+  // benched; the numbers for `reachN` are in this round's report.
+  get reachArm()      { return t('reachArm', 1); },
 };
 
 // ---------------------------------------------------------------------------
@@ -3524,7 +3543,14 @@ export function createAgents(THREE, scene, world) {
     s.doorPref = EXITS.length > 1 ? ri(0, EXITS.length - 1) : 0;
     s.stumble = 0; s.bargeT = 0; s.bargeN = 0; s.bargeStam = null;
     s.nerve = rr(K.nerveLoD, K.nerveHiD);
-    s.hasCart = true; s.cart.visible = true; s.mesh.visible = true;
+    // ROUND 12 — NOT EVERYBODY HAS A TROLLEY, and the decision is the PERSON'S,
+    // rolled once in figures.js at construction. Not rolled here: one extra
+    // rnd() inside a reset moves every subsequent decision in the building, and
+    // this file's header records that exact mistake moving a published
+    // likelihood ratio from 1.95 to 2.33 in a change that touched no
+    // probability anywhere. `desc.cart` costs the seeded stream nothing.
+    s.hasCart = s.rig.desc.cart !== false; s.cart.visible = s.hasCart;
+    s.mesh.visible = true;
     s.held.visible = false; s.bang.visible = false; s.target = null;
     s.stole = false;
     s.gest = null; s.gestT = 0; s.gestD = 1; s.turnY = 0;
@@ -3601,6 +3627,13 @@ export function createAgents(THREE, scene, world) {
     shoppers.forEach((s) => {
       s.rig.reachT = K.reachLo + (K.reachHi - K.reachLo) * hash2(s.id, seed0);
       s.rig.reachN = 0;
+      // ROUND 2 (character) — completed reaches, zeroed HERE and nowhere else,
+      // for exactly the reason `reachN` is: resetShopper() is also how game.js
+      // puts an escaped body back in the building, and a body that escaped is
+      // more often one that stole, so zeroing a fuse gate there would make "his
+      // shopping counter just restarted" a weak function of guilt. Within a
+      // shift it accumulates, full stop.
+      s.rig.reachDone = 0;
     });
     cop.position.set(0, 0, FRONT_WALK_Z + 1.5);
     const cu = cop.userData;
@@ -5131,6 +5164,27 @@ export function createAgents(THREE, scene, world) {
   }
 
   function updateShopper(s, dt, api, frozen) {
+    // ---- ROUND 2 (character): THE TROLLEY HAS A SECOND OWNER AND IT IS NOT
+    // ---- IN THIS FILE ------------------------------------------------------
+    // `hasCart` is a property of the PERSON now (figures.js rolls `desc.cart`
+    // once, at construction) and resetShopper() is where it is applied. It is
+    // not the only place it is written: game.js's putBack(), which returns a
+    // resolved body to the floor eighteen seconds later, sets `s.hasCart = true`
+    // and `s.cart.visible = true` unconditionally. Measured on the live page —
+    // seven cartless bodies at boot, ten of them holding a trolley two minutes
+    // in, three of whom had never had one.
+    //
+    // game.js is not this builder's file, so this is the ONE-WAY CLAMP instead:
+    // a body that was not issued a trolley never acquires one, and the
+    // legitimate write in the other direction — the bolt, which lets go of it —
+    // is untouched. It is deliberately not silent about being a repair, because
+    // CLAUDE.md's rule is that one piece of code owns a derivation and everybody
+    // else calls it: the actual fix is one line in game.js putBack(),
+    //     s.hasCart = s.rig.desc.cart !== false; s.cart.visible = s.hasCart;
+    // and this clamp comes out the round that lands.
+    if (s.hasCart && s.rig.desc && s.rig.desc.cart === false) {
+      s.hasCart = false; s.cart.visible = false;
+    }
     if (s.escaped || s.caught) { animateShopper(s, dt, 0); return; }
     if (frozen) { s.vel.multiplyScalar(Math.exp(-6 * dt)); animateShopper(s, dt, 0); return; }
 
@@ -5201,7 +5255,22 @@ export function createAgents(THREE, scene, world) {
           // WHICH TAIL. One constant, one hash, for every body in the store.
           // A thief and a shopper roll this the same way and the two tails
           // share their first 0.80 by construction — see decoy.js.
-          const keep = hash2(s.id, r.reachN * 2) >= K.reachPut;
+          // ROUND 2 (character) — `shiftN` IS IN THE HASH NOW, AND CLOSING THE
+          // FUSE LEAK IS WHY. hash2(id, reachN*2) has exactly fourteen possible
+          // values for reachN = 1, so "what body 3 does with the first thing it
+          // picks up this shift" was a constant of the universe — the same
+          // decision every shift, forever. That was harmless while every body
+          // reached dozens of times and averaged over it. It stopped being
+          // harmless the moment an ARMED body's reaches became almost entirely
+          // first reaches: the guilty column of benchTake started sampling those
+          // fourteen fixed values and the innocent column kept sampling all of
+          // them, and LR(put-back | a take) came back 0.71 at the desk against
+          // 1.00 at the door. Mixing the shift in decorrelates the two columns
+          // without touching the probability, the draw count, or the property
+          // that matters: `shiftN` is the RNG state at the top of reset(),
+          // captured BEFORE the guilt draw, so it is exactly as guilt-blind as
+          // the reach phase that already uses it.
+          const keep = hash2(s.id + shiftN, r.reachN * 2) >= K.reachPut;
           s.gest = keep ? REACH_KEEP : REACH_PUT;
           // Scaled by tellMul like every other clip. Not because a reach is a
           // tell — it is not, everybody plays it — but because at difficulty 0
@@ -5211,8 +5280,15 @@ export function createAgents(THREE, scene, world) {
           s.gestD = s.gest.dur * K.tellMul; s.gestT = s.gestD;
           s.reachKeep = keep; s.reachTook = false; s.grabT = 0;
           // -0.22 is a high shelf (hand at ~1.75 m), +0.83 is a low one (hand
-          // at ~0.75 m, body folded over). Same hash family as the tail choice.
-          s.reachEl = -0.22 + hash2(s.id + 977, r.reachN) * 1.05;
+          // at ~0.75 m, body folded over). Same hash family as the tail choice,
+          // and it carries `shiftN` for the same reason and by the same
+          // argument — see above. It measured CLEAN without it (LR(grab height)
+          // 1.01 desk / 0.99 door with the fuse gated), which is luck of the
+          // fourteen values on this roster rather than a property: the tail
+          // choice, one line up, is drawn from exactly the same fourteen and
+          // came back 0.71. A number that is only right by the roster it was
+          // measured on is a number the next roster changes.
+          s.reachEl = -0.22 + hash2(s.id + 977 + shiftN, r.reachN) * 1.05;
           s.timer = Math.max(s.timer, s.gestD + 0.35);
         }
       }
@@ -5272,8 +5348,47 @@ export function createAgents(THREE, scene, world) {
             s.balk = Math.max(0, s.balk - dt * 0.8);
           }
         }
-        s.concealT -= dt;
-        if (s.concealT <= 0 && s.state !== 'conceal' && !s.gest && s.chill <= 0) {
+        // =================================================================
+        // THE FUSE DOES NOT START UNTIL HE HAS SHOPPED. See K.reachArm.
+        // =================================================================
+        // Round 12 published this leak rather than hiding it, which is why it
+        // gets fixed instead of inherited:
+        //
+        //   LR(take rate) = 0.118 (cop at desk) / 0.152 (cop on door)
+        //
+        // An armed body opened a gap in a shelf about a SEVENTH as often as a
+        // clean one, so watching a body reach and take something made it
+        // roughly eight times less likely to be guilty. It cannot convict. It
+        // lets a player ELIMINATE most of the roster on sight, and in a game
+        // whose premise is that you cannot tell, a reliable elimination is
+        // nearly as damaging as a reliable conviction.
+        //
+        // The mechanism was never subtle once the rate was measured: `concealT`
+        // is 2.5-7.0 s from the reset, and a body spends most of that walking
+        // to a shelf. By the time it is standing at a face with its speed under
+        // 0.35 and its heading square to the fixture — the four conditions the
+        // reach scheduler requires — the fuse has already blown, and its whole
+        // remaining timeline is conceal -> drift -> door. It was structurally
+        // incapable of shopping.
+        //
+        // So the fuse WAITS. It is not shortened, lengthened or re-rolled: it
+        // simply does not tick until this body has done what every other body
+        // in the store does, which is take something off a shelf. Then it burns
+        // the same 2.5-7.0 s it always did, so the concealment is not welded to
+        // the frame the reach ends on — a gap of exactly zero would be a new
+        // tell in place of the old one, and the innocent population's own
+        // reach-to-next-clip gap is a uniform 0-22 s that 2.5-7.0 sits inside.
+        //
+        // GUILT-BLIND IN FORM, and this is the load-bearing sentence: the gate
+        // reads a counter incremented by takeAt(), which takes nothing but `s`;
+        // the counter lives on the RIG, which no reset wipes except reset()
+        // itself, at the same place and in the same breath as `reachN`; and the
+        // reach that increments it is scheduled off a clock no state transition
+        // can restart. Nothing in the chain has ever seen `s.guilty`. It is also
+        // simply what a shoplifter does — you browse first.
+        if ((s.rig.reachDone || 0) >= K.reachArm) s.concealT -= dt;
+        if (s.concealT <= 0 && (s.rig.reachDone || 0) >= K.reachArm
+            && s.state !== 'conceal' && !s.gest && s.chill <= 0) {
           s.state = 'conceal'; s.look = 0;
           startGesture(s, 'steal');
           s.timer = s.gestD;
@@ -6222,7 +6337,18 @@ export function createAgents(THREE, scene, world) {
         r.armR.rotation.x = p.armR + s.reachEl * ext;
         r.chest.rotation.x = lerp(r.chest.rotation.x,
           r.stoop + p.chest + Math.max(0, s.reachEl) * 0.42 * ext, ed(10));
-        if (p.vis && !r.gestVis) { takeAt(s); s.reachTook = true; }
+        // ROUND 2 (character) — AND THIS IS WHERE `reachDone` COMES FROM. It
+        // counts the frames on which a body actually removed a facing, which is
+        // the exact event benchTake counts, so the fuse gate built on it
+        // equalises the quantity that was leaking rather than a proxy for it.
+        // It goes up on a HIT and not on an attempt: a miss is "there is no
+        // shelf in front of me", the body shopped either way, but the rate the
+        // player can see on the monitor wall is the rate holes appear at.
+        // takeAt() takes nothing but `s` and cannot see guilt; nor can this.
+        if (p.vis && !r.gestVis) {
+          if (takeAt(s)) r.reachDone = (r.reachDone || 0) + 1;
+          s.reachTook = true;
+        }
         // ...and the box comes OFF THE SHELF rather than appearing in a fist.
         // For 0.28 s after the grasp the prop is lerped from where the facing
         // actually was — the handle's own `at`, in world metres, brought back

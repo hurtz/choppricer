@@ -3242,9 +3242,17 @@ export function createGame(hudEl, deps = {}) {
     s.position.set(aisleX(i) + rr(-1.1, 1.1), 0, rr(-HALF + 1.6, HALF - 1.6));
     s.vel.set(0, 0, 0); s.speed = 0;
     s.guilty = false; s.stole = false; s.caught = false; s.escaped = false;
-    s.bolted = false; s.angry = 0; s.harassArmed = true; s.hasCart = true;
+    s.bolted = false; s.angry = 0; s.harassArmed = true;
+    // THE TROLLEY IS NOT OURS TO HAND OUT. This used to set hasCart = true and
+    // cart.visible = true unconditionally, so every body returned to the floor
+    // came back pushing a trolley whether or not it was built with one. Round 13
+    // made half the roster hand-carriers to unpin their arms — and this line
+    // quietly undid it: 7 cartless bodies at boot, 10 holding a trolley two
+    // minutes later, three of whom never had one. agents.js owns what a body is
+    // built carrying (rig.desc.cart); read it, do not decide it.
+    s.hasCart = s.rig?.desc?.cart !== false;
     s.state = 'walk'; s.timer = rr(1, 4); s.path = []; s.target = null; s.look = 0;
-    s.mesh.visible = true; s.cart.visible = true; s.held.visible = false; s.bang.visible = false;
+    s.mesh.visible = true; s.cart.visible = s.hasCart; s.held.visible = false; s.bang.visible = false;
     s.__stall = 0; s.__best = Infinity; s.__gone = null;
     recs.delete(s.id);
   }

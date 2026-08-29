@@ -655,23 +655,48 @@ const SHOE = [0x33322f, 0x1e1c1a, 0x4a3a2c, 0xbfbdb6, 0x5a2f26];
 //   waist breadth 0.166 S (obese 0.26)   hip breadth 0.191 S (obese 0.24)
 // Those ratios are the whole point of the table: they are what make `pear` and
 // `heavy` different SHAPES rather than different SIZES.
+//
+// ---------------------------------------------------------------------------
+// ROUND 12 — "SIX BUILDS DIFFER IN SHAPE, NOT SIZE" ONLY HALF HELD, AND THE
+// CRITIC WHO CHECKED IT DID IT PROPERLY: pairwise shape distance came out 0.037
+// for lean/slim and 0.051 for slim/reg — three shapes at six sizes, with the
+// pear the only genuine outlier — and chest depth ratio (chD/ch) was PERFECTLY
+// RANK-CORRELATED WITH SIZE, 0.722 / 0.729 / 0.743 / 0.761 / 0.779 / 0.803 in
+// table order. A ratio that is monotone in size is a size, spelled differently.
+//
+// Two changes, and they are deliberately in different axes so each can be
+// judged on its own:
+//
+//   SLIM IS NOW THE RANGY ONE. Broader across the shoulder than round 11's and
+//   narrower everywhere below it (sh/hp 1.31 against lean's 1.25 and reg's
+//   1.20), with the FLATTEST section of the six. That is a real common build —
+//   the tall wiry one — and it was the entry sitting closest to two of its
+//   neighbours.
+//
+//   DEPTH IS NO LONGER A FUNCTION OF WIDTH. `reg` becomes the deep-chested,
+//   comparatively narrow one (chD/ch 0.80) and `stock` the broad flat slab
+//   (0.71), which inverts them against size and breaks the rank correlation:
+//   0.694 / 0.671 / 0.802 / 0.761 / 0.714 / 0.803. Depth is invisible to the
+//   front-on width instrument this round is measured with — which is the point
+//   of doing it in this axis: it cannot flatter the headline number.
+// ---------------------------------------------------------------------------
 const BUILDS = [
   // k       sh     shD    ch     chD    wa     waD    hp     hpD
   //         be    beY    hem     th     hw     sw     nk     kyph   st    aw   head
   { k: 'lean',
-    sh: 0.182, shD: 0.100, ch: 0.144, chD: 0.104, wa: 0.126, waD: 0.096,
+    sh: 0.182, shD: 0.100, ch: 0.144, chD: 0.100, wa: 0.126, waD: 0.096,
     hp: 0.146, hpD: 0.116,
-    be: 0.00, beY: 0.075, hem: -0.052, th: 0.082, hw: 0.070, sw: 0.142,
+    be: 0.00, beY: 0.075, hem: -0.052, th: 0.082, hw: 0.070, sw: 0.128,
     nk: 0.078, kyph: 0.006, st: -0.010, aw: 0.90, head: 1 },
   { k: 'slim',
-    sh: 0.193, shD: 0.107, ch: 0.155, chD: 0.113, wa: 0.139, waD: 0.105,
-    hp: 0.157, hpD: 0.123,
-    be: 0.10, beY: 0.070, hem: -0.058, th: 0.090, hw: 0.074, sw: 0.150,
-    nk: 0.068, kyph: 0.008, st: 0.000, aw: 0.92, head: 1 },
+    sh: 0.199, shD: 0.102, ch: 0.152, chD: 0.102, wa: 0.134, waD: 0.100,
+    hp: 0.152, hpD: 0.118,
+    be: 0.10, beY: 0.070, hem: -0.058, th: 0.086, hw: 0.072, sw: 0.135,
+    nk: 0.074, kyph: 0.008, st: 0.000, aw: 0.92, head: 1 },
   { k: 'reg',
-    sh: 0.205, shD: 0.117, ch: 0.167, chD: 0.124, wa: 0.156, waD: 0.120,
-    hp: 0.169, hpD: 0.133,
-    be: 0.28, beY: 0.062, hem: -0.064, th: 0.099, hw: 0.078, sw: 0.160,
+    sh: 0.205, shD: 0.126, ch: 0.162, chD: 0.130, wa: 0.156, waD: 0.132,
+    hp: 0.169, hpD: 0.138,
+    be: 0.28, beY: 0.062, hem: -0.064, th: 0.099, hw: 0.078, sw: 0.144,
     nk: 0.060, kyph: 0.012, st: 0.018, aw: 1.00, head: 0 },
   // THE PEAR. Shoulders NARROWER than the hips (0.94:1 against reg's 1.19:1),
   // the mass low and wide, the belly apex down at the trouser line rather than
@@ -681,19 +706,29 @@ const BUILDS = [
   // every other body in this store is a rectangle or a triangle with the point
   // down.
   { k: 'pear',
-    sh: 0.191, shD: 0.111, ch: 0.159, chD: 0.121, wa: 0.165, waD: 0.131,
-    hp: 0.200, hpD: 0.152,
-    be: 0.34, beY: 0.040, hem: -0.070, th: 0.118, hw: 0.086, sw: 0.148,
+    sh: 0.188, shD: 0.111, ch: 0.159, chD: 0.121, wa: 0.165, waD: 0.131,
+    hp: 0.204, hpD: 0.152,
+    be: 0.34, beY: 0.040, hem: -0.070, th: 0.118, hw: 0.086, sw: 0.128,
     nk: 0.058, kyph: 0.014, st: 0.022, aw: 1.02, head: 0 },
   { k: 'stock',
-    sh: 0.220, shD: 0.133, ch: 0.190, chD: 0.148, wa: 0.196, waD: 0.158,
+    // `ch` stays 0.190 and not the 0.196 the first cut of this tried: at 0.196
+    // it is identical to `wa` and the trunk is a straight tube from the waist
+    // to the armpit, which measured 1.000 arms-off — the one build that would
+    // still have read as a skittle the moment a pose hid its arms.
+    sh: 0.220, shD: 0.128, ch: 0.190, chD: 0.140, wa: 0.196, waD: 0.152,
     hp: 0.192, hpD: 0.152,
-    be: 0.62, beY: 0.058, hem: -0.072, th: 0.114, hw: 0.086, sw: 0.172,
+    be: 0.62, beY: 0.058, hem: -0.072, th: 0.114, hw: 0.086, sw: 0.155,
     nk: 0.048, kyph: 0.020, st: 0.030, aw: 1.08, head: 2 },
   { k: 'heavy',
     sh: 0.234, shD: 0.150, ch: 0.213, chD: 0.171, wa: 0.228, waD: 0.194,
     hp: 0.217, hpD: 0.176,
-    be: 1.00, beY: 0.046, hem: -0.084, th: 0.132, hw: 0.094, sw: 0.184,
+    // `sw` is 10 mm wider than the -16 mm the other five took, and it is the
+    // one build where that is not a fudge: an obese trunk is 0.216 half-width
+    // at mid-humerus, so an arm hung on the same offset as everybody else's
+    // lands INSIDE it. 0.176 puts the arm 20 mm proud, which is the least of
+    // the six and correct — a heavy person's arms really do disappear into
+    // their sides from dead front.
+    be: 1.00, beY: 0.046, hem: -0.084, th: 0.132, hw: 0.094, sw: 0.176,
     nk: 0.042, kyph: 0.028, st: 0.046, aw: 1.10, head: 2 },
 ];
 
@@ -1136,6 +1171,12 @@ function shopperShoe(THREE, S, kind) {
 // mostly goes BACKWARD.
 const ELB_BACK = 0.072;    // metres the elbow sits BEHIND the shoulder-hand line
 const ELB_OUT  = 0.016;    // ...and outboard of it
+// ROUND 12 — AND ON A SHOPPER IT SITS INBOARD. See shopperSleeve: a relaxed arm
+// hangs with the humerus vertical while the trunk narrows away underneath it, so
+// the elbow ends up NEARER the midline than the acromion, not further out. The
+// cop keeps the outboard value because his does not hang — it is braced out over
+// a duty belt and a gut, which is the one body in the game where it is right.
+const SH_ELB_OUT = -0.008;
 
 // Aim a part along a segment. Returns the length, the Euler that maps the
 // primitive's own -Y onto (b - a), and a point sampler.
@@ -1182,12 +1223,16 @@ function limbSeg(a, b) {
 // wrist. `side` is +1 for the left arm and -1 for the right, matching every
 // other builder in this file.
 const ELB_F = 0.45;
-function armBones(side, shoulderY, tipX, tipY, tipZ, scale) {
+// `out` is how far the elbow sits outboard of the shoulder-hand line IN METRES,
+// and it is a parameter rather than a constant because the two bodies that use
+// this disagree about its SIGN — see SH_ELB_OUT. Omit it and you get the cop's.
+function armBones(side, shoulderY, tipX, tipY, tipZ, scale, out) {
   const k = scale == null ? 1 : scale;
+  const eo = out == null ? ELB_OUT * k : out;
   const sh = [0, shoulderY, 0];
   const tip = [tipX, tipY, tipZ];
   const el = [
-    tipX * ELB_F + side * ELB_OUT * k,
+    tipX * ELB_F + side * eo,
     shoulderY + (tipY - shoulderY) * ELB_F,
     tipZ * ELB_F - ELB_BACK * k,
   ];
@@ -1197,7 +1242,7 @@ function armBones(side, shoulderY, tipX, tipY, tipZ, scale) {
 // Where a shopper's arm starts and ends. The fingertip is the number the prop
 // solve implicitly assumes, so it does NOT move: -0.660 is exactly where the
 // old straight stick put it.
-const SH_ARM = (side) => armBones(side, -0.020, side * 0.008, -0.660, 0.010);
+const SH_ARM = (side) => armBones(side, -0.020, side * 0.008, -0.660, 0.010, 1, SH_ELB_OUT);
 
 // ROUND 11 — THE ARMS WERE 70% TOO THICK, AND IT WAS COSTING THE WAIST.
 //
@@ -1213,25 +1258,83 @@ const SH_ARM = (side) => armBones(side, -0.020, side * 0.008, -0.660, 0.010);
 // per-instance thickness multiplier (`aw` in BUILDS, `armThick` in rollPerson)
 // so a heavy body still gets a heavy arm. The HAND is untouched by that
 // scaling — see makePerson — because a hand is a hand.
+//
+// ===========================================================================
+// ROUND 12 — ROUND 11 CUT THE FAT AND THE CAP WENT WITH IT. EVERY BODY IN THE
+// STORE WAS A SKITTLE.
+// ===========================================================================
+// A critic measured all fourteen front-on, near-orthographic:
+//
+//     width(0.70 S) / width(0.80 S)  =  1.07 .. 1.31, median 1.11
+//     a real adult                   ~= 0.75 trunk-only, ~0.90 arms included
+//
+// i.e. THE WIDEST PART OF EVERY PERSON IN THIS GAME WAS BELOW THEIR SHOULDER,
+// and the shape narrowed continuously from the neck to the hem. It then ran the
+// control that names the cause instead of guessing at it: hide `armL`/`armR`
+// and four bodies read 0.81 / 0.87 / 0.89 / 0.93. The lofted trunk is right.
+// The arms did it, with two numbers:
+//
+//   1. THERE WAS NO DELTOID. A 0.060 ball over an upper arm tapering
+//      0.057 -> 0.050 is a 5% swell where a real shoulder is 30-40%, so the arm
+//      was a straight pipe from acromion to elbow. The lateral-most point of a
+//      real arm is the deltoid, and every millimetre BELOW it the arm is
+//      narrower — that taper is what makes a person read widest at the
+//      shoulders even though their arms hang outside their ribs.
+//   2. SPLAY THREW THE ELBOW OUT WHERE THE TRUNK WAS COMING IN. 0.052-0.187 rad
+//      moves the elbow 15-54 mm outboard at exactly the height the waist is
+//      narrowing, so the arm filled in the one taper a build is legible by.
+//
+// THE FIX IS NOT A FATTER ARM — round 11 was right about the 172 mm bodybuilder
+// and none of it comes back. It is the SAME MASS MOVED UP: the deltoid goes
+// 0.060 -> 0.076 half-width and the mid-humerus 0.054 -> 0.050, so the swell is
+// 52% instead of 5%; `sw` in BUILDS comes inboard by the same 16 mm the deltoid
+// gained, so no shoulder in the store got any wider; splay drops to 0.004-0.046
+// rad; and SH_ELB_OUT hangs the elbow 8 mm INBOARD of the shoulder-hand line
+// instead of 16 mm outboard. Four numbers, no new geometry, no new part.
+//
+// WHAT IT BUYS, and it is not cosmetic: the pear build's ONLY discriminating
+// landmark is a narrow shoulder over a wide seat, and with the widest point of
+// the body at the elbow that landmark was not on the screen at any distance.
+// The best new silhouette of round 11 was invisible for a whole round.
 function shopperSleeve(THREE, S, long, side) {
   const P = partList(THREE, S);
   const B = SH_ARM(side), U = B.upper, F = B.fore;
-  // The taper from deltoid to wrist is 2.4:1, which round 10 got right and is
-  // kept exactly; only the absolute size has changed.
-  P.ball(0.060, 0.072, 0.060, [0, -0.018, 0], 0xffffff, { seg: 8, rseg: 6 });
+  // THE DELTOID, and it is a CAP rather than a bulge on a tube: wider than the
+  // arm below it and centred within 10 mm of the shoulder pivot, which is
+  // 0.80 S on the finished body — where bideltoid is measured. Its equator is
+  // therefore the widest point of the whole figure, which is the entire claim
+  // this round is making. Half-widths, so 152 mm across the shoulder cap
+  // against a 100 mm upper arm: the 1.5:1 a photograph has.
+  //
+  // AND THE ARM IS SHADED AGAINST THE TRUNK, which is not decoration — it is
+  // the other half of the fix. Once the arm hangs where it belongs it is
+  // touching the torso, drawn from the same bolt of cloth in the same dye on a
+  // material that has no shoulder seam, and the first render of the correct
+  // geometry showed a heavy man with a deltoid cap, a hand at his hip, and
+  // nothing between them. He had arms. You could not see them. So the deltoid
+  // keeps the white (it is the top-lit surface and it is what defines the
+  // shoulder), and everything below it steps down ~9% per element — which is
+  // what an arm hanging in its own trunk's shadow does, and is the same
+  // vertex-colour trick the torso rings use for the contact shadow under a
+  // belly, at the same price, which is nothing.
+  P.ball(0.076, 0.078, 0.068, [0, -0.010, 0], 0xffffff, { seg: 8, rseg: 6 });
   if (long) {
-    P.taper(0.057, 0.045, U.len * 0.98, U.at(0.51), 0xffffff, { seg: 8, r: U.r });
+    P.taper(0.054, 0.043, U.len * 0.98, U.at(0.51), 0xe8e8e8, { seg: 8, r: U.r });
     // THE ELBOW ITSELF. A ball at the joint is what makes a bend read as an
     // elbow rather than as a kink in a pipe — the two tapers meet at an angle
     // and without something round in the corner you can see the seam from
     // across the store. It must not be BIGGER than either segment or it is a
     // knuckle: 0.058 against a 0.062 sleeve is a crease, 0.072 was a knot.
-    P.ball(0.042, 0.044, 0.042, B.el, 0xfbfbfb, { seg: 8, rseg: 5 });
-    P.taper(0.041, 0.030, F.len * 0.62, F.at(0.32), 0xf8f8f8, { seg: 8, r: F.r });
-    P.tube(0.031, 0.030, F.at(0.64), 0xdcdcdc, { seg: 8, r: F.r });   // cuff
+    P.ball(0.042, 0.044, 0.042, B.el, 0xe2e2e2, { seg: 8, rseg: 5 });
+    P.taper(0.041, 0.030, F.len * 0.62, F.at(0.32), 0xeeeeee, { seg: 8, r: F.r });
+    P.tube(0.031, 0.030, F.at(0.64), 0xd4d4d4, { seg: 8, r: F.r });   // cuff
   } else {
-    P.taper(0.057, 0.050, U.len * 0.56, U.at(0.32), 0xffffff, { seg: 8, r: U.r });
-    P.tube(0.052, 0.022, U.at(0.62), 0xe0e0e0, { seg: 8, r: U.r });   // rolled hem
+    // The short sleeve stops at 60% of the upper arm, so its bottom radius is
+    // NOT the elbow's — it is the mid-humerus, and 0.049 there is the number
+    // the ratio above is actually made of. The rolled hem is 2 mm proud of the
+    // cloth it terminates, as a hem is.
+    P.taper(0.054, 0.049, U.len * 0.56, U.at(0.32), 0xe8e8e8, { seg: 8, r: U.r });
+    P.tube(0.051, 0.022, U.at(0.62), 0xd6d6d6, { seg: 8, r: U.r });   // rolled hem
   }
   return mergeParts(THREE, P.L);
 }
@@ -1290,9 +1393,16 @@ function shopperForearm(THREE, S, long, side) {
     // short-sleeved arm in the store was a hole with the shelving showing
     // through it. The two meshes have to OVERLAP; they are separate objects and
     // there is nothing to fill a gap between them.
-    P.taper(0.048, 0.044, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
-    P.ball(0.041, 0.043, 0.041, B.el, 0xffffff, { seg: 8, rseg: 5 });   // elbow
-    P.taper(0.040, 0.032, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
+    // ROUND 12 — and it has to stay UNDER the sleeve through the overlap, not
+    // just inside its own outline: the sleeve is 0.0505 at t=0.48 where this
+    // starts and 0.0490 at t=0.60 where it ends, so 0.047 -> 0.044 clears it by
+    // 3 mm the whole way and the bare arm cannot poke through the cloth.
+    // Same step-down as the sleeve, one notch lighter: bare skin below a short
+    // sleeve is further from the trunk than the cloth above it was and catches
+    // more of the room. See the shading note in shopperSleeve.
+    P.taper(0.047, 0.044, U.len * 0.48, U.at(0.76), 0xeeeeee, { seg: 8, r: U.r });
+    P.ball(0.041, 0.043, 0.041, B.el, 0xe8e8e8, { seg: 8, rseg: 5 });   // elbow
+    P.taper(0.040, 0.032, F.len * 0.56, F.at(0.30), 0xf4f4f4, { seg: 8, r: F.r });
   }
   shopperHand(P, F, side, 0xffffff);
   return mergeParts(THREE, P.L);
@@ -1321,7 +1431,10 @@ function shopperBird(THREE, S, long, side) {
   const P = partList(THREE, S);
   const B = SH_ARM(side), U = B.upper, F = B.fore;
   if (!long) {
-    P.taper(0.048, 0.044, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
+    // Same three radii as shopperForearm, and they have to BE the same: this
+    // bake is swapped onto a live mesh mid-clip and a forearm that changed
+    // width on the frame the finger goes up is a pop at any distance.
+    P.taper(0.047, 0.044, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
     P.ball(0.041, 0.043, 0.041, B.el, 0xffffff, { seg: 8, rseg: 5 });
     P.taper(0.040, 0.027, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
   }
@@ -2321,7 +2434,12 @@ function rollPose(rng, age, build) {
     roll: rr(0.45, 1.70) * (heavy ? 1.45 : 1),        // hip yaw + shoulder counter
     swing: rr(0.50, 1.40) * (old ? 0.6 : 1),          // free-arm swing
     lag: rr(0.28, 0.66),                              // arm phase behind the leg
-    splay: rr(0.05, 0.13) + (heavy ? 0.07 : 0),       // arms carried away from the body
+    // ROUND 12 — HALVED. This is the WALKING splay (the free arm on a one-handed
+    // cart push, and the idle poses); `splayL/R` in rollPerson is the standing
+    // one. Both were throwing the elbow out into the waist taper — see the block
+    // over shopperSleeve — and a heavy body gets its clearance from a wider
+    // deltoid now rather than from an abducted shoulder.
+    splay: rr(0.020, 0.070) + (heavy ? 0.045 : 0),    // arms carried away from the body
     toe: rr(-0.10, 0.20),                             // toe-out, in radians
     // ---- the cart. 0 two hands, 1 right only, 2 left only, 3 leaning on the
     // bar, 4 pushed out ahead at arm's length.
@@ -2410,8 +2528,26 @@ export function rollPerson(rng) {
   const skin = pick(SKIN);
   const near = (a, b) => Math.abs((a >> 16 & 255) - (b >> 16 & 255))
     + Math.abs((a >> 8 & 255) - (b >> 8 & 255)) + Math.abs((a & 255) - (b & 255));
+  // ROUND 12 — THE BAR WAS TOO LOW AND THE LOOP COULD LOSE. A critic found body
+  // 11 clearing this at 116 and reading BARE-CHESTED at 2 m, which is right:
+  // 116 summed over three channels is 39 points a channel, and the two beiges
+  // in CLOTH sit that close to two of the SKIN tones by construction. 150.
+  //
+  // ...and a threshold with a bounded retry is a threshold that sometimes
+  // fails. At 150 the worst skin tone has 5 of 14 cloths clear of it, so six
+  // rejections land a naked-looking body about 7% of the time it comes up —
+  // once every couple of rosters, which is exactly often enough to ship. The
+  // loop keeps its shape — up to six re-draws, the same bounded retry round 11
+  // wrote — and then falls back DETERMINISTICALLY to the furthest cloth from
+  // that skin, which draws nothing and cannot fail. Raising the bar does change
+  // how many draws the loop spends, so the SHIPPED ROSTER moves; every bench
+  // setSeed()s first and re-rolls nobody, so none of them do. Verified by
+  // running them, not by asserting it.
   let shirt = pick(CLOTH);
-  for (let k = 0; k < 6 && near(shirt, skin) < 90; k++) shirt = pick(CLOTH);
+  for (let k = 0; k < 6 && near(shirt, skin) < 150; k++) shirt = pick(CLOTH);
+  if (near(shirt, skin) < 150) {
+    for (const c of CLOTH) if (near(c, skin) > near(shirt, skin)) shirt = c;
+  }
   const pants = pick(PANTS);
   // ROUND 9 — a bag on about two in five, in one of three carries. See
   // shopperBag: this exists because two clips in decoy.js reach into luggage,
@@ -2468,6 +2604,42 @@ export function rollPerson(rng) {
     stopFor: rr(1.6, 3.6),
     phase: rr(0, 12),
   } : null;
+  // Four carries, and a side for each. The basket is the one that puts a LOAD
+  // on a body — see makePerson, where it buys a lean. Hoisted out of the return
+  // literal this round because two fields below now have to READ it: which leg
+  // the weight is on, and whether this body has a trolley at all.
+  const bag = bagRoll < 0.46 ? {
+    kind: bagRoll < 0.14 ? 0 : bagRoll < 0.24 ? 1 : bagRoll < 0.35 ? 2 : 3,
+    side: rnd() < 0.5 ? 1 : -1,
+    color: pick(CLOTH),
+  } : null;
+  // A HAND load: a carrier bag or a shopping basket, held down at one side. A
+  // shoulder bag or a crossbody is strapped on and weighs nothing worth leaning
+  // against, which is why kind >= 2 is the test everywhere it appears.
+  const handLoad = !!bag && bag.kind >= 2;
+  const wRoll = rnd() < 0.5 ? 1 : -1;
+  // ---- ROUND 12: NOT EVERYBODY HAS A TROLLEY --------------------------------
+  // 14 of 14 shoppers pushed a cart in every reset, and a cart pins BOTH ARMS
+  // TO A HANDLE at a fixed angle: the highest-traffic pose in the game was also
+  // the one with the least in it, and a crowd of fourteen forklifts is what the
+  // reference photographs are least like. Every one of the eight has more
+  // people carrying than pushing.
+  //
+  // It is rolled HERE, at construction, and not in resetShopper(), for the
+  // reason this file's header gives at length: resetShopper runs inside the
+  // seeded shift and one extra rnd() there moves every subsequent decision in
+  // the building. Rolled here it is a property of the PERSON — the same body
+  // shops the same way every shift, which is also what people do — and it costs
+  // the sim stream nothing.
+  //
+  // Two of the three branches are not a roll at all, because they are physical:
+  // a hand load means no trolley (that is WHY you are carrying it), and a child
+  // in a cart seat means there had better be a cart under it, or `animateChild`
+  // has a toddler riding thin air. See its `mode === 'seat'` branch.
+  const cartRoll = rnd();
+  const cart = kid && kid.mode === 'seat' ? true
+    : handLoad ? false
+    : cartRoll < 0.64;
   const B = BUILDS[bi];
   const old = age === 'old', young = age === 'young';
   // AGE IS NOT HEIGHT, and round 10's 0.965 said it was. Real stature loss over
@@ -2497,17 +2669,33 @@ export function rollPerson(rng) {
     neckZ: rr(0.004, 0.020) + (old ? rr(0.018, 0.040) : 0) + B.kyph * 0.5,
     headSize: rr(0.905, 1.015) * (young ? 1.03 : 1),
     // ---- asymmetry --------------------------------------------------------
-    wSide: rnd() < 0.5 ? 1 : -1,
+    // WHICH LEG THE WEIGHT IS ON, AND A LOAD GETS TO DECIDE IT. Carry six kilos
+    // of shopping in your right hand and you stand with the weight on the RIGHT
+    // leg, right hip hiked under the load, trunk leaning left to put the centre
+    // of mass back over your feet. Rolled independently — which is what round 11
+    // did — the two are opposite signs half the time and they CANCEL: the
+    // basket's 0.062 rad of lean against the contrapposto's 0.0595 leaves 0.003,
+    // and the one feature in this file that gives a body weight silently
+    // vanishes on a quarter of the bodies that have it. A critic found it by
+    // reading the sum rather than by looking at a render, which is the only way
+    // it could have been found: 0.003 rad looks exactly like a body standing up
+    // straight, because it is one.
+    wSide: handLoad ? bag.side : wRoll,
     contra: rr(0.020, 0.070),
     footFwd: rr(0.006, 0.046),
     toeL: rr(-0.10, 0.26),
     toeR: rr(-0.10, 0.26),
-    // 3 to 8 degrees, not 5 to 16. The first cut at 0.085-0.205 rad put a
-    // gunslinger in the foreground of every crowd shot; what the arms actually
-    // needed was somewhere for the daylight to be, and the lofted waist gives
-    // them that on its own now.
-    splayL: rr(0.052, 0.132) + (heavyB ? 0.055 : 0),
-    splayR: rr(0.052, 0.132) + (heavyB ? 0.055 : 0),
+    // ROUND 11 cut this from 5-16 degrees to 3-8 and called it done. It was
+    // still three times too much, and the reason is a mistake worth naming
+    // because it is easy to make twice: the round-11 note reasons about how the
+    // arm looks NEXT TO THE WAIST, where daylight is wanted, and never checks
+    // what the same rotation does UP AT THE SHOULDER, where it is not. 0.13 rad
+    // moves the elbow 37 mm outboard at exactly the height the trunk is
+    // narrowing, which is the whole skittle. 0.2 to 2.6 degrees now, and the
+    // daylight comes from the trunk's own taper plus an elbow that hangs inboard
+    // (SH_ELB_OUT), which is where a real arm gets it.
+    splayL: rr(0.004, 0.046) + (heavyB ? 0.030 : 0),
+    splayR: rr(0.004, 0.046) + (heavyB ? 0.030 : 0),
     headTilt: rr(-0.055, 0.055),
     // ---- palettes and kit --------------------------------------------------
     skin,
@@ -2525,13 +2713,10 @@ export function rollPerson(rng) {
     stoop: B.st + (old ? 0.15 : 0),
     plain: rnd() < 0.3,
     age,
-    // Four carries now, and a side for each. The basket is the one that puts a
-    // LOAD on a body — see makePerson, where it buys a lean.
-    bag: bagRoll < 0.46 ? {
-      kind: bagRoll < 0.14 ? 0 : bagRoll < 0.24 ? 1 : bagRoll < 0.35 ? 2 : 3,
-      side: rnd() < 0.5 ? 1 : -1,
-      color: pick(CLOTH),
-    } : null,
+    bag,
+    // Whether this body pushes a trolley. agents.js reads it in resetShopper()
+    // and nothing writes it afterwards except the bolt, which lets go.
+    cart,
     kid,
     pose: rollPose(rng, age, bi),
   };
@@ -2657,7 +2842,21 @@ export function makePerson(THREE, F, o) {
     if (extra) piv.add(new THREE.Mesh(extra[0], extra[1]));
     return piv;
   };
-  const hw = b.hw * o.stanceW, sw = b.sw * o.shoulderW;
+  // ROUND 12 — THE SHOULDER HANGS OFF THE TRUNK IT IS ATTACHED TO. `torso.scale`
+  // multiplies every trunk half-width by `girth * torsoW` (up to 1.14) and the
+  // arm pivot was NOT multiplied by anything of the kind, so a body that rolled
+  // a wide trunk grew its ribs out past its own arms and swallowed them: the
+  // widest builds rendered with a deltoid cap, a hand at the hip, and no arm in
+  // between. It has been true since round 11 and was invisible while the splay
+  // was throwing the elbows clear of the body anyway — which is the shape of
+  // every bug in this file's header: a second mistake hiding a first.
+  //
+  // `sw` in BUILDS is therefore now read as "shoulder half-width RELATIVE TO
+  // THIS TRUNK", which is what it always meant, and `shoulderW` keeps its own
+  // independent 0.93-1.07 on top. Measured on the shipped roster, the arm's
+  // lateral edge at mid-humerus stands 20-38 mm proud of the trunk on all six
+  // builds, against 10-13 mm before and a real adult's ~42 mm.
+  const hw = b.hw * o.stanceW, sw = b.sw * o.shoulderW * o.girth * o.torsoW;
   // ONE FOOT IN FRONT OF THE OTHER, and it is the free leg that goes forward.
   const ff = o.wSide > 0 ? [0, o.footFwd] : [o.footFwd, 0];
   const legL = limb(F.leg[o.build][0], pants, hw, 0, ff[0], o.girth, legS,
@@ -2736,9 +2935,20 @@ export function makePerson(THREE, F, o) {
   // standing. These are REST angles: animateShopper adds them to the gait
   // channels and fades them out as a body starts to walk, because a walking
   // body's weight is alternating rather than parked.
+  // ROUND 12 — AND A LOAD OUTRANKS A POSE. rollPerson now puts the weight on the
+  // loaded leg, so these two terms have the same sign by construction and add
+  // instead of cancelling; the clamp is here anyway, because the bug was one
+  // `+` between two independently rolled numbers and the next person to re-roll
+  // `wSide` for some unrelated reason would put it straight back. A body that is
+  // carrying something keeps at least its own lean, whatever the pose wants.
+  // This is CLAUDE.md's rule applied to a value rather than to a derivation: if
+  // two things can disagree, say which one wins, out loud, at the join.
+  const contraZ = -o.wSide * o.contra * 0.85;
+  const chestZ = loadLean === 0 ? contraZ
+    : (contraZ < 0) === (loadLean < 0) ? contraZ + loadLean : loadLean + contraZ * 0.25;
   const rest = {
     hipZ: o.wSide * o.contra,
-    chestZ: -o.wSide * o.contra * 0.85 + loadLean,
+    chestZ,
     toeL: o.toeL, toeR: -o.toeR,
     splayL: o.splayL, splayR: -o.splayR,
   };
