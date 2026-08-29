@@ -64,6 +64,27 @@
 // honest version of the trade rather than a foot that ploughs the tiles.
 //
 // ===========================================================================
+// ROUND 4 (move) — THE PARAGRAPH ABOVE IS RIGHT ABOUT THE ARGUMENT AND WAS
+// WRONG ABOUT WHICH POINT IT APPLIES TO
+// ===========================================================================
+// "A foot that touches at +SD ahead of the hip and leaves at SD behind it has
+// travelled 2SD" is the plant, and it held for a point on the end of a rod of
+// length L. The rig does not have one. It has a hip-to-ANKLE line, which is
+// shorter than hip-to-sole by the height of the ankle (8.0% of stature on the
+// crowd, 9.2% on the cop), with a 230 mm foot hung off the end of it that ROLLS
+// — heel at strike, flat, toe at push-off — carrying the ankle 73 mm forward
+// across a stance all by itself. Two more terms, both the size of the thing
+// being solved for. `legX` targets the ankle over `LA` with `rock()` in it now,
+// and the two are read off the shoe's own bounding box rather than picked.
+//
+// Two more places the drawn foot moved that the solve could not see, both fixed
+// this round and both documented where they live: the sole pin translated the
+// shoe along the knee frame's tilted Y (see footPose), and the pelvis's
+// transverse rotation carried the leg PIVOTS fore and aft (see poseWalk in
+// agents.js). Between them and this they are the whole of the stance skate: the
+// cop went +0.0392 -> +0.0004 of the ground covered with nothing done to him.
+//
+// ===========================================================================
 // WHAT DIFFERS BETWEEN A HEAVY WALK AND A LEAN ONE, AND WHY IT IS NOT "SLOWER"
 // ===========================================================================
 // The brief is explicit that a heavy person's walk is not a thin person's walk
@@ -417,11 +438,43 @@ export function footPose(f, k, ank, th, floorY) {
       return f.sy * Y * cth - f.sxz * Z * sth;          // hips-local y, root metres
     };
     const lowest = Math.min(corner(f.toeZ), corner(f.heelZ));
-    // ...and a lift of `d` along the knee frame's own Y arrives in hips-local as
-    // d * (sy*cos(beta)*cos(th) - sxz*sin(beta)*sin(th)). Clamped so a deeply
-    // flexed leg cannot divide by nothing.
-    const gain = f.sy * cb * cth - f.sxz * sb * sth;
-    f.shoe.position.set(f.shoe0.x, base + (floorY - lowest) / Math.max(0.3, gain), dz);
+    // =====================================================================
+    // ROUND 4 (move) — THE PIN IS VERTICAL. IT WAS NOT.
+    // =====================================================================
+    // A lift of `d` along the KNEE FRAME'S own Y arrives in hips-local as
+    //     Y = d * (sy*cb*cth - sxz*sb*sth)        <- what `gain` divided out
+    //     Z = d * (sy*cb*sth + sxz*sb*cth)        <- what nobody did anything
+    //                                                about
+    // and the second row is not small. `th + beta` runs 0.20 to 0.65 rad across
+    // one stance, so a pin that has to lift the shoe at all ALSO shoves it fore
+    // and aft by between 0.2 and 0.76 of the lift — and because the angle
+    // sweeps, the shove sweeps with it. That is a moving foot on a body that is
+    // supposed to be standing on it.
+    //
+    // It is not a rounding term. Measured on the cop, whose 9.2-degree list
+    // makes pinRolled() ask for a 44 mm lift on the loaded leg every frame of
+    // stance: the shoe walked 17 mm forward of its own ankle across each
+    // foot-flat window, +0.056 of the ground he covered — the LARGEST of the
+    // three terms in his skate, bigger than the moment arm above.
+    //
+    // The fix is to stop solving a 2-D constraint with a 1-D translation. Ask
+    // for a hips-local displacement of exactly (Y = floorY - lowest, Z = 0) and
+    // solve the 2x2 for the knee-frame (dy, dz) that produces it. Substituting
+    // Z = 0 into the pair above collapses it to P = D*cth, Q = -D*sth, and
+    // inverting the beta rotation gives the two lines below. It costs two
+    // multiplies over the divide it replaces.
+    //
+    // AND THE `Math.max(0.3, gain)` CLAMP IS GONE, because the thing it was
+    // guarding against was an artefact of holding Z at nothing. Constrained to
+    // move along one tilted axis, a leg near 72 degrees has almost no vertical
+    // response left and the divide blows up; allowed both axes there is no
+    // singularity at all — the 2x2 is a rotation and a diagonal scale, and its
+    // determinant is sy*sxz. The shoe used to be left short of the tiles in
+    // exactly the frames where the leg was most angled, which is heel strike
+    // and toe-off.
+    const D = floorY - lowest;
+    const py = D * cth / (f.sy || 1), pz = -D * sth / (f.sxz || 1);
+    f.shoe.position.set(f.shoe0.x, base + cb * py + sb * pz, dz - sb * py + cb * pz);
     return;
   }
   const a = ank - th;
@@ -442,9 +495,11 @@ export function footPose(f, k, ank, th, floorY) {
     return f.sy * cy * cth - f.sxz * cz * sth;          // hips-local y, root metres
   };
   const lowest = Math.min(corner(f.toeZ), corner(f.heelZ));
-  // A leg-local lift arrives in hips-local multiplied by sy*cos(th), so divide
-  // it back out. Clamped so a leg past 72 degrees cannot divide by nothing.
-  f.shoe.position.set(f.shoe0.x, base + (floorY - lowest) / Math.max(0.3, f.sy * cth), dz);
+  // ROUND 4 (move): the same two-axis pin as the knee branch above, with
+  // beta = 0 because there is no hinge here. See the long note up there for
+  // why a one-axis pin on a tilted leg walks the foot forward.
+  const D = floorY - lowest;
+  f.shoe.position.set(f.shoe0.x, base + D * cth / (f.sy || 1), dz - D * sth / (f.sxz || 1));
 }
 export function footRest(f) {
   if (!f) return;
@@ -478,30 +533,12 @@ export function solveGait(G, o) {
   const uL = (uR + 0.5) % 1;
   const reach = S * D;                       // how far ahead the heel lands
 
-  // fx: foot position along the direction of travel, relative to the hip.
-  // Stance is LINEAR IN TIME because the hip is moving at a constant speed and
-  // the foot is not moving at all. That linearity is the whole fix.
-  const legX = (u) => {
-    if (u < D) return reach * (1 - 2 * (u / D));
-    const w = (u - D) / (1 - D);
-    return -reach + 2 * reach * swingEase(w);
-  };
-  const fxR = legX(uR), fxL = legX(uL);
-  const stR0 = uR < D, stL0 = uL < D;
-  // Stance knee flexion has to be known BEFORE the leg angle is, because it
-  // shortens the leg the angle is solved against. Solving theta on the full L
-  // and then shortening the leg moves the foot by L*flex*sin(theta), which the
-  // check duly caught as 9-21 mm of slip — small, real, and entirely avoidable
-  // by doing these two in the right order.
-  const flexOf = (u, stance) => (stance ? (o.flex || 0) * Math.pow(Math.sin(Math.PI * u / D), 1.4) : 0);
-  const fR = flexOf(uR, stR0), fL = flexOf(uL, stL0);
-  const LR = L * (1 - fR), LL = L * (1 - fL);
-  // +rotation.x carries the foot BEHIND the body (the leg hangs down -Y and the
-  // body faces local +Z), so the sign is inverted here once, on purpose, rather
-  // than at each of the four call sites.
-  const thR = -Math.asin(clamp(fxR / LR, -0.94, 0.94));
-  const thL = -Math.asin(clamp(fxL / LL, -0.94, 0.94));
-
+  // ---- the ankle roll -----------------------------------------------------
+  // Heel strike toes-up, flat through mid-stance, a real push at toe-off, and
+  // a neutral-to-slightly-up carriage through the swing so the toe does not
+  // catch. Authored against `u` rather than against the leg angle so a shuffle
+  // and a stride roll through the same phases.
+  //
   // ---- ROUND 2 (character): THE SIGNS WERE INVERTED AND THE FOOT ROCKED
   // ---- BACKWARDS THROUGH EVERY STEP THIS GAME HAS EVER DRAWN --------------
   // `ank` is the sole's pitch, and it goes onto the shoe as `ank - shank`, so it
@@ -530,6 +567,9 @@ export function solveGait(G, o) {
   //     stance ends     heel +95 mm, toe +2 mm    -> toe-off
   //
   // Negated. The comments underneath were already describing the fixed version.
+  //
+  // ROUND 4 (move): THIS BLOCK MOVED ABOVE legX, because the leg angle now
+  // depends on it. Nothing in it changed.
   const ankleOf = (u, stance) => {
     if (!o.feet) return 0;
     if (stance) {
@@ -544,6 +584,96 @@ export function solveGait(G, o) {
     // present the heel for the next strike
     return 0.52 * Math.pow(1 - Math.min(1, w / 0.30), 2) - 0.24 * Math.pow(w, 2.2);
   };
+
+  // =========================================================================
+  // ROUND 4 (move) — THE MOMENT ARM. WHAT SWINGS IS NOT WHAT THIS SOLVED FOR.
+  // =========================================================================
+  // Everything below the hip pivot rotates about it as ONE rigid line of length
+  // hip -> ANKLE, and then a foot hangs off the end of that line. This file has
+  // always solved `theta` as though the line ran hip -> SOLE, which is longer by
+  // the height of the ankle over the sole — 8.03% of stature on all fourteen
+  // shoppers, 9.20% on the cop, straight out of each shoe's own bounding box.
+  // So the drawn foot swept (1 - h0) of what the solve asked for, and the
+  // difference went to the stance foot as forward skate, at EVERY speed and on
+  // EVERY body, since the day the plant was written.
+  //
+  // Measured on the live rig, foot-flat stance windows, decomposed into the
+  // three places a planted foot can move (hip joint / leg swing / sole pin),
+  // as a signed fraction of the ground covered:
+  //
+  //                        hip joint    leg swing    sole pin      net
+  //     cop, 2.35 m/s       -0.1083      +0.0914      +0.0561     +0.0392
+  //     crowd, median       -0.0541      +0.0395      +0.0157     -0.0063
+  //
+  // The cop's leg-swing term is +0.0914 against a predicted +0.0920. It IS this
+  // bug, to two decimal places, on a body nobody had measured. The crowd's is
+  // smaller only because their idle phase tick over-sweeps the leg by about the
+  // same amount in the other direction — see animateShopper, where that tick is
+  // now gone, because the thing it was cancelling is this.
+  //
+  // AND THE FOOT IS NOT A POINT ON THE END OF THE LINE, IT ROLLS. A rigid foot
+  // pivoting on its heel at strike and on its toe at push-off carries the ankle
+  // FORWARD over the contact — 19 mm through the heel rocker and 54 mm through
+  // the toe rocker on a standard leg, 73 mm across the whole of stance, which is
+  // the same order as the moment arm itself. So the ankle's target is not the
+  // straight line `reach*(1 - 2p)`: it is that line plus `rock(ank)`, the
+  // ankle's own offset from the point the heel struck, for a foot rolling about
+  // whichever corner is down. rock() is zero through foot-flat by construction,
+  // which is where the two ends of it are pinned.
+  //
+  // This is the classical determinants-of-gait argument and it is the same
+  // geometry hipOf() below already uses for the VERTICAL. It was only ever
+  // missing from the horizontal.
+  //
+  // WITH NO SHOES FOUND (`o.foot` null) h0 is 0, LA is L and rock() is 0, so
+  // the whole block collapses to the expression it replaced, bit for bit. The
+  // degraded rig is not a new code path.
+  const FT = o.foot;
+  const h0 = FT ? FT.h0 * L : 0;             // ankle above a flat sole
+  const LA = L - h0;                         // hip -> ANKLE. THE MOMENT ARM.
+  const hz0 = FT ? -FT.heel * L : 0;         // heel corner, signed, off the ankle
+  const tz0 = FT ? FT.toe * L : 0;           // toe corner, signed
+  const rock = (ank) => {
+    if (!FT) return 0;
+    const c = Math.cos(ank), s = Math.sin(ank);
+    return (ank <= 0 ? -(hz0 * c - h0 * s)
+                     : (tz0 - hz0) - (tz0 * c - h0 * s)) + hz0;
+  };
+  const rock1 = rock(ankleOf(D, true));      // ankle at toe-off, off the strike
+  const rock0 = rock(ankleOf(0, true));      // ...and at heel strike
+
+  // fx: ANKLE position along the direction of travel, relative to the hip.
+  // Stance is LINEAR IN TIME plus the rocker, because the hip is moving at a
+  // constant speed and the foot is rolling over a contact that is not moving.
+  // That linearity is the whole fix and the rocker is what a foot adds to it.
+  const legX = (u) => {
+    if (u < D) return reach * (1 - 2 * (u / D)) + rock(ankleOf(u, true));
+    // The swing simply connects the two ends of stance, so the asymmetry the
+    // rocker leaves behind (the ankle is 19 mm behind at strike and 54 mm ahead
+    // at toe-off) is carried rather than averaged away.
+    const w = (u - D) / (1 - D);
+    const a = -reach + rock1, b = reach + rock0;
+    return a + (b - a) * swingEase(w);
+  };
+  const fxR = legX(uR), fxL = legX(uL);
+  const stR0 = uR < D, stL0 = uL < D;
+  // Stance knee flexion has to be known BEFORE the leg angle is, because it
+  // shortens the leg the angle is solved against. Solving theta on the full L
+  // and then shortening the leg moves the foot by L*flex*sin(theta), which the
+  // check duly caught as 9-21 mm of slip — small, real, and entirely avoidable
+  // by doing these two in the right order.
+  const flexOf = (u, stance) => (stance ? (o.flex || 0) * Math.pow(Math.sin(Math.PI * u / D), 1.4) : 0);
+  const fR = flexOf(uR, stR0), fL = flexOf(uL, stL0);
+  // ...and it shortens the hip-to-ANKLE line, which is what footPose's `k`
+  // scales: `k` is documented as "how long the hip-to-ankle line is, as a
+  // fraction", and kneeOf() hands it `1 - flex` for a stance leg. So this is
+  // the same length in both places instead of two different ones.
+  const LR = LA * (1 - fR), LL = LA * (1 - fL);
+  // +rotation.x carries the foot BEHIND the body (the leg hangs down -Y and the
+  // body faces local +Z), so the sign is inverted here once, on purpose, rather
+  // than at each of the four call sites.
+  const thR = -Math.asin(clamp(fxR / LR, -0.94, 0.94));
+  const thL = -Math.asin(clamp(fxL / LL, -0.94, 0.94));
 
   // ---- the hip height, i.e. the controlled fall ---------------------------
   // Whichever planted leg is MOST angled is the one holding the hip down. In
@@ -585,14 +715,17 @@ export function solveGait(G, o) {
   // and it is what lets gaitFlex be the angle it always claimed to be.
   // `o.foot` is null for a rig with no shoes found and the expression collapses
   // to the old one.
+  //
+  // ROUND 4 (move): `h0`, `LA` and the two sole corners are hoisted to the top
+  // of this function now, because the HORIZONTAL needs the same three numbers.
+  // They were computed twice here and once nowhere, which is how the horizontal
+  // came to be missing them.
   const stR = stR0, stL = stL0;
-  const FT = o.foot;
   const ankR0 = ankleOf(uR, stR), ankL0 = ankleOf(uL, stL);
   const hipOf = (th, flex, ank) => {
     if (!FT) return L * Math.cos(th) * (1 - flex);
-    const h0 = FT.h0 * L;
-    const reach = (ank > 0 ? FT.toe : FT.heel) * L;
-    return (L - h0) * (1 - flex) * Math.cos(th) + h0 * Math.cos(ank) + reach * Math.abs(Math.sin(ank));
+    const down = ank > 0 ? tz0 : -hz0;             // whichever corner is down
+    return LA * (1 - flex) * Math.cos(th) + h0 * Math.cos(ank) + down * Math.abs(Math.sin(ank));
   };
   let hip = L;
   if (stR) hip = Math.min(hip, hipOf(thR, fR, ankR0));
@@ -619,7 +752,14 @@ export function solveGait(G, o) {
     const w = (u - D) / (1 - D);
     const clear = o.lift * L * Math.pow(Math.sin(Math.PI * w), 1.25);
     G[side] = clear;
-    const need = (hipH - clear) / Math.max(0.05, L * Math.cos(th));
+    // ROUND 4 (move): the SAME moment-arm correction. `need` is a fraction of
+    // the hip-to-ANKLE line, so what it has to span is the hip-to-ankle drop —
+    // the floor, less the clearance, less the ankle's own height over the sole
+    // — over the hip-to-ankle length. It was solving that against hip-to-sole
+    // at both ends, which is 8 mm of pin work per swing frame the pin then had
+    // to undo. (It was nearly right by a coincidence: (X - h0)/(L - h0) equals
+    // X/L exactly when X = L, and a swing hip is close to L.)
+    const need = (hipH - clear - h0) / Math.max(0.05, LA * Math.cos(th));
     return clamp(need, 0.78, 1);
   };
   G.kneeR = kneeOf(uR, thR, stR, 'clearR');
@@ -683,7 +823,33 @@ export function dutyOf(v, heavy) {
 // re-solve from scratch, and measure how far the planted foot actually drifts.
 // A pass is under 5 mm over a whole stance phase; the round-11 walk measures
 // 0.30-0.45 m over the same interval, which is the number in the header.
+//
 // ---------------------------------------------------------------------------
+// ROUND 4 (move) — AND UNTIL THIS ROUND IT ONLY EVER RAN THE BRANCH THAT DOES
+// NOT SHIP.
+// ---------------------------------------------------------------------------
+// It passed `feet: true` and no `foot`, so `o.foot` was null on every row: the
+// no-shoes-found fallback, which no body in the game has taken since round 2.
+// It therefore could not have seen the moment arm (h0 is 0 down that branch, so
+// hip-to-ankle IS hip-to-sole and the two are the same expression) and it did
+// not. It read 0.0 mm through every build that carried it.
+//
+// It also tracked a point that does not exist — `hip - L sin(theta)`, the end of
+// a rod — where the thing that has to hold still is A CORNER OF A SHOE. Those
+// differ by the foot rocker, which is the term this round added.
+//
+// So: every row now runs TWICE, once with a real shoe box (the fourteen
+// shoppers' own, straight off attachFeet) and once with none, and the shod pass
+// tracks the two SOLE CORNERS through the solve's own ankle angle, checking
+// whichever one is down — the heel while the sole is pitched up, the toe while
+// it is pitched down, both through foot-flat. A rolling foot is allowed to roll
+// and is not allowed to slide, which is the distinction the old row could not
+// express. The unshod pass keeps the old point and the old number, so the
+// fallback rig is still covered and the header's arithmetic is still checked.
+// ---------------------------------------------------------------------------
+// The shoppers' own box, as the fractions attachFeet publishes: ankle 8.03% of
+// hip-to-sole above the ground, toe 17.0% ahead of it, heel 9.66% behind.
+const CHECK_FOOT = { h0: 0.0803, toe: 0.170, heel: 0.0966 };
 export function gaitCheck(opts = {}) {
   const G = {};
   const bad = [];
@@ -691,13 +857,20 @@ export function gaitCheck(opts = {}) {
   const out = [];
   for (const v of speeds) {
     for (const heavy of [false, true]) {
+      for (const FT of [CHECK_FOOT, null]) {
       const L = 0.86, stride = 1.0;
       const S = stepLength(v, L, stride, heavy), D = dutyOf(v, heavy);
-      const o = { phase: 0, speed: v, L, step: S, duty: D, lift: 0.07, flex: 0.055, feet: true };
+      const o = { phase: 0, speed: v, L, step: S, duty: D, lift: 0.07, flex: 0.055,
+        feet: true, foot: FT };
+      const h0 = FT ? FT.h0 * L : 0, LA = L - h0;
+      const hz0 = FT ? -FT.heel * L : 0, tz0 = FT ? FT.toe * L : 0;
       // Track the RIGHT foot through one full stance, in world x.
       const T = 2 * S / v;                   // cycle period
       const n = 240;
-      let x = 0, minF = Infinity, maxF = -Infinity;
+      // Two contact corners, each only over the sub-phase in which it is the
+      // one on the tiles. `+ 1e-9` so the flat plateau, where ank is exactly 0,
+      // counts for BOTH — which is the interval where both really are down.
+      let x = 0, minF = Infinity, maxF = -Infinity, minT = Infinity, maxT = -Infinity;
       for (let i = 0; i <= n; i++) {
         const u = (i / n) * D;               // stance only
         o.phase = u * TAU;
@@ -707,13 +880,31 @@ export function gaitCheck(opts = {}) {
         // the foot BEHIND the body. Getting this sign wrong reports the SUM of
         // the hip advance and the foot excursion — 1,589 mm at a walk, which is
         // exactly twice the step and is how the error announced itself.
-        const footWorld = x - L * (1 - G.flexR) * Math.sin(G.thR);
-        if (footWorld < minF) minF = footWorld;
-        if (footWorld > maxF) maxF = footWorld;
+        const ankleRel = -LA * (1 - G.flexR) * Math.sin(G.thR);
+        if (!FT) {
+          const footWorld = x + ankleRel;
+          if (footWorld < minF) minF = footWorld;
+          if (footWorld > maxF) maxF = footWorld;
+          continue;
+        }
+        const ca = Math.cos(G.ankR), sa = Math.sin(G.ankR);
+        if (G.ankR <= 1e-9) {                                  // heel is down
+          const w = x + ankleRel + hz0 * ca - h0 * sa;
+          if (w < minF) minF = w;
+          if (w > maxF) maxF = w;
+        }
+        if (G.ankR >= -1e-9) {                                 // toe is down
+          const w = x + ankleRel + tz0 * ca - h0 * sa;
+          if (w < minT) minT = w;
+          if (w > maxT) maxT = w;
+        }
       }
-      const slip = maxF - minF;
-      out.push({ v, heavy, step: +S.toFixed(3), duty: +D.toFixed(3), slipMM: +(slip * 1000).toFixed(1) });
-      if (slip > 0.005) bad.push(`v=${v}${heavy ? ' heavy' : ''} stance foot slipped ${(slip * 1000).toFixed(1)} mm`);
+      const slip = Math.max(maxF - minF, FT ? maxT - minT : 0);
+      out.push({ v, heavy, shod: !!FT, step: +S.toFixed(3), duty: +D.toFixed(3),
+        slipMM: +(slip * 1000).toFixed(1) });
+      if (slip > 0.005) bad.push(`v=${v}${heavy ? ' heavy' : ''}${FT ? ' shod' : ' unshod'}`
+        + ` stance foot slipped ${(slip * 1000).toFixed(1)} mm`);
+      }
     }
   }
   // ...and the old model, measured the same way, so the header's number is

@@ -4258,8 +4258,22 @@ export function createAgents(THREE, scene, world) {
     // uL = 0 half a cycle later), so one half-sine over the first 30% of each
     // STEP is the body settling onto the foot and coming back up.
     const pStep = ((u.phase / Math.PI) % 1 + 1) % 1;
+    // ---- ROUND 4 (move): AND THE BARGE STAGGER RIDES THE SAME CHANNEL ------
+    // The stagger block at the bottom of this function used to end with
+    //     r.hips.position.y -= f * 0.05;
+    // which is 50 mm of pelvis written AFTER poseWalk has pinned both soles to
+    // the tiles, so for the ~0.5 s of a shoulder barge the man the player is
+    // watching centre-frame stood 50 mm underground. `o.sink` is the channel
+    // that already exists for exactly this — poseWalk lowers the hips AND the
+    // floor the pin solves against by the same amount, so a foot cannot be
+    // unplanted by it — and `stagF` is computed here, once, and read by the
+    // stagger block below rather than recomputed there. One derivation.
+    const stagF = u.stagger > 0
+      ? Math.sin(clamp(u.stagger / Math.max(0.05, T.bargeStagger), 0, 1) * Math.PI)
+        * clamp(u.stagger / Math.max(0.05, T.bargeStagger), 0, 1)
+      : 0;
     const sink = K.copHeelSink * gait
-      * (pStep < 0.30 ? Math.sin(Math.PI * pStep / 0.30) : 0);
+      * (pStep < 0.30 ? Math.sin(Math.PI * pStep / 0.30) : 0) + stagF * 0.05;
     // Banking into a corner. Solved BEFORE poseWalk and handed to it as
     // `hipZAdd` rather than added afterwards, because it is part of the pelvis
     // roll the sole pin has to solve against: 0.36 rad of bank over a 180 mm
@@ -4469,14 +4483,15 @@ export function createAgents(THREE, scene, world) {
 
     // Shaken off by a shoulder barge: arms up, off balance, facing the way the
     // man came from. Reads as a beat lost rather than a freeze.
-    if (u.stagger > 0) {
-      const t = clamp(u.stagger / Math.max(0.05, T.bargeStagger), 0, 1);
-      const f = Math.sin(t * Math.PI) * t;
+    if (stagF > 0) {
+      const f = stagF;                    // solved above, and fed to o.sink
       r.chest.rotation.z += f * 0.34;
       r.chest.rotation.x -= f * 0.30;
       r.armL.rotation.x -= f * 1.5; r.armR.rotation.x -= f * 1.1;
       r.armL.rotation.z += f * 0.5; r.armR.rotation.z -= f * 0.35;
-      r.hips.position.y -= f * 0.05;
+      // The 50 mm of pelvis drop that used to be here is `o.sink` now. See the
+      // note over stagF: written down here it unpinned both of his feet for the
+      // whole beat, because poseWalk had already placed them.
     }
 
     // ---- the belt, out of phase --------------------------------------------
@@ -5053,6 +5068,7 @@ export function createAgents(THREE, scene, world) {
   // read only by plantCheck(); it is declared up here rather than next to
   // poseWalk so it is initialised before either of them can be reached.
   const UNITS = { worst: 0, at: null, missing: 0, n: 0, scaled: 0, rollWorst: 0, rollAt: null };
+  const _PINV = new THREE.Vector3();     // plantCheck's pin-axis row only
   function copCheck() {
     const r = cop.userData.rig, bad = [];
     if (!r.feetOk) bad.push('feetOk false: gait.js could not find a shoe inside the cop leg group. '
@@ -5159,10 +5175,69 @@ export function createAgents(THREE, scene, world) {
     }
     if (flatErr > 1e-9) bad.push('the roll-aware sole pin does not collapse to the flat pin '
       + 'at zero list (' + (flatErr * 1000) + ' mm). A body with no list has been moved.');
+    // ---- ROUND 4 (move) — THE PIN'S AXIS, THROUGH THREE.JS'S OWN MATRICES --
+    // The pin is a VERTICAL constraint. Until this round it was solved with a
+    // translation along the knee frame's own Y, which is tilted by the shank and
+    // the thigh, so every millimetre of lift also shoved the foot forward by up
+    // to 0.76 mm — and since the tilt sweeps through stance, the shove swept
+    // with it. On the cop that was +0.056 of the ground he covered, the biggest
+    // single term in his stance skate.
+    //
+    // What makes this a check rather than a comment is where the second number
+    // comes from. footPose's closed form composes the chain by hand, in the
+    // pitch plane, for speed. This asks the SCENE GRAPH instead: pose a real
+    // foot at two floors 10 mm apart, read the contact corner out of
+    // shoe.localToWorld and back into the hips' frame, and require that it moved
+    // 10 mm UP and nothing along the body. three.js's matrices know about the
+    // toe yaw, the hip abduction and the leg group's non-uniform scale, none of
+    // which the closed form does, so the two derivations are genuinely
+    // independent and this row is not the tautology copCheck's units row is.
+    // Ask what would turn it red: reinstating the one-axis pin reads 3-8 mm.
+    //
+    // The residual it does allow is real and second order — Rz(splay) and
+    // Ry(toe) tilt the pin out of the pitch plane by sin(toe)*sin(splay), which
+    // is 0.4 mm on a 44 mm lift at the cop's own angles.
+    // `th` IS READ OFF THE LEG GROUP AND NOT PICKED, and getting that wrong is
+    // how this row read 7.32 mm on its first run — on correct code. footPose
+    // takes the hip angle as an ARGUMENT for its closed form but does not write
+    // `legGroup.rotation.x`, so handing it a number the scene graph does not
+    // have makes the two derivations disagree about the pose rather than about
+    // the pin, and the row then measures the difference between two different
+    // legs. The whole value of this check is that its two halves see the same
+    // rig; a literal there quietly destroys that.
+    let axisZ = 0, axisY = 0, axisN = 0, axisAt = null;
+    for (const r of [cop.userData.rig, ...shoppers.map((x) => x.rig)]) {
+      if (!r || !r.feetOk || !r.footL || !r.footR) continue;
+      r.hips.updateWorldMatrix(true, false);
+      for (const [f, grp, tag] of [[r.footL, r.legL, 'L'], [r.footR, r.legR, 'R']]) {
+        const read = (floorY) => {
+          footPose(f, 0.95, 0, grp.rotation.x, floorY);
+          f.shoe.updateWorldMatrix(true, false);
+          const a = r.hips.worldToLocal(f.shoe.localToWorld(_PINV.set(0, f.soleY, f.heelZ)));
+          return { y: a.y, z: a.z };
+        };
+        const A = read(-0.80), B = read(-0.79);
+        footRest(f);                       // next frame's poseWalk re-poses it
+        const dz = Math.abs(B.z - A.z), dy = Math.abs((B.y - A.y) - 0.010);
+        axisN++;
+        if (dz > axisZ) { axisZ = dz; axisAt = tag; }
+        if (dy > axisY) axisY = dy;
+      }
+    }
+    if (!axisN) bad.push('pin axis: no rig has feet yet, so nothing was checked. '
+      + 'Let a body walk (attachFeet runs lazily inside poseWalk) before believing this row.');
+    if (axisZ > 0.0015) bad.push('the sole pin moved a contact corner ' + (axisZ * 1000).toFixed(2)
+      + ' mm ALONG the body for 10 mm of lift, on foot ' + axisAt + '. The pin is a vertical '
+      + 'constraint and it is being solved with a translation along a tilted axis again: see '
+      + 'footPose, which must solve the 2x2 for (dy, dz) rather than dividing by `gain`.');
+    if (axisY > 0.0015) bad.push('the sole pin moved a contact corner ' + ((axisY + 0.010) * 1000).toFixed(2)
+      + ' mm vertically when it was asked for 10.00 mm.');
     return {
       ok: bad.length === 0, bad,
       unitsWorstMM: worstMM, unitsAt: UNITS.at, unitsMissing: UNITS.missing,
       unitsFrames: UNITS.n, unitsScaledFrames: UNITS.scaled,
+      pinAxisFeet: axisN,
+      pinAxisAlongMM: +(axisZ * 1000).toFixed(4), pinAxisUpErrMM: +(axisY * 1000).toFixed(4),
       rollPinFlatErrMM: +(flatErr * 1000).toFixed(6),
       // NOT a pass/fail: how far the roll term moved a floor, worst since boot,
       // and the pelvis roll it happened at. This is the size of what deleting
@@ -6756,7 +6831,15 @@ export function createAgents(THREE, scene, world) {
     // the roll-aware sole pin below needs all of them before a foot is placed.
     // Nothing between here and their assignment reads or writes any of them, so
     // a body gets the same numbers in the same order it always did.
-    if (r.stance0 === undefined) { r.stance0 = r.legL.position.x; r.stanceR0 = r.legR.position.x; }
+    if (r.stance0 === undefined) {
+      r.stance0 = r.legL.position.x; r.stanceR0 = r.legR.position.x;
+      // ...and the pivots' own FORE-AFT rest offsets, read the same way and for
+      // the same reason. They are not zero: COP_RAKE_Z puts the cop's hips
+      // behind his feet, which is round 1's weight-on-the-heels read expressed
+      // as a translation rather than as an angle. See the pelvis-yaw
+      // counter-translation at the bottom of this function.
+      r.legZ0 = r.legL.position.z; r.legRZ0 = r.legR.position.z;
+    }
     const list = _G.list * o.listA * gait * o.roll;
     const hz = list + o.restHipZ * o.rest0 + (o.hipZAdd || 0);
     const sway = _G.sway * o.swayA * gait;
@@ -6904,6 +6987,39 @@ export function createAgents(THREE, scene, world) {
     r.hips.position.x = sway;
     r.legL.position.x = r.stance0 - sway;
     r.legR.position.x = r.stanceR0 - sway;
+    // ---- ROUND 4 (move): ...AND SO DOES THE TRANSVERSE ROTATION -------------
+    // The two lines above are the file's own rule — "whatever the pelvis does
+    // that would move the feet is undone at the leg pivots" — applied to the
+    // pelvis's lateral TRANSLATION. It was never applied to its YAW, and a yaw
+    // moves a pivot sitting out at +-px fore and aft by px*sin(psi), which is
+    // the same kind of dragged foot one axis over.
+    //
+    // It is the single biggest term in the crowd's stance skate and the biggest
+    // in the cop's, measured as a signed fraction of the ground covered under
+    // the planted foot: the hip JOINT falls -0.104 behind the body on him and
+    // -0.054 on the crowd's median body, per foot-flat window. On him that is
+    // 40 mm a stance, on a 150 mm stance width and 0.26 rad of yaw across the
+    // window, and it is what the moment arm was cancelling: fix one without the
+    // other and his skate goes +0.039 -> -0.103.
+    //
+    // WHAT IT GIVES UP, SAID OUT LOUD: pelvic transverse rotation genuinely
+    // carries the hip joints in a real walk — it is one of the classical
+    // determinants of gait and it is part of how a long stride is bought. What
+    // it carries them ABOUT is the hip that is loaded, because that leg is
+    // planted; a pelvis rotating about the body's own midline, which is what
+    // this rig does, moves BOTH hips and there is no leg for it to be rotating
+    // about. So the honest version on this rig is that the pelvis rotates and
+    // the hip joints do not, exactly as the pelvis lists and the femurs do not.
+    // The silhouette keeps the rotation — `hips` carries the chest, the arms
+    // and the head — and the feet keep the floor.
+    //
+    // Exact rather than small-angle: a child at (px, *, pz) under a yaw of psi
+    // lands at z = pz*cos - px*sin, so the pz that leaves it where it started is
+    // (pz0 + px*sin)/cos. The lateral residual is second order (px/cos - px is
+    // 1.8 mm at 0.2 rad on a 90 mm pivot) and is not this axis.
+    const cy = Math.cos(r.hips.rotation.y), sy2 = Math.sin(r.hips.rotation.y);
+    r.legL.position.z = (r.legZ0 + r.legL.position.x * sy2) / cy;
+    r.legR.position.z = (r.legRZ0 + r.legR.position.x * sy2) / cy;
     return _G;
   }
 
@@ -6991,39 +7107,39 @@ export function createAgents(THREE, scene, world) {
     // why this reads `vLocal` and not `s.speed`: the step it divides by came out
     // of a root-local solve and mixing the two is the same bug one line down.
     //
-    // `+ dt * 0.35` is round 9's idle tick, kept so a stopped body still
-    // breathes and so the browse oscillators downstream of `s.phase` keep
+    // `(1 - gz) * dt * 0.35` is round 9's idle tick, kept so a stopped body
+    // still breathes and so the browse oscillators downstream of `s.phase` keep
     // running; it is slower than round 9's 0.6 because the reach now owns the
     // visible half of standing still.
     //
-    // ---- AND IT IS NOT THE THIRD BUG. IT IS HOLDING THE SECOND ONE UP ------
-    // THE COP FADES THIS OUT AND THE CROWD DOES NOT — his is `(1 - gz) * dt *
-    // 0.35` — so it looked like the same debt as the two this round closed, and
-    // the argument at animateCop is sound on its face: phase with no ground
-    // under it is foot excursion with no ground under it, i.e. skate, and
-    // 0.35 rad/s against a shopper's ~6.5 rad/s cadence is 5% of every cycle.
+    // ---- ROUND 4 (move): AND IT IS FADED NOW, BECAUSE THE THING IT WAS
+    // ---- HOLDING UP HAS BEEN FIXED -----------------------------------------
+    // For three rounds this line ran UNFADED on the crowd and faded on the cop,
+    // and round 3 tried to make them agree and measured the crowd getting
+    // WORSE — mean |skate| 0.023 -> 0.037 — so it reverted and published the
+    // reason as a conjecture: the tick was a constant offset cancelling an
+    // opposite error, probably a moment arm solved on hip-to-SOLE where the rig
+    // swings hip-to-ANKLE.
     //
-    // IT WAS TRIED, ON ALL FOURTEEN, AND IT IS WORSE. Foot-flat skate as a
-    // signed fraction of the ground the body covered under the planted foot:
+    // It was, and there were three of them, not one. gait.js now swings the
+    // hip-to-ankle line over its own length with the foot's rocker in it, its
+    // sole pin is vertical instead of leaking along a tilted axis, and poseWalk
+    // counter-translates the leg pivots out of the pelvis yaw. Foot-flat stance
+    // skate as a signed fraction of the ground covered, fourteen bodies, 8 s
+    // warm-up, the solve's own foot-flat window:
     //
-    //                          mean      mean |x|   worst |x|   slope vs rootS
-    //     with the tick       -0.021      0.023       0.069       +0.224
-    //     faded like the cop  +0.036      0.037       0.074       +0.235
+    //                                       mean    mean |x|   worst |x|   slope vs rootS
+    //     round 3's build, tick unfaded    -0.006     0.012      0.028      +0.108 +- 0.085
+    //     three fixes in, tick unfaded     -0.047     0.047      0.073      -0.112 +- 0.117
+    //     three fixes in, tick faded       (below)
     //
-    // The tick is a CONSTANT OFFSET — it moves every body by the same +5.7
-    // points and leaves the slope against root scale untouched — and the sign
-    // says what it is doing: without it the foot drifts FORWARD, i.e. the rig
-    // sweeps LESS than the solve asked for. It is compensating a second,
-    // opposite error, and the candidate is that the solve puts the foot at
-    // `L*sin(theta)` with L the hip-to-SOLE distance while the thing that
-    // actually rotates is the hip-to-ANKLE line with a foot hung off it — a
-    // 5-10% shorter moment arm on every body, which is the right size.
-    //
-    // So this line stays, and it is not "the crowd is behind the cop" — it is
-    // that removing it exposes an error the cop is probably already carrying,
-    // since he has no tick to hide it. That is the next thing to measure, on
-    // him and on them, and it wants the hip solve rather than the phase clock.
-    s.phase += (vLocal > 0.02 ? Math.PI * vLocal / step * dt : 0) + dt * 0.35;
+    // The middle row is the point: with the errors gone the tick is not a
+    // compensation any more, it is just 4.7% of extra leg swing with no ground
+    // under it, and it shows up as exactly that in the leg term of the budget.
+    // Fading it is now free, which is the test that the fix was a fix and not a
+    // re-tune — and the same three fixes moved the COP from +0.039 to +0.000
+    // with nothing done to him at all, on a body that never had a tick.
+    s.phase += (vLocal > 0.02 ? Math.PI * vLocal / step * dt : 0) + (1 - gz) * dt * 0.35;
     const gait = clamp(s.speed / 1.4, 0, 1);
     const sw = Math.sin(s.phase);
     // `amp` is kept because eleven things below still swing arms off it, but it
@@ -7139,6 +7255,11 @@ export function createAgents(THREE, scene, world) {
       r.chest.rotation.x = 0.22 + heave * 0.18;
       r.hips.position.y = r.hipY;
       r.hips.position.x = 0; r.legL.position.x = r.stance0; r.legR.position.x = r.stanceR0;
+      // ROUND 4 (move): and the pivots' fore-aft, which poseWalk now writes to
+      // counter the pelvis yaw. This branch resets the other two and returns
+      // early, so a body that shoves a door would otherwise keep whatever yaw
+      // offset its last walking frame left on it, forever.
+      if (r.legZ0 !== undefined) { r.legL.position.z = r.legZ0; r.legR.position.z = r.legRZ0; }
       r.leanApplied = 0;                                             // LEAN in
       return;
     }
@@ -7612,12 +7733,30 @@ export function createAgents(THREE, scene, world) {
       const dz = r.hips.rotation.z - r.hipsZ0;
       if (dz) { r.legL.rotation.z -= dz; r.legR.rotation.z -= dz; }
       const c = (r.hipY - _G.drop) - r.hips.position.y;
-      if (c > 0.002 || r.crouched) {
+      // ---- ROUND 4 (move): AND THE RE-PIN GOES THROUGH pinRolled() ----------
+      // Two things were wrong with this and they are the same thing. It re-pinned
+      // against a FLAT floor, `_G.drop - r.hipY + c`, throwing away the roll term
+      // poseWalk's own pin had just solved — and it only ran at all when the pose
+      // lowered the hips, so a pose that added ONLY roll (which is most of the
+      // idle pool) moved the pelvis over the feet and never re-pinned anything.
+      // That is why three rounds running the deepest sole in the live store was a
+      // browse frame and not the walk: -30.0 mm, against -12.3 for the walk.
+      //
+      // The floor is now solved by the SAME function poseWalk calls, off the same
+      // four quantities read back from the rig — the pivot after the sway, that
+      // leg's own roll after the counter-rotation, and the pelvis roll the pose
+      // actually left behind. At c = 0 and dz = 0 every argument is identical to
+      // the ones poseWalk used, `kk` is 1, and footPose is a pure function of
+      // them, so a body in no pose at all gets the same numbers it always did.
+      if (c > 0.002 || dz || r.crouched) {
         const kk = clamp(1 - c / r.hipY, 0.70, 1.05);
-        const fl = _G.drop - r.hipY + c;
+        const floorY = _G.drop - r.hipY + c;
+        const hz = r.hips.rotation.z;
+        const fl = pinRolled(floorY, r.hipY, r.legL.position.x, r.legL.rotation.z, hz);
+        const fr = pinRolled(floorY, r.hipY, r.legR.position.x, r.legR.rotation.z, hz);
         footPose(r.footL, _G.kneeL * kk, _G.ankL, _G.thL, fl + _G.clearL);
-        footPose(r.footR, _G.kneeR * kk, _G.ankR, _G.thR, fl + _G.clearR);
-        r.crouched = c > 0.002;
+        footPose(r.footR, _G.kneeR * kk, _G.ankR, _G.thR, fr + _G.clearR);
+        r.crouched = c > 0.002 || !!dz;
       }
     }
   }

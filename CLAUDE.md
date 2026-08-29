@@ -113,6 +113,12 @@ Keep this list; every entry cost a round or a false report.
   "crowd shown". One explicit render is stable to the call.
 - **Wall-clock frame timers**, repeatedly: a 3x spread on an unchanged build, and
   a ranged arm timing *below* its own no-op baseline.
+- **A check that only ever ran the branch without the bug.** `gaitCheck` tested the
+  no-shoes path (`feet: true`, no `foot`) — the single branch where the foot's
+  height over the sole is 0, so it *structurally could not see* a moment-arm error
+  and read 0.0 mm through every build that carried one. The most expensive
+  instrument failure found here: it licensed the walk for four rounds. Ask which
+  branch your check exercises, not just whether it passes.
 - **A check that cannot fail.** `copCheck`'s units row compared `v·(2S/(v/rootS))`
   against `2S·rootS` — an algebraic tautology. It read 0.000 mm whatever the cop
   did, and always could have. Before trusting a green check, ask what input would
