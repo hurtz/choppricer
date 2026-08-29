@@ -4553,3 +4553,102 @@ outside-mask differences explained as floor behind glass, 0 unexplained.**
 
 **Standing:** the mirror image is **a patch, not a column** — real elongation needs more than one
 texture tap.
+
+## THE FIRST NON-SATURATING PERCEPT TEST, AND IT WORKED
+
+Round 29 died because its criterion returned the same label for the fixed render and for a
+photograph. Round 30's builder declared three answers in advance; round 30's critic **pre-registered
+its own three-level criterion in writing before cutting a tile** and got exactly them:
+
+    OFF   4/4 -> NONE          16 of 18 three-way, p = 1.7e-6
+    ON    4/4 -> SHORT         ON vs PHOTOGRAPH do NOT collapse, Fisher p = 0.015
+    CATCH 8/10 -> FULL         both misses named, not hidden
+
+**This is the instrument this project has been looking for since round 20.** It says two things at
+once that a two-level test cannot: *the change is visible*, and *it is still short of a
+photograph*. **A three-level criterion measures the remaining gap instead of announcing a pass.**
+
+Render-recall: **12/12, thirtieth round.** Total 39/39, p = 1.8e-12, first-glance identical to
+considered on all 39, and **no leak needed** — every render was called on content, not on a codec,
+EXIF or dimension cue.
+
+## "MOVES, DOES NOT CLOSE" IS HONEST — AND THE CLOSURE CLAIM IS UNFALSIFIABLE ANYWAY
+
+Verified against the exact ON-OFF difference mask rather than hand-drawn boxes: the change touches
+9.2-10.6% of frame, floor only, floor C* **+2.89 / +1.30 / +0.72 / +0.53, mean +1.36**, rms chroma
+modulation **2.46 -> 6.22**. Round 30's published band reproduces.
+
+**But the reference statistic cannot adjudicate closure at all.** Eight reference floors span C*
+**8.61-25.69, sd 5.65**, against an effect of 1.36 — **0.24 sd** — and **two real store floors sit
+BELOW the render's OFF value.** So "we moved but did not close, and the residual is a file I do not
+own" is **unfalsifiable with that instrument.** Stop citing closure against a statistic whose
+reference spread is four times your effect.
+
+## EIGHT FAILED STATISTICS PUBLISHED, TWO OF WHICH KILLED THE CRITIC'S OWN HYPOTHESIS
+
+It withdrew its "rainbow wash" reading after residual-PCA and hue-churn both rejected it. And the
+lateral EDGE/OPEN split showed **it had misread its own heat map** — the render puts chroma at the
+shelf feet on 3 of 4 cameras and real floors do the reverse. **Its hand-placed boxes also gave the
+wrong SIGN (-0.22) until the difference mask corrected them.**
+
+That is the third independent demonstration on this project that **a hand-placed box is not an
+instrument.** Use a difference mask that is occlusion-exact by construction.
+
+## THREE ROUNDS WENT TO A CUE THAT WAS DECIDING NOTHING
+
+> **"Floor chroma appeared in ZERO of my twelve first-glance calls. Round 30 fixed something real
+> and spent the round on a cue that was not deciding the frames."**
+
+Rounds 28, 29 and 30 — contact occlusion, the wear decal, the mirror — were all floor rounds. All
+three fixed real defects. **None of them touched what a blind scorer actually calls on.**
+
+**This file has carried the warning since round 14** — *"before you optimise a number, ask a blind
+critic what it actually called on; if the cue and the statistic are different things, the statistic
+is maintenance and the cue is the round."* It happened again, three rounds deep, because each
+round's cue was handed down by the previous round's critic **as its named gap** rather than as
+**its first-glance reason.** Those are different questions and only one of them predicts the score.
+
+**Ask a critic for BOTH: what it called on first, and what it can prove. Dispatch against the
+first.**
+
+## THE CUE: THE PRODUCT WALL CARRIES NO SATURATED INK, AND THE PROMO TAGS DO
+
+**A real store inverts this.** Product-face boxes only, no tags, no floor, identical on-screen
+product scale, sRGB -> CIELAB D65:
+
+    RENDER chase_a4 left bay   f_sat(C* > 45) = 0.039
+    RENDER chase_a6 left bay                   0.021
+    PHOTO  Ingles   left bay                   0.290
+    PHOTO  Smith's  right bay                  0.178
+
+**An order of magnitude, cleanly separating: 6 of 7 photographs from all 7 renders.** In the render
+bays the only saturated marks are the injected promo tags — `2 FOR`, `ROLLBACK $5.89` — against
+Lipton green, Cap'n Crunch red and Life blue carrying the frame in the photographs.
+
+**Observation confidence 0.9, and earned the hard way: it was the critic's written first-glance
+reason on 10 of 12 render frames, BEFORE any measurement.** Explanation confidence 0.5 — it did not
+open `src/store/`, so the mechanism is a guess.
+
+Set-construction note it published against itself: `near_a1` and `near_a4` are md5-identical across
+arms, and **15 photo slots are filled by 10 distinct images**, so 27 frames carry the information
+of 12 renders and 10 photographs.
+
+## Claim your browser tab
+
+There is a cap on open tabs and this session has hit it. Every finished round
+leaves its tab behind, so the cap is reached by accumulation rather than by
+anyone doing anything wrong, and the next builder cannot open one at all.
+
+Two rules, both cheap:
+
+- **Stamp `window.__CLAIM = '<piece>-r<round>'` on your tab the moment you open
+  it.** Nothing else identifies a tab's owner. Without it the only signal is page
+  age, which is a proxy that misleads the first time a long round reloads — and a
+  builder that guesses wrong closes a critic's half-finished measurement with no
+  error anywhere.
+- **Close your own tab when your round ends.** If you cannot, say so in your
+  report so the lead can.
+
+If you are blocked by the cap, ask the lead rather than picking a tab to close.
+Asking cost one message; guessing costs someone else's round.
+
