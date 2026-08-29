@@ -5629,10 +5629,34 @@ export function createAgents(THREE, scene, world) {
       if (copD < T.suspicionRadius && s.harassArmed && s.angry <= 0 && copClosingOn(s, copD)) {
         s.angry = 2.6; s.harassArmed = false; s.bang.visible = true;
         api.onHarass && api.onHarass(s);
+        // A MAN BEING SHOUTED AT DOES NOT REACH INTO HIS COAT. Same shape as
+        // announceAt's `s.concealT = Math.max(s.concealT, s.annT + 0.7)`, and
+        // it closes a leak of its own: the decoy scheduler is gated on
+        // `s.angry <= 0`, so an innocent can start NO clip while angry — but
+        // the concealment trigger has no such gate, so a cold thief could
+        // start a `steal` clip inside the anger window against an innocent
+        // baseline of exactly zero. Any clip in that window was guilty-only.
+        s.concealT = Math.max(s.concealT, s.angry + (T.angryFuse ?? 0.4));
       }
       if (copD > T.suspicionRadius + 1.6) s.harassArmed = true;
-      if (s.angry > 0) { s.angry -= dt; if (s.angry <= 0) s.bang.visible = false; }
     }
+    // THE DECAY IS NOT PART OF THE GATE, and this is the general rule this
+    // round keeps re-learning: a POLICY may be gated on what a body is, a TIMER
+    // never may. A body that conceals or bolts while still angry leaves the
+    // gate on that frame, and with the decay inside it his anger never runs
+    // out. He then freezes at `target = 0` facing the cop (the pin below is
+    // exempt only for `bolt` and `react`, and he is in `drift`), cannot be
+    // arrested (`interactions()` needs `bolted` or `react`), and carries a
+    // depth-test-off `!` sprite through solid shelving for the rest of his
+    // life — in a state only a guilty body can reach, which is a worse
+    // classifier than the one this round closed and is visible from the desk.
+    // Unreachable before the yell was lifted out; the lift opened it. Found by
+    // builder-game-r13, and it never shipped.
+    //
+    // It stays AFTER the gate rather than before so a body that stays
+    // un-concealed keeps round 12's same-frame ordering exactly, and the
+    // innocent path is byte-identical.
+    if (s.angry > 0) { s.angry -= dt; if (s.angry <= 0) s.bang.visible = false; }
 
     // ONE walking speed, and it is a PERSON. Every state below that walks reads
     // this and nothing else — see K.paceLo. `bolt`, `react` and `shove` set

@@ -332,6 +332,21 @@ export const TUNING = {
   // leave 0.32 @ 0.55). One per-person band spanning both.
   exitLookLo: 0.32, exitLookHi: 0.50,
   exitLookRateLo: 0.55, exitLookRateHi: 0.80,
+
+  // --- Round 15: walking up to someone was a free guilt probe ---
+  // The yell lived inside `else if (!s.guilty)` while the bolt needed `drift`
+  // or `stole`, so a thief who had not concealed anything YET did neither.
+  // Measured before the fix, n=70 per arm: innocent 100% yell, cold thief 100%
+  // NOTHING, hot thief 100% bolt. The "nothing" cell had an unsmoothed
+  // likelihood ratio of infinity. The cop could stand 0.80 m from an
+  // un-concealed thief for 7.4 s and the body would never look up.
+  //
+  // How long the fuse is held while a body is being shouted at. The decoy
+  // scheduler already refuses to start a clip while `angry`, so without this an
+  // innocent could start NO clip in that window and a cold thief could still
+  // start a `steal` — making any clip inside it guilty-only against a baseline
+  // of exactly zero. Same shape as announceAt's annT + 0.7.
+  angryFuse: 0.4,
 };
 
 // CHANNEL LINEUP — what the channels ARE. Ids, labels, and which aisle each covers.
