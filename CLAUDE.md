@@ -113,6 +113,18 @@ Keep this list; every entry cost a round or a false report.
   "crowd shown". One explicit render is stable to the call.
 - **Wall-clock frame timers**, repeatedly: a 3x spread on an unchanged build, and
   a ranged arm timing *below* its own no-op baseline.
+- **A metric satisfied exactly, in the wrong way.** A round was asked to get
+  shoppers off the aisle centre line and up against the shelf. It did; the metric
+  passed; it shipped. A later critic measured *how* square: **0.00 degrees off the
+  fixture normal at every percentile**, one distinct value across 1392 samples. A
+  snapped yaw is more obviously artificial than the centre-line walk it replaced,
+  so the metric made the game worse while reading as a win. Ask for a
+  distribution, never a mean or a count — and when a metric passes on the first
+  try, suspect it.
+- **The same measurement in two frames, neither labelled.** The cop's step read
+  733 mm in one report and 704 in another; both were right — root-local versus
+  ground, differing by his root scale. An unlabelled unit is the same defect as
+  the solve that mixed root-local metres with world ones, one level up.
 - **A check that only ever ran the branch without the bug.** `gaitCheck` tested the
   no-shoes path (`feet: true`, no `foot`) — the single branch where the foot's
   height over the sole is 0, so it *structurally could not see* a moment-arm error
