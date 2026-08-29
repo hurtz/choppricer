@@ -220,12 +220,34 @@ function peopleBoxes(cam) {
     if (s && s.mesh && s.mesh.visible && !s.caught && !s.escaped) push(s.mesh);
   }
   push(agents.cop);
-  const box = new THREE.Box3(), v = new THREE.Vector3();
+  // Box3.setFromObject INCLUDES INVISIBLE CHILDREN, and this rig has one that
+  // matters: the `bang` sprite (the harassment `!`) is a child of s.mesh and
+  // spans 1.87-2.30 m whether or not it is drawn. Every crop box was therefore
+  // 2.30 m tall for a 1.76 m body — 31% empty ceiling — and the frame-edge
+  // reject below dropped bodies for a halo that is never rendered,
+  // preferentially the near ones with the most pixels. The comment above claims
+  // this "keeps working while figures.js changes shape underneath it"; it did
+  // not, and a critic framing faces with the same box landed half a metre over
+  // everyone's heads. Union only what is actually visible.
+  const box = new THREE.Box3(), kid = new THREE.Box3(), v = new THREE.Vector3();
+  const visBox = (root, target) => {
+    target.makeEmpty();
+    root.updateWorldMatrix(true, true);
+    root.traverse((o) => {
+      if (!o.visible || !o.geometry) return;
+      // a hidden ancestor hides the subtree; traverse does not know that
+      for (let p = o; p && p !== root.parent; p = p.parent) if (!p.visible) return;
+      if (!o.geometry.boundingBox) o.geometry.computeBoundingBox();
+      kid.copy(o.geometry.boundingBox).applyMatrix4(o.matrixWorld);
+      target.union(kid);
+    });
+    return target;
+  };
   const out = [];
   cam.updateMatrixWorld();
   cam.updateProjectionMatrix();
   for (const b of bodies) {
-    box.setFromObject(b);
+    visBox(b, box);
     if (box.isEmpty()) continue;
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, behind = 0;
     for (let i = 0; i < 8; i++) {
