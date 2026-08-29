@@ -79,6 +79,69 @@ second copy is genuinely unavoidable, it needs an assertion that fails loudly wh
 the two disagree — see `lungCheck()` in `src/agents.js` for the pattern.
 
 
+## A check on the solve is not a check on the rig
+
+`gaitCheck()` passed while the walk rig was visibly wrong **four separate times**
+in one round, and again for three more bugs in the round after: the ankle rocker
+signs were inverted, so every body in every build that ever shipped landed
+toe-first and pushed off its heel; the sole pin was solving in the leg's *scaled*
+frame against a floor in root metres, so it was wrong by each body's own stature;
+and `gaitFlex` was authored as an angle and encoded as a length fraction, its own
+comment saying "about 15 degrees" while the shipped 0.055 was 38.
+
+All three are invisible to a checker that validates the maths, because the maths
+was right. Rule: a numeric check earns you nothing about geometry you have not
+rendered. Capture the thing, look at it, and keep the probe
+(`shots/_probe_move_plant.js`, `shots/_probe_crit_move.js`).
+
+## Instruments known to lie here
+
+Keep this list; every entry cost a round or a false report.
+
+- **`bench()` chases `shoppers[0]` every trial**, so anything that varies per
+  person is sampled at n=1. A per-person pace multiplier read as a −3.5 regression
+  on one seed and +4.0 on another. Use paired seeds and say which body you got.
+- **`benchTake` carries store state between calls.** The gap FIFO caps at 160, so
+  a run straight after another starts on a partly-shopped shelf: same build, same
+  seed, same difficulty read 0.888 and 0.885 depending on what ran before it.
+- **Any geometry hash on a tab you have been testing in.** A put-back permanently
+  re-poses a facing and swap-and-shrink permutes push order, so the store builder
+  nearly reported "this round moved 40 meshes" off its own test activity. Hash
+  before the first take.
+- **Summing `renderer.info` across a `step()`** gave −305, −247 and −745 draw
+  calls on three identical toggles, with "crowd hidden" reading *higher* than
+  "crowd shown". One explicit render is stable to the call.
+- **Wall-clock frame timers**, repeatedly: a 3x spread on an unchanged build, and
+  a ranged arm timing *below* its own no-op baseline.
+- **A sample of two.** A per-body trait looked like a perfect classifier in both
+  directions at n=2 guilty bodies (`gMean` 1.000 then 0.455; at n=5 it was 0.498
+  vs 0.500). Publish a census of who was armed alongside any population claim.
+
+## Guilt must not be readable, and it keeps becoming readable
+
+The premise is that you cannot tell a thief from a shopper without watching what
+they *do*. Two **perfect** classifiers have been found in consecutive rounds, both
+by measuring distributions rather than by reading code:
+
+- `drift` (a guilty-only state) walked at `thiefWalk * 1.12` where innocents
+  capped at 1.25 — 57.8% of a thief's pre-bolt life above a threshold no innocent
+  ever crossed, zero false positives in 27 minutes.
+- The harassment branch sat inside `else if (!s.guilty)` while the bolt needed
+  `drift` or `stole`, so walking up to someone read out yell = innocent, bolt =
+  guilty, **nothing = a thief who has not stolen yet** — and unlike the other two
+  that probe was free.
+
+Both existed for rounds under passing tests, and in the first case the file
+already carried a comment stating the exact rule it broke, applied to a
+neighbouring state. Rules:
+
+- **Anything an armed body does at a different rate, speed, angle or interval
+  than an unarmed one is this bug.** Sweep distributions per population and report
+  `leakHi` — the share of guilty body-time above the highest value any innocent
+  reached. It should be 0.00%.
+- Do not gate on `s.guilty` to fix an economy. That rebuilds the leak.
+- A published confession (the bolt) is fine. A *free* probe is not.
+
 ## Committing while builders are live
 
 Several commits in this repo were made with `git add -A` while other agents had
