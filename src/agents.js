@@ -5653,6 +5653,23 @@ export function createAgents(THREE, scene, world) {
     // Unreachable before the yell was lifted out; the lift opened it. Found by
     // builder-game-r13, and it never shipped.
     //
+    // MEASURED, on the broken build, rather than reasoned about — and it is
+    // narrower than it first looked, which makes it worse rather than better.
+    // The steal has to COMPLETE inside the 2.6 s of anger to trap the decay, and
+    // fuse + clip crosses 2.6 s at about 0.8 s of remaining fuse:
+    //
+    //   fuse left at the yell   0.3s  0.5s  0.7s | 0.9s  1.1s  1.4s
+    //   frozen afterwards        75%   60%   67% |   0%    0%    0%
+    //
+    // So it is not "any crowding". It is crowding a man in the last second
+    // before he conceals — the exact play the game rewards — and it lands about
+    // two times in three when a player does it on purpose. The residual stuck
+    // anger is only 0.13-0.48, and `if (s.angry > 0) target = 0` does not care
+    // how angry. Rare per crowding, permanent per occurrence.
+    //
+    // IT DID NOT APPEAR IN 80 BENCH SHIFTS. The bots do not crowd a man on his
+    // last second of fuse, so no bench in this repo would have found it.
+    //
     // It stays AFTER the gate rather than before so a body that stays
     // un-concealed keeps round 12's same-frame ordering exactly, and the
     // innocent path is byte-identical.

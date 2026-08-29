@@ -113,6 +113,11 @@ Keep this list; every entry cost a round or a false report.
   "crowd shown". One explicit render is stable to the call.
 - **Wall-clock frame timers**, repeatedly: a 3x spread on an unchanged build, and
   a ranged arm timing *below* its own no-op baseline.
+- **The benches do not play like a player.** A permanent, guilty-only freeze —
+  body pinned at zero speed, unarrestable, wearing a depth-test-off `!` through
+  the shelving — was reachable two times in three by crowding a thief in the last
+  second before he conceals, and appeared in **zero of 80 bench shifts**, because
+  no bot does that. A clean bench is evidence about the bots, not about the game.
 - **A sample of two.** A per-body trait looked like a perfect classifier in both
   directions at n=2 guilty bodies (`gMean` 1.000 then 0.455; at n=5 it was 0.498
   vs 0.500). Publish a census of who was armed alongside any population claim.
