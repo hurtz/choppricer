@@ -304,7 +304,8 @@ export const GESTURES = [
     id: 'jacket', tell: 'decoy', dur: 1.60, item: BOX,
     keys: [
       kf(0.00, { vis: 0, armR: -0.95, armL: -0.95 }),
-      kf(0.22, { vis: 0, armR: -1.70, armL: -1.70, armRz: 0.34, armLz: -0.34, look: 0.55 }),
+      // ROUND 4 — 0.55 -> 0.64. See the shoulder-check ledger over `strap`.
+      kf(0.22, { vis: 0, armR: -1.70, armL: -1.70, armRz: 0.34, armLz: -0.34, look: 0.64 }),
       kf(0.46, { vis: 0, armR: -1.95, armL: -1.95, armRz: 0.10, armLz: -0.10, chest: 0.16 }),
       kf(0.70, { vis: 0, armR: -1.50, armL: -1.50, armRz: 0.40, armLz: -0.40, look: -0.48 }),
       kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16 }),
@@ -349,12 +350,38 @@ export const GESTURES = [
   {
     // PUTTING A COAT BACK ON / SHRUGGING A BAG STRAP UP. Shortest clip in the
     // file, and it is a decoy — see the note at the top about durations.
+    //
+    // ===================================================================
+    // ROUND 4 — THE SHOULDER-CHECK LEDGER, AND WHY THIS CLIP IS NOW THE
+    // LOUDEST HEAD-TURN IN THE FILE.
+    // ===================================================================
+    // A critic swept max |look| per clip and found the one near-miss
+    // classifier left in the set: the three steals ran 0.60-0.72 and the
+    // seven decoys 0.40-0.60. Adjacent, touching at 0.60, ZERO MARGIN — no
+    // threshold separated them today, and any future edit that nudged a
+    // steal up or a decoy down would have made one.
+    //
+    // The cheap insurance is not to quiet the steals (round 6's rule: the
+    // thief's tell does not get louder or quieter to pay for the decoys) —
+    // it is to put a decoy ABOVE the steal maximum, so the innocent range
+    // strictly CONTAINS the guilty one and no threshold in either direction
+    // is a classifier. Two clips move and neither is a steal:
+    //
+    //     0.40 label(D)   0.45 phone(D)   0.50 wallet(D)   0.55 restash(D)
+    //     0.55 putback(P) 0.60 handoff(D) 0.60 concealBag(S)
+    //     0.62 concealPocket(S)  0.64 jacket(D)  0.72 conceal(S)
+    //     0.74 strap(D)   <- the maximum is now an innocent
+    //
+    // 0.74 rad is 42 degrees of neck yaw, which is what looking back at the
+    // strap you are pulling onto your own shoulder actually costs, and it is
+    // well inside the 77 degrees at which this rig hands the turn to the
+    // body. The react clips all sit at 0.66 off heard() and are untouched.
     id: 'strap', tell: 'decoy', dur: 1.65, item: SMALL,
     keys: [
       kf(0.00, { vis: 0, armR: -0.95, armL: -0.95 }),
-      kf(0.26, { vis: 0, armR: -2.25, armRz: 0.52, look: -0.60, chest: 0.10 }),
+      kf(0.26, { vis: 0, armR: -2.25, armRz: 0.52, look: -0.74, chest: 0.10 }),
       kf(0.50, { vis: 0, armR: -2.40, armRz: 0.20, armL: -1.20, chest: 0.18 }),
-      kf(0.76, { vis: 0, armR: -1.60, armRz: 0.44, look: 0.52 }),
+      kf(0.76, { vis: 0, armR: -1.60, armRz: 0.44, look: 0.56 }),
       kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16 }),
     ],
   },

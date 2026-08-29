@@ -212,7 +212,8 @@
 //
 //                                   before          after
 //   cadence at 2.35 m/s          2.477 Hz         1.604 Hz
-//   step length                     474 mm           733 mm
+//   step length, GROUND             474 mm           732 mm
+//   step length, root-local          n/a            704 mm
 //   lateral pelvis travel             0 mm            88 mm
 //   stance-foot skate, foot-flat  (no plant)   heel 44-46, toe 73-75 mm
 //   sole below the tiles          (no ankle)        -7.3 mm
@@ -1366,7 +1367,7 @@ import { makeFrontEnd } from './agents/frontend.js';
 // by parsing them, and a comment in there fails the whole tree.)
 import {
   mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG, KID,
-  SKIN, HAIR, CLOTH, PANTS, COP_KNEE_Y,
+  SKIN, HAIR, CLOTH, PANTS, COP_KNEE_Y, faceCheck, carryCheck,
 } from './agents/figures.js';
 // ROUND 6 — the decoy library. Every reach-with-an-object in the store, guilty
 // and innocent, keyframed in ONE table and sampled by ONE function, so the
@@ -2503,6 +2504,24 @@ const K = {
   get shelfNear()     { return t('shelfNear', 1.05); },
   get shelfFar()      { return t('shelfFar', 1.38); },
   get shelfOdds()     { return t('shelfOdds', 0.82); }, // P(browse at a shelf face)
+  // ---- ROUND 4 (character): HOW SQUARE HE STANDS TO IT --------------------
+  // Radians off the fixture normal, rolled per arrival. NOT a mean and not a
+  // jitter around one: the whole finding this replaces is that a single value
+  // — 0.00 degrees, on 1392 of 1392 samples — is what a body snapped to a
+  // normal looks like, and replacing it with a different single value would be
+  // the same mistake. 0.13-0.72 rad is 7.4 to 41.3 degrees, which brackets both
+  // reference photographs that were measured (ppl_06 ~40 off the meat case,
+  // ppl_09 ~30 off the cooler) and leaves room under them for the body that
+  // really is nearly square without ever landing on it. 0.05 rad is 2.9
+  // degrees: reachable, and thinned by the raised cosine in wanderTarget so it
+  // is a tail rather than a mode.
+  get stanceLo()      { return t('stanceLo', 0.05); },
+  get stanceHi()      { return t('stanceHi', 0.72); },
+  // How much of that residual the SHOULDERS take back off the pelvis. 0.62 puts
+  // the chest 62% of the way from the pelvis's heading to the fixture, i.e. the
+  // trunk twists by 0.62x the approach angle — 4.6 to 25.6 degrees, clamped at
+  // 25 — with the feet keeping the rest. Zero restores round 12's rigid trunk.
+  get stanceTwist()   { return t('stanceTwist', 0.62); },
   // ---- the reach ----------------------------------------------------------
   // Seconds between reaches for a body that is standing at a shelf. Runs on the
   // rig's idle clock, which no state transition can restart — the same
@@ -3607,6 +3626,17 @@ export function createAgents(THREE, scene, world) {
       //            heading the body wants while it is standing still — at a
       //            shelf that is square-on to the fixture.
       visYaw: 0, faceYaw: null, yawRate: 0,
+      //   approach  radians of "not quite square" this body will hold the next
+      //             time it parks at a fixture. Rolled in wanderTarget off the
+      //             shared stream, unconditionally, on both branches.
+      //   faceTwist the signed shoulder-to-pelvis angle that goes with it.
+      //             Written only at the walk -> browse transition and cleared
+      //             on the way out; poseWalk splits it.
+      //   facingFixture  the single owner of "he is standing at a fixture and
+      //             being drawn at faceYaw". Written once a frame in the visYaw
+      //             block; the trunk twist reads it so the two halves of the
+      //             pose cannot disagree.
+      approach: 0, faceTwist: 0, facingFixture: false,
       //   gas      the eased speed target, so a start is a start and not a
       //            teleport. `leanA` is the smoothed body acceleration the
       //            trunk leans on.
@@ -3785,7 +3815,7 @@ export function createAgents(THREE, scene, world) {
     // browser's gap indistinguishable, and putting mine back here would make
     // this file a second owner of that policy. The store builder's note says so
     // in those words.
-    s.visYaw = s.heading; s.cartYaw = s.heading; s.faceYaw = null;
+    s.visYaw = s.heading; s.cartYaw = s.heading; s.faceYaw = null; s.faceTwist = 0;
     s.yawRate = 0; s.turnErr = 0; s.leanA = 0; s.lastAlong = 0; s.shelfSide = 0;
     s.grabT = 0; s.reachTook = false; s.gas = 0; s.reachEl = 0;
     stow(s);
@@ -4576,6 +4606,52 @@ export function createAgents(THREE, scene, world) {
       if (d >= K.shelfNear - 0.24) { x = cx + side * d; sideOut = side; }
     }
     s.shelfSide = sideOut;
+    // ---- ROUND 4 (character): HOW SQUARE, WHICH IS NOT THE SAME QUESTION ---
+    // Round 12 got the bodies off the centre line and against the fixture, and
+    // the metric passed. A critic then measured HOW square, and this round
+    // re-measured it on the population the metric is actually about — the
+    // frames in which a rig is being drawn at `faceYaw`, converged:
+    //
+    //     1392 samples, 12 bodies, ONE distinct value,
+    //     0.00 degrees off the fixture normal at every percentile,
+    //     trunk twist 0.00 degrees at every percentile
+    //
+    // `Math.atan2(shelfSide, 0)` is exactly +-PI/2 and nothing downstream ever
+    // perturbed it. That is a snapped yaw, not a stance, and it is a WORSE
+    // picture than the aisle centre line was: fourteen bodies at 0.000 degrees
+    // reads as a rack of mannequins, and unlike a face it reads at 5-20 m,
+    // which is where this game is actually played. The reference photographs
+    // are unanimous — ppl_06 stands about 40 degrees off the meat case, ppl_09's
+    // green-shirted woman about 30 off the cooler with her hips and shoulders
+    // counter-rotated — and NOBODY in them stands square to a shelf.
+    //
+    // So: one draw, rolled here, kept on the shopper. It is `approach` because
+    // that is what it is physically — you walk up the aisle and turn TOWARD the
+    // fixture, and you stop short of square, because square costs you a quarter
+    // turn you do not need to read a label. The sign is therefore not rolled:
+    // it is which way you came, resolved at arrival in the `walk` case below,
+    // so half the crowd leans one way and half the other for a reason.
+    //
+    // THE DRAW IS UNCONDITIONAL AND THIS FILE'S HEADER IS WHY. `rr` here runs
+    // whether or not the body ended up at a face, on the same line, on both
+    // branches — a rolled call that fires on one branch and not the other walks
+    // the seeded stream and moves every likelihood ratio in the file without
+    // touching a single probability. That has already happened once here
+    // (compliance 32.5% -> 27.5%, LR 1.95 -> 2.33, no probability changed).
+    // GUILT-BLIND by construction: it is one draw off the shared stream, on
+    // every body, and nothing in it reads `s.guilty`.
+    // ONE draw, SHAPED. A flat spread between two limits is not what a crowd
+    // does either: both tails are real but thin — almost nobody stands square
+    // to a shelf, and almost nobody stands side-on to one they are reading.
+    // `t|t|` has zero slope at the middle of its range, and a mapping's density
+    // goes as the RECIPROCAL of its slope, so that is where the mass lands:
+    // half the crowd inside 17-27 degrees, a tenth outside 6.5-38, both ends
+    // reachable, one draw. (The first cut used a raised cosine, whose slope is
+    // zero at the ENDS, and it did the exact opposite — 14% of body-time inside
+    // 5 degrees of square, which is the finding this replaces wearing a
+    // distribution. Measured, not reasoned about: the deciles said so.)
+    const ta = 2 * rr(0, 1) - 1;
+    s.approach = K.stanceLo + (K.stanceHi - K.stanceLo) * (0.5 + 0.5 * ta * Math.abs(ta));
     return { x, z };
   }
 
@@ -5107,7 +5183,19 @@ export function createAgents(THREE, scene, world) {
       feetOk: !!r.feetOk, kneeOk: !!r.kneeOk,
       kneeCutErrMM: cutErr, rootScale: +rootS.toFixed(4),
       unitErrTautology: unitErr,
-      stepM: +S.toFixed(3), cadenceHz: +((v / rootS) / (2 * S)).toFixed(3),
+      // ---- ROUND 4: A LENGTH WITH NO FRAME ON IT IS TWO NUMBERS -----------
+      // `stepM` is ROOT-LOCAL — the solve's own units, 704 mm — and the port's
+      // report and the progress board both quote 733, which is the same walk
+      // measured on the FLOOR (704 x 1.04). Neither is wrong and neither said
+      // which it was, so a critic re-deriving one against the other finds a
+      // 29 mm discrepancy and has no way to tell which number moved. Both are
+      // published now, named, and `stepM` is kept pointing at the local one so
+      // nothing that reads it changes meaning. This is the same class of defect
+      // as gaitUnits()'s original bug one level up: the file had two frames and
+      // one word for them.
+      stepM: +S.toFixed(3),
+      stepLocalM: +S.toFixed(4), stepGroundM: +(S * rootS).toFixed(4),
+      cadenceHz: +((v / rootS) / (2 * S)).toFixed(3),
     };
   }
 
@@ -6267,7 +6355,31 @@ export function createAgents(THREE, scene, world) {
         // keeps its travel heading and nothing else changes.
         if (!dir) {
           s.target = null; s.state = 'browse'; s.timer = rr(1.6, 4.5);
-          s.faceYaw = s.shelfSide ? Math.atan2(s.shelfSide, 0) : null;
+          // ROUND 4 — HE TURNS TOWARD THE FIXTURE AND STOPS SHORT OF SQUARE.
+          // `approach` is the size of the turn he did not make (rolled in
+          // wanderTarget, guilt-blind, one draw); the SIGN is which way he was
+          // walking when he arrived, so a body that came up the aisle from the
+          // south under-rotates the other way from one that came down it. Both
+          // signs occur across the crowd, for a reason, without a second draw.
+          const nrm = s.shelfSide ? Math.atan2(s.shelfSide, 0) : null;
+          if (nrm == null) { s.faceYaw = null; s.faceTwist = 0; }
+          else {
+            let d = nrm - s.heading;
+            while (d > Math.PI) d -= Math.PI * 2;
+            while (d < -Math.PI) d += Math.PI * 2;
+            const turn = d < 0 ? -1 : 1;            // the way he has to come round
+            s.faceYaw = nrm - turn * s.approach;
+            // ...and the trunk does not arrive in one piece. The pelvis keeps
+            // more of the approach than the shoulders do — you turn your chest
+            // to the shelf and leave your feet pointing where you were going —
+            // so hips and chest straddle `faceYaw` instead of both sitting on
+            // it. `faceTwist` is the SHOULDER-TO-PELVIS angle, signed, and
+            // poseWalk splits it. Clamped at the top of comfortable axial
+            // rotation: past about 25 degrees a standing person moves a foot
+            // instead, and a rig that does not have that option just looks
+            // wrung out.
+            s.faceTwist = clamp(turn * s.approach * K.stanceTwist, -0.44, 0.44);
+          }
         }
         break;
       }
@@ -6276,7 +6388,7 @@ export function createAgents(THREE, scene, world) {
         target = 0;
         if (s.timer <= 0) {
           s.state = 'walk'; s.timer = rr(4, 9); s.target = null; s.path = [];
-          s.faceYaw = null;                       // back to facing where he goes
+          s.faceYaw = null; s.faceTwist = 0;      // back to facing where he goes
         }
         break;
       }
@@ -6942,8 +7054,25 @@ export function createAgents(THREE, scene, world) {
     // `roll` is clamped to a TRIM by the caller: used as a bare multiplier on an
     // angle that is already a real anatomical quantity it produced 20 degrees of
     // pelvic rotation, about three times life.
-    r.hips.rotation.y = _G.pelvisY * 0.34 * gait * o.roll;
-    r.chest.rotation.y = -_G.pelvisY * 0.52 * gait * o.roll;
+    // ---- ROUND 4 (character): THE STANDING TWIST GOES IN HERE, NOT LATER ---
+    // `o.twist` is the shoulder-to-pelvis angle a body parked at a shelf holds
+    // (see the `walk` -> `browse` transition). It has to be added at THIS
+    // assignment and nowhere else, because the leg-pivot compensation forty
+    // lines down reads `hips.rotation.y` after it and undoes exactly the foot
+    // drag a pelvic yaw would otherwise cause — 90 mm at 0.2 rad on this
+    // stance. A branch that added it downstream would get a stance twist and a
+    // skating foot, and only one of those is visible.
+    // It fades out with `gait` on the same argument the contrapposto does: a
+    // body that is walking is not holding a twist, it is alternating.
+    // The split is stated in WORLD yaw, because that is what the eye reads and
+    // `chest` is a child of `hips`: the pelvis ends up 0.38 of the twist away
+    // from the fixture and the shoulders 0.62 of it toward it, so the local
+    // chest angle is the whole twist and the local hip angle is minus 0.38 of
+    // it. Writing 0.62 into the chest line directly would have put the
+    // shoulders at 0.24 of the twist, because the pelvis is already under them.
+    const tw = (o.twist || 0) * (1 - gait);
+    r.hips.rotation.y = _G.pelvisY * 0.34 * gait * o.roll - tw * 0.38;
+    r.chest.rotation.y = -_G.pelvisY * 0.52 * gait * o.roll + tw;
     // ---- THE PELVIS LISTS, AND THE BODY GETS OVER EACH FOOT -----------------
     // These two are the brief's "weight transfer, not a slide", and they are
     // where a heavy walk and a lean walk stop being the same animation.
@@ -7042,7 +7171,18 @@ export function createAgents(THREE, scene, world) {
     // browsing shopper ends up square to the shelf instead of facing down the
     // aisle. See wanderTarget.
     {
-      const want = (s.speed < 0.30 && s.faceYaw != null) ? s.faceYaw : s.heading;
+      // ROUND 4 — ONE OWNER FOR "IS HE HOLDING A STANCE AT A FIXTURE". The yaw
+      // and the trunk twist are two halves of one pose and they must agree by
+      // construction, not by both happening to test the same two things: the
+      // first cut passed `twist: s.faceTwist` straight through, and because
+      // `faceTwist` outlives a browse that ends any way except on its own timer
+      // — react, conceal, bolt, leave all leave the state without touching it —
+      // a walking body carried 11% of a stale twist (the `1 - gait` fade is not
+      // 1 - anything at 1.25 m/s) and the crowd's stance drift read 0.0084
+      // against a 0.0080 baseline. Same channel, same rule as CLAUDE.md's.
+      const wantFace = (s.speed < 0.30 && s.faceYaw != null);
+      s.facingFixture = wantFace;
+      const want = wantFace ? s.faceYaw : s.heading;
       let d = want - s.visYaw;
       while (d > Math.PI) d -= Math.PI * 2;
       while (d < -Math.PI) d += Math.PI * 2;
@@ -7187,6 +7327,10 @@ export function createAgents(THREE, scene, world) {
       roll: clamp(P.roll, 0.55, 1.35), listA, swayA,
       toeL: P.toe + r.rest.toeL, toeR: -P.toe + r.rest.toeR,
       restHipZ: r.rest.hipZ, rest0: r.rest0,
+      // ROUND 4 (character) — the standing trunk twist, solved with the pelvis
+      // so the leg-pivot compensation covers it. Zero on everybody who is not
+      // parked at a fixture, and zeroed on the way out of `browse`.
+      twist: s.facingFixture ? (s.faceTwist || 0) : 0,
     });
     // ---- ROUND 12: THE HEAD LEADS THE BODY INTO A TURN ----------------------
     // "The head turns before the body." `turnErr` is exactly how far the body
@@ -10139,6 +10283,14 @@ export function createAgents(THREE, scene, world) {
   {
     const E = exitCheck();
     if (!E.ok && typeof console !== 'undefined') console.warn('[agents] exit band', E);
+    // ROUND 4 (character) — the two figures.js assertions, at the same volume.
+    // faceCheck needs the baked heads AND the baked hair, and carryCheck needs
+    // the baked forearms, so both belong here rather than in the module-level
+    // block: `F` does not exist until buildFigureGeo has run.
+    const FC = faceCheck(THREE, F);
+    if (!FC.ok && typeof console !== 'undefined') console.warn('[agents] face', FC);
+    const CC = carryCheck(F);
+    if (!CC.ok && typeof console !== 'undefined') console.warn('[agents] carry', CC);
   }
 
   return {
@@ -10262,6 +10414,15 @@ export function createAgents(THREE, scene, world) {
     // whether world.takeFacing was actually found at construction, so a report
     // that claims the shelf loses items can be checked rather than believed.
     gaitCheck, benchTake, get stockWired() { return STOCK_OK; },
+    // ROUND 4 (character) — figures.js's two assertions, exposed so a critic
+    // can run them rather than take the boot warning's word for it.
+    //   faceCheck   is every face feature actually on the OUTSIDE of the head,
+    //               under every one of the nine hairstyles? It raycasts the
+    //               baked buffers; it is not a re-derivation of the placement.
+    //   carryCheck  does the fist the carry override derives from SH_ARM still
+    //               land inside the hand shopperHand() bakes?
+    faceCheck: () => faceCheck(THREE, F),
+    carryCheck: () => carryCheck(F),
     // How often a grasp actually finds something, and how far away it was. A
     // miss is ordinary — pallet stacks and cart loads are not takeable and the
     // search will not reach THROUGH a fixture — but a hit rate that collapsed

@@ -1069,6 +1069,87 @@ function copBelly(THREE, S) {
   return mergeParts(THREE, P.L);
 }
 
+// ---------------------------------------------------------------------------
+// A FACE IS MOUNTED ON A BALL, AND THE BALL OWNS WHERE ITS SURFACE IS.
+// ---------------------------------------------------------------------------
+// ROUND 4 (character). A critic raycast the BAKED merged heads — not the source
+// numbers — and found that two of the five things the paragraph below boasts
+// about were inside the primitive they are mounted on. Re-measured here against
+// all fourteen bodies with the HAIR counted as an occluder, which the first
+// pass did not do and which makes it worse, every head kind read:
+//
+//   mouth        0.0% visible, buried 7.9 mm (round/long) to 16.3 mm (heavy)
+//                across its whole 44 mm width. Never seen, by anyone, ever.
+//   nose bridge  4.4% visible, 2.0 mm in
+//   cheekbones   14.1% visible, 8.2 mm in
+//   brow bar     29.3% visible and DEAD ACROSS ITS MIDDLE 66% — it rendered as
+//                two tabs on a forehead, which is worse than nothing
+//   eyes         41.5% visible: the INNER half of each eye is inside the skull,
+//                so they read as two crescents, not two eyes
+//
+// Every one of those was authored as a plausible z next to a plausible radius,
+// one line at a time, and every one of them went wrong the moment the radius
+// beside it moved. `0.078` is not wrong; it is wrong *for a jaw of rz 0.093 at
+// z 0.008*, and nothing in the file said so.
+//
+// So the z stops being authored. `onFace` SOLVES the mount surface and returns
+// where to put the part. What a feature carries now is where it sits ON the
+// face and how far proud it stands — two numbers that stay true when a radius
+// moves — and `faceCheck()` re-derives every one of them at startup and fails
+// loudly if a feature ever goes under again. This is CLAUDE.md's rule about one
+// owner for a derivation, applied to a surface instead of to a constant.
+const ELL = (c, r) => ({ c, r });
+// Front (+Z) surface of E at (x, y). null if (x, y) is off it.
+function surfZ(E, x, y) {
+  const u = (x - E.c[0]) / E.r[0], v = (y - E.c[1]) / E.r[1];
+  const k = 1 - u * u - v * v;
+  return k <= 1e-6 ? null : E.c[2] + E.r[2] * Math.sqrt(k);
+}
+// Outward unit normal of E at the front surface point above (x, y).
+function normOf(E, x, y) {
+  const z = surfZ(E, x, y); if (z == null) return null;
+  const n = [(x - E.c[0]) / (E.r[0] * E.r[0]),
+    (y - E.c[1]) / (E.r[1] * E.r[1]),
+    (z - E.c[2]) / (E.r[2] * E.r[2])];
+  const L = Math.hypot(n[0], n[1], n[2]) || 1;
+  return [n[0] / L, n[1] / L, n[2] / L];
+}
+// Place a part so its local +Z pole stands `proud` metres off E at (x, y),
+// AIMED along the surface normal there. Returns { p, r, n, z } for partList.
+//
+// THE AIM IS NOT DECORATION. A flat 132 mm bar laid across a 104 mm skull is
+// 25 mm proud at its ends when it is flush in the middle — which is exactly how
+// round 10's brow became a visor and round 11's became two tabs, one problem
+// twice. A part sitting on the TANGENT plane is wrong only by the sagitta,
+// w^2/2R, which is 5.6 mm across a 68 mm ridge, and an ellipsoid's ends taper
+// into that error rather than standing on it.
+//
+// THREE's Euler XYZ gives R*(0,0,1) = (sinY, -sinX cosY, cosX cosY), so the aim
+// inverts in closed form and nothing here needs a quaternion.
+// Every feature placed by onFace, per head kind, so faceCheck() can fire a ray
+// at each one instead of being handed a second copy of the coordinates. Filled
+// by shopperHead as it bakes; read only by faceCheck.
+const FACE_PROBES = [[], [], []];
+let FACE_REC = null;
+function onFace(E, x, y, hz, proud, tag) {
+  const z = surfZ(E, x, y); if (z == null) return null;
+  const n = normOf(E, x, y);
+  const d = proud - hz;
+  const ry = Math.asin(Math.max(-1, Math.min(1, n[0])));
+  const rx = Math.atan2(-n[1], n[2] / (Math.cos(ry) || 1e-6));
+  // THE POLE, not the mount point, is what faceCheck fires a ray through. The
+  // part is aimed along the normal, so its front pole is displaced in y as well
+  // as z — up to 2 mm on the mouth, where the jaw normal points down and
+  // forward — and a check that shot at (x, y) and expected surfZ + proud read
+  // 1.4 mm SHORT on four features that are in fact proud. That is a false
+  // negative in the direction of the bug the check exists for, which is the
+  // worst direction available, and it is the reason this is stored rather than
+  // recomputed at the check.
+  const pole = [x + n[0] * proud, y + n[1] * proud, z + n[2] * proud];
+  if (FACE_REC && tag) FACE_REC.push({ tag, E, x, y, proud, pole });
+  return { p: [x + n[0] * d, y + n[1] * d, z + n[2] * d], r: [rx, ry, 0], n, z, proud, pole };
+}
+
 // THREE heads: round, long, and heavy. All three have a jaw, a nose, ears, a
 // brow and eyes, because those five things are the entire difference between
 // "a person seen from 7 m" and "a ball".
@@ -1089,12 +1170,26 @@ function shopperHead(THREE, S, k) {
   const ln = k === 1 ? 1.00 : k === 2 ? 0.90 : 0.90;
   const wd = k === 1 ? 0.94 : k === 2 ? 1.08 : 1.03;
   const jw = k === 2 ? 1.10 : 1.0;                 // jaw relative to the skull
+  // ---- THE TWO MOUNTS ------------------------------------------------------
+  // Declared once. The skull ball, the jaw ball and every feature stuck to
+  // either of them read these and nothing repeats their numbers, which is the
+  // whole point: change `wd` and the eyes move with the cheekbones.
+  const SKULL = ELL([0, h + 0.010, -0.004], [0.100 * wd, 0.108 * ln, 0.104]);
+  const JAW = ELL([0, h - 0.058, 0.008], [0.089 * wd * jw, 0.070 * ln, 0.093 * jw]);
+  FACE_REC = FACE_PROBES[k] = [];
+  // A ball whose front pole stands `proud` off E at (x, y), aimed at the
+  // normal. `rz` is its own depth, so the solve knows how far to set it back.
+  const onBall = (E, x, y, proud, rx, ry, rz, c, o, tag) => {
+    const m = onFace(E, x, y, rz, proud, tag);
+    P.ball(rx, ry, rz, m.p, c, { seg: 8, rseg: 4, ...(o || {}), r: m.r });
+    return m;
+  };
   // The neck. On a heavy body it is 40% thicker and 30 mm shorter, which puts
   // the jaw almost on the collar.
   P.tube(k === 2 ? 0.058 : 0.042, k === 2 ? 0.076 : 0.10,
     [0, h - (k === 2 ? 0.140 : 0.155), -0.006], 0xe0e0e0, { seg: 8 });
-  P.ball(0.100 * wd, 0.108 * ln, 0.104, [0, h + 0.010, -0.004], 0xffffff, { seg: 10, rseg: 7 });
-  P.ball(0.089 * wd * jw, 0.070 * ln, 0.093 * jw, [0, h - 0.058, 0.008], 0xfbfbfb, { seg: 10, rseg: 6 }); // jaw
+  P.ball(SKULL.r[0], SKULL.r[1], SKULL.r[2], SKULL.c, 0xffffff, { seg: 10, rseg: 7 });
+  P.ball(JAW.r[0], JAW.r[1], JAW.r[2], JAW.c, 0xfbfbfb, { seg: 10, rseg: 6 });                  // jaw
   P.ball(0.060 * jw, 0.036, 0.055, [0, h - 0.098, 0.014], 0xf4f4f4, { seg: 8, rseg: 5 });       // chin
   if (k === 2) {
     // Jowls and the soft under-chin. They change the OUTLINE — the jaw line
@@ -1107,21 +1202,77 @@ function shopperHead(THREE, S, k) {
   }
   P.ball(0.028, 0.036, 0.020, [0.099 * wd, h - 0.006, -0.008], 0xf6f6f6, { seg: 6, rseg: 4 });  // ears
   P.ball(0.028, 0.036, 0.020, [-0.099 * wd, h - 0.006, -0.008], 0xf6f6f6, { seg: 6, rseg: 4 });
-  // Cheekbones. Cheap, and they are what stops a face being a smooth egg with
-  // furniture stuck on it at portrait range — but SMALL and set back, because
-  // a ball at the cheek that is proud of the jaw is a mask, not a face.
-  P.ball(0.026, 0.020, 0.020, [0.056 * wd, h + 0.002, 0.052], 0xfcfcfc, { seg: 6, rseg: 4 });
-  P.ball(0.026, 0.020, 0.020, [-0.056 * wd, h + 0.002, 0.052], 0xfcfcfc, { seg: 6, rseg: 4 });
+  // ---- EVERYTHING BELOW IS PLACED BY onFace, NOT BY A TYPED z --------------
+  // The old numbers are kept in the comments, because the interesting thing
+  // about each of them is not that it was wrong but by how little: the mouth
+  // was 8 mm out, and 8 mm is the whole difference between a face and a ball.
+  // These are MULTIPLIERS on a per-person skin colour that spans 0xf7d7b8 to
+  // 0x62402c, so a shadow tone is not a shade, it is a fraction — and the first
+  // cut had the socket at 0xcbb5a8 (0.79x), which on the two darkest bodies in
+  // the roster rendered as a hollow rather than a shadow. 0.85x reads on the
+  // lightest skin and stops short of a skull on the darkest.
+  const EYE = 0x6a5c52, SOCK = 0xd8c6bb, LIP = 0xdca894, LIPDK = 0x9c7264;
+  // Cheekbones. Were at z 0.052 — 8.2 mm inside the skull, 14% visible.
+  for (const s of [1, -1]) {
+    onBall(SKULL, s * 0.056 * wd, h + 0.002, 0.004, 0.028, 0.020, 0.016, 0xfcfcfc,
+      null, s > 0 ? 'cheekL' : 'cheekR');
+  }
   P.ball(0.021, 0.026, 0.026, [0, h - 0.012, 0.086], 0xffffff, { seg: 6, rseg: 5 });            // nose
-  P.box(0.020, 0.026, 0.030, [0, h + 0.020, 0.078], 0xfafafa);                                  // bridge
-  // The brow. Round 10's was 24 mm proud at the same z as the eyes, so from the
-  // front it was a visor with two dark slots under it and every face in the
-  // store was scowling. Half the projection, tucked 8 mm back, and the eyes
-  // come out from under it.
-  P.box(0.132, 0.014, 0.016, [0, h + 0.048, 0.070], 0xf4f4f4, { r: [-0.10, 0, 0] });
-  P.ball(0.024, 0.013, 0.011, [0.040, h + 0.026, 0.079], 0x6a5c52, { seg: 6, rseg: 4 });        // eyes
-  P.ball(0.024, 0.013, 0.011, [-0.040, h + 0.026, 0.079], 0x6a5c52, { seg: 6, rseg: 4 });
-  P.box(0.044, 0.008, 0.012, [0, h - 0.070, 0.078], 0xd8a494);                                  // mouth
+  // Nostrils. New, and they are the cheapest mark on this face: two dots under
+  // the tip that survive to about 30 px because they are VALUE, not shape.
+  for (const s of [1, -1]) {
+    P.ball(0.0075, 0.006, 0.008, [s * 0.014, h - 0.026, 0.094], 0xb08c7c, { seg: 6, rseg: 3 });
+  }
+  // Bridge. Was a box at z 0.078 — 2 mm in, 4.4% visible.
+  {
+    const m = onFace(SKULL, 0, h + 0.020, 0.015, 0.003, 'bridge');
+    P.box(0.020, 0.030, 0.030, m.p, 0xfafafa, { r: m.r });
+  }
+  // ---- THE BROW, WHICH IS TWO RIDGES AND NOT A BAR ------------------------
+  // Round 10's bar was 24 mm proud at the eyes' own z, so it read as a visor
+  // and everybody scowled. Round 11 halved the projection and tucked it 8 mm
+  // back, which put its middle two thirds INSIDE the skull — the same bar, now
+  // rendering as two tabs. A bar was never the right primitive: a supraorbital
+  // ridge is two arcs over two eyes with a dip at the glabella between them,
+  // and two arcs placed on the surface cannot go under it whatever the skull
+  // does next. 6 mm proud over the eye, tapering to flush at each end.
+  for (const s of [1, -1]) {
+    onBall(SKULL, s * 0.043, h + 0.046, 0.006, 0.036, 0.011, 0.012, 0xf4f4f4,
+      { seg: 8, rseg: 4 }, s > 0 ? 'browL' : 'browR');
+  }
+  onBall(SKULL, 0, h + 0.041, 0.005, 0.013, 0.012, 0.010, 0xf6f6f6,
+    { seg: 8, rseg: 4 }, 'glabella');
+  // ---- THE EYES, AND THE SOCKET THAT IS WORTH MORE THAN THEY ARE ----------
+  // At 3.2 m — the range at which this game prints GET OUT OF HIS FACE — the
+  // head is 48 px and an eye is 4. Nothing at that size reads by its SHAPE; it
+  // reads by its VALUE. So the eye gets a socket: a shadow-toned patch on the
+  // surface, wider than the eye and reaching under it, with the eye standing
+  // 3.5 mm proud of that. The socket is the mark you can see from across the
+  // store and the eye is what it resolves into when you are close.
+  for (const s of [1, -1]) {
+    onBall(SKULL, s * 0.041, h + 0.024, 0.0015, 0.030, 0.017, 0.010, SOCK,
+      { seg: 8, rseg: 4 }, s > 0 ? 'sockL' : 'sockR');
+    onBall(SKULL, s * 0.040, h + 0.026, 0.005, 0.023, 0.012, 0.009, EYE,
+      { seg: 8, rseg: 4 }, s > 0 ? 'eyeL' : 'eyeR');
+  }
+  // ---- THE MOUTH, WHICH DID NOT EXIST ------------------------------------
+  // Was a 44x8x12 box at z 0.078 with the jaw's surface at 0.0993 — 7.9 mm
+  // under it on the round head, 16.3 mm on the heavy one, 0.0% visible on all
+  // fourteen bodies at every range. Three parts now, all solved off JAW: the
+  // aperture (dark, and it is the part that reads), a lower lip that catches
+  // light under it, and a thinner upper lip. 44 mm is 10 px at 3.2 m, which is
+  // enough for one dark mark and not enough for two, so the aperture is the one
+  // carrying the read and the lips are what it resolves into up close.
+  // `proud` is against the IDEAL jaw and the bake is a 8x4 sphere, so the facet
+  // chord eats about 0.6 mm of it — faceCheck read these four 1.1-1.6 mm short
+  // at proud 0.0015-0.0035 and it was right to: a mouth that is analytically
+  // 1.5 mm out and tessellated 0.9 mm in is a mouth you cannot see. The numbers
+  // below carry the sag rather than pretending it away, and the check is left
+  // measuring the DRAWN surface against the ideal pole so it keeps saying so.
+  onBall(JAW, 0, h - 0.070, 0.0050, 0.023, 0.0045, 0.008, LIPDK, { seg: 8, rseg: 4 }, 'mouth');
+  onBall(JAW, 0, h - 0.080, 0.0050, 0.019, 0.008, 0.008, LIP, { seg: 8, rseg: 4 }, 'lipLo');
+  onBall(JAW, 0, h - 0.062, 0.0035, 0.020, 0.006, 0.007, LIP, { seg: 8, rseg: 4 }, 'lipUp');
+  FACE_REC = null;
   return mergeParts(THREE, P.L);
 }
 
@@ -1130,7 +1281,20 @@ function shopperHead(THREE, S, k) {
 function shopperHair(THREE, S, k) {
   const P = partList(THREE, S);
   const h = FIG.headY;
-  const cap = (ry, y, z) => P.ball(0.106, ry, 0.110, [0, y, z], 0xffffff, { seg: 10, rseg: 6 });
+  // ---- ROUND 4 (character): THERE IS A HAIRLINE NOW ----------------------
+  // The dome was centred at z -0.008 with rz 0.110 against a skull of rz 0.104
+  // at z -0.004, so it stood 4-6 mm PROUD OF THE SKULL AT EYE HEIGHT: eight of
+  // the nine styles came down over the brow and onto the eyes, and the raycast
+  // said so — brow visibility fell 42% bare to 29% dressed and the eyes 55% to
+  // 38% on the same bodies. Pulling the centre back 10 mm puts the hair BEHIND
+  // the skull everywhere below y = h+0.070 and leaves it proud above, so the
+  // crossover IS the hairline and there is 44 mm of forehead over the brow.
+  // Costs nothing at the back — the dome ends 20 mm behind the skull instead of
+  // 10, which is more hair volume, not less — and the top and sides are the
+  // same numbers they were.
+  const CAP_Z = -0.010;
+  const cap = (ry, y, z) => P.ball(0.106, ry, 0.110, [0, y, z + CAP_Z], 0xffffff,
+    { seg: 10, rseg: 6 });
   if (k === 0) {                                  // short back and sides
     cap(0.086, h + 0.028, -0.008);
     P.box(0.016, 0.040, 0.030, [0.093, h + 0.002, 0.000], 0xf0f0f0);
@@ -1158,8 +1322,21 @@ function shopperHair(THREE, S, k) {
     cap(0.090, h + 0.026, -0.008);
     P.ball(0.052, 0.048, 0.050, [0, h + 0.048, -0.098], 0xf6f6f6, { seg: 8, rseg: 6 });
   } else if (k === 5) {                            // beanie / ballcap wearer
+    // ---- ROUND 4: IT WAS A BOWLER ----------------------------------------
+    // A 150 mm half-disc pitched 0.24 rad and hung at y = h+0.036 — 10 mm ABOVE
+    // THE EYE LINE — on a head 200 mm wide. Its leading edge swept down to
+    // y = h+0.000 at z 0.176, i.e. straight across the face, and the raycast
+    // over the four bodies that rolled this style read eyes 8.1% visible and
+    // NOSE 56.6% against 88% on everybody else. In the plate it is a black disc
+    // with a chin under it. This is the identical mistake the cop round found
+    // on HIM and wrote up at length ("0.32 put the brim across his eye line and
+    // he had no face at all"); the fix is his, one storey down. The brim goes
+    // up to h+0.082 — above the brow ridge, not above the eye — the radius
+    // comes in to 0.140, the pitch to 0.20, and it keeps the 3-degree roll that
+    // stops a brim reading as new. Leading edge now at y = h+0.054, which is
+    // clear of the brow by 8 mm.
     cap(0.098, h + 0.030, -0.006);
-    P.half(0.150, 0.014, [0, h + 0.036, 0.030], 0xbdbdbd, { r: [0.24, 0, 0], seg: 12 });
+    P.half(0.140, 0.013, [0, h + 0.082, 0.026], 0xbdbdbd, { r: [0.20, 0, 0.05], seg: 12 });
   } else if (k === 6) {
     // ROUND 9 — PONYTAIL. Added for one reason and it is a CCTV reason: at
     // 214x120 a head is four pixels of dark on top of a light torso, and every
@@ -1180,7 +1357,10 @@ function shopperHair(THREE, S, k) {
     // down one shoulder is the cheapest asymmetric silhouette in the file: it
     // survives at monitor scale because it makes the dark blob on top of the
     // body lopsided, which no round blob ever is.
-    P.ball(0.104, 0.088, 0.108, [0.008, h + 0.030, -0.008], 0xffffff, { seg: 10, rseg: 6 });
+    // (round 4: the same -10 mm the shared `cap` took, for the same reason —
+    // this style rolls its own dome and would otherwise be the one person in
+    // the store with no forehead.)
+    P.ball(0.104, 0.088, 0.108, [0.008, h + 0.030, -0.018], 0xffffff, { seg: 10, rseg: 6 });
     // The volume over the parting. It sits BEHIND the hairline: the first cut
     // put it at z +0.016 with 74 mm of depth, which reaches z 0.090 — and the
     // nose is at 0.086. Every person who rolled this style had no face at all.
@@ -2811,6 +2991,116 @@ export function buildFigureGeo(THREE) {
     BUILDS,
   };
   return F;
+}
+
+// ===========================================================================
+// TWO ASSERTIONS, BOTH OF THE lungCheck() SHAPE: two derivations of one fact,
+// made to say so out loud rather than agreeing by coincidence.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// faceCheck(THREE, F) — IS THE FACE ON THE OUTSIDE OF THE HEAD?
+// ---------------------------------------------------------------------------
+// The bug this exists for shipped for four rounds behind prose claiming the
+// opposite ("all three have a jaw, a nose, ears, a brow and eyes"), and no
+// numeric check could have found it, because every number in the file was
+// individually reasonable. What finds it is a RAY: fire one down -Z through
+// each feature's own mount point and ask what the frontmost surface is.
+//
+// WHAT INPUT TURNS THIS RED, since AGENTS_BRIEF says to be able to name one:
+// move a mouth back 4 mm; grow the jaw radius; drop a fringe over an eye. The
+// last is not hypothetical — it is how the ballcap brim covered four bodies'
+// faces for eleven rounds, and it is why the hair is in the loop rather than
+// only the head.
+//
+// It re-derives against the BAKED buffer. onFace() computed where to put each
+// feature; this asks the merged geometry, which is a different object arrived
+// at by a different route, whether the feature ended up in front.
+export function faceCheck(THREE, F) {
+  const bad = [], rows = [];
+  const rc = new THREE.Raycaster();
+  const dir = new THREE.Vector3(0, 0, -1), org = new THREE.Vector3();
+  const mat = new THREE.MeshBasicMaterial({ side: THREE.FrontSide });
+  const meshOf = (g) => { const m = new THREE.Mesh(g, mat); m.updateMatrixWorld(); return m; };
+  for (let k = 0; k < FACE_PROBES.length; k++) {
+    const probes = FACE_PROBES[k];
+    if (!probes || !probes.length) { bad.push('head ' + k + ' registered no face probes'); continue; }
+    const head = meshOf(F.head[k]);
+    for (let j = 0; j < F.hair.length; j++) {
+      const targets = [head, meshOf(F.hair[j])];
+      for (const q of probes) {
+        org.set(q.pole[0], q.pole[1], 1.0);
+        rc.set(org, dir);
+        const hit = rc.intersectObjects(targets, false)[0];
+        // Where the FEATURE's own front pole ended up, from the mount solve.
+        const want = q.pole[2];
+        const got = hit ? hit.point.z : -1;
+        const mm = +((got - want) * 1000).toFixed(2);
+        if (mm < -0.6) {
+          bad.push('head ' + k + ' hair ' + j + ': ' + q.tag + ' is ' + (-mm).toFixed(1)
+            + ' mm inside whatever is in front of it. A feature is placed by onFace() '
+            + 'and something else — the skull, the jaw, or a fringe — is nearer the '
+            + 'camera at its own mount point.');
+        }
+        rows.push({ head: k, hair: j, tag: q.tag, mm });
+      }
+    }
+  }
+  const worst = rows.reduce((a, r) => (r.mm < a.mm ? r : a), rows[0] || { mm: 0 });
+  return { ok: bad.length === 0, bad, n: rows.length, worstMM: worst.mm, worstAt: worst,
+    // A feature that is exactly flush is as invisible as one that is buried, so
+    // the number to watch is the MINIMUM, not the mean.
+    minProudMM: +Math.min(...rows.map((r) => r.mm)).toFixed(2) };
+}
+
+// ---------------------------------------------------------------------------
+// carryCheck(F) — THE ASSERTION ROUND 3 NAMED AND DID NOT WRITE.
+// ---------------------------------------------------------------------------
+// makePerson's `carry` group overrides updateMatrixWorld and re-derives the
+// fist from SH_ARM: `B.fore.at(0.986)`, scaled by the arm pivot's own scale.
+// That is a SECOND copy of where the hand is — the first is the hand that
+// shopperHand() bakes into the forearm buffer — and round 3's own note said so
+// and left it: "if someone moves the hand without moving B.fore.at(0.986) the
+// basket detaches silently." Silently is the word that matters. Nothing on
+// screen would look broken; a basket would simply hang 40 mm off a fist, on two
+// or three bodies, and only while they are carrying.
+//
+// So: take the derived point and ask the BAKED FOREARM whether there is any
+// hand there. Nearest vertex, in the geometry's own frame, over every forearm
+// bake a shopper can be given.
+//
+// WHAT TURNS IT RED: move `fing()`'s t0 values, move SH_ARM's fingertip, change
+// ELB_F, or change 0.986. Any one of those moves one of the two numbers and not
+// the other, which is exactly the failure it is guarding.
+export function carryCheck(F) {
+  const bad = [], rows = [];
+  for (const side of [1, -1]) {
+    const B = SH_ARM(side);
+    const h = B.fore.at(0.986);
+    for (let long = 0; long < 2; long++) {
+      // makePerson hangs the bag off armL when bag.side > 0 and armR otherwise,
+      // and both of those are `fore[sleeve][side>0?0:1]`.
+      const g = F.fore[long][side > 0 ? 0 : 1];
+      const pos = g.attributes.position;
+      let best = 1e9, bi = -1;
+      for (let i = 0; i < pos.count; i++) {
+        const d = Math.hypot(pos.getX(i) - h[0], pos.getY(i) - h[1], pos.getZ(i) - h[2]);
+        if (d < best) { best = d; bi = i; }
+      }
+      const mm = +(best * 1000).toFixed(2);
+      rows.push({ side, long, mm, at: [+h[0].toFixed(4), +h[1].toFixed(4), +h[2].toFixed(4)] });
+      // 30 mm is half a fist. Inside that the point is in the hand; outside it,
+      // the two derivations have parted company.
+      if (mm > 30) {
+        bad.push('carry: the fist SH_ARM(' + side + ').fore.at(0.986) derives is ' + mm
+          + ' mm from the nearest vertex of the forearm bake it is supposed to be '
+          + 'inside (sleeve ' + (long ? 'long' : 'short') + '). Either shopperHand moved '
+          + 'or 0.986 did. makePerson\'s carry override will hang the basket in mid air.');
+      }
+    }
+  }
+  return { ok: bad.length === 0, bad, rows,
+    worstMM: rows.reduce((a, r) => Math.max(a, r.mm), 0) };
 }
 
 // ===========================================================================

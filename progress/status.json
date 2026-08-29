@@ -2,7 +2,7 @@
  "pieces": {
   "store": {
    "round": 30,
-   "state": "gap",
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -383,6 +383,11 @@
      "round": 30,
      "path": "../shots/_r30_critic_gap_product_ink.png",
      "t": 1787935306.4308338
+    },
+    {
+     "round": 12,
+     "path": "../shots/b18_gap.png",
+     "t": 1787954574.679434
     }
    ],
    "gaps": [
@@ -559,8 +564,8 @@
      "text": "The product wall carries no saturated ink and the promo tags do, which is the inverse of a real store. Product-face boxes only, identical on-screen scale: render f_sat(C* over 45) 0.039 and 0.021 against photographs at 0.290 and 0.178 - an order of magnitude, separating 6 of 7 photos from all 7 renders."
     }
    ],
-   "updated": 1787935422.287162,
-   "note": "THE FIRST NON-SATURATING PERCEPT TEST, AND IT WORKED. Pre-registered a three-level criterion in writing before cutting a tile and got exactly it: OFF 4/4 NONE, ON 4/4 SHORT, CATCH 8/10 FULL, 16 of 18 three-way at p 1.7e-6, with ON and PHOTOGRAPH refusing to collapse at Fisher p 0.015. A three-level criterion measures the remaining gap instead of announcing a pass, and it says two things a two-level test cannot - the change is visible AND it is still short of a photograph. ROUND 30'S MOVES-BUT-DOES-NOT-CLOSE IS HONEST, verified against the exact difference mask: floor C* plus 2.89 / 1.30 / 0.72 / 0.53, rms chroma modulation 2.46 to 6.22. BUT THE CLOSURE CLAIM IS UNFALSIFIABLE ANYWAY - eight reference floors span C* 8.61 to 25.69 at sd 5.65 against an effect of 1.36, which is 0.24 sd, and two real store floors sit BELOW the render's OFF value. AND THE FINDING THAT MATTERS MOST: floor chroma appeared in ZERO of its twelve first-glance calls. Rounds 28, 29 and 30 were all floor rounds, all three fixed real defects, and none of them touched what a blind scorer actually calls on. Each round's cue was handed down as the previous critic's NAMED GAP rather than its FIRST-GLANCE REASON, and only one of those predicts the score. It also published eight failed statistics including two that killed its own hypothesis, and found its hand-placed boxes had given the wrong SIGN until a difference mask corrected them.",
+   "updated": 1787955349.549458,
+   "note": "takeFacing lands: 8,782 facings, swap-and-shrink so a gap is a real hole, 0.96us a take. The cooler stops selling oatmeal (25 of 35 facings in GRAB & GO were peanuts, popcorn and oatmeal) and auditing that found three more routes to the same bug. Follow-up r12b: the radius argument was silently clamped to 0.75m, so the documented contract and one line disagreed with nothing able to notice \u2014 same shape as bargeDump. Fixed with an expanding-shell search that is faster at every radius.",
    "gap": "The product wall carries no saturated ink and the promo tags do, which is the inverse of a real store. Product-face boxes only, identical on-screen scale: render f_sat(C* over 45) 0.039 and 0.021 against photographs at 0.290 and 0.178 - an order of magnitude, separating 6 of 7 photos from all 7 renders.",
    "verdict": "12/12 render-recall, ON 6/6 and OFF 6/6, total 39/39 at p 1.8e-12. Thirtieth round at ceiling, and no leak needed - every render called on content."
   },
@@ -925,7 +930,7 @@
   },
   "game": {
    "round": 21,
-   "state": "critiquing",
+   "state": "passed",
    "shots": [
     {
      "round": 0,
@@ -1081,6 +1086,11 @@
      "round": 21,
      "path": "../shots/r21_crop_final_r21.png",
      "t": 1787894885.992896
+    },
+    {
+     "round": 13,
+     "path": "../shots/game_r13.png",
+     "t": 1787975165.275936
     }
    ],
    "gaps": [
@@ -1141,8 +1151,8 @@
      "text": "The top band eats the mans head at exactly the gap the chase is decided, and the argument for leaving it is refuted by the rounds own population. The band is hud.js:1439 at 0,0,1280,52 and it is now the largest occluder of a man you can actually see. Measured: at 4.50m on CONTACT it covers 23.0 pct of him and all that renders below it is his legs and torso, with the tight pursuit panel correctly dodged to 10,62,340,134 taking 5.5 pct - shots/r20c_topband.png and the crop shots/r20c_crop_topband.png. At 3.86m it covers 67.1 pct. Across 613 matched frames it fires on 10, worst 25.2 pct, and the gaps it fires at are 2.25, 2.32, 2.77, 2.93, 5.44, 5.51, 5.57, 5.62, 5.66m - the worst three are ALL at 5.4 to 5.7m. The rounds stated reason for not touching it is that a man whose head is off the top of the screen is a man you are on top of. That is false where it matters: round 16s hand-played chases oscillated 3.3 to 5.0m and ended at 4.41 / 4.71 / 8.05m, so 4.5 and 5.6m is the losing-gap band, not point blank, and on those frames vis is 1.0 - he is entirely on canvas, the band is simply drawn over him. The band is 52px of title strip carrying REC, a store name and a clock, none of which changes during a chase; the panel below it already proved a 330px slot and a side flip are affordable. The same lever - yield to the man - has not been applied to the one element that now costs him his head."
     }
    ],
-   "updated": 1787894995.811924,
-   "note": "LEAD VERIFICATION OF ROUND 21, independent of the builder report. Build boots clean, 14 shoppers, 75 colliders, empty error console, and hud.bands / hud.bandCheck / hud.subjCheck are all live on the api. THE LANDMINE IS GENUINELY DISARMED, checked directly rather than taken on trust: hud.bands('r17') and hud.bands('r21') both return, and hud.bands('r99_nonexistent') THROWS with 'unknown layout - one of r15, r16, r17, r21'. That matters because every layout gate in the file was BANDS === 'r17', so shipping the new name would have made pursuitRect fall through to the WIDE rectangle and silently undo round 20's entire fix, with no error and a passing parse. THE ROUND ALSO REFUTED PART OF ITS OWN GAP BEFORE FIXING IT, which is the standard here: coveredFrac divided by the CLIPPED box, so a man 90% off an edge had a denominator a tenth of himself and the three worst band frames read 98.3/100/100 at vis 0.263/0.116/0.009 - the band standing on his last three pixels. Corrected to divide by the whole silhouette those become 25.9/11.6/0.9 and the band is 9% of chrome not 30%. AND THE GAP SURVIVED THE CORRECTION: at vis >= 0.90 on CONTACT the band still took 23.2% of him at 4.34 m against the critic independently hunted 23.0% at 4.50 m. A round that had only done the first half would have closed a real gap by redefinition. Band mean now 0.44 to 0.01, worst 16.1 to 2.6, 0 of 597 frames worse. Standing gap handed forward: the WIND panel, 65% of corrected chrome, worst 30.6% of a fully visible man at 2.85 m.",
+   "updated": 1787975311.506424,
+   "note": "Walk-up leak closed: the 'nothing happens' cell no longer exists in either population, 68/68 reached in both ambiguous arms, every cell identical to the digit, positive control unmoved. Before, the cop could stand 0.80m from an un-concealed thief for 7.4s and the body would never look up. Found a WORSE leak in its own file on the way: BEHAVIOUR_GUILTY_PRE identified a cold thief with certainty on 68-73% of lines above one, LR 5265-5695, free, from the desk \u2014 and armThief cleared r.trap so P(flagged|cold) was 0.0% against 13-14% for innocents, the same tell sign-flipped. annHuff measured and LEFT IN with the number. Economy needed no repricing: a four-seed sweep shows a 23.7-point spread on one unchanged build, larger than the build difference.",
    "gap": "The top band eats the mans head at exactly the gap the chase is decided, and the argument for leaving it is refuted by the rounds own population. The band is hud.js:1439 at 0,0,1280,52 and it is now the largest occluder of a man you can actually see. Measured: at 4.50m on CONTACT it covers 23.0 pct of him and all that renders below it is his legs and torso, with the tight pursuit panel correctly dodged to 10,62,340,134 taking 5.5 pct - shots/r20c_topband.png and the crop shots/r20c_crop_topband.png. At 3.86m it covers 67.1 pct. Across 613 matched frames it fires on 10, worst 25.2 pct, and the gaps it fires at are 2.25, 2.32, 2.77, 2.93, 5.44, 5.51, 5.57, 5.62, 5.66m - the worst three are ALL at 5.4 to 5.7m. The rounds stated reason for not touching it is that a man whose head is off the top of the screen is a man you are on top of. That is false where it matters: round 16s hand-played chases oscillated 3.3 to 5.0m and ended at 4.41 / 4.71 / 8.05m, so 4.5 and 5.6m is the losing-gap band, not point blank, and on those frames vis is 1.0 - he is entirely on canvas, the band is simply drawn over him. The band is 52px of title strip carrying REC, a store name and a clock, none of which changes during a chase; the panel below it already proved a 330px slot and a side flip are affordable. The same lever - yield to the man - has not been applied to the one element that now costs him his head.",
    "verdict": "The round did what it said. Both sweeps reproduce independently: panel-on-man >=20 pct goes to zero, worst frame 56 -> 6, nothing gets worse on any of 613 frames, and the relative guard fires in all three directions rather than passing vacuously. Do not undo it. But it stopped one element short of its own conclusion, and it shipped two defects of the class it cites: a live 47px overprint in the new tight panels foot row (YOU 40m painted through by NO CUT - RUN HIM DOWN, reproduced deterministically) and a subject label typeset off the top of the canvas on 6.8 pct of chase frames because rowFree treats space that does not exist as free. And the play claim it refused to make is now made: in three hand-played chases at gaps of 1.79 to 6.20m the pursuit panel never covered any part of the man, so the defect it fixed is real but rare - 16 of 613 frames, 2.6 pct - while the top band, which it measured and left, takes his head at 4.5m."
   },
@@ -1154,11 +1164,16 @@
      "round": 1,
      "path": "../shots/cop_r1_chase.png",
      "t": 1787498932.7217238
+    },
+    {
+     "round": 1,
+     "path": "../shots/cop_r1_ab.png",
+     "t": 1787978989.052431
     }
    ],
    "gaps": [],
-   "updated": 1787523796.713137,
-   "note": "Chase distribution byte-identical: cut off0 77.0%, median 6.22s, catchUnder1s 11.7%, camper 27.0% with 70/100 ditched, ration 77.0 vs always-sprint 53.0, lungCheck passing. Two mistakes worth knowing: brim pitch must be set AGAINST stoop (0.32 on a head already tipped forward erased his eyes), and face-texture marks are magnified by the head rather than the atlas cell, so 1.4px stubble at 0.30 alpha arrives as mud splashes.",
+   "updated": 1787982235.300234,
+   "note": "Ported onto the shared solve: cadence 2.477 -> 1.604 Hz, step 474 -> 733mm, lateral pelvis 0 -> 87.8mm, a real two-bone knee where the comment admitted 'the knee-less leg fakes that with a kick'. His foot had swept backwards at 0.938v^2 = 5.18 m/s under a body doing 2.35; there was exactly one speed at which he did not skate, 1.066 m/s, and his walk is 2.35 and his gassed walk 1.46. Never at it, in any build. The huff phase-locks to the footfall once he is moving and blown (phase-error SD 0.000 rad vs 1.805 fresh) and releases the instant he stops.",
    "verdict": "PASS at both scales. The gut HANGS: apex 88mm proud and 60mm above the strap, and the ring the belt rides on is narrower than the belt so the strap disappears underneath him. At 214x120 the light band goes from a rectangle to a PEAR - widest at the bottom with the belt as a dark notch UNDER it rather than a stripe through the middle. That is the hang, at 20 pixels. Budget: 13 meshes, 3 materials, one 512px atlas - ALL unchanged. 7,032 -> 7,816 tris (+11%), no new draw call, no new texture."
   },
   "audio": {
@@ -1234,25 +1249,365 @@
    "state": "passed",
    "shots": [],
    "gaps": [],
-   "updated": 1787952060.685815,
-   "note": "People blind set: tools/people_blindset.py + C.snapPeople() + a JSON sidecar sink on the server. Cropping is unavoidable for people (a whole 1280x720 frame of this store is mostly store), so five of the eight leaks in the store harness reopen. Render boxes are projected from agent world positions, so nobody chooses which shopper looks good; photo boxes are annotated by hand and the file says so. Scale is normalised: a 900px photographed person against a 60px render is a test of resolution, not craft."
+   "updated": 1787955349.5864131,
+   "note": "snapPeople verified end-to-end against a live page: PNG plus a sidecar box per body, boxes land on bodies. First two attempts cropped shelving \u2014 both times the POSE was inside a fixture, not the projection. Use the canonical aniso.js POSES rather than deriving a camera from a shopper position."
   },
   "figures": {
-   "round": 1,
+   "round": 4,
    "state": "building",
    "shots": [
     {
      "round": 1,
      "path": "../shots/figures_r1.png",
      "t": 1787954092.370202
+    },
+    {
+     "round": 1,
+     "path": "../shots/crit_r1_gap_no_shoulder.png",
+     "t": 1787955693.279916
+    },
+    {
+     "round": 2,
+     "path": "../shots/figures_r2.png",
+     "t": 1787963953.265353
+    },
+    {
+     "round": 3,
+     "path": "../shots/f3a_cop_arms.png",
+     "t": 1787989060.051174
+    },
+    {
+     "round": 3,
+     "path": "../shots/figures_r3.png",
+     "t": 1787989897.4807758
+    },
+    {
+     "round": 4,
+     "path": "../shots/figures_r4.png",
+     "t": 1787995258.256692
     }
    ],
-   "gaps": [],
-   "updated": 1787954092.370199,
-   "note": "BODIES. Shopper torso is now ONE LOFTED SURFACE (belly in the surface, no pasted sphere, no tyre-stack seams); 6 builds incl. a pear (sh/hp 0.94 vs reg 1.19); arms rebuilt to real anthropometry (deltoid was 172mm across on a 1.65m person, now 100mm); leg taper was INVERTED (widest at the knee) which is what opened the crotch gap; per-instance leg-fraction-of-stature 0.487-0.548, decoupled torso width/depth, arm length/thickness, stance width, neck length + forward-head, head size; contrapposto + independent per-foot toe and per-arm splay (nothing was asymmetric before); basket carry that leans the body. Bench BYTE-IDENTICAL before/after at difficulty=1 n=200 (catch 64/90). LR(putback) 1.93, LR(bird|armed) 0.80/0.78 \u2014 unchanged to the digit. Crowd cost 165->159 draw calls, 42624->44896 tris by within-run toggle."
+   "gaps": [
+    {
+     "round": 1,
+     "text": "The shoulder is not the widest point of the upper body on any of the 14 bodies, and the arms are why: hide them and the lofted trunk measures 0.81-0.93 chest/shoulder (a person is ~0.75); put them back and it inverts to 1.07-1.31."
+    },
+    {
+     "round": 1,
+     "text": "The shoulder is not the widest point: width(0.70S)/width(0.80S) is 1.07-1.31 on 13 of 14 bodies where a real person is 0.75. Every body is a skittle."
+    }
+   ],
+   "updated": 1787995258.25669,
+   "note": "CHARACTER r4. Both findings taken, and both were worse than reported.\n\nONE - THE FACE. Raycast against the BAKED merged geometry, all 14 bodies, with the HAIR counted as an occluder (the critic's pass did not, and it changes the answer). BEFORE, model mm, hair in:\n  mouth   0.0% visible on 14 of 14, buried 7.9 (round/long) to 16.3 mm (heavy). Never seen, at any range, by anyone.\n  brow    22.1-43.2% visible and DEAD ACROSS ITS MIDDLE 46-71% of columns - two tabs on a forehead, not a brow.\n  eyes    8.1-62.1%: the INNER half of each eye is inside the skull, so they read as two crescents.\n  bridge  4.4%, 2.0 mm in.   cheekbones 14.1%, 8.2 mm in.   chin 12.2%, 18.5 mm in.\nIt was not two features. Every mounted feature on the front of the head was inside the ball it was mounted on.\nTWO THINGS THE CRITIC MISSED, both found by putting the hair in the ray: (a) the shared hair dome sat 4-6 mm PROUD OF THE SKULL AT EYE HEIGHT on 8 of 9 styles, so hair came down over the brow and onto the eyes - brow 42% bare fell to 29% dressed; (b) the ballcap brim (hairStyle 5, 4 of 14 bodies) is a 150 mm half-disc hung at h+0.036, TEN MM ABOVE THE EYE LINE, sweeping to y=h+0.000 at z 0.176 - straight across the face. Those four bodies read eyes 8.1% and NOSE 56.6% against 88% on everyone else. In the plate it is a bowler hat with a chin under it. It is the identical mistake the cop round found on HIM, wrote up at length, and fixed only on him.\nFIX, and it is structural rather than a z-shift: the skull and jaw are declared once as ellipsoids and onFace() SOLVES where a feature goes - two coordinates on the face plus how far proud, instead of a hand-typed z that goes stale the moment a radius moves. Features are AIMED along the surface normal (a flat 132 mm bar on a 104 mm skull is 25 mm proud at its ends when flush in the middle; that is round 10's visor and round 11's two tabs, one problem twice). Brow is two supraorbital ridges plus a glabella, not a bar. Eyes get a SOCKET - at 3.2 m the head is 48 px and an eye is 4, nothing reads by shape at that size, it reads by value. Mouth is a dark aperture plus two lips. Hair dome pulled back 10 mm, which creates a hairline at h+0.070 and 44 mm of forehead. Brim to h+0.082, r 0.140, pitch 0.20.\nAFTER, same instrument: mouth 100% on 14 of 14 (0.0 mm buried). eyes 83.9-85.1%. brow 65.6-84.9% (dressed = bare on 10 of 14; the four in caps lose brow to the brim, which is what a brim does). nose 71-95.9%.\nCOST: 0 draw calls, 0 materials, 0 geometries. Crowd triangles 29,632 -> 32,368 (+9.2%), matched states.\n\nTHE ASSERTION. faceCheck(THREE, F) fires a ray down -Z through every onFace-placed feature's own pole, against the BAKED head AND each of the nine baked hairstyles: 3 x 9 x 13 = 351 rows, pass, min proud -0.33 mm (facet sag on a brow ridge). It can fail and did: it read four features 1.1-1.6 mm short at proud 0.0015-0.0035, correctly - `proud` is against the ideal ellipsoid and an 8x4 sphere loses ~0.6 mm to the facet chord, so a mouth analytically 1.5 mm out is tessellated 0.9 mm IN. Numbers carry the sag now.\ncarryCheck(F), the one round 3 named and did not write: the fist the carry override derives from SH_ARM.fore.at(0.986) is 11.97-12.00 mm from the nearest vertex of the forearm bake it is supposed to be inside, on all four bakes. PASS, threshold 30 mm. Turns red if fing()'s t0, SH_ARM's fingertip, ELB_F or 0.986 moves without the others.\n\nTWO - THE STANCE. Re-measured on the population the metric is actually about (frames where a rig is DRAWN at faceYaw, converged) and it is worse than 60.7% within 1 degree: 1392 samples, 12 bodies, ONE DISTINCT VALUE, 0.00 deg at every percentile, trunk twist 0.00 at every percentile. Math.atan2(shelfSide,0) is exactly +-PI/2 and nothing perturbed it.\nAFTER, n=1851, 14 bodies, |off fixture normal|: p0 5.7 / p10 11.0 / p25 17.0 / p50 22.0 / p75 24.2 / p90 33.3 / p100 41.0 deg. Within 1 deg: 0.0%. Bands 0-5 0.0% | 5-15 21.0% | 15-25 57.4% | 25-35 14.5% | 35-45 7.1% | 45+ 0.0%. Signed mean +1.4 deg over 834 negative / 1017 positive - the sign is which way he walked in, not a roll, so both occur for a reason. Trunk twist (shoulders relative to pelvis) p10 6.8 / p50 13.7 / p90 20.7 / max 25.2 deg. ppl_06's ~40 off the meat case sits in the p90-p100 tail, ppl_09's ~30 at p75-p90.\nONE draw, SHAPED, unconditional on both branches of wanderTarget (this file's own header on what a conditional draw does to the stream). t|t| has zero slope mid-range and a mapping's density goes as 1/slope, so the mass lands in the middle; the first cut used a raised cosine, whose slope is zero at the ENDS, and it put 14% of body-time inside 5 degrees of square - the finding I was replacing, wearing a distribution. The deciles caught it.\nThe twist is added at poseWalk's hips.rotation.y assignment, not downstream, so the leg-pivot compensation covers it (a pelvic yaw drags a foot 90 mm at 0.2 rad otherwise). One owner for \"is he holding a stance at a fixture\": s.facingFixture, written in the visYaw block and read by the twist - the first cut passed faceTwist straight through and a walking body carried 11% of a stale twist.\n\nIS THE NEW CHANNEL A GUILT TELL? Sweep per population, 16 guilty bodies vs 96 clean, 672 vs 6478 samples: off-normal guilty mean 22.46 vs clean 21.60 (ratio 1.04), leakHi 0.00%; twist guilty 13.92 vs clean 13.39, leakHi 0.00%. leakLo reads 8.04% on both and I chased it rather than rounding it: belowDistinct 1, span 0.000 deg - ONE arrival by ONE body held for 54 sample frames at 2.883 deg against a clean minimum of 2.953 over 6478 samples. The supports overlap to a fifteenth of a degree.\n\nLIKELIHOOD RATIOS, difficulty explicit, control RE-MEASURED not quoted (it has moved: chase mean was 61.25 on the board, 63.0 now).\n  LR(take rate)  0.853 -> 0.838 desk,  0.933 -> 0.743 door\n  LR(put-back)   1.116 -> 0.764 desk,  0.994 -> 0.871 door\n  LR(bird|armed) 0.92 -> 0.93 cold,    0.88 -> 0.88 hot\n  LR(bird) uncond 0.68 -> 0.65 cold,   0.46 -> 0.39 hot\n  LR(shrug)      0.82 -> 0.81 (benchBird),  0.34 -> 0.38 (benchAnnounce);  LR(putback|PA) 2.06 -> 2.01\nThe take/put-back movement is the seeded stream walking one draw, and I did not leave that as an assertion. PAIRED ABLATION on the same page (override stanceLo=stanceHi=stanceTwist=0, which keeps the draw and removes the behaviour), 3 seeds, n=16: takeRate live 0.817/0.921/0.844 desk, 0.773/0.810/0.913 door; ablated 0.920/0.889/0.837 desk, 0.634/0.844/0.898 door. putBack live 0.772/0.970/1.106 desk vs ablated 0.689/0.927/1.245. The seed-to-seed spread swamps live-vs-ablated at every cell. GRASP HIT RATE, which the stance could plausibly have wrecked because the reach query point rides visYaw: live 51.3% (118/230) vs ablated 49.4% (114/231), mean grasp distance 0.394 vs 0.353 m, grabR 0.75. The angle does not cost the reach.\n\nSHOULDER CHECK. Was steal 0.60-0.72 against decoy 0.40-0.60, touching at 0.60, zero margin. Two decoys moved and no steal did (round 6's rule): strap -0.60 -> -0.74, jacket 0.55 -> 0.64. Sorted: 0.40 label D, 0.45 phone D, 0.50 wallet D, 0.55 restash D, 0.55 putback P, 0.60 handoff D, 0.60 concealBag S, 0.62 concealPocket S, 0.64 jacket D, 0.72 conceal S, 0.74 strap D. The file maximum is now an innocent, so the decoy range strictly CONTAINS the steal range and no threshold in either direction is a classifier. React clips untouched at 0.66 off heard().\n\nTHE COP'S STEP: 733 is not wrong and neither is 704 - they are the same walk in two frames, and neither said which. copCheck().stepM is ROOT-LOCAL, 0.7036 m; the ground a foot covers is 0.7036 x 1.04 = 0.7318 m, which is the port's 733. copCheck now publishes stepLocalM and stepGroundM by name and agents.js's table says which column is which. Same class of defect as gaitUnits' own bug one level up: two frames, one word.\n\nDO NOT REGRESS: gaitCheck pass, slip 0.0 mm on all 16 rows, shod AND bare. plantCheck pass (433,386 scaled frames, units worst 0.0 mm, pin along 0.43 mm, up 0.19 mm). lungCheck, paceCheck, exitCheck, copCheck (walked first) all pass. Crowd stance drift mean|skateFrac| 0.0084 live / 0.0083 ablated / 0.0083 live again, cop 0.0005 / 0.0004 / 0.0005 - INSIDE the instrument's own run-to-run spread, which I measured rather than assumed: the same build read skateMM 2.5, 3.8, 5.7 and 7.6 mm on four runs. That instrument does not support a claim finer than +-0.0004.\nCHASE BENCH, difficulty 1 explicit, paired seeds 1234/2468/7777/91011, n=100: before 56/61/67/68 (mean 63.0), after 52/65/64/64 (mean 61.3). catchT_median 7.4/7.4/6.2/6.5 -> 7.6/7.6/5.7/6.3, gassedFrac 0.06-0.08 both, copSpd_mean 2.66-2.74 both, ditched 0 both.\n\nBUDGET: 0 new draw calls, 0 new materials, 0 new geometries. Crowd triangles +2,736 (+9.2%) across 15 bodies, measured as two renders of one camera differenced, in matched states after two page loads. Head part count 14 -> 21 (round/long) and 17 -> 24 (heavy); the three heads are still shared by fourteen bodies.\n\nWHAT I WOULD ARGUE ABOUT: the eye socket is the one new value judgement in the round. It is a 0.85x multiplier on a per-person skin colour spanning 0xf7d7b8 to 0x62402c, and on the two darkest bodies it is closer to a hollow than a shadow at portrait range. The first cut was 0.79x and was worse. If a critic wants it lighter the number is SOCK in shopperHead and nothing else changes.",
+   "gap": "The shoulder is not the widest point: width(0.70S)/width(0.80S) is 1.07-1.31 on 13 of 14 bodies where a real person is 0.75. Every body is a skittle."
+  },
+  "move": {
+   "round": 4,
+   "state": "passed",
+   "shots": [
+    {
+     "round": 1,
+     "path": "../shots/move_r1.png",
+     "t": 1787961299.0162828
+    },
+    {
+     "round": 1,
+     "path": "../shots/crit_move_knee.png",
+     "t": 1787965754.004315
+    },
+    {
+     "round": 2,
+     "path": "../shots/move_r2.png",
+     "t": 1787972439.494963
+    },
+    {
+     "round": 3,
+     "path": "../shots/move_r3.png",
+     "t": 1787982137.9838028
+    },
+    {
+     "round": 3,
+     "path": "../shots/move_r3_crowd.png",
+     "t": 1787982235.26546
+    },
+    {
+     "round": 4,
+     "path": "../shots/move_r4.png",
+     "t": 1787986593.095576
+    }
+   ],
+   "gaps": [
+    {
+     "round": 1,
+     "text": "GUILT LEAKS THROUGH WALKING SPEED: state 'drift' (guilty-only, post-conceal) targets K.thiefWalk*1.12 = 1.40 m/s; no innocent body ever exceeds 1.25 m/s in 27 min of body-time. Perfect separator, fires for 58% of the thief's pre-bolt life in runs of median 4.0 s."
+    },
+    {
+     "round": 1,
+     "text": "Guilt leaks through walking speed and it is a PERFECT classifier: drift (guilty-only, post-conceal) walks at 1.40 m/s where innocents cap at 1.25. Zero false positives in 27 minutes."
+    }
+   ],
+   "updated": 1787986717.493896,
+   "note": "The moment arm was one of three, and two had never been named: the sole pin was not vertical (a vertical constraint solved along the knee frame's TILTED Y, leaking 0.2-0.76 of the lift fore-aft) and the pelvis yaw dragged the leg pivots. THE TEST THAT MATTERS: the cop, with nothing done to him specifically, +0.0392 -> +0.0004 \u2014 14.8mm to 0.2mm per window. A body nobody touched getting better is how you know it is a fix and not a re-tune. gaitCheck had only ever run the no-shoes branch, the one branch where the foot's height over the sole is 0, so it structurally could not see this bug and read 0.0mm through every build that carried it.",
+   "gap": "Guilt leaks through walking speed and it is a PERFECT classifier: drift (guilty-only, post-conceal) walks at 1.40 m/s where innocents cap at 1.25. Zero false positives in 27 minutes."
+  },
+  "people": {
+   "round": 2,
+   "state": "gap",
+   "shots": [
+    {
+     "round": 2,
+     "path": "../shots/critic_people_r2_faces.png",
+     "t": 1787991603.460499
+    }
+   ],
+   "gaps": [
+    {
+     "round": 2,
+     "text": "The face is authored and then buried: mouth sits 7.9-16.3mm INSIDE the jaw and the brow 7.5mm inside the skull on 14/14 shoppers, so at 3.2m (the game's own GET OUT OF HIS FACE range, head=48px) every body is a blank ovoid with two dark sockets and no mouth"
+    },
+    {
+     "round": 2,
+     "text": "The face is authored and then buried: mouth 7.9-16.3mm behind the jaw ball across its whole width, brow 7.5mm inside the skull so it renders as two floating tabs, eyes flush at 1.5mm."
+    }
+   ],
+   "updated": 1787991723.3576262,
+   "note": "At 3.2m the head is 48px \u2014 the mouth would be 9px wide and the brow 27px \u2014 and 3.2m is the range at which the game itself prints GET OUT OF HIS FACE. The game pushes the player to a distance where a face should read and finds a blank ovoid with two dots. Verified by raycast against merged geometry, not by eye. SECOND AND MORE INTERESTING: '12 of 14 stand square to a fixture' is a metric the lead asked for, satisfied exactly, that made the game worse \u2014 median 0.00 degrees off the normal, 60.7% within 1.0 degree. A snapped yaw, not a stance, and nobody in the reference photographs stands square. No perfect guilt classifier found; nearest miss is shoulder-check amplitude, steal 0.60-0.72 rad vs decoy 0.40-0.60, touching with zero margin.",
+   "gap": "The face is authored and then buried: mouth 7.9-16.3mm behind the jaw ball across its whole width, brow 7.5mm inside the skull so it renders as two floating tabs, eyes flush at 1.5mm."
   }
  },
  "log": [
+  {
+   "t": 1787995258.256693,
+   "piece": "figures",
+   "role": "builder",
+   "round": 4,
+   "state": "building",
+   "text": "CHARACTER r4. Both findings taken, and both were worse than reported.\n\nONE - THE FACE. Raycast against the BAKED merged geometry, all 14 bodies, with the HAIR counted as an occluder (the critic's pass did not, and it changes the answer). BEFORE, model mm, hair in:\n  mouth   0.0% visible on 14 of 14, buried 7.9 (round/long) to 16.3 mm (heavy). Never seen, at any range, by anyone.\n  brow    22.1-43.2% visible and DEAD ACROSS ITS MIDDLE 46-71% of columns - two tabs on a forehead, not a brow.\n  eyes    8.1-62.1%: the INNER half of each eye is inside the skull, so they read as two crescents.\n  bridge  4.4%, 2.0 mm in.   cheekbones 14.1%, 8.2 mm in.   chin 12.2%, 18.5 mm in.\nIt was not two features. Every mounted feature on the front of the head was inside the ball it was mounted on.\nTWO THINGS THE CRITIC MISSED, both found by putting the hair in the ray: (a) the shared hair dome sat 4-6 mm PROUD OF THE SKULL AT EYE HEIGHT on 8 of 9 styles, so hair came down over the brow and onto the eyes - brow 42% bare fell to 29% dressed; (b) the ballcap brim (hairStyle 5, 4 of 14 bodies) is a 150 mm half-disc hung at h+0.036, TEN MM ABOVE THE EYE LINE, sweeping to y=h+0.000 at z 0.176 - straight across the face. Those four bodies read eyes 8.1% and NOSE 56.6% against 88% on everyone else. In the plate it is a bowler hat with a chin under it. It is the identical mistake the cop round found on HIM, wrote up at length, and fixed only on him.\nFIX, and it is structural rather than a z-shift: the skull and jaw are declared once as ellipsoids and onFace() SOLVES where a feature goes - two coordinates on the face plus how far proud, instead of a hand-typed z that goes stale the moment a radius moves. Features are AIMED along the surface normal (a flat 132 mm bar on a 104 mm skull is 25 mm proud at its ends when flush in the middle; that is round 10's visor and round 11's two tabs, one problem twice). Brow is two supraorbital ridges plus a glabella, not a bar. Eyes get a SOCKET - at 3.2 m the head is 48 px and an eye is 4, nothing reads by shape at that size, it reads by value. Mouth is a dark aperture plus two lips. Hair dome pulled back 10 mm, which creates a hairline at h+0.070 and 44 mm of forehead. Brim to h+0.082, r 0.140, pitch 0.20.\nAFTER, same instrument: mouth 100% on 14 of 14 (0.0 mm buried). eyes 83.9-85.1%. brow 65.6-84.9% (dressed = bare on 10 of 14; the four in caps lose brow to the brim, which is what a brim does). nose 71-95.9%.\nCOST: 0 draw calls, 0 materials, 0 geometries. Crowd triangles 29,632 -> 32,368 (+9.2%), matched states.\n\nTHE ASSERTION. faceCheck(THREE, F) fires a ray down -Z through every onFace-placed feature's own pole, against the BAKED head AND each of the nine baked hairstyles: 3 x 9 x 13 = 351 rows, pass, min proud -0.33 mm (facet sag on a brow ridge). It can fail and did: it read four features 1.1-1.6 mm short at proud 0.0015-0.0035, correctly - `proud` is against the ideal ellipsoid and an 8x4 sphere loses ~0.6 mm to the facet chord, so a mouth analytically 1.5 mm out is tessellated 0.9 mm IN. Numbers carry the sag now.\ncarryCheck(F), the one round 3 named and did not write: the fist the carry override derives from SH_ARM.fore.at(0.986) is 11.97-12.00 mm from the nearest vertex of the forearm bake it is supposed to be inside, on all four bakes. PASS, threshold 30 mm. Turns red if fing()'s t0, SH_ARM's fingertip, ELB_F or 0.986 moves without the others.\n\nTWO - THE STANCE. Re-measured on the population the metric is actually about (frames where a rig is DRAWN at faceYaw, converged) and it is worse than 60.7% within 1 degree: 1392 samples, 12 bodies, ONE DISTINCT VALUE, 0.00 deg at every percentile, trunk twist 0.00 at every percentile. Math.atan2(shelfSide,0) is exactly +-PI/2 and nothing perturbed it.\nAFTER, n=1851, 14 bodies, |off fixture normal|: p0 5.7 / p10 11.0 / p25 17.0 / p50 22.0 / p75 24.2 / p90 33.3 / p100 41.0 deg. Within 1 deg: 0.0%. Bands 0-5 0.0% | 5-15 21.0% | 15-25 57.4% | 25-35 14.5% | 35-45 7.1% | 45+ 0.0%. Signed mean +1.4 deg over 834 negative / 1017 positive - the sign is which way he walked in, not a roll, so both occur for a reason. Trunk twist (shoulders relative to pelvis) p10 6.8 / p50 13.7 / p90 20.7 / max 25.2 deg. ppl_06's ~40 off the meat case sits in the p90-p100 tail, ppl_09's ~30 at p75-p90.\nONE draw, SHAPED, unconditional on both branches of wanderTarget (this file's own header on what a conditional draw does to the stream). t|t| has zero slope mid-range and a mapping's density goes as 1/slope, so the mass lands in the middle; the first cut used a raised cosine, whose slope is zero at the ENDS, and it put 14% of body-time inside 5 degrees of square - the finding I was replacing, wearing a distribution. The deciles caught it.\nThe twist is added at poseWalk's hips.rotation.y assignment, not downstream, so the leg-pivot compensation covers it (a pelvic yaw drags a foot 90 mm at 0.2 rad otherwise). One owner for \"is he holding a stance at a fixture\": s.facingFixture, written in the visYaw block and read by the twist - the first cut passed faceTwist straight through and a walking body carried 11% of a stale twist.\n\nIS THE NEW CHANNEL A GUILT TELL? Sweep per population, 16 guilty bodies vs 96 clean, 672 vs 6478 samples: off-normal guilty mean 22.46 vs clean 21.60 (ratio 1.04), leakHi 0.00%; twist guilty 13.92 vs clean 13.39, leakHi 0.00%. leakLo reads 8.04% on both and I chased it rather than rounding it: belowDistinct 1, span 0.000 deg - ONE arrival by ONE body held for 54 sample frames at 2.883 deg against a clean minimum of 2.953 over 6478 samples. The supports overlap to a fifteenth of a degree.\n\nLIKELIHOOD RATIOS, difficulty explicit, control RE-MEASURED not quoted (it has moved: chase mean was 61.25 on the board, 63.0 now).\n  LR(take rate)  0.853 -> 0.838 desk,  0.933 -> 0.743 door\n  LR(put-back)   1.116 -> 0.764 desk,  0.994 -> 0.871 door\n  LR(bird|armed) 0.92 -> 0.93 cold,    0.88 -> 0.88 hot\n  LR(bird) uncond 0.68 -> 0.65 cold,   0.46 -> 0.39 hot\n  LR(shrug)      0.82 -> 0.81 (benchBird),  0.34 -> 0.38 (benchAnnounce);  LR(putback|PA) 2.06 -> 2.01\nThe take/put-back movement is the seeded stream walking one draw, and I did not leave that as an assertion. PAIRED ABLATION on the same page (override stanceLo=stanceHi=stanceTwist=0, which keeps the draw and removes the behaviour), 3 seeds, n=16: takeRate live 0.817/0.921/0.844 desk, 0.773/0.810/0.913 door; ablated 0.920/0.889/0.837 desk, 0.634/0.844/0.898 door. putBack live 0.772/0.970/1.106 desk vs ablated 0.689/0.927/1.245. The seed-to-seed spread swamps live-vs-ablated at every cell. GRASP HIT RATE, which the stance could plausibly have wrecked because the reach query point rides visYaw: live 51.3% (118/230) vs ablated 49.4% (114/231), mean grasp distance 0.394 vs 0.353 m, grabR 0.75. The angle does not cost the reach.\n\nSHOULDER CHECK. Was steal 0.60-0.72 against decoy 0.40-0.60, touching at 0.60, zero margin. Two decoys moved and no steal did (round 6's rule): strap -0.60 -> -0.74, jacket 0.55 -> 0.64. Sorted: 0.40 label D, 0.45 phone D, 0.50 wallet D, 0.55 restash D, 0.55 putback P, 0.60 handoff D, 0.60 concealBag S, 0.62 concealPocket S, 0.64 jacket D, 0.72 conceal S, 0.74 strap D. The file maximum is now an innocent, so the decoy range strictly CONTAINS the steal range and no threshold in either direction is a classifier. React clips untouched at 0.66 off heard().\n\nTHE COP'S STEP: 733 is not wrong and neither is 704 - they are the same walk in two frames, and neither said which. copCheck().stepM is ROOT-LOCAL, 0.7036 m; the ground a foot covers is 0.7036 x 1.04 = 0.7318 m, which is the port's 733. copCheck now publishes stepLocalM and stepGroundM by name and agents.js's table says which column is which. Same class of defect as gaitUnits' own bug one level up: two frames, one word.\n\nDO NOT REGRESS: gaitCheck pass, slip 0.0 mm on all 16 rows, shod AND bare. plantCheck pass (433,386 scaled frames, units worst 0.0 mm, pin along 0.43 mm, up 0.19 mm). lungCheck, paceCheck, exitCheck, copCheck (walked first) all pass. Crowd stance drift mean|skateFrac| 0.0084 live / 0.0083 ablated / 0.0083 live again, cop 0.0005 / 0.0004 / 0.0005 - INSIDE the instrument's own run-to-run spread, which I measured rather than assumed: the same build read skateMM 2.5, 3.8, 5.7 and 7.6 mm on four runs. That instrument does not support a claim finer than +-0.0004.\nCHASE BENCH, difficulty 1 explicit, paired seeds 1234/2468/7777/91011, n=100: before 56/61/67/68 (mean 63.0), after 52/65/64/64 (mean 61.3). catchT_median 7.4/7.4/6.2/6.5 -> 7.6/7.6/5.7/6.3, gassedFrac 0.06-0.08 both, copSpd_mean 2.66-2.74 both, ditched 0 both.\n\nBUDGET: 0 new draw calls, 0 new materials, 0 new geometries. Crowd triangles +2,736 (+9.2%) across 15 bodies, measured as two renders of one camera differenced, in matched states after two page loads. Head part count 14 -> 21 (round/long) and 17 -> 24 (heavy); the three heads are still shared by fourteen bodies.\n\nWHAT I WOULD ARGUE ABOUT: the eye socket is the one new value judgement in the round. It is a 0.85x multiplier on a per-person skin colour spanning 0xf7d7b8 to 0x62402c, and on the two darkest bodies it is closer to a hollow than a shadow at portrait range. The first cut was 0.79x and was worse. If a critic wants it lighter the number is SOCK in shopperHead and nothing else changes."
+  },
+  {
+   "t": 1787991723.357634,
+   "piece": "people",
+   "role": "critic",
+   "round": 2,
+   "state": "gap",
+   "text": "The face is authored and then buried: mouth 7.9-16.3mm behind the jaw ball across its whole width, brow 7.5mm inside the skull so it renders as two floating tabs, eyes flush at 1.5mm."
+  },
+  {
+   "t": 1787991603.460499,
+   "piece": "people",
+   "role": "critic",
+   "round": 2,
+   "state": "gap",
+   "text": "The face is authored and then buried: mouth sits 7.9-16.3mm INSIDE the jaw and the brow 7.5mm inside the skull on 14/14 shoppers, so at 3.2m (the game's own GET OUT OF HIS FACE range, head=48px) every body is a blank ovoid with two dark sockets and no mouth"
+  },
+  {
+   "t": 1787990112.99423,
+   "piece": "figures",
+   "role": "builder",
+   "round": 3,
+   "state": "passed",
+   "text": "Basket hangs from a hand and hangs plumb; a loaded arm no longer folds, which forced hand loads to the left because armR is the only arm any clip drives. Cop forearms rebuilt from the lead playing the build \u2014 from the chase camera they were smooth skin tubes with no elbow or wrist and a sleeve that just stopped; now a real cuff fold, elbow knob, flexor swell and wrist, on the body that is on screen for the entire floor phase. Garment: armpit shadow 0.710 of adjacent cloth, under-strap 0.573 with a 4.8-5.4mm groove, and the 30% of bodies with map:null get a weave. All five LRs identical, benchBird matching cell for cell. Found and fixed a one-in-200 divergence caused by hoisting an rnd() draw out of a ternary."
+  },
+  {
+   "t": 1787989897.480777,
+   "piece": "figures",
+   "role": "builder",
+   "round": 3,
+   "state": "passed",
+   "text": "ITEM ONE the basket now hangs from the FIST: a carry group on chest takes position from the hand every frame and orientation from the pelvis, so the arm is free; and animateShopper's last line stops a LOADED arm folding/pocketing/pumping, which is why hand loads moved to the left hand (armR is the only arm any clip drives). shots/f3b_fold.png -> figures_r3_fold.png, with figures_r3_fold_unclamped.png as the control. ITEM TWO hands: one finger box -> three masses at three lengths + shaded web + stepped wrist; the COP's forearm (lead's addendum, chase range) rebuilt from 3 flat parts to 6 shaded ones with a cuff shadow, elbow knob, flexor swell and a real wrist, and his sleeve hem is a fold with a crease and an under-edge. ITEM THREE loft can shade AROUND a ring and dent one: armpit 0.710, seam, strap 0.807 + 4.8-5.4mm groove, plain bodies got two unpatterned weave cells. LEDGER (within-run toggle, fresh page, both columns): crowd 160 calls both, 44748->48060 tris; cop 15 calls both, 8020->8668; 174 meshes both, 90 materials both. AMBIGUITY UNMOVED: LR(putback) 2.06, LR(shrug) 0.34, LR(bird|armed) 0.92 cold 0.88 hot, LR(take) desk 0.810 door 0.837, LR(putback|take) 1.126/0.936 - every cell of benchBird identical to HEAD to the digit. Chase 56/55/84/89 vs control 56/55/84/89, difficulty pinned. gaitCheck shod+bare, plantCheck, copCheck, lungCheck, paceCheck, exitCheck all pass; drift crowd 0.0080 cop 0.0004."
+  },
+  {
+   "t": 1787989060.051174,
+   "piece": "figures",
+   "role": "builder",
+   "round": 3,
+   "state": "building",
+   "text": "basket now hangs from the fist and stays plumb (carry group on chest, position off the hand, orientation off the pelvis); loaded arm no longer folds/pockets/pumps, so hand loads moved to the left hand \u2014 the one no clip drives. Hands: one finger box -> three masses at three lengths, shaded web, stepped wrist. Cop forearm rebuilt: cuff shadow, elbow knob, flexor swell, real wrist. Garment: loft can shade around a ring and dent one \u2014 armpit 0.710, seam, strap 0.807 + 5 mm groove; plain bodies got two unpatterned weave cells. All rig checks pass; benches running."
+  },
+  {
+   "t": 1787986717.493901,
+   "piece": "move",
+   "role": "builder",
+   "round": 4,
+   "state": "passed",
+   "text": "The moment arm was one of three, and two had never been named: the sole pin was not vertical (a vertical constraint solved along the knee frame's TILTED Y, leaking 0.2-0.76 of the lift fore-aft) and the pelvis yaw dragged the leg pivots. THE TEST THAT MATTERS: the cop, with nothing done to him specifically, +0.0392 -> +0.0004 \u2014 14.8mm to 0.2mm per window. A body nobody touched getting better is how you know it is a fix and not a re-tune. gaitCheck had only ever run the no-shoes branch, the one branch where the foot's height over the sole is 0, so it structurally could not see this bug and read 0.0mm through every build that carried it."
+  },
+  {
+   "t": 1787986593.095576,
+   "piece": "move",
+   "role": "builder",
+   "round": 4,
+   "state": "building",
+   "text": "THE MOMENT ARM IS REAL AND IT IS ONE OF THREE. Decomposed the foot-flat stance window into the three places a planted foot can move -- hip JOINT / leg SWING / sole PIN -- as a signed fraction of the ground covered, summing to the net by construction. BEFORE: cop at 2.35 m/s -0.1083 / +0.0914 / +0.0561 = +0.0392 (+14.8 mm a window); crowd medians -0.0541 / +0.0395 / +0.0157, mean -0.0063, mean|x| 0.0117. The cop's leg term is +0.0914 against a predicted +0.0920 -- the ankle's height over the sole as a fraction of hip-to-sole, straight off his own shoe's bounding box (0.0803 on all fourteen shoppers, 0.0920 on him). It IS the bug round 3 named, to two decimals, on the body nobody had measured.\n\nTHREE FIXES, ALL IN THE SHARED SOLVE, NONE OF THEM HIS. (1) solveGait swings hip-to-ANKLE over its own length and targets the ANKLE on a rolling-foot trajectory: a rigid foot pivoting on its heel at strike and its toe at push-off carries the ankle 19 + 54 = 73 mm forward across a stance, the same order as the moment arm, and rock() is zero through foot-flat by construction. kneeOf got the same correction. With o.foot null the whole block collapses to the expression it replaced, bit for bit. (2) footPose's sole pin was a VERTICAL constraint solved by translating along the knee frame's tilted Y -- the fore-aft component is 0.2 to 0.76 of the lift and it SWEEPS through stance. On the cop, whose 9.2-degree list makes pinRolled ask for a 44 mm lift every stance frame, that was +0.056 of the ground, the LARGEST of his three terms. Now a 2x2 solve for (dy,dz) giving exactly (Y=lift, Z=0) in hips-local; the Math.max(0.3,gain) clamp is deleted because the singularity it guarded only existed while dz was held at zero. (3) poseWalk counter-translates the leg pivots out of the pelvis's transverse rotation -- the file's own rule for the lateral sway, one axis over, never applied to the yaw: -0.108 of ground on him, -0.054 on the crowd median.\n\nTHE COP, WITH NOTHING DONE TO HIM: +0.0392 -> +0.0004, 14.8 mm -> 0.2 mm a window, terms +0.0012 / +0.0013 / -0.0022, spread 0.0023 over 19 windows, 0 blocked.\n\nTHE TICK IS GONE, and the middle row is the proof it was a compensation. Crowd, 14/14, 8 s warm-up (round 3 found body 14 at the WRONG SIGN at 3 s), slope of skate fraction against each body's own root scale: round-3 build +0.1075 +/- 0.0854, CI [-0.079,+0.294]; three fixes in with the tick STILL unfaded -0.1124 +/- 0.1173, mean -0.0466, mean|x| 0.0466 -- worse than before the round; tick faded -0.0622 +/- 0.0436, CI [-0.157,+0.033]. mean|x| 0.0117 -> 0.0091, worst|x| 0.0277 -> 0.0195, terms -0.0541/+0.0395/+0.0157 -> +0.0001/+0.0051/+0.0035. All three CIs contain zero and the SE halved. On round 3's own two-corner window: 0.0212 (it published 0.023).\n\nJOB TWO. The cop's barge wrote hips.position.y AFTER poseWalk pinned both feet; it rides o.sink now, which lowers the hips AND the floor the pin solves against. His sole through the beat: worst -31.4 -> -3.7 mm, median -14.7 -> -2.5. The shopper crouch re-pin re-pinned against a FLAT floor, throwing away pinRolled's roll term, and only ran when a pose LOWERED the hips -- so a pose that only added roll never re-pinned at all. It goes through pinRolled now with the pivots, leg rolls and pelvis roll read back off the rig; at c=0 and dz=0 every argument is identical to poseWalk's. Live store 20 s, all states, seed 4242: p01 -11.2 -> -9.5, median -0.3 -> -0.5, worst -30.0 -> -13.0, and the worst is no longer a pose: browse -30.0 -> -12.3 against walk -19.3 -> -13.0. Controlled sweep p01 -8.9, median -0.3, worst -13.6 (body 11 on both builds, -12.8 before) -- this round moved the horizontal, not the vertical.\n\nINSTRUMENTS THAT LIED, AND ONE I BROKE MYSELF. Round 3's foot-flat window (two sole corners within 3 mm) NEVER OPENS ON THE COP: his heel sits 4-7 mm above his toe through the entire loaded plateau because the leg group composes Rx(pitch).Ry(toe-out).Rz(splay+list) and a yawed foot gets tipped by the roll. Widening the threshold is exactly what _probe_cop_r1.js warns against, so the window is taken off the SOLVE'S OWN ZERO instead -- ankleOf returns exactly 0 through foot-flat and ank is recoverable from the rig as the sum of four pitch channels, an identity in the chain. Both windows are reported. A BLOCKED BODY IS NOT A PLANTED ONE: the cop runs out of cross-aisle and the one window where he stood against the end wall read -2.16 against 22 clean ones at +0.033..+0.046, enough to move a mean on its own; windows carry vmin and get dropped and counted. AND MY OWN NEW CHECK READ 7.32 mm ON CORRECT CODE first time, because it handed footPose a `th` literal the scene graph did not have -- it reads legGroup.rotation.x now.\n\nCHECKS. gaitCheck HAD ONLY EVER RUN THE BRANCH THAT DOES NOT SHIP: it passed feet:true and no `foot`, i.e. the no-shoes fallback, the one branch where h0 is 0 and hip-to-ankle IS hip-to-sole. It could not have seen this bug and did not -- 0.0 mm through every build that carried it. Every row now runs shod AND bare and the shod pass tracks the two SOLE CORNERS through the solve's own ankle angle, checking whichever is down; 16 rows, 0.0 mm. plantCheck gains pinAxisAlongMM: pose a real foot at two floors 10 mm apart, read the contact corner out of three.js's own matrices back into the hips frame, require it moved 10 mm up and nothing along the body. 0.197 mm now against a 1.5 mm threshold; the pre-round-4 one-axis pin reads 10.5 mm at the worst leg angle in the roster, so it can fail. It refuses to report on an empty sample. copCheck's units row still reads 0.000 and is still a tautology; not quoted.\n\nAMBIGUITY UNMOVED, PAIRED AGAINST THE ROUND-3 BUILD. benchTake n=48, difficulty 1, seed 4242, both posts, every cell byte-identical (bodies/takes/takesPerMin/putBackPct/grabY/grabD): LR(put-back) 1.036 desk / 0.953 door, LR(take rate) 0.819 / 0.833. benchBird pooled from COUNTS over 4x50 = 200 trials, difficulty 1: LR(bird) 0.70 cold / 0.45 hot, LR(bird | still in the aisle at the rung) 0.93 / 0.86, LR(shrug) 0.85 -- and every outcome cell AND every per-clip histogram is identical string-for-string across all four runs and all three populations. ZERO divergences in 600 announcements, where round 3 had one.\n\nBENCH, difficulty passed explicitly, 4 paired seeds n=100, fresh page and the same order on both builds: 56 / 61 / 67 / 68 control, 56 / 61 / 67 / 68 shipped -- identical on all four and on escaped, stalled, ditched, catchT_median, gassedFrac, copSpd_mean, thiefSpd_mean, missByM_median and minGapM_median. (Round 3's control was 56/64/66/58; store r11 and game r13 have landed since, so the control was RE-MEASURED this round rather than quoted.) PLAYED IT: sprint to gassed (gassed walk 2.04 under the healthy 2.35), leaned on the key four more seconds, stopped dead (hips back to 0.860), reversed, forced a barge stagger, recovered -- no freeze, no demotion, plantCheck and copCheck green after.\n\nNOT DONE AND IT IS NOT MY FILE: the carried basket is parented at figures.js:3003 ((o.bag.kind >= 2 ? hips : chest).add(bag)) and the hands are baked there too. Both are in figures.js's own 'what is still wrong' header and belong to builder-figures."
+  },
+  {
+   "t": 1787982235.300237,
+   "piece": "cop",
+   "role": "builder",
+   "round": 1,
+   "state": "passed",
+   "text": "Ported onto the shared solve: cadence 2.477 -> 1.604 Hz, step 474 -> 733mm, lateral pelvis 0 -> 87.8mm, a real two-bone knee where the comment admitted 'the knee-less leg fakes that with a kick'. His foot had swept backwards at 0.938v^2 = 5.18 m/s under a body doing 2.35; there was exactly one speed at which he did not skate, 1.066 m/s, and his walk is 2.35 and his gassed walk 1.46. Never at it, in any build. The huff phase-locks to the footfall once he is moving and blown (phase-error SD 0.000 rad vs 1.805 fresh) and releases the instant he stops."
+  },
+  {
+   "t": 1787982235.265461,
+   "piece": "move",
+   "role": "builder",
+   "round": 3,
+   "state": "passed",
+   "text": "Crowd gets both shared-solve fixes; the cop's flags are DELETED rather than renamed. Skate slope vs root scale -0.721 (CI excludes zero, brackets the closed-form -1.06) -> +0.224 (CI contains zero). Sole p01 -24.2 -> -7.8mm, median -4.8 -> -0.35. Found a third candidate divergence and proved it is NOT one: the crowd's idle phase tick is a constant offset cancelling an opposite error \u2014 the solve swings hip-to-SOLE while the thing that rotates is hip-to-ANKLE, a 5-10% short moment arm. New debt: the cop has no tick to hide it. Two instruments caught lying \u2014 copCheck's units row is an algebraic tautology, and the plant probe's foot-flat test has returned null (read as 'no problem') since the knee landed."
+  },
+  {
+   "t": 1787982137.9838028,
+   "piece": "move",
+   "role": "builder",
+   "round": 3,
+   "state": "building",
+   "text": "Closed round 1's declared debt: the crowd now gets vLocal and the roll-aware sole pin, and BOTH FLAGS ARE DELETED. vLocal became gaitUnits(), one owner, both callers; pinRoll became pinRolled(), unconditional. Foot-flat stance skate as a signed fraction of the ground covered, regressed against each body's own root scale over all 14: slope -0.721+/-0.142 (r -0.826, p 0.0003, CI excludes zero and brackets the predicted -1.06) -> +0.224+/-0.126 (r 0.456, p 0.10, CI [-0.05,+0.50] contains zero). mean|x| 0.053 -> 0.023, worst 0.139 -> 0.069 (body 11). Stance-sole depth profile over ~8,300 foot frames: p01 -24.2 -> -7.8 mm, median -4.8 -> -0.35, worst -25.7 -> -12.3; live store all states p01 -21.4 -> -11.2, median -3.3 -> -0.3, but live WORST -26.9 -> -30.0 and it is a browse pose on both builds, not the walk. AMBIGUITY UNMOVED: benchTake n=48 both posts identical to the digit in every cell (LR putBack 1.061 desk / 0.929 door, takeRate 0.875 / 0.877); benchBird n=200 LR bird|armed 0.92 cold 0.88 hot, LR(bird) 0.68/0.46, LR(shrug) 0.82 -- all five unchanged. ONE trial of 600 changed shrug clip (cold whoMeStare->whoMeFolded); re-ran the new build and it reproduced exactly, and unlike last round the OLD build was re-measured under identical conditions, so it is a real one-trial divergence and not noise. Chase bench 4 paired seeds, difficulty 1, n=100: 56/64/66/58 -- identical to control on every seed. gaitCheck 0.0mm, lung/pace/exit pass, copCheck passes after walking him. NEW: plantCheck() asserts the units contract from two independently produced numbers and fails on an empty sample. TRIED AND REJECTED: fading the crowd's idle phase tick like the cop's makes skate WORSE (mean -0.021 -> +0.036) and leaves the slope untouched (+0.235) -- the tick is cancelling a second error, probably that the solve swings L=hip-to-SOLE while the rig swings hip-to-ANKLE. INSTRUMENTS THAT LIED: _probe_move_plant's foot-flat test has been dead since the knee landed (it computed ank-beta, never under 0.07, both stance rows returned null) -- repaired to a two-corner geometric test; and copCheck's units row is an algebraic tautology that reads 0.000 whatever the code does."
+  },
+  {
+   "t": 1787978989.052431,
+   "piece": "cop",
+   "role": "builder",
+   "round": 1,
+   "state": "building",
+   "text": "animateCop was a SECOND implementation of the shopper walk and is gone. He calls poseWalk(), the same function animateShopper() calls; everything of his is a number in K.cop* (25 constants, all t(name,fallback) so config.js wins). WHAT THE SOLVE NOW DOES THAT HIS TWO SINES DID NOT, measured at his own 2.35 m/s: cadence from stepLength() not a 0.95 m-per-cycle divisor, 2.477 -> 1.604 Hz and step 474 -> 733 mm; leg angle asin(fx/L) not sin(phase)*amp, so the stance foot is planted by construction -- his old foot swept backwards at 0.938v^2 = 5.18 m/s under a body doing 2.35, and there was exactly ONE speed at which it did not skate, 1.066 m/s, which he is never at; the fake heel kick (its own comment: the knee-less leg fakes that with a kick) is a real two-bone knee, rig.kneeOk true; he has an ANKLE for the first time -- heel strike, foot flat, toe-off, sole pinned through the shoe's own box, worst sole -6.8 mm against no ankle at all; the bob is L(1-cos) through the foot rocker, 89.9 mm, not a picked 0.034+0.012*spd; and the pelvis TRANSLATES, 87.8 mm, where it measured 0.0 mm before. THE PORT NEEDED ONE GEOMETRY CHANGE: copLeg baked the oxford INTO the trouser, so gait.js's shoe search returned null on its first line and none of this was reachable. copShoe is its own bake at the same coordinates; the knee ball moved 15 mm onto gait.js's own cut. +4 draw calls on ONE body, named in the ledger. THE HUFF AND THE WALK ARE ONE BODY: once he is moving and blown the breath phase LOCKS to the footfall (locomotor-respiratory coupling; phase-error SD 0.000 rad gassed-walking against 1.805 free-running fresh, and it releases the instant he stops -- 1.828 standing -- so he gets his breath back on his own clock), and the gait deteriorates on the same fatigue: step 733 -> 435 mm, the foot stops clearing, the pelvis rolls further. TWO BUGS FOUND THAT ARE NOT HIS AND ARE NOT FIXED, because either fix moves fourteen shoppers: (a) the solve is in ROOT-LOCAL metres and the store is not -- every figure's root is scaled, 0.9585 to 1.1143 across the roster, and the plant identity v*T=2*S needs shared units, so every shopper's stance foot skates by (rootScale-1) of its excursion, 11.4 percent on body 11; (b) the sole pin solves relative to the hip pivot while the pelvis rolls about its own origin underneath it, so a listing pelvis carries the loaded pivot down by px*sin(list) -- 39.6 mm of sole through the tiles on him, 2.2 mm with copList forced to zero. He gets both via explicit flags (vLocal, pinRoll); the crowd gets neither, which is why their numbers are identical to the digit rather than close. SHOPPERS UNMOVED: LR(put-back) 0.672 desk / 0.920 door and LR(take rate) 0.900 / 0.756 -- every benchTake cell byte-identical before and after, both populations, bodies/takes/takesPerMin/putBackPct/grabY/grabD. LR(bird | still in the aisle at the rung) 0.91 cold / 0.90 hot, LR(bird) 0.68 / 0.51, LR(shrug) 0.84 -- every outcome cell identical; ONE trial in 600 picked whoMeStare over whoMeHips and I could NOT attribute it (three runs of the new build agree; I did not re-measure the old one). BENCH, difficulty passed explicitly, paired seeds 1234/2468/7777/91011 at n=100: 58.0/52.0/66.0/69.0, mean 61.25 -- identical to the digit on all four and on escaped, ditched, stalled, catchT_median, gassedFrac, copSpd_mean. Played it by hand through readInput(): sprint to gassed, keep leaning on the key, stop dead, reverse, and pin a body for 7 s -- no freeze, no demotion, target still browsing. copCheck() added: feetOk, kneeOk, the knee cut landing on figures.js's own knee ball (two derivations of one number), and the root-scale unit identity. gaitCheck 0.0 mm, lungCheck, paceCheck, exitCheck pass."
+  },
+  {
+   "t": 1787975311.541495,
+   "piece": "figures",
+   "role": "lead",
+   "round": 2,
+   "state": "passed",
+   "text": "Standing debt for the next character round, from three builders' own notes: the COP still runs round 11's two-sine gait (no plant, no knee, no foot roll) and he is the body the player looks at for the entire floor phase, centre frame, at 3m. Also: hands read as mittens at portrait range; the carried basket rides hips so a folded-arms body leaves it hanging beside a leg that is not holding it; no shoulder seam, armpit crease or strap deformation; 30% of bodies have no cloth map and read flat."
+  },
+  {
+   "t": 1787975311.506428,
+   "piece": "game",
+   "role": "builder",
+   "round": 13,
+   "state": "passed",
+   "text": "Walk-up leak closed: the 'nothing happens' cell no longer exists in either population, 68/68 reached in both ambiguous arms, every cell identical to the digit, positive control unmoved. Before, the cop could stand 0.80m from an un-concealed thief for 7.4s and the body would never look up. Found a WORSE leak in its own file on the way: BEHAVIOUR_GUILTY_PRE identified a cold thief with certainty on 68-73% of lines above one, LR 5265-5695, free, from the desk \u2014 and armThief cleared r.trap so P(flagged|cold) was 0.0% against 13-14% for innocents, the same tell sign-flipped. annHuff measured and LEFT IN with the number. Economy needed no repricing: a four-seed sweep shows a 23.7-point spread on one unchanged build, larger than the build difference."
+  },
+  {
+   "t": 1787975245.51791,
+   "piece": "game",
+   "role": "builder",
+   "round": 13,
+   "state": "passed",
+   "text": "r13 complete. Two perfect classifiers closed and measured; complaint economy priced and left alone; annHuff measured and left in. Ship build verified: walk-up LR 1.00/1.00/1.00 for an un-concealed thief vs an innocent with the positive control unmoved at 136.94, roster perfectStrings 0. Bundle is STALE (docs/index.html predates these edits) \u2014 lead's call to run tools/bundle.py."
+  },
+  {
+   "t": 1787975165.275936,
+   "piece": "game",
+   "role": "builder",
+   "round": 13,
+   "state": "building",
+   "text": "Guilt-probe leak CLOSED and measured, plus a second one found in my own file. WALK-UP (n=70/arm, difficulty 1, randomised assignment, two servers differing only in agents.js): before, cold thief = 0% yell / 100% NOTHING vs innocent 100% yell \u2014 LR 139 (unsmoothed: infinite), median closest approach 0.80 m and 7.4 s stood inside the suspicion radius with no reaction. After, on the shipped build: 100/0/0 in BOTH ambiguous arms, 68/68 reached each, every LR 1.00; the 'nothing happens' cell no longer exists. Positive control (hot thief bolts) unmoved at 136.94, so the null is real and not a dead path. ROSTER TEXT, my file: BEHAVIOUR_GUILTY_PRE was a private 4-string pool for un-concealed thieves, 3 of them in no other pool \u2014 it identified one with certainty on 68.3-73.2% of printed lines, LR 5265-5695, free, from the desk; and armThief cleared r.trap so P(flagged | cold) was 0.0% against 13.2-14.6% for innocents. Both retired: perfectStrings 0, worst LR 1.44-2.39 on a different string per policy (noise), flag 12.3-15.8% vs 13.4-18.6%. ECONOMY: NO REPRICING, no TUNING change. 20 shifts x 240 s x 4 policies \u2014 reader (the bot round 7 must be survivable for) files 0.05/shift in both builds, observer and camper 0, only random moves (+0.55 complaints, +0.25 demotions) and he reads nothing. Round 2's reticle gate and round 7's grace window already absorb the extra yells. Catch rate/points unmoved: four-seed sweep shows a 23.7-point spread on one unchanged build, larger than the build difference. annHUFF: NOT observable \u2014 paired ablation, one condition per page load, n=150/146; LR(turned for the door within 25 s) 1.20 shipped vs 1.37 off, a 0.17 shift inside noise and in the wrong direction for the hypothesis, while the positive control fires hard (innocents that never turn: 0/64 shipped vs 21/65 off). Left in, with the number. Also caught and escalated two regressions the yell-lift introduced in agents.js (the anger TIMER was inside the state gate, freezing concealing thieves solid with a wall-piercing '!' \u2014 75/60/67% at 0.3/0.5/0.7 s of remaining fuse, 0% from 0.9 s; and a steal clip could start inside the anger window an innocent could start no clip in). Both fixed by the lead."
+  },
+  {
+   "t": 1787972726.903442,
+   "piece": "move",
+   "role": "builder",
+   "round": 2,
+   "state": "passed",
+   "text": "Speed leak closed: leakHi 0.00% on all ten swept channels. Collapsing drift onto leave was tried and REJECTED \u2014 it killed the per-frame classifier but left a rate of 23.6% vs 2.5% (LR 9.6) because both door states were faster than the ordinary walk. One walking speed in the file now, a per-person multiplier that cannot carry state. The sweep found four more leaks including s.look never being cleared, so a thief who turned back out of drift carried a frozen 29-degree head-turn for the rest of his shift. The knee: telescoping 69-139mm to 0.0mm, verified independently over 6720 samples. Three rig bugs invisible to gaitCheck because they are rig not solve \u2014 the ankle rocker signs were INVERTED, so every body in every build that ever shipped landed toe-first and pushed off its heel."
+  },
+  {
+   "t": 1787972439.494963,
+   "piece": "move",
+   "role": "builder",
+   "round": 2,
+   "state": "building",
+   "text": "JOB ONE CLOSED, AND A SECOND CHANNEL WITH IT. `drift`/`leave` collapsed to one code path; the door-pace bump deleted entirely and replaced by ONE per-person walk speed (hash2(id), 5 buckets, 0.90-1.12 x thiefWalk, mean 1.01) read by every walking state. Speed can no longer carry STATE, so it cannot carry guilt. 150s live sim, difficulty 1, excl bolt/react/shove -- BEFORE: speed max 1.400 guilty / 1.250 innocent, 49.6% vs 0.0% over 1.33 m/s, runs to 13.6s. AFTER (126s, both populations reach the top of the band): max 1.400 / 1.400, leakHi 0.00% on all TEN channels swept; 270s: 24.5% vs 20.0% (LR 1.23), guilty runs med 1.18s vs innocent 2.40s. SECOND LEAK, same two lines: head yaw was 0.50 rad guilty-only vs 0.32 innocent (29.7% of guilty body-time above the innocent ceiling) AND s.look was never CLEARED, so a thief who turned back out of drift carried a frozen 29-degree head-turn into walk for the rest of his shift. Both fixed. THIRD: turnBack() pulled the decoy scheduler to <2.5s for guilty bodies only (5x rate) -- deleted; the rnd() DRAW is kept (void) so the seeded stream does not move, worth +1.0 on the bench. That deletion is why LR(take rate|door) went 0.723 -> 0.955. KNEE: legs split into thigh+shank at the knee ball's centre, two-bone IK off the hip-ankle line (armBones' pattern), joint band duplicated into both halves so the seam cannot open. Telescoping 69-139mm -> 0.0mm on all 14 bodies; stance knee 32-45 deg, swing 45-64. ALSO: ankle rocker signs were INVERTED -- every body in every shipped build landed toe-first and pushed off its heel (measured: stance opens heel +21 / toe -29, closes heel -29 / toe +87); sole pin was solving in the leg's SCALED frame against a root-metre floor, so it was wrong by each body's own stature (sole under tiles median 11mm -> 0.9mm, worst 28mm and it is a browse pose not the walk); hip bob 17-87 -> 13-67mm (median 38) via a foot-rocker term in the hip height; figures.js hip pivots now scale with girth like the thigh mesh does; reachU deleted; cart clamp removed (7 carts at boot, 0 mismatched); REACH inspect brought in to the chest, two hands, head down (grasp frame byte-identical). BENCH, PAIRED, n=200 x 4 seeds, difficulty 1: control 63.5/66.0/64.0/62.0 (mean 63.9) vs shipped 60.0/59.0/60.5/66.0 (mean 61.4) = -2.5 +- 2.4 (1 SE at n=800, not resolvable). LRs vs control: take 0.885->0.935 desk, 0.723->0.955 door; putback 2.04->2.06; shrug 0.34->0.34; bolt|innocent 0.0%; bird|armed 0.92->0.92, hot 0.83->0.88. TUNING PROPOSED: gaitFlex 0.055 -> 0.020 (0.055 is 38 deg of stance knee, 2.5x life; the constant was authored as '15 degrees' and encoded as a length fraction)."
+  },
+  {
+   "t": 1787965840.347287,
+   "piece": "move",
+   "role": "critic",
+   "round": 1,
+   "state": "gap",
+   "text": "Guilt leaks through walking speed and it is a PERFECT classifier: drift (guilty-only, post-conceal) walks at 1.40 m/s where innocents cap at 1.25. Zero false positives in 27 minutes."
+  },
+  {
+   "t": 1787965754.0043159,
+   "piece": "move",
+   "role": "critic",
+   "round": 1,
+   "state": "gap",
+   "text": "GUILT LEAKS THROUGH WALKING SPEED: state 'drift' (guilty-only, post-conceal) targets K.thiefWalk*1.12 = 1.40 m/s; no innocent body ever exceeds 1.25 m/s in 27 min of body-time. Perfect separator, fires for 58% of the thief's pre-bolt life in runs of median 4.0 s."
+  },
+  {
+   "t": 1787964502.269557,
+   "piece": "figures",
+   "role": "builder",
+   "round": 2,
+   "state": "passed",
+   "text": "Skittle closed: width(0.70S)/width(0.80S) median 1.082 -> 0.899, 14 of 14 bodies over 1.00 -> 0 of 14. Mass moved UP not added \u2014 deltoid 0.060 -> 0.076 against a 0.050 mid-humerus (52% swell, was 5%), shoulder width pulled 16mm INBOARD so nothing got wider. The pear finally reads: it is now the only build under 1.00 on shoulder/hem, separated by 15%, where before it looked less pear-shaped than a lean body. Found CLAUDE.md's header bug again on the way: torso.scale multiplied trunk half-widths by girth*torsoW while the arm pivot was multiplied by nothing, so wide bodies grew their ribs out past their own arms \u2014 true since round 11, invisible while splay threw the elbows clear. Take-rate leak closed 0.119 -> 0.885; round 12's proposed reachN gate was the wrong counter (reachN counts clock firings, not reaches). The gate opened a second leak (first-reaches sample only 14 hash values) and the same round closed it."
+  },
+  {
+   "t": 1787963953.265354,
+   "piece": "figures",
+   "role": "builder",
+   "round": 2,
+   "state": "building",
+   "text": "JOB 1 \u2014 THE SKITTLE IS FIXED. Held-pose front-on, same instrument both ways: width(0.70S)/width(0.80S) median 1.082 -> 0.899, range 1.010-1.107 -> 0.870-0.935, 14 of 14 over 1.00 -> 0 of 14. Arms-hidden control barely moves (0.817 -> 0.803 median), which is the claim: the trunk was always right, the arms did it. Cause and fix: deltoid 0.060 -> 0.076 half-width (a 52% swell over a 0.050 mid-humerus, was 5%), sw in BUILDS 16 mm inboard so no shoulder got wider, splay 0.052-0.187 -> 0.004-0.076 rad, elbow hangs 8 mm INBOARD (SH_ELB_OUT) instead of 16 mm out. Found on the way: sw was not scaled by girth*torsoW while the torso was, so wide bodies swallowed their own arms \u2014 fixed, arm now stands 12-31 mm proud of the trunk (was 36-90, real is ~42). Pear is on the screen at last: shoulder/hem pear 0.98 vs lean 1.12 / slim 1.14 / reg 1.11, where before EVERY build sat in 0.84-0.96 and the pear (0.918) looked less pear-shaped than a lean body (0.887). Also: 14/14 carts -> 7/14 (rolled per PERSON at construction, zero draws off the seeded stream); loadLean no longer cancels contrapposto (weight goes on the loaded leg, plus a clamp); shirt-vs-skin bar 90 -> 150 with a deterministic fallback that cannot fail; slim re-shaped rangy and chest-DEPTH ratio de-correlated from size (0.694/0.671/0.802/0.761/0.737/0.803). JOB 2 \u2014 THE FUSE NOW WAITS. concealT does not tick until the body has completed one ordinary browse-reach (K.reachArm, default 1, 0 = round 12 exactly). LR(take rate) 0.118 -> 0.888 desk, 0.154 -> 0.723 door; guilty takes 3 -> 50 and 7 -> 44. LR(grab height) 1.24 -> 1.04 / 1.14 -> 1.00. LR(put-back) 2.04 unchanged (and benchAnnounce cannot see the gate \u2014 it shouts inside 2.5 s). LR(bird|armed) 0.82 -> 0.92, hot 0.85 -> 0.83. bench(200, seed 1234, difficulty 1) = 63.5% before, 63.5% at reachArm 0, 63.5% at reachArm 1. gaitCheck ok, 0.0 mm solve slip; live stance skate 16.7-19.6 mm. LEAK I OPENED AND THEN CLOSED: gating made an armed body's takes almost all FIRST reaches, and hash2(id, reachN*2) has only 14 values there \u2014 LR(put-back | a take) went 0.71 desk / 1.00 door. shiftN is now mixed into that hash and into the grab-elevation hash; 1.17 / 1.13. COST: benchShift(8, 4 min, desk) 5.13 -> 4.00 incidents, 2.63 -> 2.25 catches, 262 -> 225 points, 8.5 -> 4.6 complaints per shift. TUNING to apply: reachArm: 1."
+  },
+  {
+   "t": 1787961299.0162828,
+   "piece": "move",
+   "role": "builder",
+   "round": 1,
+   "state": "building",
+   "text": "Gait rebuilt as a constraint: stance foot planted at every speed (solve slip 0.0 mm vs round 11's 83-710; live foot-flat skate 11-36 mm), bob derived from the stride (26-48 mm), knee substitute + ankle roll, pelvic list and sway scaled by build. Start 0.42 s, stop 0.25 s, 180 turn 0.67 s with the head leading. Shoppers now stand AT the shelf (12 of 14 vs the lead's measured 2 of 14) and reach on a rig clock: world.takeFacing is wired and the shelf really loses the item. Chase 64.0 -> 63.5 at seed 1234. LR(putback) 1.93 -> 2.04, LR(bird|armed) 0.80 -> 0.82. KNOWN LEAK, published: LR(take rate) 0.118 desk / 0.152 door \u2014 armed bodies browse-reach ~7x less because their shift is shorter and spent walking; direction is toward innocence, cannot convict. Fix proposed, not shipped."
+  },
+  {
+   "t": 1787955801.087517,
+   "piece": "figures",
+   "role": "critic",
+   "round": 1,
+   "state": "gap",
+   "text": "The shoulder is not the widest point: width(0.70S)/width(0.80S) is 1.07-1.31 on 13 of 14 bodies where a real person is 0.75. Every body is a skittle."
+  },
+  {
+   "t": 1787955693.279917,
+   "piece": "figures",
+   "role": "critic",
+   "round": 1,
+   "state": "gap",
+   "text": "The shoulder is not the widest point of the upper body on any of the 14 bodies, and the arms are why: hide them and the lofted trunk measures 0.81-0.93 chest/shoulder (a person is ~0.75); put them back and it inverts to 1.07-1.31."
+  },
+  {
+   "t": 1787955349.586414,
+   "piece": "harness",
+   "role": "lead",
+   "round": 1,
+   "state": "passed",
+   "text": "snapPeople verified end-to-end against a live page: PNG plus a sidecar box per body, boxes land on bodies. First two attempts cropped shelving \u2014 both times the POSE was inside a fixture, not the projection. Use the canonical aniso.js POSES rather than deriving a camera from a shopper position."
+  },
+  {
+   "t": 1787955349.5494661,
+   "piece": "store",
+   "role": "builder",
+   "round": 12,
+   "state": "passed",
+   "text": "takeFacing lands: 8,782 facings, swap-and-shrink so a gap is a real hole, 0.96us a take. The cooler stops selling oatmeal (25 of 35 facings in GRAB & GO were peanuts, popcorn and oatmeal) and auditing that found three more routes to the same bug. Follow-up r12b: the radius argument was silently clamped to 0.75m, so the documented contract and one line disagreed with nothing able to notice \u2014 same shape as bargeDump. Fixed with an expanding-shell search that is faster at every radius."
+  },
+  {
+   "t": 1787955246.991298,
+   "piece": "store",
+   "role": "builder",
+   "round": 12,
+   "state": "building",
+   "text": "RADIUS DEFECT FIXED. takeFacing's r was silently clamped by Math.min(r, STOCK.maxR=0.75) \u2014 every larger radius behaved as 0.75 while the contract said null meant 'nothing within r'. Clamp removed; the box scan is now expanding shells out of the query cell that stop when the nearest possible point of the next shell is further than the best hit, so cost scales with distance-to-nearest and NOT with r: 1.05 us at r=0.45, 0.767 at r=2, 0.633 at r=8, 0.567 at r=30, all 6000/6000 hits. Monotonicity 2,100 checks 0 violations. All of the lead's nulls resolve: (13,-7.6) hits at 1.758 m, (11,-7.6) at 4.254, (19,-7.6) at 2.469, (-10,0) at 1.345. x=11/x=15.5 are NOT unstocked \u2014 an x-sweep at z=-7.6 shows they are the 1.0 m dead band behind a gondola back, with the same run 0.39 m away at x=11.5. Reach guidance: 0.16-0.46 m at a lip, <=1.78 m anywhere in an aisle facing a run, so r=0.55 for lip work and r=2.0 for aisle-centre. gapCheck 120/120 still byte-identical, take 0.958 us, put 0.209 us, drawn=cap=42,966. Worst case is honest and stated: r=30 from off-grid with nothing in range = 352 us."
+  },
+  {
+   "t": 1787954574.679435,
+   "piece": "store",
+   "role": "builder",
+   "round": 12,
+   "state": "building",
+   "text": "takeFacing/putFacing/facingsTaken shipped: 8,782 front-rank facings indexed off the finished scene, swap-and-shrink removal (mesh.count really drops), 1.00 us/take + 0.26 us/put, 166 B uploaded per take against 64.5 KB for a whole-buffer push. Draw calls 142/115/149/117/132/121 identical with 0 and 160 gaps open. gapCheck 120/120: same point twice -> byte-identical buffers, and 3/3 rendered PNG pairs md5-identical. Gaps age on one FIFO in take order (393 opened, oldest 233 closed, strictly oldest-first) so a thief's gap and an innocent's have the same half-life. GEOMETRY NOT MOVED: instance-matrix, colour, quad-position and collider hashes all identical to HEAD on a fresh load; only the artwork hash differs. Pool leak: GRAB & GO cooler went 25/35 non-drink -> 0/35; store-wide class mismatch 25.9%->11.1% front, 40.4%->11.6% back; food-line crossings 177->32. Three cross-atlas cell routes found and fixed (fillBackRow drew bottle/can indices as cartons, intrusions.js used a hard-coded (rng()*8), stragglers had a dead [] fallback). drawSig 2294903825 = HEAD, 814 fill calls, 526,234 draws: zero rng re-roll."
+  },
   {
    "t": 1787954092.370202,
    "piece": "figures",
@@ -1980,239 +2335,7 @@
    "round": 16,
    "state": "critiquing",
    "text": "THE LEDGER NOW RECORDS PAINT, NOT TYPESET - and the AISLE n attribution in the gap was INVERTED, disproved by crop. Bound to the HUD own ctx inside createHUD, no prototype patch, so it structurally cannot see the CCTV wall or the offscreen composite. Effective alpha is globalAlpha TIMES the alpha parsed from the rgba() fill string; on one desk frame that separates 8 OPAQUE PLATES FROM 61 TRANSLUCENT ones, WHICH THE NAIVE globalAlpha TEST GETS EXACTLY BACKWARDS. Validated on a known signal in three directions before quoting anything: an opaque rect injected AFTER the draw fires 5/5 at 100%, the same rect at alpha 0.30 fires 0, and the same opaque rect drawn FIRST fires 0. RESULT: 68 ERASURES -> 0 and 12 OVERPRINTS -> 0 over 9,600 census frames, with byte-identical denominators both runs (218,924 strings / 125,570 plates / 594,308 translucent). THE AISLE n CLAIM IS INVERTED: AISLE n is drawn INSIDE the DISPATCHED TO panel, which paints AFTER the whole marker cluster, and across 4,864 layouts the only rect that ever overlaps it is the panel own backing plate, drawn BEFORE it. IN ALL THREE CLASSES THE CASUALTY IS THE MARKER OWN LABEL - panel() 0.88, topBand() 0.93, plate() 0.92, each reaching 100%. shots/crop_r16_pair_aisle.png shows AISLE 1 BYTE-IDENTICAL in both layouts; crop_r16_pair_readout.png shows the real defect, r15 leaving a bare 2 where a subject code should read. Fixed with six reserved bands, each read from the same function the drawing site paints from. ROUND 15 LAYOUT SHIPS AS hud.bands(r15), so before/after is ONE PAGE LOAD AND ONE DIAL: 116 / 106 -> 0 / 0 on a byte-identical scene. RUN PAIRS FIRE FOR THE FIRST TIME: PAD_PROBES plus makeSight(colliders, {pad}) - cap45 gives 252/592 all step, pad2.10 gives 64/592 ALL RUN - and sightCheck() asserts the BOUNDARY at half-gap, not merely that something fired. Two errors of its own caught by running the guard against a healthy tree first, and one is worth carrying: A PERPENDICULAR step PAIR CAN NEVER BE BLOCKED BY ANY PAD, because the end exemption is pad metres and the shell is pad deep, so they cancel term for term. DOOR PANEL - CHANGE THE EMPHASIS, WITHHOLD NOTHING: YOU ROSE 0.8 m in that four seconds BECAUSE THE PLAYER RAN AT THE MAN, so the headline number degrades as a consequence of the correct decision. Every metre still prints, the dead chip says NO CUT, and GAP - the race that stays live - goes 13 px -> 19 px. A boost is priced as METRES (6.36 m) rather than as a speed, after a first cut that priced it as a speed and DID NOT FIRE ON ITS OWN MOTIVATING EXAMPLE. THE DETERMINISM PRECONDITION BIT IT and is now documented above run() with the table: benches taken after different amounts of idle rAF gave caught 17 vs 7 on HUD-ONLY changes, so the door-panel figures are single-run and LABELLED as such, and only the 68 -> 0 pair has matched denominators. agents.report() still returns null; cop stamina came off cop.userData."
-  },
-  {
-   "t": 1787777077.56372,
-   "piece": "store",
-   "role": "critic",
-   "round": 17,
-   "state": "gap",
-   "text": "TEXTURE COST, priced against the budget rather than against itself. The 21.2 -> 50.9 MB (x2.40) is arithmetically EXACT \u2014 I reproduce both to 0.1 MB from atlas geometry (carton 2720x2520 + pouch 1920x1600 + can 1920x960 + bottle 1536x1020 = 13,336,320 px x 4 B = 50.87 MB; r16 at the same cell sizes = 21.20 MB). Two corrections. (1) It is quoted at RGBA8 with NO MIPMAPS, and all four atlas textures have generateMipmaps true \u2014 the machine-facing figures are 67.9 MB for the atlases and 132.1 MB for the whole store, not 50.9 and 99.0. The round understates its own bill by a third. (2) The denominator: the store carries 38 unique textures totalling 99.0 MB, of which the package atlases are 51.4%; the round added +42.8% to TOTAL store texture, which is the number a low-memory machine meets. ZERO geometry cost VERIFIED as a within-run toggle at my own pose (aisle1 chase, pos[-13.25,2.35,-14.5] look[-13.25,1.60,-2.0] fov57.5): swapping all four atlases for a 1x1 texture in the same run leaves 330 calls / 2,641,750 tris byte-identical, and restores. My counts differ from the builder 345/2,827,856 purely by pose, as AGENTS_BRIEF predicts. AND IT WAS AVOIDABLE: sheet.js own comment computes that a 0.20 m facing subtends 84 px at 1.75 m, and the chase rig cannot get nearer than about 1.5 m (h 2.35, dist 5.57 behind the cop, measured live) \u2014 so a facing is 84-110 px on screen at its largest while the carton cell is 340 px wide. That is 4x linear, 16x areal oversampling; the top mip of every package atlas is never sampled in play. Sized to the delivered resolution, all 120 cells would fit in LESS memory than r16 spent on 48. The round bought cell COUNT at full price while cell SIZE was already 4x over."
-  },
-  {
-   "t": 1787777060.740426,
-   "piece": "store",
-   "role": "critic",
-   "round": 17,
-   "state": "gap",
-   "text": "ROUND PACKAGES DESTROY THEIR OWN ARTWORK, AND THAT IS NOW THE CUE. 23.0% of all 44,853 package instances (10,333: can/bottle lathes + cylinders) wrap the atlas cell around a body of revolution, and the print degenerates into vertical smear. Gradient anisotropy mean|dL/dx| / mean|dL/dy|, masks taken by ABLATION so no region is declared: round-form facings 1.490 +/- 0.372 sd relative to flat-form facings in the SAME frame at the SAME distance, 6/6 poses above 1.0, range 1.075-2.062, all six restores byte-identical. Three reference photographs run through the identical rule put REAL cylinders BELOW their flat neighbours: 0.730 (store_01 tuna cans vs pouches), 0.783 (store_00_Drinks bottles vs cartons), 1.033 (store_05 Lipton bottles vs paper packs). The sign is inverted. In the round-only ablation not one cylinder in the store carries a readable wordmark, a rim ellipse or a lid, while CEDAR MILL ROASTED PEANUTS reads as a frosted bottle with a barcode across its face. REFUTATION PUBLISHED: whole-frame anisotropy does NOT separate \u2014 render 0.654-0.776 median 0.706 sits inside references 0.617-1.164 median 0.874, n=14 of 14 files. The separation is the within-frame class contrast, not the frame. The flat-faced work is genuinely good and is no longer what I called on: OAKHAVEN MILK CHOCOLATE BARS, HAVENWOOD PEPPERONI PIZZA with NUTRITION FACTS and NET WT 10 OZ (283g), MARCHETTI INSTANT OATMEAL with a legible steaming bowl. Round 15 said the cue is semantic; it is not any more. It is material."
-  },
-  {
-   "t": 1787777046.1736488,
-   "piece": "game",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "INSTRUMENTS I DISTRUSTED. (1) My own ledger, twice, on its first reading: it published a worst single-string coverage of 2382.4% because eval.js has TWO census pooling loops and I fixed only the cross-shift one, and it printed an empty site list beside 68 erasures because mark() is a no-op after census is nulled four lines above. Both were visible in the first output. (2) My first fix cleared all three chrome classes and opened a fourth - 116 erasures by the readout plate onto the label - because round 15s guard tested dy2 === ly exactly and rowBelow can produce a merely-overlapping row. The label row is a keep-out now, one list instead of two rules. (3) The synthetic radial sweep: it never produced backRect (the rear-break banner) or the mid-chase top-left geometry, so it certified a keep-out list that was one band short; the ledger caught that band on the very next bench, naming hud.js:1896. The enumerated list is not the guard - _erasures and _eraseSites are, and they report a file and line. Added _eraseNear, the same test at any overlap, so a band grazing a word is named before it lands on one. (4) Pose dominance again: the same ablation reads 70 and 116 erasures at two cop poses on one build. (5) The determinism precondition bit ME - benches after different amounts of idle rAF gave caught 17 vs 7 on HUD-only changes, so the door-panel runs are single-run and are reported as such; only the 68 -> 0 pair has matched denominators. agents.report() still returns null on this build."
-  },
-  {
-   "t": 1787777032.381252,
-   "piece": "game",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "DOOR PANEL - DECISION: change the emphasis, withhold nothing. The diagnosis is sharper than \"more information is worse\". At the bolt HIM 56.9 / YOU 59.0; four seconds later HIM 49.5 / YOU 59.8. HIM fell 7.4 m because he ran at the door and YOU ROSE 0.8 m because the player ran at the MAN - so the panels headline number degrades as a CONSEQUENCE OF THE CORRECT DECISION. There are two races and only one stays live: the door race, and the interception race that GAP and OUT IN measure, which moves with every stride and every powerup and was 13 px at the bottom. So every metre still prints; the door chip that is gone says NO CUT beside its own number, the row that already owned the door-race verdict says NO CUT - RUN HIM DOWN, and GAP goes 13 px -> 19 px. The rule uses no new constant: a boost is METRES, boostTime*(boostMul-1)*copRun = 6.36 m of head start, the rest at copRun, against agents own live thiefCruise(). My first cut priced the whole route at copRun*boostMul and DID NOT FIRE ON ITS OWN MOTIVATING EXAMPLE - it credits a 3 s boost across an 8 s run. The shipped rule reproduces both halves of the observed chase: at the bolt 10.42 s vs 10.64 s LIVE, four seconds later 10.58 s vs 9.25 s GONE. It fires on 8.4% and 11.7% of chase frames over two seeds - BOT-DRIVEN and therefore not an answer about play, since eval routes from t.position."
-  },
-  {
-   "t": 1787777019.434125,
-   "piece": "game",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "RUN PAIRS NOW FIRE. sight.js gains PAD_PROBES and makeSight(colliders,{pad}), the same upgrade round 15 made to END_RULES: every variant injected before was an end rule, an end rule only changes the answer near an endpoint, so all 112 run pairs had never once been shown capable of firing. sightVariants() now reads - cap45 252/592 all step, none 420/592 all step, pad2.10 64/592 ALL RUN, pad3.00 24/592 all run. Perfectly complementary: step catches end-rule breaks, run catches pad breaks, neither catches the other. sightCheck() asserts the BOUNDARY, not that something fired: a run pair sits AISLE_GAP/2 = 2.0 m off either face, so pad 1.9 must block 0 and pad 2.1 must block every pair it can reach. Two of my own errors, both caught by running the guard against the healthy tree first: asserting all 112 fired on a clean build (the 2.5 m pairs are exempt because 2*pad exceeds their length, so the denominator is the reachable 64), and an uncatchable list that missed the structural dead band - a perpendicular step pair can never be blocked by ANY pad, because the end exemption is pad metres and the shell is pad deep, so they cancel term for term. That band is now derived from AISLE_GAP, not typed."
-  },
-  {
-   "t": 1787777006.9082181,
-   "piece": "game",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "CORRECTION TO THE BRIEF, evidenced: AISLE n is never destroyed and cannot be. It is drawn inside the DISPATCHED TO panel, which is drawn AFTER the whole subject cluster, so the panel always wins. Swept 4,864 marker layouts: the only rectangle that ever overlaps that string is the panels own backing plate, drawn before it. shots/crop_r16_pair_aisle.png has AISLE 1 byte-identical in both layouts. The collision is real and the casualty is inverted in all three classes - what gets painted out is the markers OWN label, by panel() 0.88, topBand() 0.93, plate() 0.92, each reaching 100%. The visible residue is an orphan ? and a bracket stub stranded on the panel. FIX: reserved bands. Six rectangles the marker cluster resolves out of, each read from the same function the drawing site paints from (dispatchRect, heardRect, dialogueRect, promptRect, backRect, doorTagBoxes) so there is no transcribed copy. The label flips BELOW the marker when the row above is taken - the fix round 15 identified and deferred - and only resolves downward if both are. Round 15s layout ships as a selectable ablation, hud.bands(r15), so before/after is one page load and one dial: 116 erasures / 106 overprints -> 0 / 0 on a byte-identical scene."
-  },
-  {
-   "t": 1787776995.268585,
-   "piece": "game",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "PLATE LEDGER: the ink ledger now records painted rectangles, not just glyph runs, bound to the HUD ctx inside createHUD (no prototype patch, so it cannot see the CCTV wall or the offscreen composite). Effective alpha = globalAlpha x the alpha parsed out of the rgba() fill string: on one desk frame that separates 8 opaque plates from 61 translucent ones, which a globalAlpha>=0.8 test gets exactly backwards. Validated three ways on a known signal before any number was quoted: an opaque rect injected AFTER the draw fires on 5/5 legible strings at 100%; the same rect at alpha 0.30 fires 0; the same opaque rect drawn FIRST fires 0. ERASURES 68 -> 0 and overprints 12 -> 0 over 9600 census frames, seed 7717, with byte-identical denominators both runs (218,924 strings / 125,570 plates / 594,308 translucent). Worst before: SUBJ-07 100% painted out by topBands full-width fill. Final build reads 0 erasures / 0 overprints / 0 near-misses on two seeds, 19,200 frames."
-  },
-  {
-   "t": 1787775232.9743218,
-   "piece": "store",
-   "role": "builder",
-   "round": 17,
-   "state": "critiquing",
-   "text": "ATLAS 48 -> 120 CELLS AND EVERY MOTIF NOW REACHES A SHELF: motifs on a shelf 30/81 -> 81/81, product nouns 40/140 -> 99/140, brand names 31/58 -> 49/58, package instances UNCHANGED at 44,853 (census reproduces the critic exactly, which is what makes the rest comparable). BUT WIDENING THE PIPE WAS ONLY HALF OF IT: every cell called copyFor(rng, dept, form), a RANDOM DRAW WITH REPLACEMENT, so 48 cells drawing from a 74-SKU pool land only ~38 distinct products - widening alone buys roughly the SQUARE ROOT of what you pay for. New src/store/plan.js replaces it with a deterministic greedy motif-coverage deal, and is now the ONE OWNER of what is in cell i, retiring a convention that was written down in THREE files (store.js:63, products.js poolFor, pack.js deptKeys[i % deptKeys.length]) - and which HAD ALREADY GONE WRONG: FROZEN.idx is 8 and 8 % 8 === 0, so EVERY FROZEN CASE WAS STOCKED WITH BAKERY-VOCABULARY PACKAGES. THREE CHECKS AT THREE STAGES, AND IT NEEDED ALL THREE: depictCheck(names, bakedSet) names an orphaned motif, bakeCheck() builds that set from CELL_LOG, and shelfCheck() reads the SCENE GRAPH. All 13 assertions pass and all 13 fire under injection. The reason the third exists: THE FIRST WIDENED BUILD PASSED bakeCheck() AT 81/81 WHILE 8 OF 18 BOTTLE CELLS WERE DEALT TO DEPARTMENTS THAT NEVER SHELVE A BOTTLE - soySplash and sportBottle were baked, verified, and INVISIBLE. Baked is not placed; round 16 lesson repeating one stage along. WHY r16 SHEET COULD NOT SEE ITS OWN DEFECTS: it decoded each cell with pal[n % pal.length], THE SHEET COLUMN INDEX, randomising away the one axis every shipped defect lived on - and its decoder was missing uPkgSat (1.22) entirely, so every colour on it was 22% less chromatic than the store. New src/store/sheet.js samples REAL INSTANCES off aCell + instanceColor, reads uPkgStock/uPkgSat off the LIVE uniforms, and parses the four food swatches out of the shader source over HTTP. RE-READ OF THE FIXED SHEET: peanuts, wheat ears, peaches, spaghetti, toothpaste, chocolate bar and soup bowl now read as objects at 84 px. THE BABY FACE IS STILL A KAWAII CARTOON, NOT A PHOTOGRAPH OF AN INFANT - the critic was right and I did not fix that. LEGIBILITY ABLATED, restore proven byte-exact at 0 px between two unmuted bakes on all four atlases: ink median 0.407 -> 0.472, paired delta +0.0514 +/- 0.0718, 79 of 113 cells up and 13 DOWN; tabletRound 0.089 -> 0.282, peanut 0.198 -> 0.327, wheatEar 0.194 -> 0.679, caplet 0.300 -> 0.538. TWO REJECTED EXPERIMENTS KEPT IN THE CODE: a filled photo window (fired on 110 of 113 cells, 86 of them dark - round 12 hole punched through the brand block from the other side), and fat rims at 0.058/0.030 which SCORE BETTER at 0.499 and look like sticker cutouts. THE METRIC WOULD HAVE CHOSEN THE STICKER. DISPLAY-TYPE CONTRADICTIONS: FLASH_SKU + displayCheck() in brands.js, a SECOND check because copyCheck() returning [] on RISING CRUST / FISH STICKS is correct for what it asks - 16.02% -> 0.00% over 300,000 draws with the six named contradictions 1,600 -> 0. That 16.02% is measured against MY OWN table and is NOT comparable to the critic 3.04%. 80 of 167 bands gated, 87 left ungated - THAT RESIDUAL IS EXPOSURE, NOT INNOCENCE, flagged as follow-up. PRICE AT A PUBLISHED POSE: 345 calls / 2,827,856 triangles BYTE-IDENTICAL with the real 120-cell atlases and with a 1x1 stand-in swapped onto the same four materials IN THE SAME RUN - the widening costs zero draw calls and zero triangles by construction. It costs 21.2 -> 50.9 MB of texture (x2.40) and ~0.9 s of bake. The rims first cost 6.6 s of a 6.9 s bake (2,880 blits onto a canvas getImageData had de-accelerated); composing them in the small scratch first took it 6,915 ms -> 1,073 ms."
-  },
-  {
-   "t": 1787775088.069678,
-   "piece": "store",
-   "role": "builder",
-   "round": 17,
-   "state": "passed",
-   "text": "ATLAS 48 -> 120 cells, and the deal that fills them. Off the LIVE SCENE: motifs reaching a shelf 30 -> 81 of 81, product nouns 40 -> 99 of 140, brand names 31 -> 49 of 58, same 44,853 instances. Three checks at three stages, all proven to fire: depictCheck(names, bakedSet) now takes the baked set and names an orphaned motif; pack.js bakeCheck() reads CELL_LOG; store.js shelfCheck() reads the scene graph - and the first widened build passed bakeCheck at 81/81 while shelfCheck caught 8 bottle cells no department could ever place. facingSheet moved into src/store/sheet.js and samples REAL instance colours off aCell + instanceColor; r16 decoded by column index, and its decoder was also missing PKG_SAT 1.22 entirely. Legibility priced by ablation on one page load, restore proven byte-exact at 0 px on all four atlases: ablated ink median 0.407 -> 0.472, paired delta +0.0514 +/- 0.0718, 79 of 113 cells up and 13 down. Display type: FLASH_SKU gates 80 of 167 bands in multi-SKU classes, 16.02% -> 0.00% over 300,000 draws with setDisplayGate as the toggle; 87 entries left ungated and that is the stated exposure. Price at pose P_a3_down: 345 calls / 2,827,856 tris IDENTICAL with the real atlases and with a 1x1 stand-in, so the widening costs zero calls and zero triangles; it costs 21.2 -> 50.9 MB of texture and about 0.9 s of bake."
-  },
-  {
-   "t": 1787774283.303064,
-   "piece": "store",
-   "role": "builder",
-   "round": 17,
-   "state": "building",
-   "text": "legibility: every depiction now carries two rims (light outer halo + dark inner keyline) drawn from its own dilated silhouette, so it separates from a per-instance brand colour the bake cannot see. Measured by ablation on one page load with a proven byte-exact restore (0 px difference between two unmuted bakes on all four atlases): ablated ink median 0.397 -> 0.493, p05 0.176 -> 0.261. The two motifs the critic called invisible were still outline-only after the rims and needed bodies, not edges: tabletRound 0.089 -> 0.282, caplet 0.300 -> 0.538. First draft was a filled photo window; it fired on 110 of 113 cells, 86 of them dark, and is published as a rejected experiment."
-  },
-  {
-   "t": 1787774085.120805,
-   "piece": "game",
-   "role": "critic",
-   "round": 15,
-   "state": "gap",
-   "text": "THE INK LEDGER RECORDS TYPESET GLYPH RUNS, NOT PAINTED PIXELS, SO THE CLASS OF ERASURE IT WAS BUILT TO END IS STILL INVISIBLE TO IT. What erases words in this HUD is ctx.fillRect, not another string: the subject bracket draws fillRect(cx-bw/2, cy-9, bw, 20), a 20 px OPAQUE PLATE reaching 15 px ABOVE the baseline the ledger records at cy+6, and the top band is 1280x52 at alpha 0.93. A plate-aware probe over 8,458 self-validated census frames finds 94 ERASURES, 65 NEVER NAMED BY THE SHIPPED LEDGER, including SUBJ-05 100% PAINTED OUT by the top band. The round slogan is measure what is actually inked; it measures what is actually TYPESET. AND THE RESIDUAL IT CALLED ONE HARMLESS OFF-CANVAS CLASS IS THREE ON-CANVAS SITES, MID-FRAME: 24 of 35 are bracket plate against AISLE n at y 89-119, which DESTROYS A WORD - at y<=100 the plate takes the top half of AISLE 1, the one string the game exists to deliver; 5 of 35 are bracket against DISPATCHED TO at y 70-79, leaving a bare 3 where a subject code should read; 6 of 35 are the top band shaving the tops off UNIT and rendering SUBJ-05 dark-on-dark. A close subject high in frame putting its label off-canvas describes NONE of them - SUBJ-05 sits at x 168-224 of 1280."
-  },
-  {
-   "t": 1787773962.1411781,
-   "piece": "game",
-   "role": "critic",
-   "round": 15,
-   "state": "gap",
-   "text": "The ink ledger records TYPESET GLYPH RUNS, not PAINTED PIXELS. The thing that erases words here is ctx.fillRect - the bracket plate is a 20px opaque rect at cy-9 while the ledger records a 12px run at cy+6, and the top band is 1280x52 at alpha 0.93. A plate-aware probe over 8458 self-validated census frames finds 94 erasures, 65 of them never named by the shipped ledger, incl SUBJ-05 100% painted out by the top band. And the residual it DID report is mischaracterised as one off-canvas class: it is 3 sites on-canvas, and two destroy words - AISLE 1 loses its top half to the bracket plate at y<=100 (evidence shots/r15crit_A_y88.png), and the DISPATCHED TO bar leaves only \"3\" of \"SUBJ-13\"."
-  },
-  {
-   "t": 1787773548.990174,
-   "piece": "store",
-   "role": "builder",
-   "round": 17,
-   "state": "building",
-   "text": "atlas 48 -> 120 cells and the deal that fills them. Measured off the live scene: motifs on a shelf 30 -> 81 of 81, product nouns 40 -> 99 of 140, brand names 31 -> 49 of 58, over the same 44,853 package instances. New src/store/plan.js is the one owner of what is in cell i, replacing the cell-i-is-department-i-mod-8 convention that was written down in three files. Two new assertions against LATER stages: bakeCheck() reads CELL_LOG (what was drawn) and shelfCheck() reads the scene graph (what was placed) - the first r17 build passed bakeCheck at 81/81 while 8 of 18 bottle cells were dealt to departments that never shelve a bottle."
-  },
-  {
-   "t": 1787773109.502582,
-   "piece": "cctv",
-   "role": "builder",
-   "round": 14,
-   "state": "critiquing",
-   "text": "THE WARM CUT SHIPPED AND IT FREED THE THRESHOLD. bloomSel() - one selector definition called nine times - now multiplies the level term by (R-B)/L < 0.15, from three channels already in the register. FETCH COUNT UNCHANGED AT 12. MEASURED ON THE RENDER, NOT PREDICTED: across all 16 poses of the reachable band, one page load, roll ablated, majority-of-5, BLADE blown falls at 15/15 poses that have a blade (369->145 at z -11.6, 537->160 at z -2), and raw-domain BLADE two-term clears 0.000% at 15/15 with cMin running 0.1561-0.2108 against the cut. BUT THE CRITIC HEADLINE DOES NOT SURVIVE THE DOMAIN CHANGE AND IT SAYS SO: more lamp than the shipped gate is true of the SELECTOR STATISTIC and false of the PICTURE - at z -16 the two-term gate more than doubles the LENS share entering the selector (2.378 -> 5.080) while blown lamp pixels go 11 -> 9. A troffer at p90 1.06 has nothing to give a halo however certain the selector is. On its own the warm cut is a CARD-SIDE fix. bloomThr CAME DOWN TO 1.15: the numeral is white ink lit by warm lamps, so chroma protects it at any level - glyphArea / glyphMass / glyphIoU are 1.000 / 1.000 / 1.000 at thresholds 1.27, 1.15, 1.10 AND 1.00 with the cut on, and r13 rejected lever was reproduced first as the control (1.310 / IoU 0.763 against its published 1.306 / 0.766). WITH THE THRESHOLD DOWN THE LARGEST BLOWN BLOB IS A TROFFER LENS AT 16 OF 16 POSES, including z -17, -16 and -2 - the three round 13 called structurally impossible - flip verified 3/3 reps at both contested poses. Whole-frame blown RISES at 16/16, reversing two rounds of decline, and aisle 1 goes from 0.031 above the reference band minimum to 0.133. Sign share falls at 4/4 aisles (13.6% -> 4.4% at aisle 7). THE COUPLING MADE EXPLICIT: probe.lampWarm() reads the live colour off scene.userData.chopField.uniforms.uLampCol and THROWS - and a transcribed constant would have been wrong immediately, because light.js defaults to 0xfff6ea while store.js passes 0xfff4e4. Margin 0.0948 below the illuminant, 0.0130 below the measured blade minimum, tested in both directions. ONE STEP OF THE CRITIC INFERENCE IS WRONG: the bloom-off ablation reproduces exactly (z -16: BLADE 168, LENS 0, largest blob BLADE 73) and that sentence replaces r13 reasoning in the file, but no bloom-side selector can flip a class the bloom is not producing is FALSE AS STATED - A SELECTOR DECIDES WHAT THE BLOOM PRODUCES. The bloom made no lamp at z -16 only because the threshold excluded a p90-1.06 troffer; drop the threshold and it makes LENS 407 where it made 7. What is genuinely immovable is the FLOOR - BLADE 168 with the bloom off against 162-180 shipped, the sign blowing on its own, which is signMat fresnel glare and store to fix. Both z -17 summaries published (largest blob BLADE 284, largest class LENS 364 vs BLADE 308) and gradeAB() now returns both at every pose so that can never again be a silent choice. CORRECTIONS: flatProfile() re-tests the r13 invariant at n=99/150/211 instead of 26, giving lift/grain 0.88-1.15 with the local kernel against 3.12-3.43 without it; CH09 blown class is SHELLOTHER at 194,658 texels (84.5% of feed) with FRONT maxing 0.2151 and clearing 0.000% - number right, label an eyeball; the wall kept bug gives printed BLADE x2.024-2.060 against the daylight it exists for at x1.684, so safe-by-size holds at a ratio of 2,187:1; warp.js fixed to tangential 1.0000 / radial 0.8184; CH09 raw is 640x360 not 284x160. WALL LEVER MEASURED, NOT TAKEN: the cut keeps CH09 daylight (cool, -0.065; stream 2.2188 -> 2.1962, -1.0%) while card feeds drop 31-89%, but the drop is every WARM surface and there is no wall reference band to judge it against - bloomWarm 9.0 is now typed explicitly on wall and spot rather than defaulted, with the A/B and the named next step beside it."
-  },
-  {
-   "t": 1787772908.026906,
-   "piece": "cctv",
-   "role": "builder",
-   "round": 14,
-   "state": "building",
-   "text": "CROSS-FILE COUPLING MADE EXPLICIT: probe.lampWarm() reads the LIVE lamp colour off scene.userData.chopField.uniforms.uLampCol and THROWS if the cut reaches the illuminant or if any blade texel goes cooler than the cut. Store passes 0xfff4e4, light.js defaults to 0xfff6ea -- a transcribed constant would have been wrong the day it was written. Margin below illuminant 0.0948, below measured blade minimum 0.0130. Guard tested in both directions before trusting it."
-  },
-  {
-   "t": 1787772907.89419,
-   "piece": "cctv",
-   "role": "builder",
-   "round": 14,
-   "state": "building",
-   "text": "CORRECTIONS TO MY OWN RECORD. (1) flatGain selects 26 pixels on the shipped build -- a signed mean off 26 is not a result. flatProfile() sweeps eps: the r13 local-kernel invariant now holds at lift/grain 0.88-1.15 over n = 99/150/211 while bloomLocal 0 sits at 3.12-3.43 on the identical pixels. (2) CH09 blown surface is SHELLOTHER (194,658 texels, 84.5% of feed), not FRONT, which maxes 0.2151 and clears 0.000% -- the number was right, the label was an eyeball. (3) the wall kept bug gives printed BLADE x2.024-2.060 against the daylight it is kept for at x1.684, so safe-by-SIZE is right and the size ratio is 2,187:1. Also: warp.js said at the corners both fall to 1 -- tangential is 1.0000, radial is 0.8184, fixed. And 284x160 per feed is true of eight feeds; CH09 raw is 640x360."
-  },
-  {
-   "t": 1787772893.409739,
-   "piece": "cctv",
-   "role": "builder",
-   "round": 14,
-   "state": "building",
-   "text": "Second axis shipped and MEASURED ON THE RENDER, not predicted. bloomSel() gains a warm cut (R-B)/L < 0.15 -- zero extra fetches, 12 stays 12. BLADE two-term clears 0.000% at 15/15 poses in the reachable band (cMin 0.1561-0.2108 vs cut 0.15). That freed uBloomThr 1.27 -> 1.15: numeral glyphArea/IoU exactly 1.000 at every threshold down to 1.00 with the cut on, against r13 rejected lever 1.310/0.763 without it. Largest blown blob is a troffer LENS at 16/16 poses including z -17/-16/-2, the three r13 called structural; flip verified 3/3 reps. Whole-frame blown UP at 16/16, reversing two rounds of decline, all inside the reference band; aisle 1 was 0.031 above band minimum, now 0.133. Sign share falls 4/4 aisles (13.6 -> 4.4 at aisle 7)."
-  },
-  {
-   "t": 1787772712.179032,
-   "piece": "game",
-   "role": "critic",
-   "round": 15,
-   "state": "critiquing",
-   "text": "ink ledger: residual is NOT one class. 35 legible collisions / 10 pair kinds at 3 sites over 9600 census frames. Words ARE destroyed: AISLE 1 half-erased by the bracket plate at y<=100, DISPATCHED-TO bar leaves only \"3\" of \"SUBJ-13\", UNIT tops shaved. And the ledger records glyph runs, not the opaque fillRects: a plate-aware probe finds 94 erasures, 65 of them never named by the shipped ledger, incl SUBJ-05 100% painted out by the 1280x52 top band."
-  },
-  {
-   "t": 1787772441.409651,
-   "piece": "store",
-   "role": "critic",
-   "round": 16,
-   "state": "gap",
-   "text": "THE ATLAS IS A 48-CELL PIPE AND THE ROUND WROTE 82 MOTIFS INTO IT. ATLAS in pack.js is carton 6x4, pouch 4x2, can 4x2, bottle 4x2 - 48 CELLS, HARD-CODED, BAKED ONCE, confirmed by CELL_LOG. Measured off the live scene: 30 OF THE 81 ASSIGNED MOTIFS REACH A SHELF AND 51 NEVER APPEAR ANYWHERE, including THREE OF THE FOUR THE ROUND LEADS WITH - peachHalf, spaghetti and toothpaste are all in the never-drawn list, and only babyFace is baked. The whole store holds 40 of 140 product nouns and 30 of 58 brand names, and 44,853 PACKAGE INSTANCES DRAW FROM THOSE 48 ARTWORKS. depictCheck() asserts every SKU has a motif and every motif has a SKU; IT NEVER ASKS WHETHER THE SKU IS EVER BAKED, so it passes at 100% while 63% of the round work does not ship. A CORRECTION I OWE THE BUILD: brand colour IS per-instance and nearly unique - 2,485 distinct colours over 4,194 carton instances in run0.0 - so it is wrong to say 48 pictures repeat. The accurate statement is worse: COLOUR VARIES CONTINUOUSLY WHILE EVERY GLYPH, EVERY LAYOUT AND EVERY MOTIF IS ONE OF 48, which is exactly why the eye reads instancing rather than eight cans of the same soup. SAME SHAPE ONE SURFACE ALONG: 370 danglers and 93 promo headers draw from 16 cards each, and of the eight department-gated qualifiers exactly ONE appears in the shipped store - FROZEN ONLY and PLUS DEPOSIT are 0 OF 32 CARDS. Widening the carton atlas is one texture, and it is the only change that puts round 16 work in front of a player."
-  },
-  {
-   "t": 1787772300.23437,
-   "piece": "store",
-   "role": "critic",
-   "round": 16,
-   "state": "gap",
-   "text": "THE ATLAS IS A 48-CELL PIPE AND THE ROUND WROTE 82 MOTIFS INTO IT. ATLAS in pack.js is carton 6x4, pouch 4x2, can 4x2, bottle 4x2 = 48 cells, fixed, baked once. CELL_LOG confirms 48. So the whole store holds 30 of the 81 assigned motifs, 40 of 140 product nouns and 30 of 58 brand names, and 51 motifs are never drawn anywhere - including three of the four the round leads with: peachHalf, spaghetti and toothpaste are all in the never-drawn list. Only babyFace of the four is baked. 44853 package instances draw from those 48 artworks. Brand colour IS per-instance and nearly unique (2485 distinct colours over 4194 carton instances in run0.0), so the correct statement is not that 48 pictures repeat - it is that colour varies continuously while every glyph, every layout and every motif is one of 48, which is precisely why the eye reads instancing. depictCheck() asserts every SKU has a motif and every motif has a SKU; it never asks whether the SKU is ever baked, so it passes at 100% while 63% of the work does not ship. Same shape at the other surface: 370 danglers and 93 promo headers draw from 16 cards each, and of the 8 department-gated qualifiers exactly ONE appears in the shipped store (promo cell 9, health, ADULT USE ONLY) - FROZEN ONLY and PLUS DEPOSIT are 0 of 32 cards, so 17.07% and 11.39% describe the grammar, not the build. Widening the carton atlas is one texture and it is the only change that can put the round-16 work in front of a player."
-  },
-  {
-   "t": 1787771944.3732648,
-   "piece": "game",
-   "role": "critic",
-   "round": 15,
-   "state": "critiquing",
-   "text": "r15 critic: eval.run() determinism REPRODUCES 5/5 across page reloads (hash 11181c04da412b36). But precondition is ZERO sim frames since load: step(0) - exactly what snap() does - swings observer 4 thieves/495 pts to 3/374. Neutrality control passes in a stronger form than r15 ran it: census:false removes the whole HUD draw path and all 6851 chars of game-side state are byte-identical."
-  },
-  {
-   "t": 1787771401.253093,
-   "piece": "game",
-   "role": "builder",
-   "round": 15,
-   "state": "critiquing",
-   "text": "THE BANNER IS FIXED AND EIGHT MORE SITES WERE FOUND. FOOTSTEPS now lays itself out from advance(): main 413-756, sub 778-867, 22 px gap, box 482 px where it needed >=464. The word NOT survives. EIGHT SITES IN hud.js DID NOT ROUTE THROUGH advance(), all now taking width from advOf(str, opts) - the same options bag the text is drawn with, so the two cannot drift. The worst is stamp(): measureText(text).width + 34, drawn at ls:3, which is LITERALLY THE BUG advance() WAS WRITTEN FOR, with the padding gone past 11 characters. The COLD readout guessed 7 px against a real 11 px bold advance - AND ROUND 14 CANVAS CLAMP WAS SIZED OFF THAT GUESS, so the error propagated. The bracket label plate measured lbl and DREW lbl + a chevron, so the plate ran two characters short on right-edge subjects. GREP FOUND THOSE EIGHT. IT COULD NOT HAVE FOUND THE NEXT THREE - so the durable deliverable is an INK LEDGER recording every drawn string real box on the census frame eval.js already renders at 10 Hz: 81 -> 21 COLLISIONS ACROSS 574,958 STRINGS OVER 7 SEEDS. It caught a second word-destroying erasure nobody knew about - LAST SEEN 7.4s +/-11m rendering as a door tag painted over the label, leaving a bare number - where BOTH BOXES WERE CORRECTLY MEASURED and they collide only because two elements clamp independently to the same edge. Fixed, plus a 100 px pursuit-panel bleed fixed with a declared keep-out rect. AND IT CAUGHT ITS OWN REGRESSION: adding a top clamp to the bracket label took overprints 25 -> 261, because a clamp does not find free space, it finds the DISPATCHED TO panel. Reverted, negative result published above the line. Residual 21 is one class - a close subject high in frame putting its label off-canvas - measured, reproducible, not fixed. openPAIRS EXTENDED BELOW 1.156 m: STEP_D now [0.4, 0.6, 0.8, 1.0, 1.5], 208 -> 592 pairs, and the cap45 over-blocking draft that scored 0/208 now scores 252/592 (84 each at 0.4/0.6/0.8) with zero difference at 1.0 and 1.5 exactly as the algebra predicts. sightCheck() now asserts the SPAN, so trimming STEP_D fires the guard. bearing NOW CONSULTS b.sweep: ringContradictionFrames 0 over 33,326 frames. COLD TWO POPULATIONS SEPARATED: ring drawn with the number printed, 6,259 frames at 98.5% realized coverage (95.4-100 by seed); ring drawn while swept, 893 frames at 25.5%; diamond with no radius, 636 frames, no claim scored. Pooled that is round 14 88.5%. PUBLISH 98.5%, NOT 88.5%. POSITION ON THE NO-OP LATCHES: keep it, and stop calling the collapse the feature - on the 893 falsified frames the ring used to draw it kept its promise 25.5% of the time against 98.5% where the number is honestly printed, so those frames genuinely are where the marker must stop making a numeric claim; what is not defensible is pricing it as a REPOSITIONING. It is a text state, one boolean and one clock, firing about once per 84 s of floor time. THE DOOR PANEL MEASURED: you-minus-him exceeds 10 m on 8.8-40.8% of chase frames by seed, and 59.3-87.2% in the last 2 s of his run, so HIM 5.2 / YOU 16.5 is not a freak but mid-distribution for the endgame. THE PANEL IS NOT EXAGGERATING - the same statistic off his TRUE position is byte-identical in the 2 s window, because the front of the store has no occluders so the belief there IS the man, with panel error 0.23-2.24 m mean. BUT THIS IS THE BOT, NOT THE BAR: routeOf() plans from t.position, a full oracle, and its catch rate reads 16.7-42.9% here against a human hand-playing at 0.8/0.8/1.9/2.3/3.3 m. It refuses to quote the oracle bot escape gap as an answer about play."
-  },
-  {
-   "t": 1787771228.612052,
-   "piece": "game",
-   "role": "builder",
-   "round": 15,
-   "state": "building",
-   "text": "r15: FOOTSTEPS banner laid out from advance() (main 413-756, sub 778-867, box 482 vs 420) so the word NOT survives; all 8 guessed-width sites in hud.js now measured; new ink ledger on hud.sample catches drawn-string collisions (81 -> 21 over 574,958 strings). openPairs swept 0.4-1.5 m: cap45 draft now caught 252/592. bearing consults b.sweep: ring 98.5% covered (6,259 frames) vs 25.5% on the 893 swept frames it used to draw. 8 of 9 latches move the marker 0 m. Door panel shows >10 m spread on 19% of chase frames, and the true-position control says it is not exaggerating."
-  },
-  {
-   "t": 1787770993.629451,
-   "piece": "cctv",
-   "role": "critic",
-   "round": 13,
-   "state": "gap",
-   "text": "THE SELECTOR READS ONLY LUMA FROM A BUFFER WHERE R AND B ARE ALREADY IN REGISTERS. A two-term gate (L >= 1.10 AND (R-B)/L < 0.15) is STRICTLY DOMINANT AT 9 OF 9 POSES - more lamp than the shipped gate and 0.000% printed card everywhere. LENS% shipped vs two-term: z-18.9 19.226 -> 22.209; z-17 6.429 -> 7.252; z-16 2.395 -> 5.089; z-15 3.004 -> 7.978; z-11.6 16.779 -> 21.031; z-6 23.569 -> 30.373; z-2 3.478 -> 5.913; z0 12.286 -> 18.066; z+9 47.835 -> 48.078. BLADE 0.000% at every one. Zero extra fetches - it is a ratio of three channels already sampled, in the same raw linear domain the bloom runs in. THE SHARPER HALF: at the round own validated pose, BLADE at L>=1.15 has chroma p01 0.1635, i.e. 0.000% below the gate, while LENS at L>=1.15 is 99.811% below it - so the chroma axis lets bloomThr come DOWN to 1.15 with the numeral untouched BY CONSTRUCTION. cctv.js:1199 says IT CANNOT BE PUSHED, raising uBloomThr costs lamp bleed and gain does not buy it back. CHROMA BUYS IT BACK. Physical grounding of the same character as the round own gradient argument: an emitter shows its own SPD, a reflector shows lamp SPD x albedo and cannot be COOLER than the light that lit it - a glare can fake amplitude, it cannot fake a gradient, and it cannot fake a colour temperature below its source. THE LEVER BELONGS TO src/cctv/shaders.js 3b, NOT STORE."
-  },
-  {
-   "t": 1787770853.665328,
-   "piece": "cctv",
-   "role": "critic",
-   "round": 13,
-   "state": "gap",
-   "text": "the bloom selector reads only luma from a buffer where R and B are already in registers. (R-B)/L admits 0.000% of BLADE at 9 of 9 poses across the measured reachable band -- including z=-16 where luma is inverted at 0.82x -- and 99.8% of bright LENS at thr 1.15, which is the lamp bleed cctv.js says cannot be bought. Belongs to cctv/shaders.js 3b, not store"
-  },
-  {
-   "t": 1787770734.29108,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "critiquing",
-   "text": "DEPICTION SHIPPED - the cue the blind critic named. New src/store/depict.js: 82 MOTIF DRAWINGS, ONE ASSIGNED TO EACH OF THE 140 SKUs, dispatched on the product noun. A can of peaches draws peach halves with the pit hollow; spaghetti draws strands round a fork; toothpaste draws the ribbon on the brush; baby wipes draw A HUMAN FACE. Plus five mascot marks on the 14 classes that carry one in a real store. depictCheck() throws if any SKU would fall through to the old heap. RETIRED foodPhoto() and heroPanel() in pack.js, measurement prose kept: they drew THE SAME 26 RANDOM ELLIPSES on flour, tuna and kettle chips - their only product input was a hue band - and wrote r=200, so the food took 78% of the carton brand colour. THE BOTTLE ATLAS CARRIED NO PICTURE AT ALL; it does now. TWO FAULTS FOUND BY RENDERING ALL 82 THROUGH A SHADER-ACCURATE DECODE AND LOOKING: twelve motifs were INVISIBLE (white objects on near-white stock), and the container motifs drew in brand colour on brand-coloured cartons, so HAVENWOOD LAUNDRY DETERGENT was a plain orange rectangle. Both fixed with keylines and light bodies. COPY 35.64% -> 0.00% over 500,000 draws, judged by tools/copyaudit.mjs - 45 lexical rules that share NOTHING with brands.js. 18 class splits, 11 new legal sets, form-gated bands, 11 tag-conflict pairs. AND ITS FIRST REWRITE OF copyCheck() WAS ALSO VACUOUS: it enumerated tuples and SKIPPED conflicting ones, the same skip copyFor makes, so it could never fire. It caught that BY INJECTION - deleting the one line in pickBand that accumulates tags produced ZERO complaints. The shipped version re-derives tags from the PRINTED TEXT; the same injection now yields 116 NAMED COMPLAINTS, and it catches four seeded contradictions while staying silent on the real table. SIGNAGE GATED, measured against HEAD: SAVE $D.CC PER LB fired on 16.07% of all deals, now 0.00% AND UNREACHABLE BY CONSTRUCTION (this store has no scale - signGaps() says so); FROZEN ONLY 5.83% everywhere -> 17.07% IN FROZEN and 0.00% in the other eight; PLUS DEPOSIT -> 11.39% in soda only. NOT JUST SUPPRESSED, CONCENTRATED. Visible in-render: SAVE $5.33 ON 2 over SNACKS / CHIPS. Both record corrections accepted and filed. PERF: 121 calls / 2,468,222 tris at published pose F1_face_a3, depiction adds ZERO of either, and its build cost is -0.2 ms (p10..p90 -6.7..+6.3) - STRADDLES ZERO, REPORTED AS SUCH. Three instruments distrusted were all its own, including three substring false positives (COLA inside CHOCOLATE, OIL inside ALUMINUM FOIL)."
-  },
-  {
-   "t": 1787770592.345834,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "r16 INSTRUMENT CAVEAT for the next round, and it is NOT the one the brief names. snapClean(storeOnly) is byte-identical on 2 of my 3 poses across two captures in one page load, but F1_face_a3 differs on 5,561 px (0.60% of frame) at a max channel delta of 16/255. The differing pixels are NOT the back-wall freezer glass \u2014 the bbox is (347,427)-(695,615), which is the REFLECTIVE FLOOR in the mid-ground beside the endcap. So there are at least two sources of clean-plate wobble on this piece, and a paired comparison at a pose that includes mid-ground floor needs a tolerance rather than a hash compare. I did not touch floor.js this round; r15 uSeamAlb is uncommitted in the tree and is the likely owner."
-  },
-  {
-   "t": 1787770574.626111,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "r16 PERF, within-run toggle at a PUBLISHED pose. F1_face_a3 pos=[-2.65,1.62,6.0] look=[-2.65,1.45,-4.0] fov=52 at 1280x720: 121 draw calls, 2,468,222 triangles, 55 programs, 49 textures, 143 geometries. Hiding every package-atlas mesh in the same run: 40 calls / 435,082 tris, so product is 81 calls and 2,033,140 tris across 101 meshes; restoring reproduces 121 / 2,468,222 exactly, which is the check that the toggle is sound. Depiction adds ZERO draw calls and ZERO triangles \u2014 it is texture content, not geometry. Its only cost is atlas build, measured 24 times ALTERNATING on and off in one page load: on median 15.2 ms (p10 11.0, p90 23.7), off median 15.4 (11.0, 21.6), paired delta median -0.2 ms with p10..p90 of -6.7..+6.3. That STRADDLES ZERO. One-off at page load either way."
-  },
-  {
-   "t": 1787770574.5331059,
-   "piece": "store",
-   "role": "builder",
-   "round": 16,
-   "state": "building",
-   "text": "r16 RECORD CORRECTIONS, both accepted. (1) My distant-floor ratio was box-inflated: the critic reproduces 0.358 against my 0.359 only by reproducing my BOX, and with floor-only boxes the same frames read 0.235 / 0.184 / 0.295 because my near box reached over a wooden endcap base and halved its own denominator. Sliding the mid box 120 px in y swings it 0.031 -> 0.242. Eighth metric retired on this project for its measuring region, and the premise was weaker than I assumed: store_05, the down-aisle photograph closest to my own pose, has far-floor fine structure of 0.008 against my 0.022-0.026, i.e. the MORE continuous distant floor, and store_12 is polished terrazzo with essentially no grout in the mid-ground. I did not touch the distant floor this round. (2) My whole-build HEAD -> shipped 0.669 -> 0.845 mirror row is r10 -> r15, NOT r14 -> r15, and since that ratio is computed in L* it silently folds in two rounds of lighting change. The geometry-only ablation is the honest row."
   }
  ],
- "updated": 1787954092.370205
+ "updated": 1787995258.256695
 }
