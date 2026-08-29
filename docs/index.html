@@ -98063,25 +98063,33 @@ const { cameraRig } = M_src_cctv_js;
 // 7.8% against their ~7%. As planted as the shipped crowd, which is the only
 // bar a rig comparison can honestly claim.
 //
-// TWO THINGS FOUND WHILE PORTING HIM THAT ARE NOT HIS, and neither is fixed
-// here because fixing either one moves fourteen shoppers:
+// TWO THINGS FOUND WHILE PORTING HIM THAT WERE NOT HIS. Round 1 gave him both
+// behind flags and left the crowd alone, because fixing either one moves
+// fourteen shoppers and that round was not allowed to. ROUND 3 (move) CLOSED
+// BOTH AND DELETED BOTH FLAGS — see gaitUnits() and the sole pin in poseWalk.
 //
 //   A. THE SOLVE IS IN ROOT-LOCAL METRES AND THE STORE IS NOT. `L` and the
 //      step are inside the figure's own root group, which is SCALED — 1.04 on
 //      him, 0.9585 to 1.1143 across the roster. The plant identity v*T = 2*S
 //      only holds when v and S share units, so the drawn foot sweeps rootScale
 //      times what the solve planted and the stance foot skates by
-//      (rootScale - 1) of its excursion. He divides his speed by his root
-//      scale; the crowd does not, and body 11 is carrying 11.4%.
+//      (rootScale - 1) of its excursion. Measured on the crowd: the foot-flat
+//      skate regressed against root scale at slope -0.721 +/- 0.142 before
+//      (p = 0.0003) and +0.224 +/- 0.126 after (p = 0.10, CI contains zero), so
+//      the error stopped being a function of how tall the body is rather than
+//      merely getting smaller. `vLocal` is not a flag any more; it is
+//      `gaitUnits()`, and both callers use it.
 //   B. THE SOLE PIN SOLVES IN THE LEG'S OWN FRAME AND THE PELVIS ROLLS
 //      UNDERNEATH IT. footPose returns a corner's height relative to its own
 //      hip pivot; the pivot is out at +-stance and the hips roll about their
 //      origin, so a listing pelvis carries the loaded pivot down by
 //      px*sin(list) and the pin never hears about it. On him that was 39.6 mm
 //      of sole through the tiles every stride (2.2 mm with `copList` forced to
-//      zero). `poseWalk`'s `pinRoll` flag fixes it for him and is OFF for
-//      everyone else, which is why the crowd's numbers below are identical to
-//      the digit rather than merely close.
+//      zero). On the crowd it was a p01 of -24.2 mm, a median of -4.8 and a
+//      worst of -25.7 over 8,300 stance-foot frames; it is -7.8, -0.35 and
+//      -12.3 now. `pinRoll` is gone; the roll-aware pin is
+//      what everybody gets, and it collapses to the old expression exactly at
+//      zero list, which plantCheck() asserts rather than claims.
 //
 // ---- AND THE OTHER FOUR THINGS THE BRIEF ASKED FOR ------------------------
 //   STARTING       0 -> 1.17 m/s in 0.42 s, measured, against 0.12 s before.
@@ -102045,23 +102053,15 @@ function createAgents(THREE, scene, world) {
     // ---- THE SOLVE IS IN ROOT-LOCAL METRES AND THE STORE IS NOT ------------
     // `L` is the hip-to-sole distance INSIDE the figure's own root group, and
     // that group is scaled: 1.04 on him, 0.9585 to 1.1143 across the fourteen
-    // shoppers. The plant is the identity `v*T = 2*S` — the body travels two
-    // step lengths per cycle — and it only holds when v and S are in the SAME
-    // units. `u.speed` is world metres a second and S comes out of a solve in
-    // root-local ones, so the foot's drawn excursion is rootS times what the
-    // solve planted and the stance foot skates by (rootS - 1) of it. Measured
-    // on him before this line: 74 mm of drift per foot-flat window, on a rig
-    // whose solve slip is 0.0 mm.
+    // shoppers. Measured on him before round 1 divided his speed by it: 74 mm
+    // of drift per foot-flat window, on a rig whose solve slip is 0.0 mm.
     //
-    // Dividing the speed by the root scale is the whole fix, and it has to be
-    // BOTH here and in the phase rate below or the two disagree. THE SAME
-    // ERROR IS ON EVERY SHOPPER — 11.4% on the tallest body in the roster —
-    // and it is reported rather than fixed, because fixing it changes every
-    // shopper's cadence and this round may not move them. See plantCheck().
-    const rootS = cop.scale.x || 1;
-    const vLocal = u.speed / rootS;
+    // ROUND 3 (move): the three lines that used to be here are `gaitUnits()`
+    // now, and the fourteen call it too. The arithmetic and the crowd's own
+    // before/after are in its header. What is left at this call site is his
+    // stride, which is genuinely his.
     const stride = K.copStride * (1 - K.copStrideTired * F);
-    const step = stepLength(vLocal, L, stride, true);          // heavy: always
+    const { vLocal, step } = gaitUnits(r, u.speed, stride, true);   // heavy: always
     const gz = clamp(u.speed / 0.55, 0, 1);
     const gait = clamp(u.speed / 1.4, 0, 1);
     // 2PI per full cycle = two steps = 2*step of ground. The `dt * 0.35` idle
@@ -102095,7 +102095,8 @@ function createAgents(THREE, scene, world) {
     const wantLean = clamp(u.turn * 0.11 * clamp(u.speed / T.copRun, 0, 1.3), -0.36, 0.36);
     u.lean = lerp(u.lean, wantLean, ed(9));
     poseWalk(r, {
-      phase: u.phase, speed: vLocal, L, step, duty: dutyOf(vLocal, true) + K.copDuty,
+      phase: u.phase, speed: vLocal, worldSpeed: u.speed, L, step,
+      duty: dutyOf(vLocal, true) + K.copDuty,
       // ---- AND THE GAIT ITSELF DETERIORATES AS HE BLOWS ------------------
       // The brief asks for the gassed walk and the breathing to be ONE body
       // rather than two effects on one mesh, and the phase lock at the bottom
@@ -102112,9 +102113,8 @@ function createAgents(THREE, scene, world) {
       // is passed rather than assumed so poseWalk cannot grow a `rig.cop` test.
       restHipZ: r.rest.hipZ, rest0: 1, sink,
       hipZAdd: u.lean,
-      // He is the only body in the game that gets the roll-aware sole pin, and
-      // the flag exists so that the fourteen who do not are provably unmoved.
-      pinRoll: 1,
+      // ROUND 3 (move): `pinRoll: 1` used to be here. The roll-aware sole pin is
+      // what poseWalk does for everybody now, so there is nothing to ask for.
     });
 
     // ---- what poseWalk does NOT own: the shoulders leading a turn ----------
@@ -102876,6 +102876,11 @@ function createAgents(THREE, scene, world) {
   //             foot as skate, and it is invisible in every still.
   //
   // It does NOT claim the walk looks right. Nothing numeric can. Render it.
+  //
+  // What poseWalk's units assertion found, live. Written ONLY by poseWalk and
+  // read only by plantCheck(); it is declared up here rather than next to
+  // poseWalk so it is initialised before either of them can be reached.
+  const UNITS = { worst: 0, at: null, missing: 0, n: 0, scaled: 0, rollWorst: 0, rollAt: null };
   function copCheck() {
     const r = cop.userData.rig, bad = [];
     if (!r.feetOk) bad.push('feetOk false: gait.js could not find a shoe inside the cop leg group. '
@@ -102897,17 +102902,101 @@ function createAgents(THREE, scene, world) {
     const S = stepLength(v / rootS, L, K.copStride, true);
     const groundPerCycle = 2 * S * rootS;          // what the FOOT sweeps, world
     const bodyPerCycle = v * (2 * S / (v / rootS));  // what the BODY travels, world
+    // ---- ROUND 3 (move): THIS ROW CANNOT FAIL AND NEVER COULD -------------
+    // `bodyPerCycle = v * (2*S / (v/rootS))` is `2*S*rootS` after one
+    // cancellation, and `groundPerCycle` is `2*S*rootS` as written, so the two
+    // are algebraically identical for every value of every input. It has read
+    // 0.000 mm since the day it was written and it would read 0.000 mm if
+    // animateCop went back to `stepLength(u.speed, ...)` tomorrow — it
+    // re-derives the FIXED version rather than observing the live one. It is
+    // kept because the prose in it is the clearest statement of the identity,
+    // and it is labelled so nobody quotes the zero as evidence again. The row
+    // with teeth is plantCheck().unitsWorstMM, which compares two numbers that
+    // come from different places.
     const unitErr = +((bodyPerCycle - groundPerCycle) * 1000).toFixed(3);
-    if (Math.abs(unitErr) > 1.0) bad.push('the gait clock and the drawn foot disagree by '
-      + unitErr + ' mm a cycle: the solve is in root-local metres and the store is not. '
-      + 'animateCop must divide u.speed by cop.scale.x before stepLength() AND before the '
-      + 'phase rate, or the stance foot skates by (rootScale - 1) of its own excursion.');
     return {
       ok: bad.length === 0, bad,
       feetOk: !!r.feetOk, kneeOk: !!r.kneeOk,
       kneeCutErrMM: cutErr, rootScale: +rootS.toFixed(4),
-      unitErrMMPerCycle: unitErr,
+      unitErrTautology: unitErr,
       stepM: +S.toFixed(3), cadenceHz: +((v / rootS) / (2 * S)).toFixed(3),
+    };
+  }
+
+  // =========================================================================
+  // ROUND 3 (move) — plantCheck(). THE UNITS AND THE PIN, FOR EVERYBODY.
+  // =========================================================================
+  // Round 1 gave the cop `vLocal` and `pinRoll` as flags and left the fourteen
+  // on the old path; this round deleted both flags, so the guarantee that used
+  // to be "the crowd is provably unmoved because it takes a different branch"
+  // has to be replaced by something. This is it, and it is two claims:
+  //
+  //   unitsWorstMM   what poseWalk actually saw. Every caller hands it the
+  //                  speed twice — once root-local, once world — and their
+  //                  ratio must be that rig's own root scale. This is NOT a
+  //                  tautology like copCheck's row above: the two numbers are
+  //                  produced by different code, and a caller that goes back to
+  //                  `speed: s.speed` fails it on thirteen of fourteen bodies
+  //                  within one frame of that body walking. It reads the LIVE
+  //                  worst since boot, so it is only meaningful once something
+  //                  has walked — `frames` says whether anything has.
+  //
+  //   rollPinFlat    the sole pin's roll term must collapse to the flat pin at
+  //                  zero list, or deleting `pinRoll` moved a body that is not
+  //                  listing. Re-derived here from the same expression, at the
+  //                  same clamp, over the roster's own stance widths.
+  //
+  // It cannot tell you the walk looks right. Nothing numeric can. Render it.
+  function plantCheck() {
+    const bad = [];
+    const worstMM = +(UNITS.worst * 1000).toFixed(3);
+    // ---- AND IT MUST SAY WHEN IT HAS SEEN NOTHING --------------------------
+    // AGENTS_BRIEF: "a self-test that runs on an empty sample proves nothing."
+    // On a freshly loaded page nobody has walked, `UNITS.n` is 0, and this
+    // would otherwise report `ok: true, worst 0.000 mm` having compared
+    // nothing — the same shape as copCheck() reading false on a cop who has
+    // not moved, which cost the lead a false alarm in the other direction.
+    // A body whose root scale is exactly 1 also cannot fail the test, so the
+    // sample that matters is `scaled`, not `n`.
+    if (UNITS.scaled < 60) bad.push('nothing scaled has walked yet: poseWalk has checked '
+      + UNITS.n + ' moving frames, ' + UNITS.scaled + ' of them on a body whose root is not '
+      + '1.0. Walk the crowd (or run a bench) before believing this row.');
+    if (UNITS.missing > 0) bad.push(UNITS.missing + ' poseWalk calls passed no worldSpeed, '
+      + 'so the units of that call were never checked. Every caller must pass both.');
+    if (worstMM > 1.0) bad.push('poseWalk was handed a speed ' + worstMM + ' mm/s away from '
+      + 'worldSpeed / rootScale. The solve is in root-local metres and the store is not: '
+      + 'the caller must take its step, its phase rate, its duty and this speed from '
+      + 'gaitUnits(), or the stance foot skates by (rootScale - 1) of its own excursion.');
+    // ---- THE PIN AT ZERO ROLL, THROUGH THE SHIPPED EXPRESSION -------------
+    // pinRolled() is the function poseWalk calls; this calls the same one, over
+    // the ROSTER'S OWN stance widths, leg rolls and hip-to-sole lengths, at
+    // hz = 0. Nothing here retypes the formula, so it is not the `x / 1 === x`
+    // check that copCheck's units row turned out to be. It is still only an
+    // identity — but it is the identity the whole "a body with no list is
+    // untouched" claim rests on, and it now fails if somebody edits pinRolled.
+    let flatErr = 0;
+    for (const s of shoppers) {
+      const r = s.rig;
+      if (r.stance0 === undefined) continue;
+      const L = r.hipY, floorY = -L;
+      for (const px of [r.stance0, r.stanceR0]) {
+        for (const rz of [-0.12, 0, 0.12]) {
+          flatErr = Math.max(flatErr, Math.abs(pinRolled(floorY, L, px, rz, 0) - floorY));
+        }
+      }
+    }
+    if (flatErr > 1e-9) bad.push('the roll-aware sole pin does not collapse to the flat pin '
+      + 'at zero list (' + (flatErr * 1000) + ' mm). A body with no list has been moved.');
+    return {
+      ok: bad.length === 0, bad,
+      unitsWorstMM: worstMM, unitsAt: UNITS.at, unitsMissing: UNITS.missing,
+      unitsFrames: UNITS.n, unitsScaledFrames: UNITS.scaled,
+      rollPinFlatErrMM: +(flatErr * 1000).toFixed(6),
+      // NOT a pass/fail: how far the roll term moved a floor, worst since boot,
+      // and the pelvis roll it happened at. This is the size of what deleting
+      // `pinRoll` did to the crowd.
+      rollTermWorstMM: +(UNITS.rollWorst * 1000).toFixed(2), rollTermAtRad: UNITS.rollAt,
+      rootScales: shoppers.map((s) => +s.rig.root.scale.x.toFixed(4)).sort((a, b) => a - b),
     };
   }
 
@@ -104347,6 +104436,61 @@ function createAgents(THREE, scene, world) {
   }
 
   // ===========================================================================
+  // gaitUnits — THE SOLVE IS IN ROOT-LOCAL METRES AND THE STORE IS NOT.
+  // ===========================================================================
+  // ROUND 3 (move). Every figure hangs under a root group that is SCALED —
+  // 1.04 on the cop, 0.9585 to 1.1143 across the fourteen — and `L`, the step
+  // and everything gait.js solves live INSIDE that scale. The plant is the
+  // identity `v*T = 2*S`: the body covers two step lengths per gait cycle. It
+  // holds only when v and S are in the same units, and `s.speed` is world
+  // metres while S comes out of a root-local solve, so the DRAWN foot sweeps
+  // rootScale times what the solve planted and the stance foot skates by
+  // (rootScale - 1) of its own excursion.
+  //
+  // Round 1 (cop) found this while porting him, fixed it for him alone with
+  // three inline lines, and reported it rather than moving fourteen shoppers
+  // mid-round. Measured on the crowd, foot-flat stance skate as a signed
+  // fraction of the ground the body covered under the planted foot, regressed
+  // against each body's own root scale — the fraction and not the millimetre,
+  // because the millimetre also carries speed, step and stature and cannot be
+  // regressed against one of them:
+  //
+  //                 slope vs rootScale      r        p        mean |x|   worst
+  //     before        -0.721 +/- 0.142    -0.826   0.0003      0.053     0.139
+  //     after         +0.224 +/- 0.126    +0.456   0.10        0.023     0.069
+  //
+  // The prediction for the broken version is slope -1.06 and the before CI is
+  // [-1.03, -0.41]; the after CI is [-0.05, +0.50], which contains zero. So the
+  // error was a function of how tall the body is and is not one now, and the
+  // mean did not merely improve while the correlation survived — which is the
+  // failure this was measured to rule out.
+  //
+  // IT IS A FUNCTION RATHER THAN THREE LINES IN EACH CALLER because three
+  // lines in each caller is precisely the shape of every bug CLAUDE.md's
+  // duplication rule is about, and this one had already been written twice —
+  // once correctly, once not at all.
+  function gaitUnits(r, worldV, stride, heavy) {
+    const rootS = (r.root && r.root.scale.x) || 1;
+    const vLocal = worldV / rootS;
+    return { rootS, vLocal, step: stepLength(vLocal, r.hipY, stride, heavy) };
+  }
+  // THE SOLE PIN'S ROLL TERM, hoisted so that plantCheck() can call the SHIPPED
+  // expression rather than a copy of it. A check that re-types the formula with
+  // literal zeros in it proves that `x / 1 === x`, which is what copCheck's
+  // units row does and is why this one is a function instead.
+  //
+  //   floorY  the floor under a pivot at hips-local (0, 0)
+  //   px      the leg pivot after the lateral sway
+  //   rz      that leg's own roll, so the corner's offset under it is counted
+  //   hz      the pelvis roll the pivot is being carried round by
+  //
+  // At hz = 0 it returns floorY exactly, for every px and rz.
+  function pinRolled(floorY, L, px, rz, hz) {
+    const ch = Math.cos(hz), sh = Math.sin(hz);
+    return (floorY - (px + L * Math.sin(rz)) * sh) / Math.max(0.5, ch);
+  }
+
+  // ===========================================================================
   // poseWalk — THE WALK, APPLIED TO A RIG. ONE OWNER, TWO CALLERS.
   // ===========================================================================
   // gait.js owns the SOLVE. This owns what you do with the answer, which is the
@@ -104385,12 +104529,38 @@ function createAgents(THREE, scene, world) {
   //   o.restHipZ o.rest0          contrapposto, and how far it has faded
   //   o.sink     extra hip drop, metres, applied to the hips AND to the floor
   //              so the sole pin follows it. See K.copHeelSink.
+  //   o.worldSpeed  the SAME speed in world metres a second. Required, and it
+  //              is required so that the units assertion below has two
+  //              derivations to compare — see gaitUnits().
   // Returns `_G`, the same scratch object solveGait writes.
   function poseWalk(r, o) {
     // THREE goes in because the knee split needs constructors — see attachFeet.
     // Without it the rig falls back to round 12's telescoping leg rather than
     // throwing, which is the same degradation path the shoe search already had.
     if (!r.feetOk && r.feetOk !== false) attachFeet(r, THREE);
+    // ---- THE UNITS, ASSERTED INSTEAD OF COMMENTED --------------------------
+    // CLAUDE.md's lungCheck() rule: if two things can disagree, make them say
+    // so out loud. `o.speed` must be root-local and `o.worldSpeed` world, so
+    // their ratio must be this rig's own root scale and nothing else. A caller
+    // that writes `speed: s.speed` — which is exactly what animateShopper did
+    // for four rounds — fails this on every body whose root is not 1.0, which
+    // is thirteen of the fourteen.
+    //
+    // Note what this can and cannot do: it is a check on the CONTRACT, not on
+    // the geometry, and copCheck()'s own units row is worse than this — it
+    // re-derives `bodyPerCycle = v * (2*S / (v/rootS))` against
+    // `groundPerCycle = 2*S*rootS`, which are algebraically identical for every
+    // rootS, so that row reads 0.000 mm whatever the code does. It has never
+    // been able to fail. This one can, because the two numbers it compares come
+    // from different places.
+    if (o.worldSpeed == null) UNITS.missing++;
+    else if (o.worldSpeed > 0.05) {
+      const rootS = (r.root && r.root.scale.x) || 1;
+      const err = Math.abs(o.speed * rootS - o.worldSpeed);
+      UNITS.n++;
+      if (rootS !== 1) UNITS.scaled++;
+      if (err > UNITS.worst) { UNITS.worst = err; UNITS.at = { rootS: +rootS.toFixed(4), v: +o.worldSpeed.toFixed(3) }; }
+    }
     const gz = o.gz, gait = o.gait, L = o.L;
     solveGait(_G, {
       phase: o.phase, speed: o.speed, L, step: o.step * gz,
@@ -104411,9 +104581,9 @@ function createAgents(THREE, scene, world) {
     });
     // ---- THE PELVIS, SOLVED BEFORE THE FEET ARE PINNED ---------------------
     // These four are computed here rather than where they are written, because
-    // the sole pin needs them: see `pinRoll` below. Nothing between here and
-    // their assignment reads or writes any of them, so a shopper gets the same
-    // numbers in the same order it always did.
+    // the roll-aware sole pin below needs all of them before a foot is placed.
+    // Nothing between here and their assignment reads or writes any of them, so
+    // a body gets the same numbers in the same order it always did.
     if (r.stance0 === undefined) { r.stance0 = r.legL.position.x; r.stanceR0 = r.legR.position.x; }
     const list = _G.list * o.listA * gait * o.roll;
     const hz = list + o.restHipZ * o.rest0 + (o.hipZAdd || 0);
@@ -104459,20 +104629,45 @@ function createAgents(THREE, scene, world) {
         //
         // `px` is the pivot AFTER the sway translation plus the corner's own
         // lateral offset under the leg's roll (L*sin(rz)), which is the 7 mm
-        // second-order term. AT hz = 0 THIS IS EXACTLY THE OLD EXPRESSION, so
-        // `pinRoll` unset reproduces the shipped build to the digit — which is
-        // what every shopper is still passed, deliberately. The same error is
-        // on them (their pivots are narrower and their list smaller, so it is
-        // 19 mm at the roster's worst rather than 40) and moving it is a
-        // regression this round is not allowed to take. It is reported instead.
-        let fL = floorY, fR = floorY;
-        if (o.pinRoll) {
-          const ch = Math.cos(hz), sh = Math.sin(hz);
-          const pin1 = (px, rz) => -((L - _G.drop - (o.sink || 0))
-            + (px + L * Math.sin(rz)) * sh) / Math.max(0.5, ch);
-          fL = pin1(r.stance0 - sway, legZ + (o.splay || 0));
-          fR = pin1(r.stanceR0 - sway, legZ - (o.splay || 0));
-        }
+        // second-order term.
+        //
+        // ---- ROUND 3 (move): AND NOW EVERYBODY GETS IT ----------------------
+        // Round 1 put this behind `o.pinRoll`, ON for the cop and OFF for the
+        // fourteen, so that the crowd's numbers that round were provably
+        // identical to the digit. That was the right call for one round and is
+        // the wrong state to leave a file in: two code paths, one derivation,
+        // differing deliberately, which is the hazard CLAUDE.md opens with. The
+        // flag is gone and this is what every body does.
+        //
+        // AT hz = 0 THIS IS EXACTLY THE EXPRESSION IT REPLACED — sh = 0, ch = 1,
+        // and pin1 collapses to `drop + sink - L`. So a body that is not listing
+        // is untouched to the last bit, and plantCheck() asserts that identity
+        // rather than asking you to believe this paragraph. Measured on the
+        // crowd, stance-sole depth below the tiles over ~8,300 foot frames
+        // across all fourteen bodies — a PROFILE, because the last two rounds
+        // each had a "worst" that turned out to be one pose:
+        //
+        //                       p01        median      worst
+        //     before          -24.2 mm     -4.8 mm    -25.7 mm
+        //     after            -7.8 mm     -0.35 mm   -12.3 mm
+        //
+        // and on the live store with everybody in it and every state running,
+        // p01 -21.4 -> -11.2 and median -3.3 -> -0.3. The live WORST goes the
+        // other way, -26.9 -> -30.0, and it is a `browse` frame on both builds:
+        // a pose branch writes the hips after poseWalk has pinned the feet, so
+        // the deepest sole in the store is not the walk and never was.
+        // Written off `floorY` rather than re-deriving `L - drop - sink`, so
+        // the collapse at hz = 0 is visible in the source instead of being a
+        // claim about it: sh = 0 and ch = 1 leave `floorY / 1`. The expression
+        // itself lives in pinRolled() so plantCheck() can call THIS code and
+        // not a retyped copy of it.
+        const fL = pinRolled(floorY, L, r.stance0 - sway, legZ + (o.splay || 0), hz);
+        const fR = pinRolled(floorY, L, r.stanceR0 - sway, legZ - (o.splay || 0), hz);
+        // How big the roll term actually is, live, so plantCheck can report a
+        // magnitude rather than only an identity. This is an OBSERVATION and
+        // has no threshold: it is what deleting the flag moved.
+        const roll1 = Math.max(Math.abs(fL - floorY), Math.abs(fR - floorY));
+        if (roll1 > UNITS.rollWorst) { UNITS.rollWorst = roll1; UNITS.rollAt = +hz.toFixed(4); }
         footPose(r.footL, _G.kneeL, _G.ankL, _G.thL, fL + _G.clearL);
         footPose(r.footR, _G.kneeR, _G.ankR, _G.thR, fR + _G.clearR);
         r.footRested = false;
@@ -104594,7 +104789,14 @@ function createAgents(THREE, scene, world) {
     // cadence = speed / step and step is still stride-proportional.
     const heavy = (r.desc && r.desc.build >= 4) || false;
     const L = r.hipY;                          // hip pivot -> sole, root-local
-    const step = stepLength(s.speed, L, P.stride, heavy);
+    // ---- ROUND 3 (move): AND SO IS THE SPEED THAT GOES WITH IT -------------
+    // `L` is root-local and `s.speed` was not, which is bug 1 in gaitUnits()'s
+    // header: thirteen of these fourteen bodies were skating in proportion to
+    // their own stature, worst 30.7 mm a stance on body 11. `vLocal` is the
+    // same speed inside the figure's own scale and it has to be used HERE, in
+    // the phase rate below, in `duty` and in what poseWalk is handed, or the
+    // four disagree with each other instead of only with the store.
+    const { vLocal, step } = gaitUnits(r, s.speed, P.stride, heavy);
     // HOW ENGAGED THE GAIT IS, and it multiplies the STEP rather than the leg
     // angles. That distinction cost an afternoon and it is the single most
     // instructive thing in this round.
@@ -104613,11 +104815,43 @@ function createAgents(THREE, scene, world) {
     // The phase RATE still reads the unblended step, or the cadence would go to
     // infinity as a body came to a halt.
     const gz = clamp(s.speed / 0.55, 0, 1);
-    // 2PI per full cycle = two steps = 2*step of ground. `+ dt * 0.35` is round
-    // 9's idle tick, kept so a stopped body still breathes and so the browse
-    // oscillators downstream of `s.phase` keep running; it is slower than round
-    // 9's 0.6 because the reach now owns the visible half of standing still.
-    s.phase += (s.speed > 0.02 ? Math.PI * s.speed / step * dt : 0) + dt * 0.35;
+    // 2PI per full cycle = two steps = 2*step of ROOT-LOCAL ground, which is
+    // why this reads `vLocal` and not `s.speed`: the step it divides by came out
+    // of a root-local solve and mixing the two is the same bug one line down.
+    //
+    // `+ dt * 0.35` is round 9's idle tick, kept so a stopped body still
+    // breathes and so the browse oscillators downstream of `s.phase` keep
+    // running; it is slower than round 9's 0.6 because the reach now owns the
+    // visible half of standing still.
+    //
+    // ---- AND IT IS NOT THE THIRD BUG. IT IS HOLDING THE SECOND ONE UP ------
+    // THE COP FADES THIS OUT AND THE CROWD DOES NOT — his is `(1 - gz) * dt *
+    // 0.35` — so it looked like the same debt as the two this round closed, and
+    // the argument at animateCop is sound on its face: phase with no ground
+    // under it is foot excursion with no ground under it, i.e. skate, and
+    // 0.35 rad/s against a shopper's ~6.5 rad/s cadence is 5% of every cycle.
+    //
+    // IT WAS TRIED, ON ALL FOURTEEN, AND IT IS WORSE. Foot-flat skate as a
+    // signed fraction of the ground the body covered under the planted foot:
+    //
+    //                          mean      mean |x|   worst |x|   slope vs rootS
+    //     with the tick       -0.021      0.023       0.069       +0.224
+    //     faded like the cop  +0.036      0.037       0.074       +0.235
+    //
+    // The tick is a CONSTANT OFFSET — it moves every body by the same +5.7
+    // points and leaves the slope against root scale untouched — and the sign
+    // says what it is doing: without it the foot drifts FORWARD, i.e. the rig
+    // sweeps LESS than the solve asked for. It is compensating a second,
+    // opposite error, and the candidate is that the solve puts the foot at
+    // `L*sin(theta)` with L the hip-to-SOLE distance while the thing that
+    // actually rotates is the hip-to-ANKLE line with a foot hung off it — a
+    // 5-10% shorter moment arm on every body, which is the right size.
+    //
+    // So this line stays, and it is not "the crowd is behind the cop" — it is
+    // that removing it exposes an error the cop is probably already carrying,
+    // since he has no tick to hide it. That is the next thing to measure, on
+    // him and on them, and it wants the hip solve rather than the phase clock.
+    s.phase += (vLocal > 0.02 ? Math.PI * vLocal / step * dt : 0) + dt * 0.35;
     const gait = clamp(s.speed / 1.4, 0, 1);
     const sw = Math.sin(s.phase);
     // `amp` is kept because eleven things below still swing arms off it, but it
@@ -104646,7 +104880,12 @@ function createAgents(THREE, scene, world) {
     // per-frame knows a basket exists.
     r.rest0 = 1 - 0.62 * gait;
     poseWalk(r, {
-      phase: s.phase, speed: s.speed, L, step, duty: dutyOf(s.speed, heavy),
+      // ROOT-LOCAL into the solve, WORLD alongside it so poseWalk's units
+      // assertion has something to compare against. `gait` and `gz` stay on the
+      // world speed on purpose: they are how fast the body is actually moving
+      // through the store, not a length in the figure's own frame.
+      phase: s.phase, speed: vLocal, worldSpeed: s.speed, L, step,
+      duty: dutyOf(vLocal, heavy),
       lift: K.gaitLift * (heavy ? K.gaitLiftHeavy : 1) * clamp(P.bounce, 0.65, 1.35),
       flex: K.gaitFlex * (heavy ? K.gaitFlexHeavy : 1),
       gait, gz,
@@ -106630,6 +106869,13 @@ function createAgents(THREE, scene, world) {
       // a band anybody can draw from, i.e. the guilt leak this round closed has
       // been reopened by a tuning edit. Same contract as the two above.
       exitBroken: exitCheck().ok ? null : exitCheck(),
+      // ROUND 3 (move). Same contract again: non-null means a poseWalk caller
+      // has gone back to handing the solve a world speed, so every body's
+      // stance foot is skating by its own stature and the walk on this build is
+      // not the walk these numbers were taken on. It reads the LIVE worst since
+      // boot, and a bench walks thousands of bodies, so by the time this is
+      // evaluated it has had every body in the roster through it.
+      plantBroken: plantCheck().ok ? null : plantCheck(),
       catchRate: +(caught.length / n * 100).toFixed(1),
       escaped: esc.length, stalled: stall.length,
       // He ditched it rather than walk into you. See onAbort above and dumpT.
@@ -107674,6 +107920,10 @@ function createAgents(THREE, scene, world) {
     // landing on figures.js's own knee ball / the root-scale unit identity that
     // decides whether his stance foot skates. See copCheck().
     copCheck,
+    // ROUND 3 (move) — the same assertion for the fourteen, and the one that
+    // replaced "the crowd takes a different branch, so it is provably unmoved"
+    // when both of round 1's flags were deleted. See plantCheck().
+    plantCheck,
     // ROUND 12. gaitCheck() is the walk's lungCheck(): it re-derives the planted
     // foot in world coordinates and fails loudly if it slips. stockWired says
     // whether world.takeFacing was actually found at construction, so a report
