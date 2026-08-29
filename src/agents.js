@@ -5595,11 +5595,37 @@ export function createAgents(THREE, scene, world) {
           s.path = []; s.target = null; s.aim = null; s.aimT = 0;
         }
       }
-      // ---- innocent: turn and yell, never run
-      // A complaint is for ROLLING UP ON someone. Standing at your post while a
-      // shopper wanders past you is not harassment, and the old pure-distance
-      // test handed the player a complaint — and a demotion — for doing nothing
-      // at all for thirty seconds. You have to walk at them.
+    }
+
+    // ---- turn and yell, never run. GUILT-BLIND, AND IT HAS TO LIVE OUT HERE.
+    // This block used to sit inside the `else if (!s.guilty)` above, and the
+    // bolt trigger needs `drift` or `stole` — so a thief who had not concealed
+    // anything YET did neither. Walking up to a body read out three ways:
+    // they yell = innocent, they bolt = guilty and already stolen, and NOTHING
+    // HAPPENS = a thief who has not done it yet. The first two are published
+    // confessions that cost the player something. The third was free, and a
+    // player who noticed it could poke bodies down an aisle and build a suspect
+    // list without reading a single gesture. Second perfect classifier found in
+    // two rounds; see CLAUDE.md.
+    //
+    // The named one-line fix — rewriting the else gate to `!s.stole` — is a
+    // NO-OP, and dangerously so. An un-concealed thief is `s.guilty &&
+    // !s.bolted`, so the FIRST branch consumes him and he never reaches the
+    // else at all; the rewrite only changes the truth value for bodies that
+    // already failed that test. It would have benched as "no change" and the
+    // leak would have been declared closed. Caught by builder-game-r13 before
+    // it was applied.
+    //
+    // Only the YELL is lifted out. The shop timer stays on `!s.guilty` on
+    // purpose: gating that on `!s.stole` too would hand un-concealed thieves
+    // the innocent leave countdown and walk them out of the building before
+    // they ever steal anything.
+    //
+    // A complaint is for ROLLING UP ON someone. Standing at your post while a
+    // shopper wanders past you is not harassment, and the old pure-distance
+    // test handed the player a complaint — and a demotion — for doing nothing
+    // at all for thirty seconds. You have to walk at them.
+    if (!s.stole && !s.bolted) {
       if (copD < T.suspicionRadius && s.harassArmed && s.angry <= 0 && copClosingOn(s, copD)) {
         s.angry = 2.6; s.harassArmed = false; s.bang.visible = true;
         api.onHarass && api.onHarass(s);
