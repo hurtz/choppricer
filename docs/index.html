@@ -54578,6 +54578,20 @@ const TUNING = {
   // start a `steal` — making any clip inside it guilty-only against a baseline
   // of exactly zero. Same shape as announceAt's annT + 0.7.
   angryFuse: 0.4,
+
+  // --- Round 16: the cop stops being a second implementation ---
+  // animateCop was round 11's two-sine waveform kept alive next to the real
+  // solve, which is why he missed four rounds of fixes. The arithmetic on his
+  // own constants: his foot swept backwards at 0.938v^2 = 5.18 m/s under a body
+  // doing 2.35. There was exactly one speed at which he did not skate — 1.066
+  // m/s — and his walk is 2.35 and his gassed walk 1.46. He was never at it.
+  //
+  // His hip bob came out at 89.9 mm against the crowd's 13-67. He SHOULD bob
+  // more than they do — he is heavy and unfit and that is the character — but
+  // 90 mm is a body in distress rather than a fat man walking. The builder's
+  // sweep: copFlex 0.012 -> 89.7 mm, 0.055 -> 56.1 mm. 0.038 lands near 70,
+  // which reads as weight without reading as a limp.
+  copFlex: 0.038,
 };
 
 // CHANNEL LINEUP — what the channels ARE. Ids, labels, and which aisle each covers.
@@ -94615,14 +94629,53 @@ function copBeltKit(THREE, S) {
 }
 
 // --- legs -------------------------------------------------------------------
-// Trouser with the outseam stripe, a break over the shoe, and a real oxford on
-// the end of it: sole, heel, welt and a toe cap that takes a highlight. Shoes
-// not made for running.
+// Trouser with the outseam stripe and a break over the shoe. The oxford it
+// breaks over — sole, heel, welt and a toe cap that takes a highlight, shoes
+// not made for running — is copShoe() below, and used to be part of this bake.
+// ---------------------------------------------------------------------------
+// ROUND 1 (cop) — THE SHOE COMES OUT OF THE LEG, AND THAT IS THE WHOLE REASON
+// HE MISSED FOUR ROUNDS OF WALK FIXES.
+//
+// gait.js's attachFeet() finds the shoe inside a leg group BY MEASUREMENT —
+// "the child whose geometry is short and lives at the bottom of the leg" — and
+// then splits the leg at the knee and hinges the two halves. Every shopper has
+// had that since round 12. The cop never could, for one reason: `copLeg` baked
+// the oxford INTO the trouser, so his leg group had exactly one child and
+// attachFeet returned null on the first line. Not a missing feature, a merged
+// mesh. So the oxford is its own bake now, in the SAME leg-local coordinates it
+// was already at, and `makeCop` hangs it off the same pivot: the rest pose is
+// byte-identical and the rig now satisfies the shoe search.
+//
+// COST: one draw call per leg, plus one per leg for the knee's shank, so four.
+// See the ledger over makeCop.
+//
+// The knee ball also MOVED, by 15 mm, and it moved because of gait.js:
+// attachFeet cuts the leg at `ankleY * KNEE_F` and the cut is safe precisely
+// when it passes through the CENTRE of the ball ("a ball split by a plane
+// containing the hinge axis and rotated about that axis is still the same
+// ball"). His shoe's top — the ankle — is at -0.780, so KNEE_F 0.529 puts the
+// cut at -0.4126 and the ball was at -0.428. Moving the ball to meet the cut is
+// 15 mm on a 1.72 m man and it is invisible; leaving it there would have put a
+// 15 mm crease off-centre in the one place on a leg where a crease is a
+// feature. It also puts his knee at the same anatomical fraction as everyone
+// else's, which it was not.
+const COP_ANKLE_Y = -0.780;                 // shoe bbox top, in leg-local metres
+const COP_KNEE_Y = COP_ANKLE_Y * 0.529;     // = gait.js's KNEE_F. See the note above.
+// Hip half-separation. UNCHANGED at 0.112, and the reason it is unchanged is
+// worth writing down because "a fat man stands wider" is true and this is not
+// where it goes. His thigh is 0.118 at the top, so the two of them overlap
+// across the midline by 12 mm — round 11's note is that the overlap IS the
+// pelvis this game has, and widening the pivots opens a hole at the crotch that
+// the seat loft does not reach down to cover. A wide stance is hip ABDUCTION,
+// which puts the FEET apart without taking the thighs apart, and it lives in
+// agents.js as K.copSplay where it can be a per-frame quantity.
+const COP_STANCE = 0.112;
+const COP_RAKE_Z = 0.038;                   // see the note over `limb` in makeCop
 function copLeg(THREE, S, side) {
   const P = partList(THREE, S);
   const T = { uv: uvOf('twill') }, X = { uv: uvOf('flat') };
   P.taper(0.118, 0.094, 0.42, [side * 0.006, -0.205, 0], C.trouser, { seg: 10, ...T });
-  P.ball(0.086, 0.062, 0.090, [0, -0.428, 0.008], C.trouser, { seg: 8, rseg: 5, ...T });
+  P.ball(0.086, 0.062, 0.090, [0, COP_KNEE_Y, 0.008], C.trouser, { seg: 8, rseg: 5, ...T });
   P.taper(0.090, 0.076, 0.34, [0, -0.600, 0.004], C.trouser, { seg: 10, ...T });
   P.tube(0.078, 0.052, [0, -0.782, 0.010], C.trouser, { seg: 10, ...T });      // break
   // outseam stripe, on the outside of each leg
@@ -94634,11 +94687,25 @@ function copLeg(THREE, S, side) {
     P.box(0.013, a[0] - b[0] + 0.006, 0.030,
       [side * (a[1] + b[1]) * 0.5, (a[0] + b[0]) * 0.5, 0.004], C.stripe, { ...X });
   }
-  // The oxford, unpolished. The colour is off-black and slightly brown now —
-  // black leather that has not seen a brush in a year goes grey-brown, not
-  // black — and the shine is gone from the atlas cell rather than from here,
-  // so the cap brim (which shares that cell) goes dull with it, which is
-  // correct: they have been neglected by the same man.
+  return mergeParts(THREE, P.L);
+}
+
+// The oxford, unpolished. The colour is off-black and slightly brown now —
+// black leather that has not seen a brush in a year goes grey-brown, not
+// black — and the shine is gone from the atlas cell rather than from here,
+// so the cap brim (which shares that cell) goes dull with it, which is
+// correct: they have been neglected by the same man.
+//
+// EVERY COORDINATE HERE IS THE ONE IT HAD INSIDE copLeg. The mesh moves from
+// being merged into the trouser to being a sibling of it at the same pivot, so
+// nothing about the standing figure changes; what changes is that gait.js can
+// now find it, pitch it and pin its sole. `soleY`/`toeZ`/`heelZ` in attachFeet
+// come straight off this box, so the numbers below ARE the foot rocker:
+// sole at -0.856, toe at +0.126, heel at -0.087 — a 213 mm shoe with the ankle
+// 76 mm up, which is what makes his hip rise at both ends of stance.
+function copShoe(THREE, S) {
+  const P = partList(THREE, S);
+  const X = { uv: uvOf('flat') };
   const y = -0.826;
   P.ball(0.052, 0.036, 0.086, [0, y + 0.010, 0.020], 0x2b2721, { seg: 10, rseg: 6, uv: uvOf('shoe') });
   P.ball(0.046, 0.028, 0.056, [0, y + 0.002, 0.078], 0x362f28, { seg: 10, rseg: 6, uv: uvOf('shoe') });
@@ -94746,6 +94813,12 @@ function buildFigureGeo(THREE) {
       seat: copSeat(THREE, S),
       belt: copBelt(THREE, S), beltKit: copBeltKit(THREE, S),
       leg: [copLeg(THREE, S, 1), copLeg(THREE, S, -1)],
+      // ONE bake, shared by both feet: the oxford is symmetric about x, so a
+      // second copy would be the same buffer twice. (The trouser is NOT
+      // symmetric — the outseam stripe runs down the outside — which is why
+      // `leg` is still a pair.) gait.js only ever writes a shoe's mesh
+      // position/rotation, never its geometry, so sharing is safe.
+      shoe: copShoe(THREE, S),
       sleeve: [copSleeve(THREE, S, 1), copSleeve(THREE, S, -1)],
       fore: [copForearm(THREE, S, 1), copForearm(THREE, S, -1)],
       belly: copBelly(THREE, S),
@@ -95434,6 +95507,18 @@ function makePerson(THREE, F, o) {
 //   legs  : 2
 //   arms  : sleeve(2) forearm(2) ... shared material, so 4
 // = 13. Two over the old rig; the two are the belt, and the belt is the joke.
+//
+// ROUND 1 (cop) — 13 -> 17, and the four are named rather than buried:
+//   +2  the shoes, which had to leave the trouser mesh before gait.js's
+//       attachFeet() could find them at all. This is the whole port.
+//   +2  the shanks, from the knee split. attachFeet cuts the trouser in two
+//       and hinges the lower half; the shank borrows the thigh's material and
+//       the split geometry is cached on the source, so it is a draw call and
+//       nothing else — no material, no texture, no new buffer per body.
+// He is ONE body against a store that draws thousands, and the scene renders
+// ten times a frame, so this is 40 draw calls a frame for the only walk cycle
+// the player ever looks at from three metres. Every shopper already pays the
+// same four.
 // ---------------------------------------------------------------------------
 function makeCop(THREE, F) {
   const g = new THREE.Group();
@@ -95480,14 +95565,28 @@ function makeCop(THREE, F) {
   head.castShadow = true; neck.add(head);
   neck.add(new THREE.Mesh(F.cop.headKit, kit));
 
-  const limb = (a, b, mb, x, y) => {
-    const piv = new THREE.Group(); piv.position.set(x, y, 0);
+  const limb = (a, b, mb, x, y, z) => {
+    const piv = new THREE.Group(); piv.position.set(x, y, z || 0);
     piv.add(new THREE.Mesh(a, uni));
     if (b) piv.add(new THREE.Mesh(b, mb || uni));
     return piv;
   };
-  const legL = limb(F.cop.leg[0], null, null, 0.112, 0);
-  const legR = limb(F.cop.leg[1], null, null, -0.112, 0);
+  // ---- WEIGHT ON THE HEELS, AS A TRANSLATION AND NOT AS AN ANGLE ----------
+  // animateCop used to open every frame with `legL.rotation.x += 0.046` on both
+  // legs — "both legs raked 2.6 degrees forward of the pelvis, so his feet lead
+  // and the gut is out over them". The read is right and it is the single most
+  // fat-man thing on him, but that channel now belongs to gait.js's solve,
+  // where the leg angle and the ground travel are an EQUALITY (see the header
+  // of gait.js). Adding a constant to one side of an equality is not constant
+  // on the other: -L sin(th + rake) differs from -L sin(th) by L·rake·cos(th),
+  // which swings 2.4 mm across a stance and is skate.
+  //
+  // What "raked forward" physically MEANS is that his feet are in front of his
+  // pelvis, so it is a translation of the hip pivot, and a translation cannot
+  // slip. 0.038 m is L·sin(0.046) — the same displacement the old angle bought,
+  // exact at every phase instead of at one.
+  const legL = limb(F.cop.leg[0], F.cop.shoe, uni, COP_STANCE, 0, COP_RAKE_Z);
+  const legR = limb(F.cop.leg[1], F.cop.shoe, uni, -COP_STANCE, 0, COP_RAKE_Z);
   const armL = limb(F.cop.sleeve[0], F.cop.fore[0], uni, 0.206, FIG.shoulderY + 0.012);
   const armR = limb(F.cop.sleeve[1], F.cop.fore[1], uni, -0.206, FIG.shoulderY + 0.012);
   hips.add(legL); hips.add(legR); chest.add(armL); chest.add(armR);
@@ -95513,7 +95612,7 @@ function makeCop(THREE, F) {
 }
 
 
-return { FIG, mergeParts, SKIN, HAIR, GREY, CLOTH, PANTS, KID, KIDCLOTH, KIDPANTS, buildFigureGeo, rollPerson, makeChild, makePerson, makeCop };
+return { FIG, mergeParts, SKIN, HAIR, GREY, CLOTH, PANTS, KID, KIDCLOTH, KIDPANTS, COP_ANKLE_Y, COP_KNEE_Y, buildFigureGeo, rollPerson, makeChild, makePerson, makeCop };
 })();
 
 /* ==== src/agents/frontend.js ==== */
@@ -97733,7 +97832,7 @@ const M_src_agents_js = (() => {
 const { TUNING, EXIT, EXIT2, aisleX, AISLE_LEN, AISLE_COUNT, AISLE_GAP, SHELF_W, STORE, FRONT_WALK_Z, SERVICE_DESK } = M_src_config_js;
 const { makeNav } = M_src_agents_nav_js;
 const { makeFrontEnd } = M_src_agents_frontend_js;
-const { mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG, KID, SKIN, HAIR, CLOTH, PANTS } = M_src_agents_figures_js;
+const { mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG, KID, SKIN, HAIR, CLOTH, PANTS, COP_KNEE_Y } = M_src_agents_figures_js;
 const { GESTURES, BY_ID, pickGesture, applyGesture, REACH_KEEP, REACH_PUT } = M_src_agents_decoy_js;
 const { solveGait, stepLength, dutyOf, attachFeet, footPose, footRest, gaitCheck } = M_src_agents_gait_js;
 const { cameraRig } = M_src_cctv_js;
@@ -97925,6 +98024,64 @@ const { cameraRig } = M_src_cctv_js;
 // FOOT-FLAT: while the sole is parallel to the floor nothing on the shoe is
 // rotating, so the bbox centre is a material point, and if the foot skates it
 // skates there.
+//
+// ===========================================================================
+// ROUND 1 (COP) — AND NONE OF THE ABOVE WAS EVER APPLIED TO HIM
+// ===========================================================================
+// Everything in the section above is the SHOPPERS' walk. `animateCop` was a
+// separate function still running round 11's two-sine waveform, so the man the
+// player looks at centre frame, at three metres, for the entire floor phase,
+// got none of the plant, none of the knee, none of the foot roll and none of
+// the four bug fixes. His leg group could not even be given them: `copLeg`
+// baked the oxford INTO the trouser, so gait.js's shoe search returned null on
+// its first line and would have gone on doing so silently.
+//
+// The same arithmetic, run on HIS constants (amp 0.165v, stride divisor 0.95):
+//
+//     dx/dt = L * amp * phase_dot = 0.86 * (0.165 v) * (v / 0.95) * 2PI
+//           = 0.938 v^2
+//
+// equals v at v = 1.066 m/s, and he is never at 1.066 m/s — his walk is 2.35
+// and his gassed walk is 1.46. At 2.35 his foot swept backwards at 5.18 m/s
+// under a body doing 2.35, every frame this game has ever drawn him walking.
+//
+// He now calls poseWalk(), the same function animateShopper() calls, and
+// everything that is genuinely his is a number in K.cop*. Measured on him:
+//
+//                                   before          after
+//   cadence at 2.35 m/s          2.477 Hz         1.604 Hz
+//   step length                     474 mm           733 mm
+//   lateral pelvis travel             0 mm            88 mm
+//   stance-foot skate, foot-flat  (no plant)   heel 44-46, toe 73-75 mm
+//   sole below the tiles          (no ankle)        -7.3 mm
+//   swing-foot clearance                0 mm          37.6 mm
+//   knee                             none      real, rig.kneeOk true
+//
+// The skate figure is against the SHOPPERS measured on the same instrument at
+// the same threshold — heel 15-25 mm, toe 32-55 mm — at roughly half his speed
+// and 85% of his step, so as a fraction of the foot's own excursion he is
+// 7.8% against their ~7%. As planted as the shipped crowd, which is the only
+// bar a rig comparison can honestly claim.
+//
+// TWO THINGS FOUND WHILE PORTING HIM THAT ARE NOT HIS, and neither is fixed
+// here because fixing either one moves fourteen shoppers:
+//
+//   A. THE SOLVE IS IN ROOT-LOCAL METRES AND THE STORE IS NOT. `L` and the
+//      step are inside the figure's own root group, which is SCALED — 1.04 on
+//      him, 0.9585 to 1.1143 across the roster. The plant identity v*T = 2*S
+//      only holds when v and S share units, so the drawn foot sweeps rootScale
+//      times what the solve planted and the stance foot skates by
+//      (rootScale - 1) of its excursion. He divides his speed by his root
+//      scale; the crowd does not, and body 11 is carrying 11.4%.
+//   B. THE SOLE PIN SOLVES IN THE LEG'S OWN FRAME AND THE PELVIS ROLLS
+//      UNDERNEATH IT. footPose returns a corner's height relative to its own
+//      hip pivot; the pivot is out at +-stance and the hips roll about their
+//      origin, so a listing pelvis carries the loaded pivot down by
+//      px*sin(list) and the pin never hears about it. On him that was 39.6 mm
+//      of sole through the tiles every stride (2.2 mm with `copList` forced to
+//      zero). `poseWalk`'s `pinRoll` flag fixes it for him and is OFF for
+//      everyone else, which is why the crowd's numbers below are identical to
+//      the digit rather than merely close.
 //
 // ---- AND THE OTHER FOUR THINGS THE BRIEF ASKED FOR ------------------------
 //   STARTING       0 -> 1.17 m/s in 0.42 s, measured, against 0.12 s before.
@@ -99029,6 +99186,11 @@ const { cameraRig } = M_src_cctv_js;
 // owns what they look like while they do it. It also carries the write-up of
 // the bug that was this round's whole brief (every person in the game was
 // headless: the head sphere was 96% inside the torso capsule). Read it there.
+// ROUND 1 (cop) — COP_KNEE_Y is where figures.js put his knee ball. It is
+// imported so copCheck() can ASSERT that gait.js's cut still lands on it, which
+// is two derivations of one number and therefore CLAUDE.md's rule rather than a
+// comment. (Names only inside the braces below: tools/check.py resolves imports
+// by parsing them, and a comment in there fails the whole tree.)
 
 // ROUND 6 — the decoy library. Every reach-with-an-object in the store, guilty
 // and innocent, keyframed in ONE table and sampled by ONE function, so the
@@ -100014,6 +100176,98 @@ const K = {
   get turnRate()      { return t('turnRate', 5.6); },   // rad/s of body yaw
   get turnLead()      { return t('turnLead', 0.62); },  // x the error, onto the neck
   get turnBank()      { return t('turnBank', 0.10); },  // s per rad/s, into the lean
+  // =========================================================================
+  // ROUND 1 (cop) — HIS WALK, AS TWELVE NUMBERS INTO THE SHARED SOLVE
+  // =========================================================================
+  // The brief: "a fat, unfit man's walk is not a thin man's walk played
+  // slower". None of these is a speed. Every one goes into poseWalk() /
+  // gait.js — the same code path fourteen shoppers run — and the only thing
+  // that makes him HIM is their values. `heavy` is already true for him inside
+  // stepLength()/dutyOf(), which is worth 0.82x on the step and +0.035 on the
+  // duty; these are what he gets ON TOP of a generic heavy body, because he is
+  // heavier than anything in the crowd (girth 1.62 against a roster that tops
+  // out near 1.07).
+  //
+  // MEASURED BEFORE, on the shipped two-sine walk, at his own 2.35 m/s:
+  //     cadence 2.477 Hz (4.95 steps a second), step 474 mm, lateral sway 0 mm.
+  // A 474 mm step at 2.35 m/s is a hummingbird shuffle and the zero is the
+  // brief's single biggest weight cue missing entirely.
+  //
+  // A shorter step at the SAME ground speed means a HIGHER cadence, not a
+  // lower one — that is the counter-intuitive half of a heavy walk and it is
+  // why this is a multiplier on the step and never on the clock.
+  get copStride()      { return t('copStride', 0.92); },   // x the heavy 0.82
+  // ...and it shortens further as he blows. Round 11 had this as
+  // `stride = 0.95 - 0.16*F` with the right reason written next to it: "the
+  // cadence stays up and the ground stops moving", which is what a knackered
+  // man looks like from behind. Same idea, now on the one constant that owns
+  // step length instead of on a phase divisor.
+  get copStrideTired() { return t('copStrideTired', 0.20); },
+  // HIGHER DUTY: more of the cycle with both feet down. A heavy walk has none
+  // of the single-support snap a light one has.
+  get copDuty()        { return t('copDuty', 0.055); },    // + dutyOf(v, heavy)
+  // SMALLER KNEE LIFT: heavy walking is a shuffle, the foot barely clears.
+  // Combined with the short step that is the read. The crowd's heavy bodies
+  // get gaitLift x gaitLiftHeavy = 0.0465; he gets less again.
+  get copLift()        { return t('copLift', 0.040); },
+  // ...and less again when he is blown. A shuffle is a foot that stops
+  // clearing the floor. Swept for the floor it must not touch: the swing sole's
+  // minimum clearance is 37.6 mm fresh and this must not take it to zero.
+  get copLiftTired()   { return t('copLiftTired', 0.35); },
+  // The pelvis rolls FURTHER as he tires — hip abductors are the first thing to
+  // give out, and a Trendelenburg lurch is what that looks like from behind.
+  get copListTired()   { return t('copListTired', 0.25); },
+  // LESS STANCE-KNEE FLEXION: he is stiffer, and stiffer means the hip has to
+  // go OVER the leg rather than through it, which is a DEEPER bob. That is the
+  // correct direction and not a bug — see the note over hipOf() in gait.js.
+  get copFlex()        { return t('copFlex', 0.012); },
+  // MUCH BIGGER LIST AND SWAY. These two are the waddle. The crowd's heaviest
+  // build gets listHeavy 0.105 rad and swayHeavy 0.052 m; his mass has to get
+  // over each foot and his feet are further apart, so both go up.
+  // SWEPT AND CUT BACK, and the sweep is the reason. `copSway` is the amplitude
+  // of a tanh that saturates at 0.976, so the peak-to-peak lateral travel of
+  // the pelvis is almost exactly 2x this number. Measured on him at 2.35 m/s:
+  //     0.030 -> 58.5 mm   0.045 -> 87.8 mm   0.055 -> 107.3 mm   0.068 -> 132.7
+  // Normal-weight walking runs 35-45 mm of mediolateral travel and a heavy
+  // walker runs about twice that, so 0.068 was out of range for a body rather
+  // than merely large. 0.045 sits at the top of the range and is still above
+  // the heaviest shopper's IN-GAME figure (swayHeavy 0.052 at their gait
+  // engagement of 0.79 is 80 mm), which is the comparison that matters, since
+  // he is the only body in the store that walks with `gait` pinned at 1.0.
+  // The shipped build before this round measured 0.0 mm: he had a hip ROLL
+  // called sway and the pelvis never translated at all.
+  get copList()        { return t('copList', 0.132); },    // rad, pelvis lists
+  get copSway()        { return t('copSway', 0.045); },    // m, pelvis translates
+  get copRoll()        { return t('copRoll', 1.25); },     // trim on both, and on pelvisY
+  // WIDER STANCE, as hip ABDUCTION and not as a wider pelvis — see COP_STANCE
+  // in figures.js for why the pivots may not move. 0.052 rad on a 0.83 m leg
+  // puts each foot 43 mm further out, so his feet are 310 mm apart against
+  // 224 mm before.
+  get copSplay()       { return t('copSplay', 0.052); },
+  // ...and duck-footed. Nobody heavy walks with their feet parallel.
+  get copToe()         { return t('copToe', 0.150); },     // rad, per foot
+  // COMPLIANCE AT HEEL STRIKE, and it is the one term here that is NOT
+  // kinematics. gait.js solves the hip height as rigid geometry — bones and a
+  // shoe — which is exactly right and deliberately has no soft tissue in it. A
+  // heavy man landing has a few centimetres of knee, heel fat and belt that
+  // give way under him and come back. It is applied to the hips AND to the
+  // floor the sole is pinned to, in one place, so it cannot unplant a foot;
+  // see `o.sink` in poseWalk.
+  get copHeelSink()    { return t('copHeelSink', 0.012); },  // m, peak
+  // The arms ride out on a bigger splay and swing LESS: they cannot brush a
+  // body this wide, so they hang clear of it and the swing goes into the
+  // clearance instead. `copArmLag` is a big man's arms being late.
+  get copArmSwing()    { return t('copArmSwing', 0.52); },   // x the hip angle
+  get copArmOut()      { return t('copArmOut', 0.30); },     // rad at rest
+  get copArmLag()      { return t('copArmLag', 0.55); },     // rad behind the legs
+  // How hard the leather chases the pelvis, and how much of the difference you
+  // see. See the belt block at the bottom of animateCop.
+  get copBeltLag()     { return t('copBeltLag', 9.0); },     // 1/s
+  get copBeltSwing()   { return t('copBeltSwing', 2.2); },   // x the residual
+  // LOCOMOTOR-RESPIRATORY COUPLING: how hard the breath is pulled onto the
+  // footfall once he is moving and blown. See the huff block.
+  get copBreathLock()  { return t('copBreathLock', 3.0); },  // 1/s of phase pull
+  get copBreathPh()    { return t('copBreathPh', 0.55); },   // rad, gasp vs strike
   // ---- ROUND 2 (character): HOW FAST THIS PERSON WALKS --------------------
   // ONE walking speed band, multiplying thiefWalk, read by EVERY state that
   // walks. It replaces three literals that were three different ideas of the
@@ -101049,6 +101303,9 @@ function createAgents(THREE, scene, world) {
     // `if (!api.report) return` and the ANIMATION cannot be: a cop who only
     // pants when the HUD happens to be listening is not a character.
     fatigue: 0, heave: 0, brace: 0, hook: 0, sway: 0,
+    // ROUND 1 (cop) — the belt's own lagged copy of the pelvis (see the note at
+    // the bottom of animateCop) and the trunk's follow-through accumulator.
+    beltZ: 0, beltYaw: 0, beltH: 0, beltX: 0, lastAlong: 0, leanA: 0,
   };
   scene.add(cop);
   // steer() writes speed/skid and moves .position; the cop's live on userData.
@@ -101687,21 +101944,32 @@ function createAgents(THREE, scene, world) {
   // ===========================================================================
   // THE WALK, THE WADDLE AND THE HUFF
   // ===========================================================================
-  // Three things changed and only the third one is the client's note.
+  // ROUND 1 (cop) — THIS FUNCTION IS NO LONGER A WALK CYCLE. IT IS THE COP'S
+  // NUMBERS, HANDED TO THE SAME SOLVE FOURTEEN SHOPPERS RUN.
   //
-  // 1. There is a `chest` joint now. Hips carry the legs, the pelvic drop and
-  //    the lean; chest carries the torso, arms and head and counter-rotates
-  //    against the hips. Everything used to hang off `hips`, so the whole man
-  //    rotated as one piece and a walk cycle was two sticks swinging under a
-  //    stationary egg.
+  // For four rounds it was a second, older implementation of poseWalk(): two
+  // sines, a hand-picked metres-per-cycle divisor, no plant, no knee — its own
+  // comment said "the knee-less leg fakes that with a kick" — and no ankle at
+  // all. Every fix that landed on the crowd's walk (the plant, the real knee,
+  // the heel-to-toe rocker, the scaled sole pin, the inverted rocker signs)
+  // missed the one body the player looks at, centre frame, at three metres, for
+  // the entire floor phase. That is CLAUDE.md's opening rule — exactly one
+  // piece of code owns a derivation — costing four rounds in one place.
   //
-  // 2. The vertical bob had the wrong sign. It read
-  //    `hips.y = 0.62 + |sin(phase)| * 0.028`, i.e. HIGHEST at the two moments
-  //    the foot is planted and the body is passing over it — which is a bounce,
-  //    not a gait. A walking body is highest at mid-stance and drops onto the
-  //    heel. Same term, minus a half, and a heavy man lands instead of hopping.
+  // The line-by-line account of what went and why is at the top of the gait
+  // block below. What is left in this function is everything that is HIS and
+  // is not a walk: the huff, the stoop, the brace, the thumbs in the belt, the
+  // barge stagger, the belt's own inertia, and the numbers in K.cop*.
   //
-  // 3. The breath. Verbatim: "he pants, like he breathes heavily, and then it
+  // Two things survive from earlier rounds and are still true:
+  //
+  // 1. There is a `chest` joint. Hips carry the legs, the pelvic drop and the
+  //    lean; chest carries the torso, arms and head and counter-rotates against
+  //    the hips. Everything used to hang off `hips`, so the whole man rotated
+  //    as one piece and a walk cycle was two sticks swinging under a stationary
+  //    egg. poseWalk() writes both.
+  //
+  // 2. The breath. Verbatim: "he pants, like he breathes heavily, and then it
   //    lets up right as he gets his breath back, but you should see that too."
   //    So it is not a gassed FLAG that switches an animation on. Rate, depth,
   //    hunch and head-drop are all continuous functions of `fatigue`, which
@@ -101733,28 +102001,146 @@ function createAgents(THREE, scene, world) {
     const F = clamp(u.fatigue, 0, 1);
     const spd = clamp(u.speed / T.copRun, 0, 1.2);
 
-    // ---- gait ---------------------------------------------------------------
-    // A short stride, because he is wide and tired. It shortens further as he
-    // fatigues, which is what actually makes a knackered man look knackered
-    // from behind: the cadence stays up and the ground stops moving.
-    const stride = 0.95 - 0.16 * F;
-    u.phase += (u.speed / stride) * dt * TAU;
-    const amp = clamp(u.speed * 0.165, 0.03, 0.58) * (1 - 0.20 * F);
-    const sw = Math.sin(u.phase), sw2 = Math.sin(u.phase * 2);
-    r.legL.rotation.x = sw * amp; r.legR.rotation.x = -sw * amp;
-    // Heel strike: the trailing leg straightens hard just before it lands, and
-    // the knee-less leg fakes that with a kick in the last quarter of the swing.
-    const heel = Math.max(0, -Math.cos(u.phase)) * amp * 0.22;
-    r.legL.rotation.x -= heel; r.legR.rotation.x += heel;
-    // WEIGHT ON THE HEELS. Both legs raked 2.6 degrees forward of the pelvis,
-    // so his feet lead and the gut is out over them. It is a constant on both
-    // legs, so the gait is untouched — the whole body just sits back on itself.
-    r.legL.rotation.x += 0.046; r.legR.rotation.x += 0.046;
-    // Arms lag the legs — a big man's arms are late and they swing across the
-    // gut rather than past it.
-    const alag = Math.sin(u.phase - 0.55);
-    r.armL.rotation.x = -alag * amp * 0.62; r.armR.rotation.x = alag * amp * 0.62;
-    const out = 0.26 + 0.06 * spd + 0.06 * F;                 // elbows off the belly
+    // ---- gait: THE SAME SOLVE FOURTEEN SHOPPERS RUN -------------------------
+    // WHAT THIS REPLACED, LINE FOR LINE, AND WHY EACH ONE HAD TO GO:
+    //
+    //   phase += (speed / stride) * dt * TAU     a hand-picked metres-per-cycle
+    //     divisor. Measured on the shipped build at his own 2.35 m/s it gave
+    //     cadence 2.477 Hz — 4.95 steps a second — on a 474 mm step. The step
+    //     length is the input now and the cadence falls out of it.
+    //   legL.rotation.x = sin(phase) * amp       a rigid leg driven by a sine
+    //     has its foot planted at exactly ONE speed (gait.js's header does the
+    //     arithmetic: 0.81 m/s) and skates quadratically either side of it. At
+    //     2.35 m/s his foot was going backwards at 3.6 m/s under a body doing
+    //     2.35. The leg angle comes out of asin() now and the plant is an
+    //     equality that holds at every speed.
+    //   heel = max(0, -cos(phase)) * amp * 0.22  the file's own comment: "the
+    //     knee-less leg fakes that with a kick". He has a knee now — a real
+    //     two-bone one, hip and ankle given, the knee the free parameter off
+    //     the line between them. rig.kneeOk says so out loud.
+    //   (nothing at all)                         there was no ankle. Every
+    //     frame he has ever been drawn in, his shoe was welded to his shin.
+    //     He now lands on the heel, goes flat, and rolls off the toe, with the
+    //     sole PINNED to the tiles through the shoe's own box.
+    //   legL.rotation.x += 0.046                 the weight-on-the-heels rake,
+    //     which is a real read and is now a translation of the hip pivot — see
+    //     COP_RAKE_Z in figures.js. An angle added to one side of the plant
+    //     equality is 2.4 mm of skate across a stance; a translation is none.
+    //   bob = (|sin| - 0.5) * (0.034 + 0.012*spd)   an amplitude somebody
+    //     picked, uncoupled from the step. It is L(1 - cos theta) through the
+    //     ankle and the foot rocker now, exact, with no dial.
+    //   land = max(0, -sin(2*phase)) * 0.012     a second, independent idea of
+    //     the same landing. Kept in spirit as K.copHeelSink, which is soft
+    //     tissue rather than geometry and is applied to the FLOOR as well so it
+    //     cannot unplant a foot.
+    //   sway = sin(phase) * 0.075                a hip ROLL called sway. The
+    //     pelvis never translated at all: measured lateral travel 0.0 mm. It
+    //     lists (Trendelenburg, tanh) and translates over the loaded foot now,
+    //     both bigger than any shopper's, and the leg pivots come back out of
+    //     both so the feet stay where they were put.
+    //
+    // Everything genuinely his is a number in K.cop*, and the code below this
+    // comment is the shopper's code with his numbers in it.
+    const L = r.hipY;
+    // ---- THE SOLVE IS IN ROOT-LOCAL METRES AND THE STORE IS NOT ------------
+    // `L` is the hip-to-sole distance INSIDE the figure's own root group, and
+    // that group is scaled: 1.04 on him, 0.9585 to 1.1143 across the fourteen
+    // shoppers. The plant is the identity `v*T = 2*S` — the body travels two
+    // step lengths per cycle — and it only holds when v and S are in the SAME
+    // units. `u.speed` is world metres a second and S comes out of a solve in
+    // root-local ones, so the foot's drawn excursion is rootS times what the
+    // solve planted and the stance foot skates by (rootS - 1) of it. Measured
+    // on him before this line: 74 mm of drift per foot-flat window, on a rig
+    // whose solve slip is 0.0 mm.
+    //
+    // Dividing the speed by the root scale is the whole fix, and it has to be
+    // BOTH here and in the phase rate below or the two disagree. THE SAME
+    // ERROR IS ON EVERY SHOPPER — 11.4% on the tallest body in the roster —
+    // and it is reported rather than fixed, because fixing it changes every
+    // shopper's cadence and this round may not move them. See plantCheck().
+    const rootS = cop.scale.x || 1;
+    const vLocal = u.speed / rootS;
+    const stride = K.copStride * (1 - K.copStrideTired * F);
+    const step = stepLength(vLocal, L, stride, true);          // heavy: always
+    const gz = clamp(u.speed / 0.55, 0, 1);
+    const gait = clamp(u.speed / 1.4, 0, 1);
+    // 2PI per full cycle = two steps = 2*step of ground. The `dt * 0.35` idle
+    // tick is the shopper's, and it is here for the same reason: it keeps the
+    // breath and the belt alive on a body standing at the desk.
+    //
+    // ...BUT IT FADES OUT AS HE STARTS WALKING, which the shopper's does not.
+    // It is phase with no ground under it: 0.35 rad/s is 0.056 Hz against his
+    // 1.66 Hz cadence, so 3.4% of every cycle is the gait clock running while
+    // the body does not move, and that is 3.4% of the foot's excursion handed
+    // straight to the stance foot as skate. Measured on him: it is a third of
+    // the 7.8% of excursion the port drifts. `1 - gz` is the same fade every
+    // input to the solve already uses, so the tick is at full strength exactly
+    // where it is needed (a stopped man) and zero where it costs.
+    u.phase += (vLocal > 0.02 ? Math.PI * vLocal / step * dt : 0) + (1 - gz) * dt * 0.35;
+    // DERIVED FROM THE STEP, not a second idea of how far a leg goes: half a
+    // step over a leg length is the sine of the hip angle. The arms swing off
+    // it below.
+    const amp = clamp(Math.asin(clamp(step * 0.5 / L, 0, 0.94)), 0.02, 0.75);
+    // ---- COMPLIANCE. Not kinematics; see K.copHeelSink. -------------------
+    // Each heel strike is at phase = 0 mod PI (uR = 0 for the right foot,
+    // uL = 0 half a cycle later), so one half-sine over the first 30% of each
+    // STEP is the body settling onto the foot and coming back up.
+    const pStep = ((u.phase / Math.PI) % 1 + 1) % 1;
+    const sink = K.copHeelSink * gait
+      * (pStep < 0.30 ? Math.sin(Math.PI * pStep / 0.30) : 0);
+    // Banking into a corner. Solved BEFORE poseWalk and handed to it as
+    // `hipZAdd` rather than added afterwards, because it is part of the pelvis
+    // roll the sole pin has to solve against: 0.36 rad of bank over a 180 mm
+    // pivot is 64 mm of foot, which is more than the list.
+    const wantLean = clamp(u.turn * 0.11 * clamp(u.speed / T.copRun, 0, 1.3), -0.36, 0.36);
+    u.lean = lerp(u.lean, wantLean, ed(9));
+    poseWalk(r, {
+      phase: u.phase, speed: vLocal, L, step, duty: dutyOf(vLocal, true) + K.copDuty,
+      // ---- AND THE GAIT ITSELF DETERIORATES AS HE BLOWS ------------------
+      // The brief asks for the gassed walk and the breathing to be ONE body
+      // rather than two effects on one mesh, and the phase lock at the bottom
+      // of this function is only half of that. The other half is that a blown
+      // man's LEGS change: the step shortens (copStrideTired, above), the foot
+      // stops clearing the floor — that is what a shuffle IS — and the pelvis
+      // rolls further because the abductors are the first thing to give out.
+      // Both are the same `F` the heave runs on, so the walk and the breath
+      // ease off together instead of one switching while the other decays.
+      lift: K.copLift * (1 - K.copLiftTired * F), flex: K.copFlex, gait, gz,
+      roll: K.copRoll, listA: K.copList * (1 + K.copListTired * F), swayA: K.copSway,
+      toeL: K.copToe, toeR: -K.copToe, splay: K.copSplay,
+      // He has no contrapposto to fade: `rest` is all zeros on his rig, and it
+      // is passed rather than assumed so poseWalk cannot grow a `rig.cop` test.
+      restHipZ: r.rest.hipZ, rest0: 1, sink,
+      hipZAdd: u.lean,
+      // He is the only body in the game that gets the roll-aware sole pin, and
+      // the flag exists so that the fourteen who do not are provably unmoved.
+      pinRoll: 1,
+    });
+
+    // ---- what poseWalk does NOT own: the shoulders leading a turn ----------
+    r.chest.rotation.y -= u.turn * 0.035;
+    // The chest counter-rolls against the pelvis. `hipsZ0` is what poseWalk put
+    // on the hips BEFORE this function added the bank — read rather than
+    // recomputed, which is the whole point of it being published.
+    r.chest.rotation.z = -r.hipsZ0 * 0.55;
+    u.sway = r.hipsZ0;                            // telemetry + the neck, below
+
+    // ARMS. Contralateral, lagging, and the phase relationship is worth
+    // deriving rather than transcribing because the old constant was tuned
+    // against a waveform that has since moved by a quarter cycle. The solve
+    // puts the LEFT foot furthest BACK at phase 0 (uL = 0.5, mid-stance behind
+    // the hip) and furthest FORWARD at phase PI; the old two-sine had the left
+    // leg neutral at phase 0. So the leg signal went from sin to cos, and an
+    // arm that swings opposite the leg on ITS side is -cos(phase - lag).
+    // Checked by rendering: at the frame the right foot lands, the LEFT arm is
+    // the one out in front.
+    const asw = Math.cos(u.phase - K.copArmLag);
+    r.armL.rotation.x = -asw * amp * K.copArmSwing;
+    r.armR.rotation.x = asw * amp * K.copArmSwing;
+    // THE ELBOWS CLEAR THE BELLY. He is 1.62 girth and the widest thing on him
+    // is his stomach, so his arms cannot brush his sides the way a thin man's
+    // do — they ride out and swing less, which is the trade in K.copArmSwing.
+    const out = K.copArmOut + 0.06 * spd + 0.06 * F;
     r.armL.rotation.z = out; r.armR.rotation.z = -out;
     // ROUND 7 — THE SHOULDERS ROUND FURTHER AS HE FATIGUES, which was asked for
     // by name. Not a rotation: the shoulder JOINTS travel forward, which is
@@ -101764,26 +102150,53 @@ function createAgents(THREE, scene, world) {
     const roll = (r.armZ ?? 0) + F * 0.030;
     r.armL.position.z = roll; r.armR.position.z = roll;
 
-    // ---- mass ---------------------------------------------------------------
-    // Pelvic drop on the swing side plus a counter-rotating chest: that pairing
-    // IS the waddle. Scaled by speed so a standing cop is not doing the twist.
-    const gait = clamp(u.speed / 1.6, 0, 1);
-    const wantLean = clamp(u.turn * 0.11 * clamp(u.speed / T.copRun, 0, 1.3), -0.36, 0.36);
-    u.lean = lerp(u.lean, wantLean, ed(9));
-    u.sway = lerp(u.sway, sw * 0.075 * gait, ed(16));
-    r.hips.rotation.z = u.lean + u.sway;
-    r.hips.rotation.y = sw * 0.075 * gait;
-    r.chest.rotation.y = -sw * 0.115 * gait - u.turn * 0.035;
-    r.chest.rotation.z = -u.sway * 0.55;
-    // Highest at mid-stance, lowest on the strike. The `- 0.5` is item 2 above.
-    const bob = (Math.abs(sw) - 0.5) * (0.034 + 0.012 * spd) * gait;
-    const land = Math.max(0, -sw2) * 0.012 * gait;            // the heel taking him
-    r.hips.position.y = r.hipY + bob - land;
+    // ---- THE TRUNK KEEPS GOING AFTER THE FEET STOP -------------------------
+    // The shopper has had this since round 12 and he never did. `leanA` is his
+    // own acceleration along his heading, smoothed at ~130 ms, and it goes onto
+    // `chest.position.z` — the ONE channel on his chest that nothing else in
+    // this function writes. chest.rotation.x is contested by six branches
+    // (stoop, brace, hook, stagger, heave) and putting it there would have each
+    // of their ed() lerps eat and re-emit it. A translation composes for free.
+    // Scaled up on him because the mass is the point: 45 mm on a shopper,
+    // 72 mm on a man carrying that gut.
+    {
+      const fx = Math.sin(u.heading), fz = Math.cos(u.heading);
+      const along = u.vel.x * fx + u.vel.z * fz;
+      const a = (along - (u.lastAlong ?? along)) / (dt || 0.016);
+      u.lastAlong = along;
+      u.leanA += (clamp(a, -14, 14) - u.leanA) * ed(7.5);
+    }
+    r.chest.position.z = clamp(u.leanA * 0.019, -0.072, 0.072);
 
-    // ---- the huff -----------------------------------------------------------
+    // ---- the huff, ON THE SAME BODY AS THE WALK -----------------------------
     // Rate 0.34 Hz calm -> 1.30 Hz blown, depth likewise, both off `fatigue`.
-    const rate = TAU * (0.34 + 1.00 * F);
-    u.breath += dt * rate;
+    //
+    // ROUND 1 (cop) — AND ONCE HE IS MOVING AND BLOWN IT IS NOT A FREE-RUNNING
+    // CLOCK ANY MORE. A man working hard locks his breathing to his stride;
+    // it is called locomotor-respiratory coupling and it is the difference
+    // between a heave that belongs to this body and a heave playing on top of
+    // one. Two halves, and both are needed:
+    //   the RATE is pulled onto his own cadence, so the loop below is not
+    //     fighting a constant error (his cadence at 2.35 m/s is 1.63 Hz and
+    //     the free-run at F=1 is 1.34, so they were close and never equal);
+    //   the PHASE is then pulled onto the footfall at copBreathLock, which is
+    //     what actually makes the shoulders lift on the same beat the foot
+    //     lands. copBreathPh is the offset between the two, and it is a real
+    //     quantity: you gasp just after you push off, not as you land.
+    // Both fade out with `gz`, so a man doubled over at the desk gets his
+    // breath back on his own clock, which is exactly what the note asked for.
+    // `vLocal`, not `u.speed`: `step` came out of a root-local solve and mixing
+    // the two here is the same unit error the gait block above exists to name,
+    // 4% of it, hidden by a loop that would quietly absorb it as phase offset.
+    const cadHz = (vLocal > 0.02 && step > 0) ? vLocal / (2 * step) : 0;
+    const lock = clamp((F - 0.30) / 0.35, 0, 1) * gz;
+    const hz = lerp(0.34 + 1.00 * F, cadHz, lock);
+    u.breath += dt * TAU * hz;
+    if (lock > 0.001) {
+      let d = (u.phase + K.copBreathPh - u.breath) % TAU;
+      if (d > Math.PI) d -= TAU; if (d < -Math.PI) d += TAU;
+      u.breath += d * lock * ed(K.copBreathLock);
+    }
     const w = breathWave(u.breath);                            // 0 empty, 1 full
     // Amplitude, near-linear in F rather than squared. The first version was
     // `w * (0.22 + 0.78F) * F`, and at F = 0.3 that is fourteen percent of the
@@ -101896,15 +102309,29 @@ function createAgents(THREE, scene, world) {
 
     // ---- the belt, out of phase --------------------------------------------
     // Eight kilos of leather hung off a man's hips does not travel with them.
-    // It lags a fifth of a stride and bounces at twice the cadence, and the
-    // torch and the keys go with it because they are welded into the same
+    // The torch and the keys go with it because they are welded into the same
     // merged mesh.
+    //
+    // ROUND 1 (cop) — IT LAGS THE PELVIS, NOT A SINE THAT USED TO BE IN PHASE
+    // WITH ONE. This was four hand-tuned constants against `sin(phase - 1.15)`
+    // and `sin(2*phase - 1.5)`, and the phase they were tuned against has since
+    // moved a quarter cycle (see the arm note above) — so the intent would have
+    // survived the port and the numbers would not have. What a hanging mass
+    // actually does is chase its mount at a finite rate, so: keep a LAGGED COPY
+    // of the three pelvis channels and draw the belt at the difference. It is
+    // one rule, `local = lagged - current`, it is right at every cadence
+    // including standing still, and it cannot go out of phase with the walk
+    // because it has no phase of its own.
     if (r.beltGrp) {
-      const bl = Math.sin(u.phase - 1.15);
-      r.beltGrp.rotation.y = bl * 0.085 * gait;
-      r.beltGrp.rotation.z = -bl * 0.045 * gait;
-      r.beltGrp.position.y = Math.sin(u.phase * 2 - 1.5) * 0.014 * gait - heave * 0.006;
-      r.beltGrp.position.x = bl * 0.010 * gait;
+      const kb = ed(K.copBeltLag);
+      u.beltZ = lerp(u.beltZ, r.hips.rotation.z, kb);
+      u.beltYaw = lerp(u.beltYaw, r.hips.rotation.y, kb);
+      u.beltH = lerp(u.beltH || r.hipY, r.hips.position.y, kb);
+      u.beltX = lerp(u.beltX, r.hips.position.x, kb);
+      r.beltGrp.rotation.z = (u.beltZ - r.hips.rotation.z) * K.copBeltSwing;
+      r.beltGrp.rotation.y = (u.beltYaw - r.hips.rotation.y) * K.copBeltSwing;
+      r.beltGrp.position.y = (u.beltH - r.hips.position.y) * K.copBeltSwing - heave * 0.006;
+      r.beltGrp.position.x = (u.beltX - r.hips.position.x) * K.copBeltSwing;
     }
     r.shirt.emissive?.setHex(boosted ? 0x1d3a12 : 0x000000);
   }
@@ -102424,6 +102851,66 @@ function createAgents(THREE, scene, world) {
   // and it should not try to: the point is that the band has no guilt term in
   // it at all. Returns { ok, why } like lungCheck/paceCheck and is stamped onto
   // every bench result.
+  // =========================================================================
+  // ROUND 1 (cop) — copCheck(). THE RIG, NOT THE SOLVE.
+  // =========================================================================
+  // CLAUDE.md's rule, verbatim: "a numeric check earns you nothing about
+  // geometry you have not rendered", and `gaitCheck()` passed while the rig was
+  // visibly wrong seven times across two rounds. This is the half of it that
+  // CAN be automated — the four preconditions the cop's walk silently degrades
+  // through, each of which was actually false at some point in this round:
+  //
+  //   feetOk    the shoe search found a shoe in each leg group. It could not,
+  //             for eleven rounds, because `copLeg` baked the oxford INTO the
+  //             trouser and the group had one child. That is the entire reason
+  //             he never got the round-12 walk.
+  //   kneeOk    the leg split at the knee. Falls back to the telescope if the
+  //             cut lands outside the leg — silently, which is why it is here.
+  //   kneeCut   the cut passes through the CENTRE of the knee ball. figures.js
+  //             hardcodes COP_ANKLE_Y to place that ball, and gait.js computes
+  //             the cut from the shoe's measured bounding box; two derivations
+  //             of one number, so they get an assertion rather than a comment.
+  //   units     the plant identity is `v*T = 2*S`, and S comes out of a solve
+  //             in ROOT-LOCAL metres while v is world. His root is scaled 1.04.
+  //             Unfixed that is 4% of the foot's excursion handed to the stance
+  //             foot as skate, and it is invisible in every still.
+  //
+  // It does NOT claim the walk looks right. Nothing numeric can. Render it.
+  function copCheck() {
+    const r = cop.userData.rig, bad = [];
+    if (!r.feetOk) bad.push('feetOk false: gait.js could not find a shoe inside the cop leg group. '
+      + 'Check figures.js makeCop still adds F.cop.shoe as a second child of each leg pivot.');
+    if (r.feetOk && !r.kneeOk) bad.push('kneeOk false: the leg did not split at the knee, so he is '
+      + 'back on the round-12 telescope. Check COP_KNEE_Y against gait.js KNEE_F.');
+    const f = r.footL;
+    let cutErr = null;
+    if (f && f.knee) {
+      cutErr = +((f.kneeY - COP_KNEE_Y) * 1000).toFixed(2);
+      if (Math.abs(cutErr) > 1.0) bad.push('the knee cut is ' + cutErr + ' mm off the knee ball '
+        + 'figures.js baked for it. One of COP_ANKLE_Y, the shoe geometry or gait.js KNEE_F moved '
+        + 'without the other two. The joint will open a wedge at flexion.');
+    }
+    // The units, re-derived rather than trusted: how far the body travels in a
+    // cycle, against how far the drawn foot does.
+    const rootS = cop.scale.x || 1;
+    const v = K.copWalk, L = r.hipY;
+    const S = stepLength(v / rootS, L, K.copStride, true);
+    const groundPerCycle = 2 * S * rootS;          // what the FOOT sweeps, world
+    const bodyPerCycle = v * (2 * S / (v / rootS));  // what the BODY travels, world
+    const unitErr = +((bodyPerCycle - groundPerCycle) * 1000).toFixed(3);
+    if (Math.abs(unitErr) > 1.0) bad.push('the gait clock and the drawn foot disagree by '
+      + unitErr + ' mm a cycle: the solve is in root-local metres and the store is not. '
+      + 'animateCop must divide u.speed by cop.scale.x before stepLength() AND before the '
+      + 'phase rate, or the stance foot skates by (rootScale - 1) of its own excursion.');
+    return {
+      ok: bad.length === 0, bad,
+      feetOk: !!r.feetOk, kneeOk: !!r.kneeOk,
+      kneeCutErrMM: cutErr, rootScale: +rootS.toFixed(4),
+      unitErrMMPerCycle: unitErr,
+      stepM: +S.toFixed(3), cadenceHz: +((v / rootS) / (2 * S)).toFixed(3),
+    };
+  }
+
   function exitCheck() {
     const why = [];
     if (!(K.paceHi > K.paceLo)) why.push('walk pace band is degenerate');
@@ -103859,6 +104346,200 @@ function createAgents(THREE, scene, world) {
     s.cart.rotation.y = y;
   }
 
+  // ===========================================================================
+  // poseWalk — THE WALK, APPLIED TO A RIG. ONE OWNER, TWO CALLERS.
+  // ===========================================================================
+  // gait.js owns the SOLVE. This owns what you do with the answer, which is the
+  // other half of the same derivation and had exactly the same problem: the
+  // solve's output is only planted if the six compensation terms downstream of
+  // it are right, and every one of them has already been wrong once —
+  //
+  //   the leg groups counter-rotate the pelvic list, or a listing pelvis walks
+  //     both feet 120 mm sideways;
+  //   the leg PIVOTS counter-translate the lateral sway, or the same again;
+  //   `floorY` comes from `_G.drop` and NOT from `hips.position.y`, which is
+  //     written thirty lines later and was therefore a frame stale — 43 mm of
+  //     heel through the tiles on exactly the frame of heel strike;
+  //   the ENGAGEMENT fade multiplies the STEP and never the leg angles,
+  //     because the plant is an equality between those two and scaling one
+  //     side of it broke it (142 mm of measured drift under a passing check);
+  //   every input to the solve fades together or none of them do, or a stopped
+  //     body sits 47 mm low forever;
+  //   a stance leg is NEVER shortened, or the foot leaves the ground.
+  //
+  // Those six were bought over two rounds by rendering the thing, and until
+  // this round the cop had none of them: `animateCop` was a SECOND, older
+  // implementation of this function — two sines, no plant, no knee, no ankle —
+  // and it is why he missed every one of those fixes. Everything genuinely
+  // different about a heavy man's walk is a NUMBER in `o` below. If you find
+  // yourself writing a second copy of any line in here, that is the bug this
+  // function exists to have already fixed.
+  //
+  //   o.L        hip pivot -> sole, root-local
+  //   o.step     step length BEFORE the engagement fade; `gz` is applied here
+  //   o.duty o.lift o.flex        straight into the solve, all faded by gz
+  //   o.gait     0..1, how engaged the swagger is (speed / 1.4 for a shopper)
+  //   o.gz       0..1, how engaged the GAIT is (speed / 0.55)
+  //   o.listA o.swayA o.roll      the weight-transfer amplitudes
+  //   o.toeL o.toeR o.splay       foot yaw, and hip abduction
+  //   o.restHipZ o.rest0          contrapposto, and how far it has faded
+  //   o.sink     extra hip drop, metres, applied to the hips AND to the floor
+  //              so the sole pin follows it. See K.copHeelSink.
+  // Returns `_G`, the same scratch object solveGait writes.
+  function poseWalk(r, o) {
+    // THREE goes in because the knee split needs constructors — see attachFeet.
+    // Without it the rig falls back to round 12's telescoping leg rather than
+    // throwing, which is the same degradation path the shoe search already had.
+    if (!r.feetOk && r.feetOk !== false) attachFeet(r, THREE);
+    const gz = o.gz, gait = o.gait, L = o.L;
+    solveGait(_G, {
+      phase: o.phase, speed: o.speed, L, step: o.step * gz,
+      duty: o.duty,
+      // BOTH OF THESE FADE WITH `gz` TOO, and leaving them out of it was a
+      // real bug with a quiet signature. `phase` keeps ticking on a stopped
+      // body, so a standing body still cycles through stance and swing — and
+      // with an unfaded flexion it sat 47 mm low forever, while an unfaded knee
+      // lift slowly picked each foot up off the floor. Every input to the solve
+      // fades together or none of them do.
+      lift: o.lift * gz,
+      flex: o.flex * gz,
+      feet: !!r.feetOk,
+      // The shoe's own box, so the solve can put the hip where the FOOT holds
+      // it rather than where a rigid rod would. Measured once at attach, null
+      // if the shoes were not found, and the solve falls back without it.
+      foot: r.footGeom,
+    });
+    // ---- THE PELVIS, SOLVED BEFORE THE FEET ARE PINNED ---------------------
+    // These four are computed here rather than where they are written, because
+    // the sole pin needs them: see `pinRoll` below. Nothing between here and
+    // their assignment reads or writes any of them, so a shopper gets the same
+    // numbers in the same order it always did.
+    if (r.stance0 === undefined) { r.stance0 = r.legL.position.x; r.stanceR0 = r.legR.position.x; }
+    const list = _G.list * o.listA * gait * o.roll;
+    const hz = list + o.restHipZ * o.rest0 + (o.hipZAdd || 0);
+    const sway = _G.sway * o.swayA * gait;
+    const legZ = -(list + o.restHipZ * o.rest0 * gz);
+    // Straight through, NOT scaled — see `gz` above. A stopped body stands
+    // still because its step went to zero, which is the same reason its hip
+    // stopped dropping, so the contrapposto takes over underneath with nothing
+    // to fight.
+    r.legL.rotation.x = _G.thL; r.legR.rotation.x = _G.thR;
+    // The knee and the ankle roll, written onto the two meshes attachFeet found
+    // inside each baked leg group. Both go to rest when the body does, and both
+    // are no-ops if the leg group ever changes shape enough that they could not
+    // be found — see gaitCheck().
+    if (r.feetOk) {
+      if (gz > 0.02) {
+        // The floor, in hips-local metres, taken FROM THE SOLVE and not from
+        // `hips.position.y` — which is written further down, so reading the rig
+        // saw the PREVIOUS frame's value and at the stance handover put the
+        // heel 43 mm through the tiles. `_G.drop` has one owner and no phase.
+        // `o.sink` is in here for the same reason: whatever lowers the hips has
+        // to lower the floor the sole is pinned to by the same amount, or the
+        // compliance term below unplants both feet.
+        const floorY = _G.drop + (o.sink || 0) - L;
+        // ---- ROUND 1 (cop): THE PIN SOLVES IN THE LEG'S OWN FRAME AND THE
+        // ---- PELVIS ROLLS UNDERNEATH IT ------------------------------------
+        // footPose returns a sole corner's height RELATIVE TO ITS OWN HIP
+        // PIVOT, and `floorY` above is the floor under a pivot sitting at
+        // hips-local (0, 0). The pivot is not at 0: it is out at +-stance, and
+        // the pelvis ROLLS about its own origin, so a listing pelvis carries
+        // the loaded pivot DOWN by px*sin(hz) and the pin never hears about it.
+        // The leg groups counter-rotate the list so the femur stays vertical,
+        // which is right and is not this — this is the pivot itself moving.
+        //
+        // Measured on the cop, one stride at his own 2.35 m/s, lowest pinned
+        // sole corner in world millimetres:
+        //     shipped       -39.6        list forced to 0     -2.2
+        //     splay to 0    -38.5        toe forced to 0     -29.2
+        // i.e. it is the list, at 9.2 degrees over a 180 mm pivot, and nothing
+        // else on the list came close.
+        //
+        //     floorY = -((L - drop - sink) + px*sin(hz)) / cos(hz)
+        //
+        // `px` is the pivot AFTER the sway translation plus the corner's own
+        // lateral offset under the leg's roll (L*sin(rz)), which is the 7 mm
+        // second-order term. AT hz = 0 THIS IS EXACTLY THE OLD EXPRESSION, so
+        // `pinRoll` unset reproduces the shipped build to the digit — which is
+        // what every shopper is still passed, deliberately. The same error is
+        // on them (their pivots are narrower and their list smaller, so it is
+        // 19 mm at the roster's worst rather than 40) and moving it is a
+        // regression this round is not allowed to take. It is reported instead.
+        let fL = floorY, fR = floorY;
+        if (o.pinRoll) {
+          const ch = Math.cos(hz), sh = Math.sin(hz);
+          const pin1 = (px, rz) => -((L - _G.drop - (o.sink || 0))
+            + (px + L * Math.sin(rz)) * sh) / Math.max(0.5, ch);
+          fL = pin1(r.stance0 - sway, legZ + (o.splay || 0));
+          fR = pin1(r.stanceR0 - sway, legZ - (o.splay || 0));
+        }
+        footPose(r.footL, _G.kneeL, _G.ankL, _G.thL, fL + _G.clearL);
+        footPose(r.footR, _G.kneeR, _G.ankR, _G.thR, fR + _G.clearR);
+        r.footRested = false;
+      } else if (r.footRested !== true) { footRest(r.footL); footRest(r.footR); r.footRested = true; }
+      // Which foot is carrying, published on the rig for gaitCheck's live half
+      // and for anything that wants to know. Read-only for everyone else.
+      r.stL = _G.stanceL; r.stR = _G.stanceR;
+    }
+    // Toe-out is one assignment and it is worth having: it is set ONCE per frame
+    // rather than driven, so it costs nothing, and a duck-footed walk and a
+    // pigeon-toed one are different people from across a store. THE TWO FEET
+    // ARE INDEPENDENT — one roll per foot costs the same as one roll for both.
+    r.legL.rotation.y = o.toeL; r.legR.rotation.y = o.toeR;
+    // Hips and chest counter-rotate. The transverse rotation is SOLVED from
+    // where the two feet actually are, so a long stride reaches with the pelvis
+    // and a shuffle does not, instead of both getting 0.055 rad off a sine.
+    // `roll` is clamped to a TRIM by the caller: used as a bare multiplier on an
+    // angle that is already a real anatomical quantity it produced 20 degrees of
+    // pelvic rotation, about three times life.
+    r.hips.rotation.y = _G.pelvisY * 0.34 * gait * o.roll;
+    r.chest.rotation.y = -_G.pelvisY * 0.52 * gait * o.roll;
+    // ---- THE PELVIS LISTS, AND THE BODY GETS OVER EACH FOOT -----------------
+    // These two are the brief's "weight transfer, not a slide", and they are
+    // where a heavy walk and a lean walk stop being the same animation.
+    //
+    // LIST: the UNLOADED hip drops (Trendelenburg). tanh() rather than a sine
+    // because weight transfer is quick and the plateau in the middle of each
+    // stance is what makes it read as load rather than as wobble. Solved above,
+    // with the sway and the leg counter-rotation, because the sole pin needs
+    // all three before the feet are placed.
+    r.hips.rotation.z = hz;
+    // ...AND THE LEGS COME BACK OUT OF IT. A pelvis lists ABOUT the hip joint of
+    // the leg that is carrying; the femur underneath it stays roughly vertical.
+    // These legs are children of `hips`, so an uncompensated list rotates both
+    // of them bodily and walks the feet sideways — 120 mm at a realistic 8
+    // degrees, which is a person skating. `rest0 * gz` fades the contrapposto
+    // out of the compensation as the gait engages, because a body AT REST
+    // should tilt its legs with its hips and a body WALKING should not.
+    //
+    // ROUND 1 (cop) — `o.splay` is hip ABDUCTION and it is ADDED here, outside
+    // the compensation, mirrored per leg. It is the only honest place for a
+    // wide stance on a rig whose thighs have to overlap across the midline to
+    // be a pelvis at all (see COP_STANCE in figures.js). It costs the sole pin
+    // an approximation it was already making for the list — the pin solves in
+    // the leg's pitch plane and knows nothing about roll — worth about 3 mm of
+    // sole height at 0.05 rad on a 100 mm sole, and it is a CONSTANT, so it
+    // cannot slip.
+    r.legL.rotation.z = legZ + (o.splay || 0); r.legR.rotation.z = legZ - (o.splay || 0);
+    r.hipsZ0 = r.hips.rotation.z;              // what a pose branch adds is undone below
+    // VERTICAL: the controlled fall. EXACT, with no per-person trim on it, and
+    // that is the point. `drop` is L(1 - cos theta) off the stance leg and the
+    // plant is an equality between that and the leg angle; multiplying one side
+    // by a `bounce` dial unplants the foot by exactly the amount of the trim.
+    r.hips.position.y = L - _G.drop - (o.sink || 0);
+    // LATERAL: the pelvis translates over the loaded foot, and the LEG PIVOTS
+    // ARE MOVED BACK BY THE SAME AMOUNT so the feet stay where they were put.
+    // Without that compensation this would drag both planted feet sideways and
+    // undo the whole point of the solve above. `stance0` is figures.js's own
+    // stance width, read once and never written, so this composes with a
+    // per-person stance instead of replacing it. (Both `stance0` and `sway` are
+    // solved at the top of this function, because the sole pin needs them.)
+    r.hips.position.x = sway;
+    r.legL.position.x = r.stance0 - sway;
+    r.legR.position.x = r.stanceR0 - sway;
+    return _G;
+  }
+
   function animateShopper(s, dt, target) {
     const r = s.rig;
     const P = r.pose;
@@ -103944,150 +104625,42 @@ function createAgents(THREE, scene, world) {
     // of how far a leg goes: half a step over a leg length is the sine of the
     // hip angle, which is the same quantity gait.js solves.
     const amp = clamp(Math.asin(clamp(step * 0.5 / L, 0, 0.94)) * P.amp, 0.02, 0.75);
-    // THREE goes in because the knee split needs constructors — see attachFeet.
-    // Without it the rig falls back to round 12's telescoping leg rather than
-    // throwing, which is the same degradation path the shoe search already had.
-    if (!r.feetOk && r.feetOk !== false) attachFeet(r, THREE);
-    solveGait(_G, {
-      phase: s.phase, speed: s.speed, L, step: step * gz,
-      duty: dutyOf(s.speed, heavy),
-      // BOTH OF THESE FADE WITH `gz` TOO, and leaving them out of it was a
-      // real bug with a quiet signature. `phase` keeps ticking on a stopped
-      // body (0.35 rad/s, so the browse oscillators downstream keep running),
-      // so a standing body still cycles through stance and swing — and with an
-      // unfaded flexion it sat 47 mm low forever, while an unfaded knee lift
-      // slowly picked each foot up off the floor. The low sit then masked the
-      // idle-crouch correction below, because it made `c` come out at zero.
-      // Every input to the solve fades together or none of them do.
-      lift: K.gaitLift * (heavy ? K.gaitLiftHeavy : 1) * clamp(P.bounce, 0.65, 1.35) * gz,
-      flex: K.gaitFlex * (heavy ? K.gaitFlexHeavy : 1) * gz,
-      feet: !!r.feetOk,
-      // ROUND 2 (character) — the shoe's own box, so the solve can put the hip
-      // where the FOOT holds it rather than where a rigid rod would. This is
-      // what took the roster's hip bob from 17-87 mm to a real band; see the
-      // note over hipOf() in gait.js. Measured once at attach, null if the
-      // shoes were not found, and the solve falls back without it.
-      foot: r.footGeom,
-    });
-    // Straight through, NOT scaled — see `gz` above. A stopped body stands
-    // still because its step went to zero, which is the same reason its hip
-    // stopped dropping, so round 11's contrapposto takes over underneath with
-    // nothing to fight.
-    r.legL.rotation.x = _G.thL; r.legR.rotation.x = _G.thR;
-    // The knee substitute and the ankle roll, written onto the two meshes
-    // attachFeet found inside each baked leg group. Both go to rest when the
-    // body does, and both are no-ops if figures.js's leg group ever changes
-    // shape enough that they could not be found — see gaitCheck().
-    if (r.feetOk) {
-      if (gz > 0.02) {
-        // The floor, in hips-local metres, taken FROM THE SOLVE and not from
-        // `hips.position.y`. Reading the rig was the obvious version and it was
-        // wrong by one frame: the hip height is written 30 lines further down,
-        // so this saw the PREVIOUS frame's value, and at the stance handover —
-        // where the drop moves 46 mm in three frames as the carrying leg
-        // changes — that stale value put the heel 43 mm through the tiles on
-        // exactly the frame of heel strike. Everywhere else it was within 6 mm,
-        // which is why it looked like a transient rather than an ordering bug.
-        // `_G.drop` has one owner and no phase.
-        const floorY = _G.drop - r.hipY;
-        footPose(r.footL, _G.kneeL, _G.ankL, _G.thL, floorY + _G.clearL);
-        footPose(r.footR, _G.kneeR, _G.ankR, _G.thR, floorY + _G.clearR);
-        r.footRested = false;
-      } else if (r.footRested !== true) { footRest(r.footL); footRest(r.footR); r.footRested = true; }
-      // Which foot is carrying, published on the rig for gaitCheck's live half
-      // and for anything that wants to know. Read-only for everyone else.
-      r.stL = _G.stanceL; r.stR = _G.stanceR;
-    }
-    // Toe-out is one assignment and it is worth having: it is set ONCE per frame
-    // rather than driven, so it costs nothing, and a duck-footed walk and a
-    // pigeon-toed one are different people from across a store.
-    // ROUND 11 — AND THE TWO FEET ARE INDEPENDENT. `P.toe` mirrored one value,
-    // so every body in this store was symmetric from the ankles up; the lead's
-    // first note off the reference photographs is that not one person in them
-    // is. One roll per foot costs the same as one roll for both.
-    r.legL.rotation.y = P.toe + r.rest.toeL; r.legR.rotation.y = -P.toe + r.rest.toeR;
-    // Same two fixes as the cop: hips and chest counter-rotate, and the bob is
-    // highest at mid-stance rather than at the strike. `roll` and `bounce` are
-    // the swagger dial — a heavy body rolls its hips and drops hard onto each
-    // heel, a light one glides — and they are the difference between a waddle
-    // and a walk at any distance you can still see the body at.
-    // ROUND 12 — the transverse rotation is SOLVED from where the two feet
-    // actually are, so a long stride reaches with the pelvis and a shuffle does
-    // not, instead of both getting 0.055 rad off a sine.
-    // `P.roll` reaches 2.46 on a heavy body (rr(0.45,1.70) x 1.45), and used as
-    // a bare multiplier on an angle that is already a real anatomical quantity
-    // it produced 20 degrees of pelvic rotation and 15 of list. Both are about
-    // three times life, and the list version was worse than ugly: the legs hang
-    // off `hips`, so 15 degrees of it swung each foot 220 mm sideways. Clamped
-    // to a trim, which is what a per-person swagger dial should have been.
-    const roll = clamp(P.roll, 0.55, 1.35);
-    r.hips.rotation.y = _G.pelvisY * 0.34 * gait * roll;
-    r.chest.rotation.y = -_G.pelvisY * 0.52 * gait * roll;
+    // ---- ROUND 1 (cop): THE SOLVE, ITS SIX COMPENSATIONS AND THE PIN ARE
+    // ---- poseWalk() NOW, AND THE COP CALLS THE SAME FUNCTION ----------------
+    // Everything that was inline here is byte-for-byte inside poseWalk; what is
+    // left at this call site is the SHOPPER'S OWN NUMBERS, which is the whole
+    // distinction. `animateCop` used to be a second copy of the block that used
+    // to be here — an older one, with no plant, no knee and no ankle — and that
+    // is why the man the player looks at for the entire floor phase missed four
+    // rounds of fixes to it. See the header over poseWalk.
+    const listA = lerp(K.listLean, K.listHeavy, clamp((r.desc ? r.desc.build : 2) / 5, 0, 1));
+    const swayA = lerp(K.swayLean, K.swayHeavy, clamp((r.desc ? r.desc.build : 2) / 5, 0, 1));
     // ---- ROUND 11: CONTRAPPOSTO, AND IT FADES OUT AS HE STARTS WALKING -----
     // Standing on one leg puts that hip up and the opposite shoulder down. It
-    // is a REST angle rolled per body in figures.js, and it is added here
-    // rather than assigned because this channel is also the gait's hip roll and
-    // an assignment would eat one of the two. The `1 - 0.62*gait` is the whole
-    // physical claim: a body at rest has its weight parked on one leg, a body
-    // walking is alternating, so the parked tilt has to go away as it does.
-    // A carried basket adds its lean into `rest.chestZ` at construction — same
-    // channel, same fade, and nothing per-frame knows a basket exists.
+    // is a REST angle rolled per body in figures.js, and poseWalk ADDS it to
+    // the gait's hip roll rather than assigning, because that channel is both.
+    // The `1 - 0.62*gait` is the whole physical claim: a body at rest has its
+    // weight parked on one leg, a body walking is alternating, so the parked
+    // tilt has to go away as it does. A carried basket adds its lean into
+    // `rest.chestZ` at construction — same channel, same fade, and nothing
+    // per-frame knows a basket exists.
     r.rest0 = 1 - 0.62 * gait;
-    // ---- ROUND 12: THE PELVIS LISTS, AND THE BODY GETS OVER EACH FOOT -------
-    // These two are the brief's "weight transfer, not a slide", and they are
-    // where a heavy walk and a lean walk stop being the same animation.
-    //
-    // LIST: the UNLOADED hip drops (Trendelenburg). tanh() rather than a sine
-    // because weight transfer is quick and the plateau in the middle of each
-    // stance is what makes it read as load rather than as wobble. A heavy body
-    // lists 2.3x as far, which is the single most legible thing on this list at
-    // any distance you can still see a body at.
-    const listA = lerp(K.listLean, K.listHeavy, clamp((r.desc ? r.desc.build : 2) / 5, 0, 1));
-    const list = _G.list * listA * gait * roll;
-    r.hips.rotation.z = list + r.rest.hipZ * r.rest0;
-    // ...AND THE LEGS COME BACK OUT OF IT. A pelvis lists ABOUT the hip joint
-    // of the leg that is carrying; the femur underneath it stays roughly
-    // vertical. These legs are children of `hips`, so an uncompensated list
-    // rotates both of them bodily and walks the feet sideways — 120 mm at a
-    // realistic 8 degrees, which is a person skating. Counter-rotating the leg
-    // groups by the same angle leaves the list where it belongs, on the pelvis
-    // and everything above it, and costs two writes. The leg PIVOTS still
-    // translate a little, which is correct and is 3 mm.
-    // ...and round 11's contrapposto goes with it, faded by how engaged the
-    // gait is. A body AT REST should tilt its legs with its hips — that is what
-    // standing on one leg looks like — and a body WALKING should not, because
-    // the femur under a listing pelvis stays vertical. `gz` is already exactly
-    // that fade, and without this term a body with a strong rest roll walked
-    // with both feet 28 mm off the tiles.
-    const legZ = -(list + r.rest.hipZ * r.rest0 * gz);
-    r.legL.rotation.z = legZ; r.legR.rotation.z = legZ;
-    r.hipsZ0 = r.hips.rotation.z;              // what a pose branch adds is undone below
-    // VERTICAL: the controlled fall. L*(1-cos theta) off the STANCE leg, so the
-    // body is highest at mid-stance with the leg vertical and carrying, and
-    // drops into each heel strike. Round 11 had the right shape at an amplitude
-    // somebody picked; this one is 62 mm on a full stride and 20 mm on a
-    // shuffle without `bounce` having to be set per person — `bounce` survives
-    // as a trim on it.
-    // EXACT, with no per-person trim on it, and that is the point. `drop` is
-    // L(1 - cos theta) off the stance leg and the plant is an equality between
-    // that and the leg angle; multiplying one side by a `bounce` dial unplants
-    // the foot by exactly the amount of the trim. Round 11's bounce roll moves
-    // to the KNEE LIFT instead — how high a person picks their feet up, which
-    // is a real per-body trait, is free to vary, and reads at the same distance
-    // the bob did.
-    r.hips.position.y = r.hipY - _G.drop;
-    // LATERAL: the pelvis translates over the loaded foot, and the LEG PIVOTS
-    // ARE MOVED BACK BY THE SAME AMOUNT so the feet stay where they were put.
-    // Without that compensation this would drag both planted feet sideways and
-    // undo the whole point of the solve above. `stance0` is figures.js's own
-    // stance width, read once and never written, so this composes with a
-    // per-person stance instead of replacing it.
-    if (r.stance0 === undefined) { r.stance0 = r.legL.position.x; r.stanceR0 = r.legR.position.x; }
-    const swayA = lerp(K.swayLean, K.swayHeavy, clamp((r.desc ? r.desc.build : 2) / 5, 0, 1));
-    const sway = _G.sway * swayA * gait;
-    r.hips.position.x = sway;
-    r.legL.position.x = r.stance0 - sway;
-    r.legR.position.x = r.stanceR0 - sway;
+    poseWalk(r, {
+      phase: s.phase, speed: s.speed, L, step, duty: dutyOf(s.speed, heavy),
+      lift: K.gaitLift * (heavy ? K.gaitLiftHeavy : 1) * clamp(P.bounce, 0.65, 1.35),
+      flex: K.gaitFlex * (heavy ? K.gaitFlexHeavy : 1),
+      gait, gz,
+      // `P.roll` reaches 2.46 on a heavy body (rr(0.45,1.70) x 1.45), and used
+      // as a bare multiplier on an angle that is already a real anatomical
+      // quantity it produced 20 degrees of pelvic rotation and 15 of list.
+      // Both are about three times life, and the list version was worse than
+      // ugly: the legs hang off `hips`, so 15 degrees of it swung each foot
+      // 220 mm sideways. Clamped to a trim, which is what a per-person swagger
+      // dial should have been.
+      roll: clamp(P.roll, 0.55, 1.35), listA, swayA,
+      toeL: P.toe + r.rest.toeL, toeR: -P.toe + r.rest.toeR,
+      restHipZ: r.rest.hipZ, rest0: r.rest0,
+    });
     // ---- ROUND 12: THE HEAD LEADS THE BODY INTO A TURN ----------------------
     // "The head turns before the body." `turnErr` is exactly how far the body
     // still has to come round, and pushing a fraction of it onto the neck IS
@@ -107097,6 +107670,10 @@ function createAgents(THREE, scene, world) {
     // crossBands() is how the back-route metric finds the store's corridors
     // from the nav grid instead of assuming where they are.
     override: OVR, crossBands, lungCheck, paceCheck, exitCheck, paceOf,
+    // ROUND 1 (cop) — the rig assertion for HIM. feetOk / kneeOk / the knee cut
+    // landing on figures.js's own knee ball / the root-scale unit identity that
+    // decides whether his stance foot skates. See copCheck().
+    copCheck,
     // ROUND 12. gaitCheck() is the walk's lungCheck(): it re-derives the planted
     // foot in world coordinates and fails loudly if it slips. stockWired says
     // whether world.takeFacing was actually found at construction, so a report
