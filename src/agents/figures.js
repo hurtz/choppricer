@@ -221,6 +221,19 @@ function shapes(THREE) {
 //   rings: [{ y, rx, rz, cz, c }] bottom to top, first and last collapsed to a
 //   point to cap it. `seg` is the ring resolution — 16 is plenty at 7 m and it
 //   is what the CCTV feed can resolve at any distance whatsoever.
+// ROUND 3 (character) — A RING MAY NOW SHADE AROUND ITSELF. `r.c` was one
+// colour for a whole ring, which can express a hem shadow or a contact shadow
+// under a belly (both are horizontal) and cannot express ANY of the three
+// things a garment does that the reference photographs are unanimous about: a
+// shoulder seam, an armpit crease and a strap pressing into cloth. All three
+// run the other way. So `r.c` may be a function of u — the fraction round the
+// ring, 0 at the SPINE and 0.5 at the sternum, with the two arm-holes at 0.25
+// (the -X side, which is the RIGHT arm) and 0.75.
+//
+// It is a vertex colour and therefore free: same vertex count, same triangle
+// count, same draw call, same material. The alternative — a normal map, or
+// geometry for a seam — costs a texture or a rebake per person, and at the
+// distance this game is played neither would be visible where this is.
 function loft(THREE, rings, seg = 16, uv) {
   const n = rings.length, W = seg + 1;
   const pos = new Float32Array(n * W * 3);
@@ -230,8 +243,10 @@ function loft(THREE, rings, seg = 16, uv) {
   const c = new THREE.Color();
   for (let i = 0; i < n; i++) {
     const r = rings[i];
-    c.set(r.c == null ? 0xffffff : r.c);
+    const fn = typeof r.c === 'function' ? r.c : null;
+    if (!fn) c.set(r.c == null ? 0xffffff : r.c);
     for (let j = 0; j <= seg; j++) {
+      if (fn) c.set(fn(j / seg));
       // ROUND 11 — the ring STARTS AT THE BACK (+PI), which is a no-op on the
       // geometry (same closed ellipse, same winding, same start-vertex count)
       // and two things on the texture: u = 0.5 is now the middle of the CHEST,
@@ -240,9 +255,14 @@ function loft(THREE, rings, seg = 16, uv) {
       // and its shading discontinuity move round to the spine, where nobody is
       // looking. The cop's cell is a fabric weave, so this is invisible on him.
       const a = (j / seg) * Math.PI * 2 + Math.PI, k = i * W + j;
-      pos[k * 3] = Math.sin(a) * r.rx;
+      // ...and `r.rf` is the same idea in the radial axis: a multiplier on this
+      // ring's half-widths at this u. It exists for ONE thing — a strap presses
+      // cloth in, and a dark line with no groove under it reads as a stripe
+      // painted on a shirt rather than as something lying on top of it.
+      const rf = r.rf ? r.rf(j / seg) : 1;
+      pos[k * 3] = Math.sin(a) * r.rx * rf;
       pos[k * 3 + 1] = r.y;
-      pos[k * 3 + 2] = Math.cos(a) * r.rz + (r.cz || 0);
+      pos[k * 3 + 2] = Math.cos(a) * r.rz * rf + (r.cz || 0);
       const u = j / seg, v = i / (n - 1);
       uvs[k * 2] = uv ? uv[0] + u * uv[2] : u;
       uvs[k * 2 + 1] = uv ? uv[1] + v * uv[3] : v;
@@ -515,9 +535,9 @@ function copAtlas(THREE) {
 // still does the colour. Kept from the previous round; the figures under them
 // are what changed.
 function clothAtlas(THREE) {
-  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const c = document.createElement('canvas'); c.width = 384; c.height = 256;
   const x = c.getContext('2d');
-  const cell = (i, f) => { x.save(); x.translate((i % 2) * 128, ((i / 2) | 0) * 128);
+  const cell = (i, f) => { x.save(); x.translate((i % 3) * 128, ((i / 3) | 0) * 128);
     x.beginPath(); x.rect(0, 0, 128, 128); x.clip(); f(x); x.restore(); };
   cell(0, (g) => {                                    // horizontal stripes
     g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
@@ -543,11 +563,42 @@ function clothAtlas(THREE) {
     for (let y = 6; y < 128; y += 21) g.fillRect(0, y, 128, 8);
     for (let v = 6; v < 128; v += 21) g.fillRect(v, 0, 8, 128);
   });
+  // ROUND 3 (character) — CELLS 4 AND 5 EXIST BECAUSE THIRTY PERCENT OF THIS
+  // CROWD HAD NO MAP AT ALL. `plain: rnd() < 0.3` meant `map: null`, and a
+  // MeshStandard surface with no map and one dye is the flattest thing this
+  // renderer can draw: four of fourteen bodies were a solid colour with nothing
+  // but the vertex ramps on it, and they are the four a critic keeps picking
+  // out. The fix is NOT to give them a pattern — a plain shirt is a real thing
+  // and half the people in the photographs are wearing one — it is to give them
+  // a FABRIC. Both cells are within four points of white everywhere, so the dye
+  // is unchanged at any distance and what arrives is grain.
+  cell(4, (g) => {                                    // jersey / heather knit
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
+    // A deterministic slub. Math.random() here would give every reload a
+    // different crowd and make two captures of "the same build" incomparable,
+    // which is the sort of thing that costs a round to notice.
+    let s = 0x2f6b1d;
+    const rnd = () => ((s = (s * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+    for (let i = 0; i < 1400; i++) {
+      const v = 236 + ((rnd() * 20) | 0);
+      g.fillStyle = 'rgb(' + v + ',' + v + ',' + v + ')';
+      g.fillRect((rnd() * 128) | 0, (rnd() * 128) | 0, 1 + ((rnd() * 2) | 0), 1);
+    }
+  });
+  cell(5, (g) => {                                    // fine twill, 45 degrees
+    g.fillStyle = '#ffffff'; g.fillRect(0, 0, 128, 128);
+    g.strokeStyle = 'rgba(120,120,120,0.13)'; g.lineWidth = 1.6;
+    for (let k = -128; k < 256; k += 7) {
+      g.beginPath(); g.moveTo(k, 0); g.lineTo(k + 128, 128); g.stroke();
+    }
+  });
   const out = [];
-  for (let i = 0; i < 4; i++) {
+  const COLS = 3, ROWS = 2;
+  for (let i = 0; i < COLS * ROWS; i++) {
     const t = new THREE.CanvasTexture(c);
     t.colorSpace = THREE.SRGBColorSpace ?? t.colorSpace;
-    t.repeat.set(0.5, 0.5); t.offset.set((i % 2) * 0.5, 1 - ((i / 2) | 0) * 0.5 - 0.5);
+    t.repeat.set(1 / COLS, 1 / ROWS);
+    t.offset.set((i % COLS) / COLS, 1 - (((i / COLS) | 0) + 1) / ROWS);
     t.needsUpdate = true; out.push(t);
   }
   return out;
@@ -639,14 +690,17 @@ const SHOE = [0x33322f, 0x1e1c1a, 0x4a3a2c, 0xbfbdb6, 0x5a2f26];
 //
 // WHAT IS STILL WRONG, honestly, for whoever takes the next round:
 //   - hands read as mittens at portrait range. The wedge is right and the
-//     fingers are one box; at 3x that box is what you see.
+//     fingers are one box; at 3x that box is what you see.       [ROUND 3: done]
 //   - a carried basket rides `hips`, so a body that folds its arms leaves the
 //     basket hanging beside a leg that is not holding it. Parenting it to the
 //     arm fixes the fold and breaks every clip that raises that arm.
+//                                                                [ROUND 3: done]
 //   - the garment has no shoulder seam, no armpit crease and no strap
 //     deformation. The lead's note off the photographs is that clothing HANGS,
 //     and this round only got as far as making it hang off the right shape.
+//                                                                [ROUND 3: done]
 //   - `plain` bodies (30%) have no cloth map at all and read as flat colour.
+//                                                                [ROUND 3: done]
 //
 // Half-dimensions, model units, on a 1.65 m frame, garment included. Checked
 // against published anthropometry as fractions of stature S:
@@ -679,6 +733,80 @@ const SHOE = [0x33322f, 0x1e1c1a, 0x4a3a2c, 0xbfbdb6, 0x5a2f26];
 //   0.694 / 0.671 / 0.802 / 0.761 / 0.714 / 0.803. Depth is invisible to the
 //   front-on width instrument this round is measured with — which is the point
 //   of doing it in this axis: it cannot flatter the headline number.
+// ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// ROUND 3 (CHARACTER) — THE THREE THINGS ON THAT LIST, AND THE ONE THE LEAD
+// ADDED AFTER PLAYING IT.
+// ---------------------------------------------------------------------------
+// The addendum reordered the round and it was right to: "from the chase camera,
+// behind the cop, three metres — the framing for the ENTIRE floor phase — his
+// bare forearms are the worst thing on screen." A shopper's hands are seen at a
+// checkout and when the player walks up on somebody. HIS are on screen every
+// second of every dispatch, and he is the only body in this game with short
+// sleeves, so he is the only one where bare arm is a large uninterrupted
+// surface. shots/f3b_cop_arms.png is the before and it is two tubes.
+//
+// 1. THE CARRIED BASKET. It rode `hips`, so a folded-arm body left it standing
+//    beside a leg (shots/f3b_fold.png). The round-11 note proposed parenting it
+//    to the arm and said that breaks every clip that raises that arm; it does,
+//    and shots/f3a_fold_unclamped.png is what that looks like. The answer is
+//    that those are TWO constraints, not one: a basket hangs from a HAND, and it
+//    hangs PLUMB. Position comes off the fist every frame, orientation comes off
+//    the pelvis, and the arm is then free. See shopperBag's header and `carry`
+//    in makePerson. The last piece is in agents.js, at the bottom of
+//    animateShopper: a loaded arm does not fold, pocket or pump — which is why
+//    a hand load is now always in the LEFT hand, the one no clip drives.
+// 2. THE HANDS. One box became three finger masses at three lengths with a
+//    shaded web and a stepped wrist, and the cop's forearm became six segments
+//    with an elbow knob, a flexor swell, a real wrist and the shadow the sleeve
+//    band casts on the arm under it. See shopperHand and copForearm.
+// 3. THE GARMENT. `loft` learned to shade AROUND a ring and to dent one, which
+//    is what a shoulder seam, an armpit crease and a strap all need and what one
+//    colour per ring could never say. `plain` bodies stopped having no map at
+//    all. See torsoRings.
+//
+// MEASURED, not asserted (probe: shots/_probe_fig_r3.js). The ledger is a
+// WITHIN-RUN TOGGLE on a fixed camera with all fourteen bodies and the cop
+// parked in a row — `__F3.lineup()` — because the aisle camera has four of the
+// fourteen in frustum and the number moves when somebody walks. Both columns
+// are a fresh page load; a dirty one measures whatever the last bench left
+// parented, which is how the first draft of this table came out claiming a
+// 28-call saving that was fourteen carts.
+//
+//                        HEAD        round 3
+//   crowd draw calls        160          160     0
+//   crowd triangles      44,748       48,060     +7.4%
+//   cop draw calls           15           15     0
+//   cop triangles         8,020        8,668     +8.1%
+//   meshes on 14 bodies     174          174     0
+//   geometries in use        45           46     +1  (one more strap variant)
+//   materials                90           90     0
+//   shared library      torso 6      torso 18    +12 lofts, and no body draws
+//                                                more than one of them.
+//
+//   armpit shadow      0.710 of the cloth beside it at y = 0.395, all 6 builds
+//   under a strap      0.573 at the same column; strap alone 0.807
+//   strap groove       4.8 - 5.4 mm of dent, all three strapped builds
+//   stance drift       crowd mean|skateFrac| 0.0080, cop 0.0004 — the numbers
+//                      the walk round bought, unmoved; gaitCheck shod AND bare,
+//                      plantCheck, copCheck, lungCheck, paceCheck, exitCheck all
+//                      pass.
+//
+// THE TRIANGLES ARE THE WHOLE COST AND THEY ARE ALL IN THE ARMS. Two extra
+// finger masses and their caps, six forearm segments where there were three:
+// about 240 triangles per arm on thirty arms. No draw call, no mesh, no
+// material, no texture — every one of them merges into a bake that already
+// existed. Round 7's filter says detail that changes a SILHOUETTE pays at every
+// distance, and the lead's note is why it is spent here rather than anywhere
+// else: the cop's bare forearms are the largest continuous surface on screen
+// for the whole floor phase, and they were two cones.
+//
+// AND THE AMBIGUITY IS UNMOVED, which is the only result that could have killed
+// the round. Every likelihood ratio is identical to the digit — see the report.
+// The one thing that moved is that a hand load is always left-handed; guilt is
+// dealt out over the fourteen indices by code that has never seen a bag, so it
+// cannot leak one. The roster itself is byte-identical: `sideRoll` is still
+// drawn even though kinds 2 and 3 ignore it, so no downstream body re-rolled.
 // ---------------------------------------------------------------------------
 const BUILDS = [
   // k       sh     shD    ch     chD    wa     waD    hp     hpD
@@ -781,9 +909,100 @@ function trunkProfile(b, y) {
 // cheapest lighting in the file — a dark ring inside the hem and one under the
 // belly overhang put contact shadow exactly where the reference photographs
 // have it, at zero cost, on a surface that has no other way to get it.
-function torsoRings(b) {
+// ===========================================================================
+// ROUND 3 (character) — THE GARMENT DOES NOT HANG. Round 11's own note, three
+// rounds on a "not done" list: "no shoulder seam, no armpit crease and no
+// strap deformation. The lead's note off the photographs is that clothing
+// HANGS, and this round only got as far as making it hang off the right shape."
+//
+// All three run VERTICALLY and round 11's ring colour was one value for a
+// whole ring, so none of them could be said at any price. `loft` now takes a
+// function of u and a radial multiplier (see its header), and the three of them
+// cost the same as the flat colour did: nothing, on the same vertices.
+//
+// WHAT IS IN THE PHOTOGRAPHS, in the order of how much each is worth at the
+// distance this game is played:
+//   THE ARMPIT is the deepest shadow on a clothed torso and it is not really a
+//   crease — it is the one place on a trunk that never sees the ceiling. In
+//   ppl_06 and ppl_07 it is the only thing separating a pale blue sleeve from
+//   the pale blue shirt it is sewn to. Round 11 solved the same problem on the
+//   arm with a 9% step-down under the deltoid and left the trunk side of the
+//   join alone, so the shadow existed on one of the two surfaces that make it.
+//   THE SHOULDER SEAM. A set-in sleeve is stitched in a line from the armpit up
+//   over the acromion and it is the only feature a plain shirt has that says
+//   where the sleeve begins. 20 mm wide on a real shirt, so it is a THIN mark;
+//   made wide it reads as a stripe and the body looks like it is wearing a
+//   raglan tracksuit, which is what the first cut of this did.
+//   THE BREAK OVER THE BELLY. Cloth over an overhang is in tension above the
+//   apex and slack below it — round 11 had the slack (the contact shadow under
+//   the overhang) and not the tension.
+//   THE STRAP. See `strap` below.
+//
+// THE MAGNITUDES ARE SMALL ON PURPOSE and the round-7 note about the cop's
+// stubble is why: this multiplies a dye that is already being lit, on a surface
+// that is 40 px tall in the frame the player spends most of his time in. The
+// armpit is the only term over 20%, and it is the only one that is a shadow
+// rather than a seam.
+const gbump = (u, c, w) => Math.exp(-Math.pow((u - c) / w, 2));
+// Both arm-holes at once. u = 0 is the SPINE and 0.5 the sternum, so 0.25 is
+// the -X side (which carries the RIGHT arm — see makePerson) and 0.75 the +X.
+const gholes = (u, w) => Math.max(gbump(u, 0.25, w), gbump(u, 0.75, w));
+const gtint = (hex, f) => {
+  const k = f < 0 ? 0 : f > 1 ? 1 : f;
+  return (Math.round((hex >> 16 & 255) * k) << 16)
+       | (Math.round((hex >> 8 & 255) * k) << 8)
+       | Math.round((hex & 255) * k);
+};
+
+// `strap` is 0, +1 or -1: no strap, or one over the +X (left) or -X (right)
+// shoulder. It is the only per-BAG variant of the trunk and it is why `torso`
+// in the bakery is now [build][strap] rather than [build] — see buildFigureGeo
+// for the ledger. It is chosen from `o.bag`, which is rolled by rollPerson, is
+// ungated with respect to guilt, and is already the most visible thing on the
+// person; a shirt that is dented under a strap that is drawn on top of it adds
+// no information a player did not already have from the strap.
+function torsoRings(b, strap) {
   const R = [];
-  const add = (y, s, c) => R.push({ y, rx: s.rx, rz: s.rz, cz: s.cz, c });
+  // Where the strap crosses this ring, as a u. A shoulder strap leaves the
+  // acromion (u 0.25 or 0.75) and falls toward the sternum as it comes down the
+  // chest — the same line a tote's and a crossbody's both take over the top of
+  // the shoulder, which is the half that is on the TRUNK. Below the chest they
+  // diverge and neither one is still touching cloth that this loft owns.
+  const sU = (y) => {
+    const acro = strap > 0 ? 0.75 : 0.25;
+    const t = Math.max(0, Math.min(1, (0.455 - y) / 0.235));
+    return acro + (strap > 0 ? -1 : 1) * t * 0.085;
+  };
+  const sAmt = (y) => (!strap ? 0
+    : Math.max(0, Math.min(1, (y - 0.150) / 0.090)) * Math.max(0, Math.min(1, (0.500 - y) / 0.060)));
+  const shade = (y, base) => (u) => {
+    let f = 1;
+    // THE ARMPIT WEDGE. Centred 55 mm below the acromion, dead by the nipple
+    // line. It is the one term here big enough to see at monitor scale.
+    const ap = Math.max(0, 1 - Math.abs(y - 0.398) / 0.120);
+    f -= 0.26 * ap * ap * gholes(u, 0.080);
+    // THE SEAM. Narrow (w 0.026 is about 22 mm on the finished body) and only
+    // on the two rings either side of the acromion.
+    const sm = Math.max(0, 1 - Math.abs(y - 0.452) / 0.080);
+    f -= 0.15 * sm * gholes(u, 0.026);
+    // THE BREAK OVER THE BELLY, front half only, above the apex.
+    const bb = b.be * Math.max(0, 1 - Math.abs(y - (b.beY + 0.098)) / 0.052);
+    f -= 0.085 * bb * gbump(u, 0.5, 0.17);
+    // THE STRAP, and it is a shadow ON TOP of the cloth plus the groove below.
+    const sa = sAmt(y);
+    if (sa > 0) f -= 0.20 * sa * gbump(u, sU(y), 0.036);
+    return gtint(base, f);
+  };
+  // The groove. 3.5% of a half-width is 5-7 mm of dent, which is what a loaded
+  // strap actually does to a shirt; at 8% it reads as a wound.
+  const dent = (y) => {
+    const sa = sAmt(y);
+    if (sa <= 0) return null;
+    const c = sU(y);
+    return (u) => 1 - 0.035 * sa * gbump(u, c, 0.042);
+  };
+  const add = (y, s, c) => R.push({ y, rx: s.rx, rz: s.rz, cz: s.cz,
+    c: shade(y, c), rf: dent(y) });
   const hemW = Math.max(b.hp, b.wa) * 1.018 + b.be * 0.008;
   const hemD = Math.max(b.hpD, b.waD) * 1.022 + b.be * 0.010;
   const hemZ = b.be * 0.030;
@@ -814,16 +1033,21 @@ function torsoRings(b) {
   add(TRUNK.shY, trunkProfile(b, TRUNK.shY), 0xffffff);
   const p1 = trunkProfile(b, TRUNK.shY);
   const mid = (collarY - TRUNK.shY) * 0.55 + TRUNK.shY;
-  R.push({ y: mid, rx: p1.rx * 0.80, rz: p1.rz * 0.88, cz: p1.cz * 0.9, c: 0xfbfbfb });
+  // The two trapezius rings go through `shade` as well, and it is not
+  // decoration: a set-in seam does not stop at the acromion, it runs a little
+  // way ONTO the top of the shoulder, and a strap that stopped at 0.455 would
+  // leave the loaded shoulder unmarked at exactly the height a strap sits.
+  R.push({ y: mid, rx: p1.rx * 0.80, rz: p1.rz * 0.88, cz: p1.cz * 0.9,
+           c: shade(mid, 0xfbfbfb), rf: dent(mid) });
   R.push({ y: collarY - 0.020, rx: p1.rx * 0.44, rz: p1.rz * 0.66, cz: p1.cz * 0.7,
            c: 0xf2f2f2 });
   R.push({ y: collarY, rx: 0.066, rz: 0.062, cz: p1.cz * 0.5, c: 0xdcdcdc });
   return R;
 }
 
-function shopperTorso(THREE, S, b) {
+function shopperTorso(THREE, S, b, strap) {
   const P = partList(THREE, S);
-  P.L.push({ g: loft(THREE, torsoRings(b), 16), m: new THREE.Matrix4() });
+  P.L.push({ g: loft(THREE, torsoRings(b, strap), 16), m: new THREE.Matrix4() });
   const collarY = 0.545 - b.nk * 0.30;
   // A collar band, and a shoulder-blade shelf at the back so the upper back is
   // not a smooth extruded tube. Both merge into the loft's mesh.
@@ -1020,12 +1244,51 @@ function shopperHair(THREE, S, k) {
 // something before letting them play a clip. `concealBag` is played by people
 // with no bag at all, exactly as often. A basket is a reason for a hand to go
 // down and come back up empty, which is the same reason a pocket is.
+// ===========================================================================
+// ROUND 3 (character) — WHERE A CARRIED THING HANGS FROM. ITEM ONE OF THREE,
+// and it had been on the "still wrong" list for three rounds:
+//
+//   "a carried basket rides `hips`, so a body that folds its arms leaves the
+//    basket hanging beside a leg that is not holding it. Parenting it to the
+//    arm fixes the fold and breaks every clip that raises that arm."
+//
+// Both halves of that sentence are true, which is why nobody did it. Parented
+// to `hips` the basket ignores the arm entirely; parented to the ARM it follows
+// the arm through a reach (armR goes to -1.57 rad, horizontal) and arrives lying
+// on its side in front of the chest with six kilos of shopping falling out of
+// the top of it. The clips are not optional — a reach now genuinely removes a
+// facing from a shelf — so "parent it to the arm" as written is a trade of one
+// broken frame for another.
+//
+// WHAT IT ACTUALLY IS: a basket hangs from a HAND, and it hangs PLUMB. Those
+// are two different constraints and the round-11 note only had the first one.
+// So the carried object gets a group of its own on `chest` which takes its
+// POSITION from the hand every frame and its ORIENTATION from the pelvis, and
+// the arm may then do whatever the animator wants. Fold, reach, pump, surrender
+// — the basket tracks the fist and stays level, because that is what a bucket
+// of shopping does. See `carry` in makePerson for the four lines that do it and
+// for why they live in this file rather than in agents.js.
+//
+// THE BRIEF ALLOWED THE OTHER ANSWER — "the body should not fold its arms while
+// holding it" — and I did not take it, for a reason worth writing down: it is a
+// GATE. It would mean a person's idle repertoire depends on what he is carrying,
+// and this file's one standing rule is that nothing a person carries may change
+// what he does. The pose pool is guilt-blind because it is not allowed to read
+// anything; the moment it reads `bag.kind` it has learned to read something,
+// and the next person to add a gate has a precedent to point at.
+//
+// KINDS 2 AND 3 ARE THEREFORE BAKED AROUND THE FIST rather than around the
+// hips. `HAND` was the fingertip in chest-local coordinates and it stays the
+// origin so nothing moves at rest: SH_ARM's fore segment at t = 0.986 is
+// arm-local y = -0.655, which is chest-local -0.200 on a body whose armLen is
+// 1.0, i.e. exactly where round 11 hung it. What changes is that it is now the
+// SAME PERSON'S hand rather than an average person's.
 function shopperBag(THREE, S, k, side) {
   const P = partList(THREE, S);
   const d = side < 0 ? -1 : 1;
-  // The hand hangs at hips-local y = shoulderY - armLen = -0.20. Anything held
-  // in it starts BELOW that. Round 9's carrier bag topped out at +0.03, i.e.
-  // 230 mm above the fist that was supposed to be holding it.
+  // Kinds 0 and 1 are strapped to the ribs and still live in chest-local space,
+  // where the fingertip is y = -0.20. Kinds 2 and 3 are baked around the fist
+  // and this constant is 0 for them — see the block below.
   const HAND = -0.200;
   if (k === 0) {
     // Tote on the shoulder, body hanging at the hip. The strap is the half of
@@ -1046,10 +1309,15 @@ function shopperBag(THREE, S, k, side) {
     // pushes the light/dark band boundary down on one side only — which is the
     // cheapest asymmetry in this whole file. It hangs from the fist now, and
     // the handles are the loop the fist is actually through.
-    P.box(0.026, 0.062, 0.018, [d * 0.176, HAND - 0.032, 0.032], 0xe0e0e0);
-    P.box(0.026, 0.062, 0.018, [d * 0.234, HAND - 0.032, 0.032], 0xe0e0e0);
-    P.box(0.144, 0.190, 0.084, [d * 0.205, HAND - 0.156, 0.032], 0xffffff);
-    P.box(0.150, 0.026, 0.090, [d * 0.205, HAND - 0.062, 0.032], 0xf4f4f4);
+    // ROUND 3 — origin is the FIST. x = 0 is the middle of the hand, so the
+    // 205 mm the old bake carried in x is gone: it was the distance from the
+    // spine to an average shoulder, and it was wrong on every body that was not
+    // average. 22 mm outboard is the bag swinging clear of the thigh.
+    const ox = d * 0.022, oz = 0.024;
+    P.box(0.026, 0.062, 0.018, [ox - d * 0.029, -0.032, oz], 0xe0e0e0);
+    P.box(0.026, 0.062, 0.018, [ox + d * 0.029, -0.032, oz], 0xe0e0e0);
+    P.box(0.144, 0.190, 0.084, [ox, -0.156, oz], 0xffffff);
+    P.box(0.150, 0.026, 0.090, [ox, -0.062, oz], 0xf4f4f4);
   } else {
     // THE BASKET. Long axis fore-and-aft, carried out and a little in front of
     // the thigh, which is where it has to go to clear a walking leg. A tapered
@@ -1061,14 +1329,23 @@ function shopperBag(THREE, S, k, side) {
     // that is most of why people carry them at all — and pushing it out to
     // clear the swing of a walking leg made it read as a box floating beside a
     // person. 40 mm in and 34 mm back, and the leg passes behind it.
-    const cx = d * 0.196, cz = 0.058;
-    P.box(0.028, 0.070, 0.016, [cx, HAND - 0.036, cz], 0xcacaca);              // handle
-    P.box(0.150, 0.018, 0.028, [cx, HAND - 0.070, cz], 0xd6d6d6);
-    P.box(0.208, 0.150, 0.300, [cx, HAND - 0.156, cz], 0xffffff);
-    P.box(0.164, 0.030, 0.250, [cx, HAND - 0.238, cz], 0xf0f0f0);              // tapered base
-    P.box(0.224, 0.020, 0.316, [cx, HAND - 0.080, cz], 0xe4e4e4);              // rim
-    P.box(0.120, 0.090, 0.088, [cx - d * 0.024, HAND - 0.052, cz + 0.070], 0xb8b8b8);
-    P.box(0.130, 0.070, 0.100, [cx + d * 0.020, HAND - 0.062, cz - 0.076], 0xdedede);
+    // ROUND 3 — same geometry, re-originned on the fist: every y below is what
+    // it was minus HAND, and cx (which was "an average shoulder's distance from
+    // the spine") collapses to 24 mm outboard of whichever hand is holding it.
+    // The rim still lands 80 mm under the fingers and the leg still passes
+    // behind it, because cz is the same 49 mm forward of the hand it always was.
+    // `cy` lifts the whole tub 32 mm so the handle ends INSIDE THE FIST rather
+    // than 49 mm below it: the anchor is the fingertip (see the header) and the
+    // grip is up at the knuckles, which is a distinction that did not exist
+    // while this thing was parented to a pelvis.
+    const cx = d * 0.024, cz = 0.049, cy = 0.032;
+    P.box(0.028, 0.070, 0.016, [cx, cy - 0.036, cz], 0xcacaca);               // handle
+    P.box(0.150, 0.018, 0.028, [cx, cy - 0.070, cz], 0xd6d6d6);
+    P.box(0.208, 0.150, 0.300, [cx, cy - 0.156, cz], 0xffffff);
+    P.box(0.164, 0.030, 0.250, [cx, cy - 0.238, cz], 0xf0f0f0);               // tapered base
+    P.box(0.224, 0.020, 0.316, [cx, cy - 0.080, cz], 0xe4e4e4);               // rim
+    P.box(0.120, 0.090, 0.088, [cx - d * 0.024, cy - 0.052, cz + 0.070], 0xb8b8b8);
+    P.box(0.130, 0.070, 0.100, [cx + d * 0.020, cy - 0.062, cz - 0.076], 0xdedede);
   }
   return mergeParts(THREE, P.L);
 }
@@ -1359,27 +1636,81 @@ function shopperSleeve(THREE, S, long, side) {
 // `uv` is the atlas cell, for the cop — his materials run off one 512 texture,
 // and a part with native 0..1 UVs on it would sample all sixteen cells at once.
 // Shoppers pass nothing and get the default.
+// ===========================================================================
+// ROUND 3 (character) — "HANDS READ AS MITTENS AT PORTRAIT RANGE", and the
+// lead's addendum, which reorders the whole item: THE COP'S HANDS ARE ON SCREEN
+// PERMANENTLY. The chase camera sits three metres behind him for the entire
+// floor phase; his bare forearms and hands occupy more pixels than any shopper
+// in this game ever will, and shots/_lead_floor_2.png is two smooth tubes
+// ending in two mittens.
+//
+// WHAT MADE IT A MITTEN: one box. Round 10 argued a box was the right primitive
+// at 55 mm and it was right about a shopper across an aisle and wrong about the
+// only body the player looks at all day. A box has no slots, and slots are the
+// entire read of a hand — the outline of a relaxed hand is not a rounded
+// rectangle, it is a stepped edge, because the four fingers are four different
+// lengths and the two outer ones curl further than the two inner ones.
+//
+// THREE MASSES INSTEAD OF ONE, at three lengths: index, middle, and ring+little
+// merged (two fingers that touch, and at this size they are one form). That
+// buys two notches in the tip line and two slots down the side of the hand for
+// 48 triangles. The old single tip ball is now three, each at its own t.
+//
+// AND IT IS SHADED, which is the other half and is free. Every part in here was
+// one flat colour, so a hand had no interior at all — the slots between the
+// fingers were geometry that could not be seen because both sides of every slot
+// were the same value. Same trick, same price as shopperSleeve's step-down and
+// the torso's contact ring: the dorsal surfaces keep the tint, the palm heel
+// and the two outboard fingers step down, and the web under the thumb is the
+// darkest thing on the hand because it is the only part of it that is a hole.
 function shopperHand(P, F, side, tint, k, uv) {
   const c = tint || 0xffffff;
   const s = k || 1;
   const X = uv ? { uv } : null;
-  P.ball(0.031 * s, 0.032 * s, 0.031 * s, F.at(0.575), c, { seg: 6, rseg: 5, ...X });    // wrist
+  const D = (f) => gtint(c, f);
+  // The wrist. NARROWER than it was (a wrist is the thinnest part of the whole
+  // arm and this one was the same width as the hand behind it) and stepped
+  // down, so there is a visible waist between forearm and hand.
+  P.ball(0.027 * s, 0.030 * s, 0.026 * s, F.at(0.575), D(0.90), { seg: 6, rseg: 5, ...X });
   // The heel of the hand: WIDE and FLAT. A hand is an ellipse in section, not a
   // circle, which is the single thing a tapered tube can never be and is most of
   // why the old box was reached for in the first place.
-  P.ball(0.029 * s, 0.044 * s, 0.040 * s, F.pt(0.716, 0, 0.004), c, { seg: 8, rseg: 6, r: F.r, ...X });
-  // The fingers. Still a box — at 55 mm a box is the right primitive and round 9
-  // was not wrong about that — but 6 mm thinner, 4 mm narrower, tipped forward
-  // into a slight curl, and CAPPED, so the outline ends in a radius instead of
-  // in a corner. A square end is what the eye calls a box.
-  P.box(0.043 * s, 0.072 * s, 0.032 * s, F.pt(0.852, 0, 0.010), c,
-    { r: [F.r[0] + 0.18, F.r[1], F.r[2]], ...X });
-  P.ball(0.024 * s, 0.016 * s, 0.018 * s, F.pt(0.945, 0, 0.020), c, { seg: 6, rseg: 4, r: F.r, ...X });
+  P.ball(0.029 * s, 0.044 * s, 0.040 * s, F.pt(0.716, 0, 0.004), D(0.96), { seg: 8, rseg: 6, r: F.r, ...X });
+  // ---- the fingers, three masses at three lengths -------------------------
+  // `lx` is across the hand in the limb's own frame, negative toward the thumb.
+  // Curl grows outboard: an open hand at rest has the little finger bent more
+  // than the index, which is what stops the tip line being a straight edge.
+  // `w` is a FULL width (P.box takes sizes) and `lx` is the centre offset, so
+  // the three of them span -0.0198..+0.0250 — 45 mm across, against the single
+  // box's 43. The hand did not get bigger; it got slots.
+  // THE CAP GOES WHERE THE BOX ACTUALLY ENDS. The first cut of this put it at a
+  // hand-typed `t` and made it 26 mm tall, and the render showed three fingers
+  // with three eggs floating off the ends of them — the cap has to be solved
+  // from the box's own length and curl or it is a separate object, and it has
+  // to be FLAT along the finger or it is a knuckle on the end of one. `s` is in
+  // here twice on purpose: the cop's hand is 1.22x on a forearm that is not, so
+  // the half-length in metres is what converts to a limb fraction, not the
+  // authored number.
+  const fing = (lx, w, len, curl, t0, v) => {
+    const rr = [F.r[0] + curl, F.r[1], F.r[2]];
+    P.box(w * s, len * s, 0.026 * s, F.pt(t0, side * lx, 0.010), D(v), { r: rr, ...X });
+    const hz = len * 0.5 * s;
+    P.ball(w * 0.5 * s, 0.0065 * s, 0.012 * s,
+      F.pt(t0 + hz * Math.cos(curl) / F.len, side * lx, 0.010 + hz * Math.sin(curl)),
+      D(v * 0.97), { seg: 5, rseg: 3, r: rr, ...X });
+  };
+  fing(-0.0135, 0.0125, 0.070, 0.16, 0.848, 1.00);   // index
+  fing(0.0000, 0.0125, 0.076, 0.19, 0.852, 0.97);    // middle
+  fing(0.0160, 0.0180, 0.066, 0.25, 0.842, 0.91);    // ring + little
   // The thumb stands off the side of the hand and points along it, so it is a
-  // notch in the outline rather than a bump on the palm.
-  P.tube(0.0115 * s, 0.042 * s, F.pt(0.790, side * -0.026, 0.012), c,
+  // notch in the outline rather than a bump on the palm. The WEB under it is
+  // the darkest value on the hand — it is a hole, not a surface.
+  P.ball(0.011 * s, 0.017 * s, 0.014 * s, F.pt(0.762, side * -0.023, 0.006), D(0.80),
+    { seg: 6, rseg: 4, r: F.r, ...X });
+  P.tube(0.0115 * s, 0.042 * s, F.pt(0.790, side * -0.030, 0.012), D(1.00),
     { seg: 6, r: [F.r[0] + 0.10, F.r[1], F.r[2] + side * 0.22], ...X });
-  P.ball(0.013 * s, 0.014 * s, 0.013 * s, F.pt(0.856, side * -0.032, 0.016), c, { seg: 6, rseg: 4, ...X });
+  P.ball(0.013 * s, 0.014 * s, 0.013 * s, F.pt(0.856, side * -0.036, 0.016), D(0.98),
+    { seg: 6, rseg: 4, ...X });
   return P;
 }
 
@@ -1400,9 +1731,18 @@ function shopperForearm(THREE, S, long, side) {
     // Same step-down as the sleeve, one notch lighter: bare skin below a short
     // sleeve is further from the trunk than the cloth above it was and catches
     // more of the room. See the shading note in shopperSleeve.
-    P.taper(0.047, 0.044, U.len * 0.48, U.at(0.76), 0xeeeeee, { seg: 8, r: U.r });
-    P.ball(0.041, 0.043, 0.041, B.el, 0xe8e8e8, { seg: 8, rseg: 5 });   // elbow
-    P.taper(0.040, 0.032, F.len * 0.56, F.at(0.30), 0xf4f4f4, { seg: 8, r: F.r });
+    // ROUND 3 (character) — THE SAME SIX SEGMENTS THE COP GOT, at a shopper's
+    // scale, and for the same reason: three parts at one value is a cone, and
+    // 55% of this crowd is short-sleeved. The clearances the round-12 note
+    // above is protecting are unchanged — the two segments that run under the
+    // cloth are 0.0455 and 0.0448 against a sleeve that is 0.0505 at t=0.48 and
+    // 0.0490 at t=0.60, so the overlap still clears by 3 mm the whole way.
+    P.taper(0.0455, 0.0448, U.len * 0.24, U.at(0.640), 0xd9d9d9, { seg: 8, r: U.r });
+    P.taper(0.0448, 0.0458, U.len * 0.20, U.at(0.880), 0xe6e6e6, { seg: 8, r: U.r });
+    P.ball(0.0458, 0.0436, 0.0472, B.el, 0xdedede, { seg: 8, rseg: 5 });
+    P.taper(0.0455, 0.0372, F.len * 0.30, F.at(0.160), 0xf4f4f4, { seg: 8, r: F.r });
+    P.taper(0.0368, 0.0296, F.len * 0.25, F.at(0.430), 0xf4f4f4, { seg: 8, r: F.r });
+    P.taper(0.0292, 0.0248, F.len * 0.11, F.at(0.605), 0xdcdcdc, { seg: 8, r: F.r });
   }
   shopperHand(P, F, side, 0xffffff);
   return mergeParts(THREE, P.L);
@@ -1431,22 +1771,32 @@ function shopperBird(THREE, S, long, side) {
   const P = partList(THREE, S);
   const B = SH_ARM(side), U = B.upper, F = B.fore;
   if (!long) {
-    // Same three radii as shopperForearm, and they have to BE the same: this
-    // bake is swapped onto a live mesh mid-clip and a forearm that changed
-    // width on the frame the finger goes up is a pop at any distance.
-    P.taper(0.047, 0.044, U.len * 0.48, U.at(0.76), 0xffffff, { seg: 8, r: U.r });
-    P.ball(0.041, 0.043, 0.041, B.el, 0xffffff, { seg: 8, rseg: 5 });
-    P.taper(0.040, 0.027, F.len * 0.56, F.at(0.30), 0xffffff, { seg: 8, r: F.r });
+    // Same radii AND THE SAME VALUES as shopperForearm, and they have to BE the
+    // same: this bake is swapped onto a live mesh mid-clip and a forearm that
+    // changed width on the frame the finger goes up is a pop at any distance.
+    // ROUND 3 (character) — that promise was half kept. The radii matched and
+    // the COLOURS never did: the ordinary arm was 0xeeeeee / 0xe8e8e8 / 0xf4f4f4
+    // and this one was flat 0xffffff, so every arm in this store brightened by
+    // about 5% on the frame the finger went up and dimmed again when it came
+    // down. Nobody saw it because nobody looked at a bird and a rest arm in the
+    // same second. Both are now the same six segments at the same six values.
+    P.taper(0.0455, 0.0448, U.len * 0.24, U.at(0.640), 0xd9d9d9, { seg: 8, r: U.r });
+    P.taper(0.0448, 0.0458, U.len * 0.20, U.at(0.880), 0xe6e6e6, { seg: 8, r: U.r });
+    P.ball(0.0458, 0.0436, 0.0472, B.el, 0xdedede, { seg: 8, rseg: 5 });
+    P.taper(0.0455, 0.0372, F.len * 0.30, F.at(0.160), 0xf4f4f4, { seg: 8, r: F.r });
+    P.taper(0.0368, 0.0296, F.len * 0.25, F.at(0.430), 0xf4f4f4, { seg: 8, r: F.r });
+    P.taper(0.0292, 0.0248, F.len * 0.11, F.at(0.605), 0xdcdcdc, { seg: 8, r: F.r });
   }
   // ROUND 10 — re-baked onto the same bones as the ordinary hand, which is the
   // point of there being bones at all: the swap happens on a live mesh mid-clip
   // and a wrist that jumped 30 mm when the geometry changed would be a pop you
   // could see on the spot monitor.
-  P.ball(0.033, 0.032, 0.033, F.at(0.575), 0xffffff, { seg: 6, rseg: 5 });
-  P.ball(0.030, 0.042, 0.044, F.pt(0.720, 0, 0.004), 0xffffff, { seg: 8, rseg: 6, r: F.r });
+  // Wrist and palm heel are byte-for-byte shopperHand's, values included.
+  P.ball(0.027, 0.030, 0.026, F.at(0.575), 0xe6e6e6, { seg: 6, rseg: 5 });
+  P.ball(0.029, 0.044, 0.040, F.pt(0.716, 0, 0.004), 0xf5f5f5, { seg: 8, rseg: 6, r: F.r });
   // The fist: the knuckle mass stays, the fingers are curled back into the palm.
-  P.ball(0.028, 0.030, 0.028, F.pt(0.820, 0, 0.008), 0xf2f2f2, { seg: 8, rseg: 5, r: F.r });
-  P.ball(0.025, 0.019, 0.023, F.pt(0.862, 0, 0.022), 0xf6f6f6, { seg: 6, rseg: 4, r: F.r });
+  P.ball(0.028, 0.030, 0.028, F.pt(0.820, 0, 0.008), 0xebebeb, { seg: 8, rseg: 5, r: F.r });
+  P.ball(0.025, 0.019, 0.023, F.pt(0.862, 0, 0.022), 0xf0f0f0, { seg: 6, rseg: 4, r: F.r });
   // ...and the one that is not curled. It runs along the FOREARM's own axis, so
   // it aims wherever the arm aims and needs no separate solve.
   P.tube(0.0125, 0.058, F.pt(0.945, 0, 0.004), 0xffffff, { seg: 6, r: F.r });
@@ -2310,10 +2660,27 @@ function copSleeve(THREE, S, side) {
   // ROUND 10 — and it now runs down the UPPER ARM rather than down a stick. The
   // sleeve already ended at -0.289, a hair above where the elbow turns out to
   // be, so this is the same garment on a bone that finally exists.
+  // ROUND 3 (character) — AND IT IS SHADED AGAINST THE TRUNK, which round 11
+  // did for every shopper and nobody ever did for him. His sleeve was C.shirt
+  // for its whole length, i.e. the same value as the shirt it is sewn to, on a
+  // material with no seam and a trunk 60 mm behind it: from the chase camera
+  // the upper arm and the ribs were one continuous blue field. The deltoid
+  // keeps the full value (it is the top-lit surface and it is what defines the
+  // shoulder); everything below it steps down, same 9%, same price.
   P.ball(0.098, 0.079, 0.096, [0, -0.030, 0], C.shirt, { seg: 10, rseg: 7, ...F });
-  P.taper(0.088, 0.096, U.len * 0.76, U.at(0.42), C.shirt, { seg: 10, r: U.r, ...F });
-  P.ball(0.083, 0.022, 0.080, U.at(0.79), C.shirt, { seg: 10, rseg: 4, r: U.r, ...F });
-  P.tube(0.075, 0.030, U.at(0.86), C.shirtDk, { seg: 10, r: U.r, ...F });   // rolled hem
+  P.taper(0.088, 0.096, U.len * 0.76, U.at(0.42), C.shirtSh, { seg: 10, r: U.r, ...F });
+  P.ball(0.083, 0.022, 0.080, U.at(0.79), C.shirtSh, { seg: 10, rseg: 4, r: U.r, ...F });
+  // ---- THE HEM IS A FOLD, NOT AN EDGE ------------------------------------
+  // A rolled short sleeve is cloth doubled back on itself: there is a crease
+  // where it turns, a band of two thicknesses, and a shadow under the bottom
+  // edge. It was ONE tube, so the sleeve simply stopped and skin began — the
+  // lead's note, and the reason the arm below read as a tube stuck into a
+  // sleeve rather than as an arm coming out of one. Three rings instead of one,
+  // and the fourth part of it (the shadow the band casts ON the arm) is in
+  // copForearm, because it is on the skin and not on the cloth.
+  P.tube(0.079, 0.008, U.at(0.818), C.shirtHem, { seg: 10, r: U.r, ...F });  // the turn
+  P.tube(0.077, 0.031, U.at(0.860), C.shirtDk, { seg: 10, r: U.r, ...F });   // the roll
+  P.tube(0.0735, 0.009, U.at(0.897), C.shirtHem, { seg: 10, r: U.r, ...F }); // its lower edge
   // shoulder patch, proud of the sleeve, facing outboard
   P.box(0.006, 0.090, 0.074, [side * 0.098, -0.080, -0.002], C.white,
     { r: [0, 0, side * -0.06], uv: uvOf('patch') });
@@ -2330,17 +2697,52 @@ function copForearm(THREE, S, side) {
   // The bare arm has to START ABOVE THE CUFF, not at the elbow — see the note in
   // shopperForearm; the two meshes are separate objects and a gap between them
   // is a hole with the store showing through.
-  P.taper(0.080, 0.076, U.len * 0.34, U.at(0.87), C.skin, { seg: 10, r: U.r, ...X });
-  P.ball(0.078, 0.074, 0.077, B.el, C.skin, { seg: 8, rseg: 6, ...X });
-  P.taper(0.076, 0.048, F.len * 0.58, F.at(0.30), C.skin, { seg: 10, r: F.r, ...X });
+  // ===========================================================================
+  // ROUND 3 (character) — THE LEAD, HAVING PLAYED IT: "from the chase camera,
+  // behind the cop, three metres — the framing for the entire floor phase — his
+  // bare forearms are the worst thing on screen. Two smooth skin-coloured
+  // tubes: no elbow, no forearm taper, no wrist."
+  //
+  // He was describing FOUR parts doing the work of nine, all of them one flat
+  // colour. The old arm was: one taper 80->76 from under the cuff to past the
+  // elbow, one elbow ball the same width as both, one taper 76->48 for the
+  // whole forearm, and a hand. That is a cone. A cone has no elbow because
+  // nothing changes width at the joint, no forearm because the flexor mass and
+  // the wrist are the same straight line, and no wrist because 48 mm of radius
+  // ran straight into a 33 mm hand ball with no colour change to say so.
+  //
+  // WHAT A FOREARM ACTUALLY DOES, and every one of these is a silhouette
+  // change rather than a texture:
+  //   it is NARROWEST where the cuff bites and swells again below it;
+  //   the elbow is a KNOB — wider than the arm above and below it, so the
+  //     outline has a corner in it;
+  //   the flexor mass is the widest part of the forearm and it is up at the
+  //     elbow, not in the middle: the taper is 80 -> 40 over the LAST two
+  //     thirds, not evenly along the whole thing;
+  //   the wrist is half the width of the elbow and it is the one place the
+  //     outline pinches.
+  // Plus the shadow the sleeve band casts on the arm under it, which is the
+  // darkest skin on him and is what makes the sleeve sit ON the arm.
+  P.taper(0.072, 0.079, U.len * 0.13, U.at(0.830), C.skinDk, { seg: 10, r: U.r, ...X });
+  P.taper(0.079, 0.082, U.len * 0.10, U.at(0.925), C.skinDk, { seg: 10, r: U.r, ...X });
+  P.taper(0.082, 0.080, U.len * 0.10, U.at(0.985), C.skinSh, { seg: 10, r: U.r, ...X });
+  // The elbow knob: proud of both segments, and darker on its own because a
+  // point of the arm that sticks out backwards is not the part catching the
+  // ceiling.
+  P.ball(0.081, 0.078, 0.084, B.el, C.skinSh, { seg: 8, rseg: 6, ...X });
+  P.taper(0.081, 0.067, F.len * 0.30, F.at(0.16), C.skin, { seg: 10, r: F.r, ...X });
+  P.taper(0.066, 0.050, F.len * 0.25, F.at(0.43), C.skin, { seg: 10, r: F.r, ...X });
+  P.taper(0.049, 0.040, F.len * 0.11, F.at(0.605), C.skinSh, { seg: 10, r: F.r, ...X });
   // ROUND 10 — the same hand every shopper got, in his skin and on his atlas
   // cell, scaled 1.22x because he is a bigger man and his hands were always
   // modelled bigger. The SHAPE is shared, which is the point of it living in one
   // function: the day somebody rounds a fingertip, fifteen people get it.
   shopperHand(P, F, side, C.skin, 1.22, uvOf('flat'));
   if (side < 0) {                                    // watch, right wrist
-    P.tube(0.050, 0.020, F.at(0.545), 0x22222a, { seg: 8, r: F.r, ...X });
-    P.tube(0.020, 0.026, F.pt(0.545, 0, 0.034), C.steel,
+    // Moved down onto the wrist proper. At F.at(0.545) it was 50 mm of radius
+    // on a 52 mm arm — a watch buried in the man wearing it.
+    P.tube(0.048, 0.020, F.at(0.618), 0x22222a, { seg: 8, r: F.r, ...X });
+    P.tube(0.020, 0.026, F.pt(0.618, 0, 0.032), C.steel,
       { r: [F.r[0] + Math.PI / 2, F.r[1], F.r[2]], seg: 8, ...X });
   }
   return mergeParts(THREE, P.L);
@@ -2357,7 +2759,13 @@ export function buildFigureGeo(THREE) {
     tex,
     cloth: clothAtlas(THREE),
     // shopper library, indexed by build / style
-    torso: BUILDS.map((b) => shopperTorso(THREE, S, b)),
+    // [build][strap], strap 0 = none, 1 = over the +X shoulder, 2 = over -X.
+    // Twelve more lofts of 416 triangles each in the library and NOT ONE more
+    // draw call, mesh or material on any body: a person points at one of the
+    // three and which one is decided once, at construction, from a bag that was
+    // already visible on him.
+    torso: BUILDS.map((b) => [shopperTorso(THREE, S, b, 0),
+      shopperTorso(THREE, S, b, 1), shopperTorso(THREE, S, b, -1)]),
     head: [0, 1, 2].map((k) => shopperHead(THREE, S, k)),
     hair: [0, 1, 2, 3, 4, 5, 6, 7, 8].map((k) => shopperHair(THREE, S, k)),
     // [kind][side]. Both sides baked; see shopperBag for why a negative scale
@@ -2667,11 +3075,45 @@ export function rollPerson(rng) {
   // on a body — see makePerson, where it buys a lean. Hoisted out of the return
   // literal this round because two fields below now have to READ it: which leg
   // the weight is on, and whether this body has a trolley at all.
-  const bag = bagRoll < 0.46 ? {
-    kind: bagRoll < 0.14 ? 0 : bagRoll < 0.24 ? 1 : bagRoll < 0.35 ? 2 : 3,
-    side: rnd() < 0.5 ? 1 : -1,
-    color: pick(CLOTH),
-  } : null;
+  // ROUND 3 (character) — A HAND LOAD IS ALWAYS IN THE LEFT HAND, and the roll
+  // that used to decide it is STILL MADE (`sideRoll`) so that the shipped
+  // roster — every height, build, hairstyle and child after this line — is
+  // byte-identical to round 12's. Dropping the draw would have re-rolled the
+  // whole crowd for a cosmetic decision, which is the trap this file's header
+  // spends a paragraph on.
+  //
+  // WHY LEFT: agents.js reaches with `armR` and only with armR — every browse
+  // style, every clip, the prop solve and the bird are all the right arm. So
+  // every person in this store is right-handed by construction, and a
+  // right-handed person carries the basket in the other hand. Once that is
+  // true, "a loaded arm does not fold and does not reach" can be enforced on
+  // armL alone, where it collides with nothing (see animateShopper's carry
+  // clamp). With the load on the right it would have had to fight the reach,
+  // and a shopper who takes a facing off a shelf without extending his arm is a
+  // worse frame than the one this round is fixing.
+  //
+  // THE COST, said out loud: round 11 baked both sides specifically so that not
+  // everybody wore their bag on the same shoulder, and kinds 2 and 3 — 22% of
+  // the crowd — now do. Straps (kinds 0 and 1) keep both sides, so 24% of the
+  // crowd is still split. The -1 bakes for 2 and 3 are kept rather than deleted
+  // because nothing about this is a law of nature: if a later round makes the
+  // reach arm a per-person property, this line is the only thing to undo.
+  //
+  // AND THE DRAW STAYS INSIDE THE TERNARY. The first cut of this hoisted
+  // `sideRoll` and `bagKind` to the top of the block, which reads better and is
+  // wrong: the old literal only evaluated `rnd()` and `pick(CLOTH)` WHEN THERE
+  // WAS A BAG, so a hoisted draw costs one extra rnd() on the eight bodies in
+  // fourteen that have none, and every roll after it — build, height, pose,
+  // child — walks. That is this file's own standing warning (see the rollPose
+  // header) and it caught the person who wrote the warning. It showed up as one
+  // trial in two hundred moving in benchBird, which is exactly how small a
+  // stream shift looks before you go looking for it.
+  let bag = null;
+  if (bagRoll < 0.46) {
+    const kind = bagRoll < 0.14 ? 0 : bagRoll < 0.24 ? 1 : bagRoll < 0.35 ? 2 : 3;
+    const sideRoll = rnd() < 0.5 ? 1 : -1;
+    bag = { kind, side: kind >= 2 ? 1 : sideRoll, color: pick(CLOTH) };
+  }
   // A HAND load: a carrier bag or a shopping basket, held down at one side. A
   // shoulder bag or a crossbody is strapped on and weighs nothing worth leaning
   // against, which is why kind >= 2 is the test everywhere it appears.
@@ -2850,7 +3292,9 @@ export function makePerson(THREE, F, o) {
   const b = BUILDS[o.build];
   const shirt = new THREE.MeshStandardMaterial({
     color: o.shirt, roughness: 0.92, vertexColors: true,
-    map: o.plain ? null : F.cloth[(o.hairStyle + o.build) & 3],
+    // `plain` is still plain — it picks one of the two unpatterned weaves
+    // rather than nothing at all. See clothAtlas cells 4 and 5.
+    map: F.cloth[o.plain ? 4 + ((o.build + o.headKind) & 1) : (o.hairStyle + o.build) & 3],
   });
   const pants = new THREE.MeshStandardMaterial({ color: o.pants, roughness: 0.95, vertexColors: true });
   const skin = new THREE.MeshStandardMaterial({ color: o.skin, roughness: 0.78, vertexColors: true });
@@ -2872,7 +3316,12 @@ export function makePerson(THREE, F, o) {
   const hips = new THREE.Group(); hips.position.y = hipY; g.add(hips);
   const chest = new THREE.Group(); hips.add(chest);
 
-  const torso = new THREE.Mesh(F.torso[o.build], shirt);
+  // ROUND 3 (character) — WHICH TRUNK, and the answer depends on the strap.
+  // A shoulder bag or a crossbody (kinds 0 and 1) presses cloth in; a carrier
+  // bag or a basket (2 and 3) hangs off a fist and touches no shirt, so those
+  // two take the undented bake. Decided here, once, and never written again.
+  const strapIx = o.bag && o.bag.kind < 2 ? (o.bag.side > 0 ? 1 : 2) : 0;
+  const torso = new THREE.Mesh(F.torso[o.build][strapIx], shirt);
   // Width and depth are SEPARATE multipliers. One number for both is what made
   // every round-10 body an ellipse of a fixed aspect ratio.
   torso.scale.set(o.girth * o.torsoW, trunkS, o.girth * o.torsoD);
@@ -2998,9 +3447,54 @@ export function makePerson(THREE, F, o) {
       color: o.bag.color, roughness: 0.88, vertexColors: true,
     });
     bag = new THREE.Mesh(F.bag[o.bag.kind][o.bag.side > 0 ? 0 : 1], bagM);
-    // Held in a hand -> rides the hips and swings with the walk. Strapped to
-    // the body -> rides the ribs and counter-rotates. One ternary, as before.
-    (o.bag.kind >= 2 ? hips : chest).add(bag);
+    if (o.bag.kind < 2) {
+      // Strapped to the body -> rides the ribs and counter-rotates. Unchanged.
+      chest.add(bag);
+    } else {
+      // ---- HELD IN A HAND. See the header of shopperBag ------------------
+      // A group on `chest` that takes its POSITION from the fist and its
+      // ORIENTATION from the pelvis. Both halves matter and they are separate
+      // constraints: position is what "it is in his hand" means, orientation is
+      // what "it has six kilos in it" means.
+      //
+      // WHY IT IS NOT SIMPLY A CHILD OF THE ARM, which is the obvious build and
+      // the one the round-11 note proposed: the arm pivot is SCALED, by
+      // (armThick, armLen, armThick), and a rotated child of a non-uniformly
+      // scaled parent is SHEARED. armThick spans 0.85 to 1.17 across this
+      // roster, so a basket hanging off a raised arm would arrive up to 11% out
+      // of square — and it would follow the arm through a fold or a reach and
+      // end up on its side, which is the bug this is fixing.
+      //
+      // `chest` has no scale of its own and `g.scale` is uniform, so a group
+      // hung here is square. The four lines in the override are the whole
+      // feature and they run once per graph traversal on the two or three
+      // bodies in the store that are carrying something.
+      const B = SH_ARM(o.bag.side > 0 ? 1 : -1);
+      const armPiv = o.bag.side > 0 ? armL : armR;
+      // The fist, in ARM-LOCAL coordinates, pre-multiplied by the arm pivot's
+      // own scale — which is what the pivot does to a child position before it
+      // rotates it (matrix = T * R * S). t = 0.986 is chest-local y = -0.200 on
+      // an armLen of 1.0, i.e. the exact point round 11's `HAND` named.
+      const h = B.fore.at(0.986);
+      const hand = new THREE.Vector3(h[0] * o.armThick, h[1] * o.armLen, h[2] * o.armThick);
+      const carry = new THREE.Group();
+      carry.add(bag);
+      chest.add(carry);
+      const qv = new THREE.Quaternion(), qId = new THREE.Quaternion();
+      const pv = new THREE.Vector3();
+      // A tenth of the trunk's lean is allowed through, so the thing is not
+      // gyroscopically rigid — a carried basket does swing a little, it just
+      // does not turn over.
+      const PLUMB = 0.10;
+      const base = THREE.Object3D.prototype.updateMatrixWorld;
+      carry.updateMatrixWorld = function (force) {
+        pv.copy(hand).applyQuaternion(armPiv.quaternion).add(armPiv.position);
+        this.position.copy(pv);
+        qv.copy(chest.quaternion).invert();
+        this.quaternion.copy(qv).slerp(qId, PLUMB);
+        base.call(this, force);
+      };
+    }
     loadLean = o.bag.kind === 3 ? -o.bag.side * 0.062
       : o.bag.kind === 2 ? -o.bag.side * 0.024 : 0;
   }
@@ -3049,6 +3543,12 @@ export function makePerson(THREE, F, o) {
     eyeY: (hipY + neckY + FIG.headY * o.headSize),
     rest,
     bag, bagKind: o.bag ? o.bag.kind : -1, kid,
+    // ROUND 3 (character) — THE LOAD, ON THE RIG, for animateShopper's carry
+    // clamp. A hand load is always armL (see rollPerson), so this is a flag and
+    // not a pointer: `weight` is how much of a constraint it is — a basket with
+    // six kilos in it is not a carrier bag with a loaf in it. Nothing writes it
+    // after construction and nothing in the scheduler is allowed to read it.
+    carry: o.bag && o.bag.kind >= 2 ? { kind: o.bag.kind, weight: o.bag.kind === 3 ? 1 : 0.55 } : null,
     handR, handGeo, birdGeo, birdOn: false,
     // The per-person pose table. animateShopper reads it every frame; nothing
     // else in the game is allowed to write it.

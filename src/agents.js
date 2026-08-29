@@ -7759,6 +7759,28 @@ export function createAgents(THREE, scene, world) {
         r.crouched = c > 0.002 || !!dz;
       }
     }
+    // ---- ROUND 3 (character): A LOADED ARM DOES NOT GO ANYWHERE ------------
+    // The last thing written, after every pose branch in this function, so it
+    // catches the ones that exist and the ones nobody has written yet. A person
+    // with six kilos of shopping in one hand does not fold his arms, does not
+    // put that hand in his pocket, does not put it on a shelf and does not pump
+    // it running for the door. He holds it, and it hangs.
+    //
+    // THIS IS NOT A GATE AND THE DISTINCTION IS THE WHOLE POINT. The scheduler
+    // is untouched: a man with a basket enters the same idles at the same rate,
+    // plays the same eleven clips at the same rate, and `pickGesture` has never
+    // heard of `rig.carry`. What is constrained is one arm's PICTURE, in the
+    // animator, the same way `rest.chestZ` already constrains a trunk that is
+    // carrying a load. Guilt is dealt out over the fourteen indices by code
+    // that has never seen a bag, so a constraint that reads a bag cannot leak
+    // one — and it is applied to armL, which no clip in this file drives.
+    // See rollPerson for why a hand load is always in the left hand.
+    if (r.carry) {
+      const w = r.carry.weight, aL = r.armL.rotation;
+      const lo = -0.30 * w - 0.62 * (1 - w), hi = 0.14 * w + 0.30 * (1 - w);
+      aL.x = clamp(aL.x, lo, hi);
+      aL.z = clamp(aL.z, r.rest.splayL - 0.10, r.rest.splayL + 0.22);
+    }
   }
 
   // =========================================================================
