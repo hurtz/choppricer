@@ -818,9 +818,38 @@ const reachHead = [
   // not, never a box at 40% opacity.
   kf(0.46, { vis: 1, armR: -1.88, armRz: -0.24, armL: -0.60, armLz: 0.36, neck: 0.26, chest: 0.19 }),
   kf(0.50, { vis: 1, armR: -1.86, armRz: -0.22, armL: -0.62, armLz: 0.34, neck: 0.24, chest: 0.18 }),
-  kf(0.62, { vis: 1, armR: -1.70, armRz: 0.02, armL: -0.80, armLz: 0.24, neck: 0.30, chest: 0.10 }),
-  kf(0.72, { vis: 1, armR: -1.62, armRz: 0.16, armL: -1.10, armLz: 0.10, neck: 0.44, chest: 0.06, look: -0.20 }),
-  kf(0.80, { vis: 1, armR: -1.58, armRz: 0.20, armL: -1.14, armLz: 0.08, neck: 0.46, chest: 0.05, look: 0.14 }),
+  // ---- ROUND 2 (character): THE INSPECT IS TWO HANDS AND A BOWED HEAD -----
+  // Against the reference photographs the tail was the weakest 0.2 s in the
+  // clip: what people actually do with a thing they have just taken off a shelf
+  // is bring it IN to the chest, put the second hand on it, and drop the head
+  // to read the front of the pack. What this did was hold armR at -1.58 to
+  // -1.70 through the whole inspect — 90 to 97 degrees off the body, i.e. very
+  // nearly full extension — with the off hand 40 degrees away and the head
+  // barely down. A man reading a label at arm's length, one-handed.
+  //
+  // So the withdraw KEEPS GOING: -1.70 -> -1.44 -> -1.24 -> -1.10 brings the
+  // item from the shelf face in to about 0.3 m off the sternum, the left arm
+  // comes to meet it (-1.14 -> -1.04, armLz 0.24 -> 0.10, which closes the gap
+  // between the hands to roughly the width of a cereal box), the neck pitches
+  // to 0.62 and the chest curls over it. `look` still swings, because a person
+  // reading a label still glances along the row.
+  //
+  // NOTHING AT OR BEFORE THE GRASP MOVED. Every key up to u = 0.50 is byte for
+  // byte what it was, so the frame the shelf loses the box, the grab height and
+  // the grab distance — which is what benchTake measures and what LR(grab
+  // height) is computed from — are unchanged by construction. This is also the
+  // SHARED head of both tails, so the keep and the put-back are still one
+  // picture up to 0.80 and the ambiguity argument is untouched.
+  //
+  // The prop follows for free: placeProp() derives the item's position from the
+  // rig's arm angles, so pulling the arm in pulls the box in with it, and the
+  // round-5 floating-box failure cannot recur here. The per-reach shelf
+  // elevation fades out with it too, because agents.js fades that term by how
+  // EXTENDED the arm is — so the box now comes down off the shelf instead of
+  // hanging at shelf height while he looks at it.
+  kf(0.62, { vis: 1, armR: -1.44, armRz: 0.06, armL: -1.00, armLz: 0.20, neck: 0.44, chest: 0.13 }),
+  kf(0.72, { vis: 1, armR: -1.24, armRz: 0.12, armL: -1.06, armLz: 0.13, neck: 0.58, chest: 0.16, look: -0.16 }),
+  kf(0.80, { vis: 1, armR: -1.10, armRz: 0.14, armL: -1.04, armLz: 0.10, neck: 0.62, chest: 0.15, look: 0.10 }),
 ];
 // IT GOES IN THE CART. Down and across, out of frame at the hip, hands back on
 // the bar. Frame for frame this is `handoff`'s tail, which is the point: an
@@ -830,8 +859,11 @@ export const REACH_KEEP = {
   id: 'reachKeep', tell: 'reach', dur: 3.10, item: [1, 1, 1],
   keys: [
     ...reachHead,
-    kf(0.88, { vis: 1, armR: -1.16, armRz: 0.36, armL: -1.00, neck: 0.42, chest: 0.14 }),
-    kf(0.93, { vis: 0, armR: -1.02, armRz: 0.32, armL: -0.98, neck: 0.34, chest: 0.10 }),
+    // ...and from the chest it goes DOWN into the trolley, which is a shorter
+    // move than it used to be because the item is already in. Same two frames,
+    // same `vis` step, same ending on the bar.
+    kf(0.88, { vis: 1, armR: -1.02, armRz: 0.30, armL: -0.99, armLz: 0.08, neck: 0.50, chest: 0.13 }),
+    kf(0.93, { vis: 0, armR: -0.98, armRz: 0.26, armL: -0.97, armLz: 0.12, neck: 0.36, chest: 0.10 }),
     kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
   ],
 };
@@ -845,7 +877,12 @@ export const REACH_PUT = {
   id: 'reachPut', tell: 'reach', dur: 3.10, item: [1, 1, 1], puts: 1,
   keys: [
     ...reachHead,
-    kf(0.86, { vis: 1, armR: -1.76, armRz: -0.22, armL: -0.78, armLz: 0.26, neck: 0.28, chest: 0.16 }),
+    // ...and from the chest it goes BACK OUT to the shelf, which is now a real
+    // reach again rather than a twitch — the arm has to travel the distance the
+    // withdraw brought it. That is what putting something back looks like, and
+    // it is why the two tails are legibly different ACTIONS while the first
+    // 0.80 of them is one picture.
+    kf(0.86, { vis: 1, armR: -1.66, armRz: -0.14, armL: -0.84, armLz: 0.22, neck: 0.30, chest: 0.16 }),
     kf(0.92, { vis: 1, armR: -1.84, armRz: -0.30, armL: -0.70, armLz: 0.30, neck: 0.24, chest: 0.18 }),
     kf(0.95, { vis: 0, armR: -1.72, armRz: -0.34, armL: -0.76, armLz: 0.28, neck: 0.22, chest: 0.14 }),
     kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),

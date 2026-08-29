@@ -2856,7 +2856,24 @@ export function makePerson(THREE, F, o) {
   // independent 0.93-1.07 on top. Measured on the shipped roster, the arm's
   // lateral edge at mid-humerus stands 20-38 mm proud of the trunk on all six
   // builds, against 10-13 mm before and a real adult's ~42 mm.
-  const hw = b.hw * o.stanceW, sw = b.sw * o.shoulderW * o.girth * o.torsoW;
+  // ROUND 2 (character) — AND THE LEGS HAD THE ARMS' BUG, one paragraph up.
+  // The leg MESH is scaled by `o.girth` (see the two limb() calls below, whose
+  // `sx` is o.girth), so a wide body's thighs get wider — but the hip PIVOTS
+  // were `b.hw * o.stanceW` and knew nothing about girth, so the two thighs
+  // walked into each other. Round 11's own note explains why that is not
+  // cosmetic: the thighs are MEANT to overlap across the midline, because that
+  // overlap is the only pelvis this game has. Scale the separation and the
+  // overlap holds at whatever it was authored to be; leave it and the overlap
+  // grows with girth until the widest builds are one solid block from hip to
+  // knee with the crotch swallowed. Measured on the shipped roster of 14, as
+  // (thigh half-width x girth) - (hip half-separation):
+  //     before   11.3 - 48.6 mm of overlap, and it moved with GIRTH
+  //     after     8.6 - 44.6 mm, and it moves with BUILD alone
+  // The three widest bodies (girth 1.06-1.067) were each carrying 4-6 mm of
+  // overlap they had not been authored. `stanceW` is untouched and still means
+  // what it says — how far apart this person stands — because it multiplies on
+  // top of the corrected quantity rather than instead of it.
+  const hw = b.hw * o.stanceW * o.girth, sw = b.sw * o.shoulderW * o.girth * o.torsoW;
   // ONE FOOT IN FRONT OF THE OTHER, and it is the free leg that goes forward.
   const ff = o.wSide > 0 ? [0, o.footFwd] : [o.footFwd, 0];
   const legL = limb(F.leg[o.build][0], pants, hw, 0, ff[0], o.girth, legS,

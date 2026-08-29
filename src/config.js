@@ -267,7 +267,14 @@ export const TUNING = {
   // visibly wrong FOUR separate times. A check on the solve is not a check on
   // the rig. Anything touching these wants shots/_probe_move_plant.js too.
   gaitLift: 0.075, gaitLiftHeavy: 0.62,   // swing clearance, and how a heavy body scales it
-  gaitFlex: 0.055, gaitFlexHeavy: 0.70,   // knee flex through stance
+  // gaitFlex was authored as an ANGLE and encoded as a LENGTH FRACTION — its own
+  // comment said "about 15 degrees" while 0.055 was 38 degrees of knee. Invisible
+  // for as long as the leg telescoped instead of bending. The bob and the
+  // stance-knee angle are the same quantity and pull opposite ways; swept on the
+  // roster, 0.055 gives bob 13/38/67mm at 38deg, 0.012 gives 22/57/91mm at 18deg.
+  // 0.020 is the compromise. The third lever that would let both land is
+  // stride's upper bound in figures.js, which owns the 85mm tail.
+  gaitFlex: 0.020, gaitFlexHeavy: 0.70,   // knee flex through stance
   swayLean: 0.016, swayHeavy: 0.052,      // lateral sway; a heavy walk is not a slow thin one
   listLean: 0.045, listHeavy: 0.105,      // list onto the loaded side
   startRamp: 2.9,  stopRamp: 4.2,         // 0 -> 1.17 m/s in 0.42 s, was 0.12 s
@@ -302,6 +309,29 @@ export const TUNING = {
   // sim-neutrality was proved rather than asserted. Costs about one theft per
   // four-minute shift.
   reachArm: 1,
+
+  // --- Round 14: speed could carry state, so it carried guilt ---
+  // `drift` (guilty-only, post-conceal) walked at thiefWalk*1.12 where innocents
+  // capped at 1.25. Not a likelihood ratio — a PERFECT classifier: 57.8% of a
+  // thief's pre-bolt life above 1.33 m/s against 0.0% of an innocent's, zero
+  // false positives in 27 minutes.
+  //
+  // Collapsing drift onto leave was tried, measured and REJECTED: it killed the
+  // per-frame classifier and left a rate of 23.6% vs 2.5% (LR 9.6), because BOTH
+  // door states were faster than the ordinary walk while a thief spends 48% of
+  // his pre-bolt life in one and an honest shopper 14%.
+  //
+  // There is now ONE walking speed in the file: a per-person multiplier from
+  // hash2(id), quantised to paceN buckets across paceLo..paceHi, read by every
+  // state that walks. Speed cannot carry state, so it cannot carry guilt.
+  // leakHi — % of guilty body-time above the highest value any innocent reached
+  // — is 0.00% on all ten swept channels.
+  paceLo: 0.90, paceHi: 1.12, paceN: 5,
+
+  // Head yaw was the same bug on the same two lines (drift 0.50 rad @ 0.80 Hz,
+  // leave 0.32 @ 0.55). One per-person band spanning both.
+  exitLookLo: 0.32, exitLookHi: 0.50,
+  exitLookRateLo: 0.55, exitLookRateHi: 0.80,
 };
 
 // CHANNEL LINEUP — what the channels ARE. Ids, labels, and which aisle each covers.

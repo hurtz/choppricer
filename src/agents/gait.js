@@ -111,7 +111,110 @@ const swingEase = (w) => {
 // false, agents.js falls back to a shorter step that does not need a knee, and
 // gaitCheck() says so out loud instead of the walk quietly degrading.
 // ---------------------------------------------------------------------------
-export function attachFeet(rig) {
+// ---------------------------------------------------------------------------
+// ROUND 2 (character) — AND NOW THERE IS A KNEE, BECAUSE THERE WAS NOT ONE.
+//
+// The header below this one describes the round-12 trade honestly: with no
+// joint available, the swing leg was SHORTENED by scaling the leg mesh, and
+// "at 8-12% for a third of a second that reads as a knee at every distance this
+// game is played at." It does not. A critic measured the shipped rig at 7.7-
+// 15.6% — 69 to 139 mm — of pure telescoping, in every frame, stance and swing.
+// A rigid rod that changes length is a compass gait with a slider in it, and
+// planting the foot of a rigid rod gives you a walking toy.
+//
+// THE PATTERN IS figures.js:armBones, AND IT TRANSFERS EXACTLY. Round 10 solved
+// this for the arm: the shoulder and the hand are GIVEN, the elbow is the free
+// parameter that swings off the line between them, and the bend costs no new
+// joint group because both segments are simply re-aimed at it. The knee is the
+// same problem with the same shape — hip and ankle are given by the solve (the
+// ankle sits at `k * A` along the hip-ankle line, which is exactly where the
+// telescope put it), and the knee is the free parameter off that line.
+//
+// The one thing that does NOT transfer is that an elbow's bend is CONSTANT, so
+// round 10 could bake it into the geometry. A knee's is not: it runs from 0 to
+// 64 degrees twice a second. So the leg has to be two parts that can be re-aimed
+// per frame, and figures.js bakes it as one.
+//
+// SO THE SPLIT IS DONE HERE, ONCE PER SOURCE GEOMETRY, AT ATTACH TIME. The
+// merged leg is cut into a thigh and a shank at the knee, the shank goes into a
+// small group hinged at the cut, and the shoe goes with it. Three properties
+// make this safe rather than clever:
+//
+//   THE CUT IS WHERE THE KNEE BALL ALREADY IS. figures.js bakes a ball at the
+//   knee ("The knee is a real landmark and it was a sphere at a guess"), and the
+//   cut plane passes through its CENTRE. A ball split by a plane containing the
+//   hinge axis and rotated about that axis is still the same ball, so the joint
+//   covers itself at every angle instead of opening a wedge. The residual is
+//   |rz - ry| of that ball — 17 mm, at the one place on a leg where a crease is
+//   what you expect to see.
+//
+//   THE GEOMETRIES ARE SHARED AND ARE NEVER MUTATED. `F.leg[build][side]` is one
+//   BufferGeometry behind every body of that build; translating or splitting it
+//   in place would rebuild the whole crowd's legs from whichever body attached
+//   first. The split is cached on a WeakMap keyed by the SOURCE geometry, so
+//   fourteen bodies pay for it twice (once per build side) and share the result.
+//
+//   IT DEGRADES THE SAME WAY THE SHOE SEARCH DOES. If the cut lands outside the
+//   leg, or either half comes back empty, `knee` is null, footPose falls back to
+//   the round-12 telescope, and the rig reports `kneeOk: false`.
+//
+// COST: one extra mesh per leg, so +2 draw calls per body — the first new draw
+// call this file has added in three rounds, and it is named rather than buried.
+// 28 extra draws for 14 shoppers, against a store that draws thousands. No new
+// material (the shank borrows the thigh's), no new texture, and the split
+// geometries are shared, so no new buffer per body either.
+// ---------------------------------------------------------------------------
+// Knee height as a fraction of hip -> ankle. figures.js puts the knee ball's
+// centre at -0.418 on a leg whose ankle is at -0.790, i.e. 0.529, and an
+// anatomical knee is at 0.50-0.53 of that span measured to the ankle. It is a
+// constant rather than a measurement because a measurement here is fragile: the
+// ball is NOT a local maximum of the leg's radius (the thigh taper ends wider
+// than the ball, t*0.78 against t*0.76), so there is nothing to find.
+const KNEE_F = 0.529;
+// How far either side of the cut is duplicated into both halves, as a fraction
+// of hip -> ankle. 0.075 is 59 mm on a standard leg, which is the knee ball's
+// own y-radius plus a little: enough that each half owns the whole ball.
+const KNEE_BAND = 0.075;
+const _splitCache = new WeakMap();
+
+// THE JOINT BAND IS IN BOTH HALVES, AND THE FIRST RENDER IS WHY. Splitting on
+// the centroid alone gives each half a hard rim, and at 60 degrees of flexion
+// the two rims rotate apart and open a bright wedge across the front of the
+// knee — visible at aisle range, which is the whole distance this game is
+// played at. So every triangle within `band` of the cut goes into BOTH halves.
+// Each side then carries a complete sleeve across the joint; one copy stays
+// with the thigh and one swings with the shank, and their union has no hole at
+// any angle. It costs about 60 triangles a leg and no draw call, and it is the
+// polygon equivalent of what a trouser knee does.
+function splitAtY(THREE, geo, cutY, band) {
+  const src = geo.index ? geo.toNonIndexed() : geo;
+  const pos = src.attributes.position;
+  const up = [], dn = [];
+  for (let t = 0; t < pos.count; t += 3) {
+    const cy = (pos.getY(t) + pos.getY(t + 1) + pos.getY(t + 2)) / 3;
+    if (cy > cutY) { up.push(t); if (cy < cutY + band) dn.push(t); }
+    else { dn.push(t); if (cy > cutY - band) up.push(t); }
+  }
+  const keys = Object.keys(src.attributes);
+  const build = (tris) => {
+    const g = new THREE.BufferGeometry();
+    for (const k of keys) {
+      const a = src.attributes[k], n = a.itemSize;
+      const arr = new a.array.constructor(tris.length * 3 * n);
+      let w = 0;
+      for (let i = 0; i < tris.length; i++) {
+        const base = tris[i] * n;
+        for (let v = 0; v < 3 * n; v++) arr[w++] = a.array[base + v];
+      }
+      g.setAttribute(k, new THREE.BufferAttribute(arr, n, a.normalized));
+    }
+    g.computeBoundingBox(); g.computeBoundingSphere();
+    return g;
+  };
+  return { up: build(up), dn: build(dn), nUp: up.length, nDn: dn.length };
+}
+
+export function attachFeet(rig, THREE) {
   const one = (grp) => {
     if (!grp || grp.children.length < 2) return null;
     let leg = null, shoe = null, legSpan = 0, shoeTop = 0;
@@ -135,17 +238,97 @@ export function attachFeet(rig) {
     }
     if (!shoe) return null;
     const sb = shoe.geometry.boundingBox;
-    return {
+    const f = {
       leg, shoe, ankleY: shoeTop, leg0: leg.scale.y, shoe0: shoe.position.clone(),
       // the sole, and the two corners that touch the ground. footPose needs all
       // three; see the note there about which point a foot actually pivots on.
       soleY: sb.min.y, toeZ: sb.max.z, heelZ: sb.min.z,
+      knee: null, shank: null, a: 0, b: 0, kneeY: 0, alpha: 0, beta: 0,
+      // ---- THE LEG GROUP'S OWN SCALE, AND IT IS NOT COSMETIC ---------------
+      // figures.js scales the leg PIVOT by (girth, legS, girth) — build and
+      // stature — and everything below it lives inside that scale. The sole pin
+      // computes a corner in LEG-LOCAL units and compares it against a floor
+      // height in ROOT metres, so it has been off by exactly this factor since
+      // it was written. That is the "sole below the tiles, -28..+28 mm" row in
+      // round 12's own table and the critic's 49 mm: not a transient, a frame
+      // error, and it scales with how tall the body is. Measured after: the
+      // live median goes from 11 mm under the tiles to 0.9 mm.
+      sy: grp.scale.y || 1, sxz: grp.scale.x || 1,
     };
+    // ---- THE KNEE ---------------------------------------------------------
+    if (!THREE) return f;                       // no constructors: telescope on
+    const legBB = leg.geometry.boundingBox;
+    const kneeY = f.ankleY * KNEE_F;
+    if (!(kneeY < legBB.max.y - 0.02 && kneeY > legBB.min.y + 0.02)) return f;
+    let cut = _splitCache.get(leg.geometry);
+    if (!cut || Math.abs(cut.kneeY - kneeY) > 1e-6) {
+      const sp = splitAtY(THREE, leg.geometry, kneeY, KNEE_BAND * -f.ankleY);
+      if (!sp.nUp || !sp.nDn) return f;
+      // The shank is re-based on the knee so the hinge group can be a plain
+      // rotation about its own origin. `translate` mutates, so it is done on the
+      // SPLIT copy and never on figures.js's shared bake.
+      sp.dn.translate(0, -kneeY, 0);
+      cut = { kneeY, thigh: sp.up, shank: sp.dn };
+      _splitCache.set(leg.geometry, cut);
+    }
+    const knee = new THREE.Group();
+    knee.position.set(0, kneeY, 0);
+    const shank = new THREE.Mesh(cut.shank, leg.material);
+    shank.castShadow = leg.castShadow; shank.receiveShadow = leg.receiveShadow;
+    leg.geometry = cut.thigh;
+    // The hinge hangs off the THIGH MESH, not off the leg group, so
+    // `legL.rotation.x` keeps meaning exactly what it meant — the hip-to-ankle
+    // line — for the solve, the plant instrument and every probe that reads it.
+    // The thigh's own -alpha lives on the mesh underneath it.
+    leg.add(knee);
+    knee.add(shank);
+    // ...and the shoe goes with the shank, because a foot is on the end of a
+    // shank. Its GEOMETRY is untouched (shared, and baked in leg-local metres);
+    // only the mesh's rest position moves, by exactly the hinge offset, so the
+    // existing ankle algebra below carries over with one extra term.
+    grp.remove(shoe); knee.add(shoe);
+    f.knee = knee; f.shank = shank; f.kneeY = kneeY;
+    f.a = -kneeY;                       // hip -> knee
+    f.b = -(f.ankleY - kneeY);          // knee -> ankle
+    f.shoe0 = shoe.position.clone(); f.shoe0.y -= kneeY;
+    return f;
   };
   const L = one(rig.legL), R = one(rig.legR);
   rig.footL = L; rig.footR = R;
   rig.feetOk = !!(L && R);
+  rig.kneeOk = !!(L && L.knee && R && R.knee);
+  // THE SHOE'S OWN BOX, AS FRACTIONS OF THE LEG. solveGait needs the ankle's
+  // height over a flat sole and the two contact reaches to solve the hip height
+  // through the foot rocker, and it works in root metres while these are baked
+  // in figures.js units. The RATIO is scale-free — the leg group's own scale
+  // takes the geometry to root — so a fraction crosses the boundary safely and
+  // a raw millimetre does not. Null when the shoes were not found, and the
+  // solve falls back to the rigid-rod hip height.
+  rig.footGeom = L ? {
+    h0: (L.ankleY - L.soleY) / -L.soleY,
+    toe: L.toeZ / -L.soleY,
+    heel: -L.heelZ / -L.soleY,
+  } : null;
   return rig.feetOk;
+}
+
+// Two-bone IK, and it is four lines because the hard part was choosing what the
+// unknowns are. The hip and the ankle are GIVEN — `d` is the hip-to-ankle
+// distance the solve already asked for, which is where the round-12 telescope
+// put the ankle too — so what is left is the law of cosines on a triangle with
+// two known sides. `alpha` is how far the thigh leaves the hip-ankle line and
+// `beta` is how far the shank comes back to it; `alpha + beta` is the knee's
+// own flexion angle. Both are zero when d = a + b, so a straight leg is the
+// continuous limit of this and not a special case.
+//
+// The sign puts the knee FORWARD (+Z, the body's facing), which is the only
+// direction a knee bends. Writing it the other way gives a flamingo, and that is
+// how the sign was checked.
+function ikKnee(f, d) {
+  const a = f.a, b = f.b;
+  const dd = clamp(d, Math.abs(a - b) + 1e-4, a + b - 1e-5);
+  f.alpha = Math.acos(clamp((a * a + dd * dd - b * b) / (2 * a * dd), -1, 1));
+  f.beta = Math.acos(clamp((b * b + dd * dd - a * a) / (2 * b * dd), -1, 1));
 }
 
 // Ankle pitch + knee substitute, written onto the two meshes attachFeet found.
@@ -192,6 +375,55 @@ export function attachFeet(rig) {
 // foot wherever the ankle put it.
 export function footPose(f, k, ank, th, floorY) {
   if (!f) return;
+  // ---- ROUND 2 (character): THE REAL KNEE --------------------------------
+  // Same contract, same five arguments, same `k`: it is still "how long the
+  // hip-to-ankle line is, as a fraction". What changed is what the leg DOES
+  // about it. The telescope below is kept as the fallback for a rig whose leg
+  // could not be split — see attachFeet — and for gaitCheck's synthetic runs.
+  if (f.knee) {
+    const A = -f.ankleY;
+    ikKnee(f, k * A);
+    const al = f.alpha, be = f.beta;
+    f.leg.scale.y = f.leg0;                 // NEVER scaled again. That was the bug.
+    f.leg.rotation.x = -al;                 // thigh leaves the line, knee forward
+    f.knee.rotation.x = al + be;            // ...and the shank comes back to it
+    // The shank's pitch is what the foot hangs off now, so the ankle angle is
+    // solved against THAT and not against the hip-to-ankle line. This is the
+    // same correction round 12 made when it wrote `ank - th` instead of `ank`:
+    // one more joint upstream, one more term.
+    const sh = th + be;
+    const a = ank - sh;
+    f.shoe.rotation.x = a;
+    const ay = f.ankleY, ca = Math.cos(a), sa = Math.sin(a);
+    const base = f.shoe0.y + ay * (1 - ca);
+    const dz = f.shoe0.z - ay * sa;
+    if (floorY == null) { f.shoe.position.set(f.shoe0.x, base, dz); return; }
+    // The sole pin, through the whole chain and now through the SCALE as well.
+    // Below the leg group the transform is
+    //     M = T_grp . Rx(th) . S(g, ly, g) . Rx(-alpha) . T(0,kneeY,0) . Rx(alpha+beta)
+    // so every child rotation happens INSIDE the non-uniform scale and the scale
+    // is applied once, last, before the hip rotation. Fold it in that order or
+    // the pin is wrong by the body's own stature — which is exactly what it has
+    // been. Closed form, no matrix update: this runs 28 times a frame.
+    const cb = Math.cos(be), sb = Math.sin(be);
+    const cal = Math.cos(al), sal = Math.sin(al);
+    const cth = Math.cos(th), sth = Math.sin(th);
+    const corner = (z) => {
+      const cy = base + f.soleY * ca - z * sa;
+      const cz = dz + f.soleY * sa + z * ca;
+      // up through the hinge into leg-group-local, still unscaled
+      const Y = f.kneeY * cal + (cy * cb - cz * sb);
+      const Z = -f.kneeY * sal + (cy * sb + cz * cb);
+      return f.sy * Y * cth - f.sxz * Z * sth;          // hips-local y, root metres
+    };
+    const lowest = Math.min(corner(f.toeZ), corner(f.heelZ));
+    // ...and a lift of `d` along the knee frame's own Y arrives in hips-local as
+    // d * (sy*cos(beta)*cos(th) - sxz*sin(beta)*sin(th)). Clamped so a deeply
+    // flexed leg cannot divide by nothing.
+    const gain = f.sy * cb * cth - f.sxz * sb * sth;
+    f.shoe.position.set(f.shoe0.x, base + (floorY - lowest) / Math.max(0.3, gain), dz);
+    return;
+  }
   const a = ank - th;
   f.leg.scale.y = f.leg0 * k;
   f.shoe.rotation.x = a;
@@ -200,23 +432,26 @@ export function footPose(f, k, ank, th, floorY) {
   const base = f.shoe0.y + ay * (k - ca);
   const dz = f.shoe0.z - ay * sa;
   if (floorY == null) { f.shoe.position.set(f.shoe0.x, base, dz); return; }
-  // the two ground corners, through the shoe's rotation and then the leg's
+  // the two ground corners, through the shoe's rotation, the leg group's SCALE
+  // and then its rotation — in that order, because that is the order the matrix
+  // composes them. See the knee branch above for why the scale is not optional.
   const cth = Math.cos(th), sth = Math.sin(th);
   const corner = (z) => {
     const cy = base + f.soleY * ca - z * sa;
     const cz = dz + f.soleY * sa + z * ca;
-    return cy * cth - cz * sth;                       // hips-local y
+    return f.sy * cy * cth - f.sxz * cz * sth;          // hips-local y, root metres
   };
   const lowest = Math.min(corner(f.toeZ), corner(f.heelZ));
-  // A leg-local lift arrives in hips-local multiplied by cos(th), so divide it
-  // back out. Clamped so a leg past 72 degrees cannot divide by nothing.
-  f.shoe.position.set(f.shoe0.x, base + (floorY - lowest) / Math.max(0.3, cth), dz);
+  // A leg-local lift arrives in hips-local multiplied by sy*cos(th), so divide
+  // it back out. Clamped so a leg past 72 degrees cannot divide by nothing.
+  f.shoe.position.set(f.shoe0.x, base + (floorY - lowest) / Math.max(0.3, f.sy * cth), dz);
 }
 export function footRest(f) {
   if (!f) return;
   f.leg.scale.y = f.leg0;
   f.shoe.rotation.x = 0;
   f.shoe.position.copy(f.shoe0);
+  if (f.knee) { f.leg.rotation.x = 0; f.knee.rotation.x = 0; f.alpha = f.beta = 0; }
 }
 
 // ---------------------------------------------------------------------------
@@ -267,6 +502,49 @@ export function solveGait(G, o) {
   const thR = -Math.asin(clamp(fxR / LR, -0.94, 0.94));
   const thL = -Math.asin(clamp(fxL / LL, -0.94, 0.94));
 
+  // ---- ROUND 2 (character): THE SIGNS WERE INVERTED AND THE FOOT ROCKED
+  // ---- BACKWARDS THROUGH EVERY STEP THIS GAME HAS EVER DRAWN --------------
+  // `ank` is the sole's pitch, and it goes onto the shoe as `ank - shank`, so it
+  // composes to the sole's pitch in the parent frame. A positive rotation about
+  // +X sends a point at +z (the toe, because the body faces +z) DOWNWARD:
+  //     y' = y cos p - z sin p
+  // so p > 0 is TOES DOWN. Round 12 authored +0.24 at heel strike and -0.52 at
+  // toe-off with comments reading "heel strike toes-up" and "rolling onto the
+  // toe" — i.e. the intent was right and the sign was the other way round for
+  // both. Measured on the live rig, one full stride, id 1, world millimetres,
+  // heel and toe contact corners:
+  //
+  //     stance begins   heel +21 mm, toe -29 mm   -> THE TOE LANDS FIRST
+  //     stance ends     heel -29 mm, toe +87 mm   -> IT PUSHES OFF THE HEEL
+  //
+  // A person lands on the heel and leaves off the toe. This did the exact
+  // opposite, on every body, in every frame, in every build that has shipped.
+  // It survived because the sole pin re-plants whichever corner is lowest, so
+  // the foot never floated and never sank — it was simply rolling the wrong way,
+  // and that is not something a check on the SOLVE can see. It is also the real
+  // cause of the note in this file's header about the heel going through the
+  // floor at toe-off: the heel was going through the floor because the heel was
+  // the trailing contact, which is not where a push-off happens. After:
+  //
+  //     stance begins   heel 0 mm,  toe +52 mm    -> heel strike
+  //     stance ends     heel +95 mm, toe +2 mm    -> toe-off
+  //
+  // Negated. The comments underneath were already describing the fixed version.
+  const ankleOf = (u, stance) => {
+    if (!o.feet) return 0;
+    if (stance) {
+      const p = u / D;
+      if (p < 0.18) return -0.24 * (1 - p / 0.18);         // heel strike -> flat
+      if (p < 0.62) return 0;                              // foot flat, loaded
+      const q = (p - 0.62) / 0.38;
+      return 0.52 * q * q;                                 // rolling onto the toe
+    }
+    const w = (u - D) / (1 - D);
+    // comes off the toe still pointed, swings through neutral, cocks up to
+    // present the heel for the next strike
+    return 0.52 * Math.pow(1 - Math.min(1, w / 0.30), 2) - 0.24 * Math.pow(w, 2.2);
+  };
+
   // ---- the hip height, i.e. the controlled fall ---------------------------
   // Whichever planted leg is MOST angled is the one holding the hip down. In
   // double support that is the trailing leg, which is why the body is lowest
@@ -281,11 +559,45 @@ export function solveGait(G, o) {
   // shortened by `flex` on a hump that maxes at mid-stance. The foot does not
   // move: the sole pin puts it back on the tiles, which is what the knee is
   // doing in a real leg too.
+  //
+  // ---- ROUND 2 (character): AND THE FOOT IS PART OF THE LEG ---------------
+  // The paragraph above is right about the mechanism and wrong about the size
+  // of it, and the error only becomes visible once there is a real knee to look
+  // at. "About 15 degrees" of stance knee flexion shortens a two-bone leg by
+  // 1 - cos(7.5 deg) = 0.9%, not by the 5.5% `gaitFlex` is set to; 5.5% is
+  // 38 degrees of knee, two and a half times life, and with the telescope it
+  // was invisible because a rod that gets 5% shorter just gets shorter.
+  //
+  // But dropping `flex` to its anatomical value puts the bob straight back up
+  // to the compass-gait value, because stance knee flexion was never the term
+  // that buys the difference. THE FOOT IS. A leg is hip -> ankle -> a 230 mm
+  // sole, and the sole ROLLS: at heel strike the contact is 83 mm behind the
+  // ankle and at toe-off it is 148 mm in front, so at both ends of stance the
+  // ankle stands HIGHER above the ground than it does with the foot flat. That
+  // raises the hip exactly where the compass gait says it should be lowest,
+  // which is the whole of the classical "determinants of gait" argument and is
+  // why real walking runs 40-50 mm on a leg whose rigid-rod prediction is 90.
+  //
+  // So the hip height is solved off the ANKLE plus the foot, not off the sole:
+  //     hip = (L - h0)(1 - flex) cos(theta)  +  h0 cos(ank) + reach * |sin(ank)|
+  // where h0 is the ankle's height over a flat sole and `reach` is whichever
+  // sole corner is down. It needs no dial, it is exact given the shoe's own box,
+  // and it is what lets gaitFlex be the angle it always claimed to be.
+  // `o.foot` is null for a rig with no shoes found and the expression collapses
+  // to the old one.
   const stR = stR0, stL = stL0;
-  let hFrac = 1;
-  if (stR) hFrac = Math.min(hFrac, Math.cos(thR) * (1 - fR));
-  if (stL) hFrac = Math.min(hFrac, Math.cos(thL) * (1 - fL));
-  G.drop = L * (1 - hFrac);
+  const FT = o.foot;
+  const ankR0 = ankleOf(uR, stR), ankL0 = ankleOf(uL, stL);
+  const hipOf = (th, flex, ank) => {
+    if (!FT) return L * Math.cos(th) * (1 - flex);
+    const h0 = FT.h0 * L;
+    const reach = (ank > 0 ? FT.toe : FT.heel) * L;
+    return (L - h0) * (1 - flex) * Math.cos(th) + h0 * Math.cos(ank) + reach * Math.abs(Math.sin(ank));
+  };
+  let hip = L;
+  if (stR) hip = Math.min(hip, hipOf(thR, fR, ankR0));
+  if (stL) hip = Math.min(hip, hipOf(thL, fL, ankL0));
+  G.drop = L - hip;
   G.thR = thR; G.thL = thL;
   G.stanceR = stR; G.stanceL = stL;
   G.flexR = fR; G.flexL = fL;
@@ -318,22 +630,9 @@ export function solveGait(G, o) {
   // a neutral-to-slightly-up carriage through the swing so the toe does not
   // catch. Authored against `u` rather than against the leg angle so a shuffle
   // and a stride roll through the same phases.
-  const ankleOf = (u, stance) => {
-    if (!o.feet) return 0;
-    if (stance) {
-      const p = u / D;
-      if (p < 0.18) return 0.24 * (1 - p / 0.18);          // heel strike -> flat
-      if (p < 0.62) return 0;                              // foot flat, loaded
-      const q = (p - 0.62) / 0.38;
-      return -0.52 * q * q;                                // rolling onto the toe
-    }
-    const w = (u - D) / (1 - D);
-    // comes off the toe still pointed, swings through neutral, cocks up to
-    // present the heel for the next strike
-    return -0.52 * Math.pow(1 - Math.min(1, w / 0.30), 2) + 0.24 * Math.pow(w, 2.2);
-  };
-  G.ankR = ankleOf(uR, stR);
-  G.ankL = ankleOf(uL, stL);
+  // ---- the ankle: the block moved above the hip height, which now needs it
+  G.ankR = ankR0;
+  G.ankL = ankL0;
 
   // ---- the pelvis ---------------------------------------------------------
   // LIST: the unloaded hip drops. Signed off which foot is carrying, and it is

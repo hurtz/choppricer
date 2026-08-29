@@ -2285,6 +2285,49 @@ const K = {
   get turnRate()      { return t('turnRate', 5.6); },   // rad/s of body yaw
   get turnLead()      { return t('turnLead', 0.62); },  // x the error, onto the neck
   get turnBank()      { return t('turnBank', 0.10); },  // s per rad/s, into the lean
+  // ---- ROUND 2 (character): HOW FAST THIS PERSON WALKS --------------------
+  // ONE walking speed band, multiplying thiefWalk, read by EVERY state that
+  // walks. It replaces three literals that were three different ideas of the
+  // same quantity:
+  //     walk    K.thiefWalk         1.00   everyone
+  //     leave   K.thiefWalk * 1.06  1.06   either population
+  //     drift   K.thiefWalk * 1.12  1.12   GUILTY ONLY, post-conceal
+  // which made `speed > 1.33` a perfect guilt classifier. See the `leave`/
+  // `drift` case for the numbers.
+  //
+  // COLLAPSING drift ONTO leave WOULD NOT HAVE BEEN ENOUGH, and measuring it
+  // is the only reason I know that. With the two door states sharing one
+  // constant the per-frame classifier died — max speeds overlapped, zero
+  // guilty body-time above the innocent ceiling — but the RATE above 1.33 m/s
+  // still read 23.6% guilty against 2.5% innocent, a likelihood ratio of 9.6.
+  // The cause is not the constants any more, it is that both door states are
+  // faster than the ordinary walk while a thief spends 48% of his pre-bolt life
+  // in one of them and an honest shopper 14%. Speed was reporting the STATE,
+  // and the state mix is guilt.
+  //
+  // So there is no purposeful-exit bump left at all. A person walks at his own
+  // pace in the aisles, to the door, and away from a shelf he changed his mind
+  // about, and the ONLY spread in this store's walking speed is which person
+  // it is. That is the strongest available form of the claim: speed cannot
+  // carry state, so it cannot carry guilt. The price is real and is named — a
+  // shopper heading for the exit no longer picks up 6%, which is a true thing
+  // about people that this game cannot afford to model.
+  //
+  // The band's mean is 1.01, so the crowd's mean walk is within 1% of round
+  // 12's and the bench is comparable; its top is the old drift value, so
+  // nothing in the store got faster than it already was. Five buckets over
+  // fourteen bodies means roughly three people share every pace and no pace is
+  // a fingerprint — paceCheck's sibling exitCheck() asserts exactly that.
+  get paceLo()        { return t('paceLo', 0.90); },      // x thiefWalk
+  get paceHi()        { return t('paceHi', 1.12); },
+  get paceN()         { return t('paceN', 5); },          // buckets, so a pace is shared
+  // ...and the head. Same band, same person, same argument: a man on his way
+  // out of a shop looks around, and how much is a trait. 0.32/0.55 was the
+  // innocent's and 0.50/0.80 the thief's.
+  get exitLookLo()    { return t('exitLookLo', 0.32); },  // rad of head yaw
+  get exitLookHi()    { return t('exitLookHi', 0.50); },
+  get exitLookRateLo(){ return t('exitLookRateLo', 0.55); },
+  get exitLookRateHi(){ return t('exitLookRateHi', 0.80); },
   // ---- browsing at the shelf ---------------------------------------------
   // WHERE A SHOPPER STANDS. The old wanderTarget picked aisleX +- 1.15 m at
   // random, which is the aisle CENTRE LINE, and the lead measured the
@@ -3408,8 +3451,15 @@ export function createAgents(THREE, scene, world) {
       //   reachT     seconds until the next browse reach. Runs on the RIG's
       //              idle clock, not on this object, for the anti-oracle reason
       //              round 9 wrote down; see the note in animateShopper.
-      //   reachU     0..1 through the reach sequence, or -1 when not reaching.
-      shelfSide: 0, facing: null, reachU: -1, reachTook: false, reachKeep: false,
+      //   `reachU` was declared here as "0..1 through the reach sequence, or -1
+      //   when not reaching", with a comment documenting it as the reach clock,
+      //   and NOTHING EVER WROTE IT. It is deleted rather than wired: the reach
+      //   clip's phase already has exactly one owner — `1 - s.gestT/s.gestD`,
+      //   computed in animateShopper and handed to applyGesture — and adding a
+      //   second copy of it on the shopper is the duplication CLAUDE.md's rule
+      //   is about. A field that is only ever read as -1 is worse than absent,
+      //   because the next reader believes the comment.
+      shelfSide: 0, facing: null, reachTook: false, reachKeep: false,
       grabHand: V(0, 0, 0), itemSize: null, grabT: 0, cartYaw: 0, leanA: 0, reachEl: 0,
       lastAlong: 0, turnErr: 0,
       // Pure counters for benchTake. They are written by takeAt/putBack and
@@ -4585,7 +4635,80 @@ export function createAgents(THREE, scene, world) {
   function turnBack(s) {
     s.state = 'walk'; s.timer = rr(2.5, 6.0); s.path = []; s.aim = null; s.aimT = 0;
     s.target = { x: aisleX(ri(0, AISLE_COUNT - 1)) + rr(-1.0, 1.0), z: rr(0.5, HALF_LEN - 2) };
-    s.gestIn = Math.min(s.gestIn, rr(0.4, 2.5));
+    // ROUND 2 (character) — THE "LOOK BUSY" EFFECT IS GONE AND THE DRAW STAYS.
+    //     s.gestIn = Math.min(s.gestIn, rr(0.4, 2.5));   // look busy
+    // Only a body that has concealed something ever turns back, so this pulled
+    // the decoy scheduler from its 9-22 s to under 2.5 s FOR GUILTY BODIES
+    // ONLY — about a fivefold rate, arriving exactly when the player is camping
+    // the door and watching the aisles. "The one fiddling with his phone every
+    // two seconds" is the same class of tell as the drift walk that this round
+    // exists to kill, and it is worse than that one because it is a rate on the
+    // decoy system itself, whose whole claim is that the scheduler has never
+    // seen `s.guilty`. He goes back to the crowd's own schedule; the theatre of
+    // hanging back in the aisles is the stall, not the clip rate.
+    // THE DRAW ITSELF STAYS, AND ITS RESULT IS THROWN AWAY. This file's header
+    // records a single misplaced rnd() moving a published likelihood ratio from
+    // 1.95 to 2.33 in a change that touched no probability anywhere, and
+    // turnBack fires inside the bench. Deleting the line outright measured
+    // 58.5% against 59.5% with the draw kept, at n=200, seed 1234,
+    // difficulty 1 — a full point of chase, bought back for one dead call.
+    // Removing the BEHAVIOUR is the whole point; moving the seeded stream
+    // underneath every number in this file is not, and the two are separable.
+    void rr(0.4, 2.5);
+  }
+  // ---------------------------------------------------------------------
+  // ROUND 2 (character) — HOW THIS PERSON WALKS OUT OF A SHOP.
+  //
+  // ONE derivation, read by BOTH `leave` and `drift`, which is why it is a
+  // function and not two literals. `pace` multiplies thiefWalk; `lookAmp` and
+  // `lookRate` are the head swivel on the way. All three come off `hash2(id)`,
+  // which is a PERSON: it is fixed for the life of a body, it is the same
+  // number whether that body is armed this shift or not, and it costs the
+  // seeded stream nothing (see the header's note on rnd() draws).
+  //
+  // Quantised to `exitPaceN` buckets so a pace is shared by several people
+  // rather than being a fingerprint. With 14 bodies and 5 buckets, roughly
+  // three people walk out at any given pace.
+  // ---------------------------------------------------------------------
+  // ONE scratch object, reused, for the same reason `_G` is: this is called once
+  // per body per frame and 25 bodies at 60 Hz is 1,500 allocations a second for
+  // four numbers. Nothing holds a reference across a frame.
+  const _PC = { u: 0, pace: 1, lookAmp: 0, lookRate: 0 };
+  function paceOf(s) {
+    const n = Math.max(2, Math.round(K.paceN));
+    const u = Math.min(n - 1, Math.floor(hash2(s.id + 4801, 0) * n)) / (n - 1);
+    _PC.u = u;
+    _PC.pace = lerp(K.paceLo, K.paceHi, u);
+    _PC.lookAmp = lerp(K.exitLookLo, K.exitLookHi, u);
+    _PC.lookRate = lerp(K.exitLookRateLo, K.exitLookRateHi, u);
+    return _PC;
+  }
+  // THE ASSERTION, in the shape CLAUDE.md names. `drift` and `leave` now share
+  // one code path, so the failure this guards against is not the two of them
+  // disagreeing — it is somebody widening the band so that the top of it stops
+  // being reachable by an innocent body. That is the property the leak actually
+  // violated, so that is what gets checked: over the live roster, the highest
+  // walk-out pace any body can draw must also be drawn by at least two DIFFERENT
+  // bodies, and the band must be non-degenerate.
+  //
+  // It cannot check guilt (guilt is re-rolled every shift and this runs once),
+  // and it should not try to: the point is that the band has no guilt term in
+  // it at all. Returns { ok, why } like lungCheck/paceCheck and is stamped onto
+  // every bench result.
+  function exitCheck() {
+    const why = [];
+    if (!(K.paceHi > K.paceLo)) why.push('walk pace band is degenerate');
+    const buckets = new Map();
+    for (const s of shoppers) {
+      const w = paceOf(s);
+      buckets.set(w.u, (buckets.get(w.u) || 0) + 1);
+    }
+    if (buckets.size) {
+      const top = Math.max(...buckets.keys());
+      if (top < 0.999) why.push('no body can draw the top of the pace band');
+      if ((buckets.get(top) || 0) < 2) why.push(`only ${buckets.get(top) || 0} body draws the top pace — it is a fingerprint`);
+    }
+    return { ok: why.length === 0, why: why.join('; '), buckets: [...buckets.entries()].sort() };
   }
 
   function updatePost(dt) {
@@ -5164,27 +5287,18 @@ export function createAgents(THREE, scene, world) {
   }
 
   function updateShopper(s, dt, api, frozen) {
-    // ---- ROUND 2 (character): THE TROLLEY HAS A SECOND OWNER AND IT IS NOT
-    // ---- IN THIS FILE ------------------------------------------------------
-    // `hasCart` is a property of the PERSON now (figures.js rolls `desc.cart`
-    // once, at construction) and resetShopper() is where it is applied. It is
-    // not the only place it is written: game.js's putBack(), which returns a
-    // resolved body to the floor eighteen seconds later, sets `s.hasCart = true`
-    // and `s.cart.visible = true` unconditionally. Measured on the live page —
-    // seven cartless bodies at boot, ten of them holding a trolley two minutes
-    // in, three of whom had never had one.
-    //
-    // game.js is not this builder's file, so this is the ONE-WAY CLAMP instead:
-    // a body that was not issued a trolley never acquires one, and the
-    // legitimate write in the other direction — the bolt, which lets go of it —
-    // is untouched. It is deliberately not silent about being a repair, because
-    // CLAUDE.md's rule is that one piece of code owns a derivation and everybody
-    // else calls it: the actual fix is one line in game.js putBack(),
-    //     s.hasCart = s.rig.desc.cart !== false; s.cart.visible = s.hasCart;
-    // and this clamp comes out the round that lands.
-    if (s.hasCart && s.rig.desc && s.rig.desc.cart === false) {
-      s.hasCart = false; s.cart.visible = false;
-    }
+    // ---- THE TROLLEY CLAMP IS GONE, BECAUSE THE REAL FIX LANDED ------------
+    // Last round this function opened with a per-frame repair:
+    //     if (s.hasCart && s.rig.desc.cart === false) { s.hasCart = false; ... }
+    // because game.js's putBack() handed a trolley to every body it returned to
+    // the floor, including the seven who were never issued one. That fix has
+    // landed on the owning side — game.js:3253 now reads
+    //     s.hasCart = s.rig?.desc?.cart !== false;
+    // which is the same derivation with one owner — so the clamp comes out, as
+    // its own note said it would. Verified on the live page: 7 cartless bodies
+    // at boot and 7 after 150 s, 0 mismatched against `desc.cart`, with the
+    // clamp removed. `desc.cart` is rolled in figures.js at construction, so it
+    // is a person and not a shift.
     if (s.escaped || s.caught) { animateShopper(s, dt, 0); return; }
     if (frozen) { s.vel.multiplyScalar(Math.exp(-6 * dt)); animateShopper(s, dt, 0); return; }
 
@@ -5494,8 +5608,28 @@ export function createAgents(THREE, scene, world) {
       if (s.angry > 0) { s.angry -= dt; if (s.angry <= 0) s.bang.visible = false; }
     }
 
-    let target = K.thiefWalk;
+    // ONE walking speed, and it is a PERSON. Every state below that walks reads
+    // this and nothing else — see K.paceLo. `bolt`, `react` and `shove` set
+    // their own and are exempt on the same grounds as the start ramp: they are
+    // the three states the chase is measured in and a bolt is already a
+    // confession.
+    const PACE = paceOf(s);
+    let target = K.thiefWalk * PACE.pace;
     let dir = null;
+
+    // ROUND 2 (character) — A HEAD DOES NOT STAY COCKED, AND THIS WAS THE SAME
+    // LEAK ONE CHANNEL OVER. `s.look` is AUTHORED every frame by the four states
+    // that use it and was never CLEARED by the three that do not, so it latched:
+    // a body that turned back out of `drift` carried its last swivel — up to
+    // 0.50 rad, 29 degrees — into `walk` and held it there, frozen, for the rest
+    // of its shift. Only a body that has concealed something can make that
+    // transition, so a permanently cocked head was a guilt tell with no decay at
+    // all, and it survived every measurement because `look` was only ever read
+    // one frame at a time. Zeroed on the three states that never write it; the
+    // neck lerps at ed(8) downstream, so it reads as him facing front again
+    // rather than as a snap. `react` and `conceal` are left alone: both write it
+    // themselves, every frame, on purpose.
+    if (s.state === 'walk' || s.state === 'browse' || s.state === 'putback') s.look = 0;
 
     switch (s.state) {
       case 'walk': {
@@ -5550,32 +5684,89 @@ export function createAgents(THREE, scene, world) {
         }
         break;
       }
-      // A customer who is done shopping, walking at the same door on the same
-      // field with the same gait. He is not evidence of anything.
-      case 'leave': {
-        dir = navToExit(s, false, dt);
-        target = K.thiefWalk * 1.06;
-        s.look = Math.sin(s.phase * 0.55) * 0.32;
-        if (atExit(s) >= 0) { startShove(s); break; }
-        break;
-      }
+      // =====================================================================
+      // ROUND 2 (character) — ONE WALK TO THE ONE DOOR, AND IT IS THE SAME
+      // WALK. THIS WAS THE WORST BUG IN THE PROJECT AND IT WAS TWO CONSTANTS.
+      // =====================================================================
+      // `leave` and `drift` are the same body doing the same thing — heading
+      // for the only exit on the same field, at the same gait, past the same
+      // people. The only difference that has ever mattered is behavioural: a
+      // drifter turns back rather than walk into a posted uniform, and a
+      // leaver has nothing to turn back from. Everything else about them was
+      // written out twice, and the two copies drifted:
+      //
+      //     leave   K.thiefWalk * 1.06   look sin(phase*0.55) * 0.32
+      //     drift   K.thiefWalk * 1.12   look sin(phase*0.80) * 0.50
+      //
+      // `drift` is the one state that only a body which has already concealed
+      // something can enter. So both of those numbers were GUILT, published on
+      // the two channels a player watches hardest. Measured over 150 s of live
+      // sim at difficulty 1, excluding bolt/react/shove:
+      //
+      //                       max speed   % of body-time > 1.33 m/s
+      //       guilty            1.400 m/s          49.6%
+      //       innocent          1.250 m/s           0.0%
+      //                       max |head yaw|   % above the innocent ceiling
+      //       guilty            0.500 rad          29.7%
+      //       innocent          0.320 rad           0.0%
+      //
+      // Zero false positives across 30 minutes of innocent walking. That is not
+      // a likelihood ratio, it is a perfect classifier, and it fires for half of
+      // the thief's pre-bolt life in runs of up to 13.6 s. Every ambiguity
+      // number in this file is measured against a design whose premise is that
+      // you cannot tell; a player who notices "the fast one is the thief" has
+      // beaten all of it without watching a single gesture.
+      //
+      // THE FILE ALREADY STATED THE RULE THIS BROKE. The guard on `huff`, forty
+      // lines below, reads "a guilty shrugger who bolts later must not be
+      // quietly 18% faster for it." That guard went on the huff and not on the
+      // state only a thief can be in.
+      //
+      // THE FIX IS NOT A NUMBER, IT IS THE DUPLICATION — AND COLLAPSING `drift`
+      // ONTO `leave` WAS MEASURED AND WAS NOT ENOUGH. Shipping that first cut
+      // killed the per-frame classifier outright (max speeds overlapped, 0.0% of
+      // guilty body-time above the innocent ceiling) and left a rate: 23.6% of
+      // guilty body-time over 1.33 m/s against 2.5% of innocent, LR 9.6. The
+      // residue was never the two constants. It was that BOTH door states were
+      // faster than the ordinary walk while a thief spends 48% of his pre-bolt
+      // life in one of them and an honest shopper 14%. Speed was reporting the
+      // STATE, and the state mix is guilt.
+      //
+      // So the door bump is gone entirely. There is now ONE walking speed in
+      // this file, it is a PERSON — see K.paceLo — and every state that walks
+      // reads it, so a body's speed cannot tell you what it is doing, let alone
+      // why. `PACE` is taken once at the top of this function; this branch does
+      // not touch `target` at all, which is the point: there is no door
+      // multiplier left for a tuning pass to get wrong.
+      //
+      // The head is the same argument on the other channel. `lookAmp`/`lookRate`
+      // are also the person's, spanning the union of the two old pairs, and the
+      // three door-adjacent states that never authored `look` now clear it —
+      // see the note above the switch, because a latched head was the same leak
+      // with no decay at all.
+      case 'leave':
       case 'drift': {
         // ROUND 6 — HE DOES NOT WALK INTO A UNIFORM STOOD ON THE ONLY DOOR.
         // He turns back into the shelf runs and waits. See the `walk` branch of
         // the guilty timeline above for the other half, and dumpGoods() for
-        // what happens if you never move.
-        if (heldOff(s) && toExit(s.position.x, s.position.z) < K.deterSight) {
-          s.state = 'walk'; s.timer = rr(2.5, 6.0); s.path = [];
-          // Back INTO the store, not to a random point that might be the aisle
-          // the cop is standing at the end of. He is going somewhere to wait.
-          s.target = { x: aisleX(ri(0, AISLE_COUNT - 1)) + rr(-1.0, 1.0), z: rr(0.5, HALF_LEN - 2) };
+        // what happens if you never move. This is the ONE thing that differs
+        // between the two states, and a body in `leave` has nothing to turn
+        // back from — he is not carrying anything he should not be.
+        if (s.state === 'drift' && heldOff(s)
+            && toExit(s.position.x, s.position.z) < K.deterSight) {
+          // ...and it goes through turnBack(), which is where this decision
+          // already lived. The two were hand-copied and had ALREADY diverged —
+          // the inline one never cleared `aim`/`aimT`, so a thief who turned
+          // back kept staring at whatever the last clip pointed him at. Same
+          // rnd() draws in the same order, so the seeded stream is unmoved.
+          turnBack(s);
           s.stall += dt;
-          s.gestIn = Math.min(s.gestIn, rr(0.4, 2.5));   // look busy
           break;
         }
         dir = navToExit(s, false, dt);
-        target = K.thiefWalk * 1.12;
-        s.look = Math.sin(s.phase * 0.8) * 0.5;
+        // ...and it is the SAME `target` the aisles use, untouched. There is no
+        // door multiplier left to get wrong.
+        s.look = Math.sin(s.phase * PACE.lookRate) * PACE.lookAmp;
         if (atExit(s) >= 0) { startShove(s); break; }
         break;
       }
@@ -5957,7 +6148,10 @@ export function createAgents(THREE, scene, world) {
     // of how far a leg goes: half a step over a leg length is the sine of the
     // hip angle, which is the same quantity gait.js solves.
     const amp = clamp(Math.asin(clamp(step * 0.5 / L, 0, 0.94)) * P.amp, 0.02, 0.75);
-    if (!r.feetOk && r.feetOk !== false) attachFeet(r);
+    // THREE goes in because the knee split needs constructors — see attachFeet.
+    // Without it the rig falls back to round 12's telescoping leg rather than
+    // throwing, which is the same degradation path the shoe search already had.
+    if (!r.feetOk && r.feetOk !== false) attachFeet(r, THREE);
     solveGait(_G, {
       phase: s.phase, speed: s.speed, L, step: step * gz,
       duty: dutyOf(s.speed, heavy),
@@ -5972,6 +6166,12 @@ export function createAgents(THREE, scene, world) {
       lift: K.gaitLift * (heavy ? K.gaitLiftHeavy : 1) * clamp(P.bounce, 0.65, 1.35) * gz,
       flex: K.gaitFlex * (heavy ? K.gaitFlexHeavy : 1) * gz,
       feet: !!r.feetOk,
+      // ROUND 2 (character) — the shoe's own box, so the solve can put the hip
+      // where the FOOT holds it rather than where a rigid rod would. This is
+      // what took the roster's hip bob from 17-87 mm to a real band; see the
+      // note over hipOf() in gait.js. Measured once at attach, null if the
+      // shoes were not found, and the solve falls back without it.
+      foot: r.footGeom,
     });
     // Straight through, NOT scaled — see `gz` above. A stopped body stands
     // still because its step went to zero, which is the same reason its hip
@@ -8057,6 +8257,10 @@ export function createAgents(THREE, scene, world) {
       // inverted or the bot's model has fallen outside it, and every speed
       // number on this object is describing a different game. See paceCheck().
       paceBroken: paceCheck().ok ? null : paceCheck(),
+      // ROUND 2 (character). Non-null means the walk-out band has stopped being
+      // a band anybody can draw from, i.e. the guilt leak this round closed has
+      // been reopened by a tuning edit. Same contract as the two above.
+      exitBroken: exitCheck().ok ? null : exitCheck(),
       catchRate: +(caught.length / n * 100).toFixed(1),
       escaped: esc.length, stalled: stall.length,
       // He ditched it rather than walk into you. See onAbort above and dumpT.
@@ -8982,6 +9186,13 @@ export function createAgents(THREE, scene, world) {
     return { cut: row('cut'), chase: row('chase'), camp: row('camp') };
   }
 
+  // Loud at boot, like the lung and the pace. It needs the roster, so it cannot
+  // live in the module-level block those two use.
+  {
+    const E = exitCheck();
+    if (!E.ok && typeof console !== 'undefined') console.warn('[agents] exit band', E);
+  }
+
   return {
     cop, shoppers, powerups, reset,
     update: tick,
@@ -9089,7 +9300,7 @@ export function createAgents(THREE, scene, world) {
     // itself instead of being quoted as the shipped build. Leave it empty.
     // crossBands() is how the back-route metric finds the store's corridors
     // from the nav grid instead of assuming where they are.
-    override: OVR, crossBands, lungCheck, paceCheck,
+    override: OVR, crossBands, lungCheck, paceCheck, exitCheck, paceOf,
     // ROUND 12. gaitCheck() is the walk's lungCheck(): it re-derives the planted
     // foot in world coordinates and fails loudly if it slips. stockWired says
     // whether world.takeFacing was actually found at construction, so a report
