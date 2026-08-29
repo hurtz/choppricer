@@ -227,6 +227,22 @@ export const GESTURES = [
       // arm's receipt. With a 64-degree elbow the hand comes in on its own and
       // the offset shrinks to a token, so the prop ends up where round 5 put it
       // and the hand ends up where the prop is.
+      //
+      // ROUND 6 (character) — AND THESE TWO ARE RIGHT, WITH THE NUMBER.
+      // Round 5 set them from the geometry and checked the result by eye
+      // ("within ~80 mm of the fist"). Measured against the drawn fist and the
+      // drawn shirt on the last frame the box is visible: the box's own surface
+      // is 7 mm INSIDE the coat and its centre is 53 mm from the fist, on a prop
+      // whose half-diagonal is 129. It lands on the body at the frame it
+      // vanishes, which is what a concealment is. Nothing here changed.
+      //
+      // What DID change is underneath: `off` is a rig-local translation from
+      // handRig()'s answer, and handRig() was wrong in two ways (see
+      // figures.js's handRigOf). Before the fix, `prop - handRig` did not equal
+      // `off` at all — it read up to 95 mm in x and 126 mm in z on keyframes
+      // whose `off` is [0, 0, 0] — so any attempt to solve these six numbers
+      // was solving for two other bugs. It equals `off` to the millimetre now,
+      // which is the only condition under which authoring them means anything.
       kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, chest: 0.05, neck: 0.22, elbR: 2.30 }),
       kf(0.22, { vis: 1, armR: -1.92, armRz: -0.20, look: 0.72, neck: 0.10, elbR: 1.86 }),
       kf(0.42, { vis: 1, armR: -2.05, armRz: 0.10, look: -0.55, elbR: 1.54 }),
@@ -239,11 +255,54 @@ export const GESTURES = [
     id: 'concealPocket', tell: 'steal', dur: 1.75, item: SMALL,
     // Low and quick. Never gets above the sternum, which is why it needs the
     // decoy `restash` to exist — that one is the same move and gives it back.
+    // ROUND 6 (character) — AND IT WAS PUTTING THE ITEM IN MID-AIR.
+    // Measured rather than looked at, with the prop against the nearest vertex
+    // of the trunk loft (shots/_probe_fig_r6.js, propFit): on the last frame the
+    // item is VISIBLE, the box's own surface was 114 mm clear of his hip, and
+    // the hand was 229 mm in front of the shirt. It disappeared into nothing,
+    // half a hand's width off the body, on the clip that IS the game.
+    //
+    // NO VALUE OF `off` FIXES THAT, and that is the useful half of the finding.
+    // `off` translates the prop away from the hand; pulling it 114 mm further
+    // back puts it outside the fist (the SMALL prop's half-diagonal is 84 mm)
+    // and trades a floating box for a box beside a hand. The hand has to come to
+    // the hip, so the SHOULDER moved and `off` stayed small:
+    //
+    //   armR at the two stash keys   -0.72 / -0.58  ->  -0.55 / -0.40
+    //   elbR                          1.36 / 1.24   ->   1.32 / 1.20
+    //   off.z                        -0.03 / -0.04  ->  -0.02 / -0.03
+    //
+    // Swept, at the deepest beat, gap between the box's own surface and the
+    // shirt (negative = pressed in), with `off.z` held at the shipped values:
+    //   armR -0.72/-0.58   +76 mm      grip 43 mm     <- what shipped
+    //        -0.62/-0.48   +41         grip 43
+    //        -0.55/-0.40   +12         grip 45
+    //        -0.48/-0.34   -12         grip 45
+    //        -0.44/-0.30   -27         grip 45
+    // then `off.z` swept on top of armR -0.55/-0.40, at 61 samples per clip
+    // rather than 21 — the coarse grid missed the deepest frame entirely and
+    // read -2 mm where the beat is really -42:
+    //   off.z -0.040/-0.060   pocket -42   restash -33   grip 44-45
+    //         -0.030/-0.045   pocket -27   restash -18   grip 42-44
+    //         -0.025/-0.035   pocket -18   restash  -9   grip 43-45
+    //         -0.020/-0.030   pocket -13   restash  -4   grip 46      <- taken
+    //         -0.015/-0.020   pocket  -3   restash  +6   grip 51
+    // Taken because it is the row where BOTH clips are in contact and neither
+    // is through — `conceal`, which needed no change at all, sits at -7 — and
+    // because the pair stays matched to 9 mm, which is what keeps the steal and
+    // its decoy the same move. Chosen for the smallest arm change that lands ON
+    // the body rather than through it, with the prop still well inside the fist
+    // (the SMALL prop's half-diagonal is 84 mm against a 46 mm grip).
+    //
+    // THE DECOY GETS THE IDENTICAL TREATMENT, in the same commit, for the
+    // reason at the top of this file: `restash` is this move given back, and a
+    // steal whose arm was tuned while its decoy's was not is the tell. The two
+    // still differ by the same small amounts they differed by before.
     keys: [
       kf(0.00, { vis: 1, armR: -1.45, armRz: -0.26, chest: 0.08, neck: 0.26, elbR: 2.28 }),
       kf(0.26, { vis: 1, armR: -1.70, armRz: -0.14, look: -0.62, elbR: 1.82 }),
-      kf(0.52, { vis: 1, armR: -0.72, armRz: 0.46, off: [0.0, 0.0, -0.03], look: 0.50, chest: 0.10, elbR: 1.36 }),
-      kf(0.60, { vis: 0, armR: -0.58, armRz: 0.44, off: [0.0, 0.0, -0.04], look: 0.34, elbR: 1.24 }),
+      kf(0.52, { vis: 1, armR: -0.55, armRz: 0.46, off: [0.0, 0.0, -0.02], look: 0.50, chest: 0.10, elbR: 1.32 }),
+      kf(0.60, { vis: 0, armR: -0.40, armRz: 0.44, off: [0.0, 0.0, -0.03], look: 0.34, elbR: 1.20 }),
       kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, elbR: 2.16 }),
     ],
   },
@@ -385,8 +444,10 @@ export const GESTURES = [
     keys: [
       kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, neck: 0.22, elbR: 2.26 }),
       kf(0.18, { vis: 1, armR: -1.78, armRz: -0.10, look: -0.55, elbR: 1.84 }),
-      kf(0.34, { vis: 1, armR: -0.74, armRz: 0.48, off: [0.0, 0.0, -0.03], chest: 0.10, elbR: 1.34 }),
-      kf(0.40, { vis: 0, armR: -0.60, armRz: 0.44, off: [0.0, 0.0, -0.04], look: 0.40, elbR: 1.22 }),
+      // ROUND 6 — the same two numbers concealPocket moved, moved by the same
+      // amounts. See the note there; the pair is the whole ambiguity argument.
+      kf(0.34, { vis: 1, armR: -0.57, armRz: 0.48, off: [0.0, 0.0, -0.02], chest: 0.10, elbR: 1.30 }),
+      kf(0.40, { vis: 0, armR: -0.42, armRz: 0.44, off: [0.0, 0.0, -0.03], look: 0.40, elbR: 1.18 }),
       kf(0.58, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, elbR: 2.10 }),
       kf(0.66, { vis: 1, armR: -1.04, armRz: 0.18, elbR: 1.70 }),
       kf(0.84, { vis: 1, armR: -1.62, armRz: -0.06, neck: 0.18, elbR: 1.50 }),

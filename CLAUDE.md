@@ -113,6 +113,20 @@ Keep this list; every entry cost a round or a false report.
   "crowd shown". One explicit render is stable to the call.
 - **Wall-clock frame timers**, repeatedly: a 3x spread on an unchanged build, and
   a ranged arm timing *below* its own no-op baseline.
+- **An instrument that can only return its own input.** A probe written to check
+  the hand-offset constants computed `prop − handRig`, which **is** the offset by
+  construction — so it handed back the number that had been typed and could never
+  disagree with it. Measured against the *drawn* fist instead, one concealment's
+  prop sat 143 mm from the hand on a box whose half-diagonal is 129: they did not
+  intersect. Ask what your instrument could possibly say that would surprise you.
+- **A checker that is red before you start.** `handCheck`'s first clause asserted
+  a false proposition and read a constant 12.16 mm red on a correct rig, at every
+  pose, under every injection. A permanently-red check is as useless as a
+  permanently-green one and rots faster, because people learn to ignore it.
+- **`updateMatrixWorld` on a paused page.** Recomposing a pivot pulls its parent's
+  *cached* matrix, and on a paused page every ancestor is a frame stale — a live
+  error probe read a 17.8 m maximum on a build whose true worst was 218 mm. Same
+  disease as hashing geometry on a tab you have been testing in.
 - **An assertion blind to the bug it was written for.** `faceCheck` was written to
   catch buried and occluded face features. It computed
   `frontmost_hit_z − feature_pole_z`, so **anything in front of a feature makes the

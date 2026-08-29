@@ -1369,7 +1369,7 @@ import {
   mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG, KID,
   SKIN, HAIR, CLOTH, PANTS, COP_KNEE_Y, faceCheck, carryCheck,
   faceSelfTest, carrySelfTest, ELB0, ELB_MIN, ELB_HANDLING, elbReach,
-  elbLock, elbLocked,
+  elbLock, elbLocked, handLock, handLocked, handCheck, handSelfTest,
 } from './agents/figures.js';
 // ROUND 6 — the decoy library. Every reach-with-an-object in the store, guilty
 // and innocent, keyframed in ONE table and sampled by ONE function, so the
@@ -7212,7 +7212,41 @@ export function createAgents(THREE, scene, world) {
     return _G;
   }
 
+  // ROUND 6 (character) — THE PROP IS PLACED LAST, ON EVERY EXIT PATH.
+  // animateShopper has an early `return` in the clip branch and another in the
+  // cart branch, so "at the end of the function" is three places, and the next
+  // pose branch somebody writes would be a fourth. A wrapper is one place, and
+  // it cannot be forgotten. See the note at `r.propP` for why the ordering
+  // started mattering this round and not before.
   function animateShopper(s, dt, target) {
+    s.rig.propP = null;
+    animateShopperCore(s, dt, target);
+    settleProp(s, dt);
+  }
+  // Everything the frame does to the trunk is finished by the time this runs,
+  // so handRig() is being asked about the arm that will actually be drawn.
+  function settleProp(s, dt) {
+    const r = s.rig;
+    if (!s.held.visible || !r.propP) return;
+    placeProp(s, r, r.propP);
+    // ...and the box still comes OFF THE SHELF. For 0.28 s after a grasp the
+    // prop is lerped from where the facing actually was — the handle's own
+    // `at`, in world metres, brought back into rig space — toward the solved
+    // hand. Without it the item pops into being at arm's end and the one thing
+    // the client asked for reads as a spawn instead of as a removal.
+    if (s.facing && s.grabT > 0) {
+      s.grabT = Math.max(0, s.grabT - dt);
+      const k = clamp(s.grabT / 0.28, 0, 1);
+      const a = s.facing.at, sc = r.root.scale.x || 1;
+      const dx = a.x - s.position.x, dz = a.z - s.position.z;
+      const cy = Math.cos(-s.visYaw), sy = Math.sin(-s.visYaw);
+      const lx = (dx * cy + dz * sy) / sc, lz = (-dx * sy + dz * cy) / sc;
+      s.held.position.x = lerp(s.held.position.x, lx, k);
+      s.held.position.y = lerp(s.held.position.y, a.y / sc, k);
+      s.held.position.z = lerp(s.held.position.z, lz, k);
+    }
+  }
+  function animateShopperCore(s, dt, target) {
     const r = s.rig;
     const P = r.pose;
     const ed = (k) => 1 - Math.exp(-k * (dt || 0.016));
@@ -7624,7 +7658,19 @@ export function createAgents(THREE, scene, world) {
       // and a short-armed body holds its bottle 40 mm past its own fingertips.
       // The shoulder was already read off the rig for exactly this reason and
       // the length was the half that got left behind.
-      placeProp(s, r, p);
+      // ROUND 6 (character) — DEFERRED, AND THE REASON IS THIS ROUND'S OWN
+      // CHANGE. handRig() now composes the chest and the hips, which is correct
+      // and which makes the prop's position ORDER-DEPENDENT INSIDE THE FRAME
+      // for the first time: everything below this line still writes the trunk —
+      // the turn bank, the lean, the pelvis roll, the walk bob, the foot re-pin,
+      // and the carry clamp's own setElbow — so a prop placed here is placed
+      // against an arm the frame has not finished moving. Measured before it was
+      // moved: prop-minus-handRig read up to 95 mm in x and 126 mm in z on a
+      // clip whose `off` is [0, 0, 0] for those keyframes, i.e. the offsets a
+      // report would have been "solving" were mostly this.
+      // So the clip records WHAT to place and settleProp() does it last. Nothing
+      // about `off` or the clip table changes; one call moves.
+      r.propP = p;
       // ---- ROUND 12: THE GRASP, AND IT IS ONE `if` IN THE WHOLE FILE --------
       // `vis` stepping 0 -> 1 on a REACH clip is the frame the shelf loses the
       // box. Nothing else in this game removes a facing; see takeAt(). The two
@@ -7677,17 +7723,9 @@ export function createAgents(THREE, scene, world) {
         // into rig space — toward the solved hand. Without it the item pops
         // into being at arm's end and the one thing the client asked for reads
         // as a spawn instead of as a removal.
-        if (s.facing && s.grabT > 0) {
-          s.grabT = Math.max(0, s.grabT - dt);
-          const k = clamp(s.grabT / 0.28, 0, 1);
-          const a = s.facing.at, sc = r.root.scale.x || 1;
-          const dx = a.x - s.position.x, dz = a.z - s.position.z;
-          const cy = Math.cos(-s.visYaw), sy = Math.sin(-s.visYaw);
-          const lx = (dx * cy + dz * sy) / sc, lz = (-dx * sy + dz * cy) / sc;
-          s.held.position.x = lerp(s.held.position.x, lx, k);
-          s.held.position.y = lerp(s.held.position.y, a.y / sc, k);
-          s.held.position.z = lerp(s.held.position.z, lz, k);
-        }
+        // ROUND 6 — the lerp itself moved to settleProp with the placement it
+        // has to run AFTER. It was correct here only while placeProp ran on the
+        // line above it.
       }
       r.gestVis = !!p.vis;
       parkCart(s, P, true);
@@ -7947,7 +7985,7 @@ export function createAgents(THREE, scene, world) {
       _P.armR = r.armR.rotation.x; _P.armRz = r.armR.rotation.z;
       _P.off[0] = 0; _P.off[1] = 0; _P.off[2] = 0;
       _P.item = ONE3;
-      placeProp(s, r, _P);
+      r.propP = _P;                       // ROUND 6 — see settleProp()
     } else if (!s.gest) {
       s.held.visible = false;
     }
@@ -8155,6 +8193,22 @@ export function createAgents(THREE, scene, world) {
       k.legR.rotation.x = -0.22 - kick * 0.19;
       k.armL.rotation.x = -0.55 + sway * 0.18; k.armL.rotation.z = 0.30;
       k.armR.rotation.x = -0.52 - sway * 0.18; k.armR.rotation.z = -0.30;
+      // ROUND 6 (character) — AND THE ELBOWS, WHICH THIS RIG HAS HAD SINCE
+      // ROUND 5 WITH NOTHING DRIVING THEM. Round 5's own closing note: "the
+      // child rig has the joint and nothing drives it ... every kid still
+      // renders at ELB0". So four children and seven staff were the only bodies
+      // left in the building with a straight arm, next to fourteen shoppers and
+      // a cop whose arms bend — which is worse than before the joint landed,
+      // because the contrast is what the eye finds.
+      //
+      // A child in a cart seat has both hands ON THE BASKET RIM, which is at
+      // its own chest height, so the arms come forward and the elbows sit near
+      // a right angle. `sway` opens and closes them a little as the cart rocks:
+      // the arms are what stops a seated child reading as a doll strapped to a
+      // trolley. EL.cartBar/EL.read are agents.js's own vocabulary and this
+      // reads out of it rather than inventing a third set of numbers.
+      k.setElbow(1, EL.read + sway * 0.14);
+      k.setElbow(-1, EL.read - sway * 0.14);
       // The parent is behind the cart in cart-local -Z, i.e. straight ahead of a
       // child that was seated facing backwards. If the cart has been let go of,
       // he twists to find them.
@@ -8223,6 +8277,35 @@ export function createAgents(THREE, scene, world) {
     k.armL.rotation.x = -sw * amp * 0.95 * k.spec.swing;
     k.armR.rotation.x = sw * amp * 0.95 * k.spec.swing;
     k.armL.rotation.z = 0.13 + g * 0.10; k.armR.rotation.z = -0.13 - g * 0.10;
+    // ROUND 6 — THE WALKING ELBOW, AND A CHILD'S IS NOT AN ADULT'S. An adult
+    // walks at EL.walk (134 deg) and runs at EL.run (87). A child's arms are
+    // shorter and their cadence is nearly double at the same ground speed (see
+    // the note above this block), and what that looks like is a MUCH more bent
+    // arm at any given pace — a scurrying four-year-old carries its forearms up
+    // near horizontal. So the same two anchors, pulled 20 degrees closed:
+    // 115 deg standing, 70 at a flat sprint, interpolated on `g`, which is the
+    // same 0..1 speed ramp the lean and the arm splay already ride.
+    //
+    // ...and the swing MODULATES it rather than replacing it: the arm going
+    // forward bends further and the one going back opens, which is what a bent
+    // arm does when it swings and is the one thing that reads at 20 px, because
+    // it changes the OUTLINE of the arm rather than its angle.
+    //
+    // BOUNDED BY CONSTRUCTION, and the first cut was not. It subtracted
+    // `0.30 * spec.swing` from the carriage angle, and `swing` rolls to 1.7, so
+    // the deepest bodies in the roster reached a DRAWN 39.9 degrees at a
+    // sprint — a forearm folded onto its own bicep, well past the 60 the
+    // reference band bottoms out at and past anything a running child does.
+    // A Math.max floor would have fixed the number and left the same trap for
+    // the next person to widen `swing` (see CLAUDE.md on bargeDump, whose
+    // Math.max never fired). So the swing LERPS BETWEEN TWO CARRIAGES instead:
+    // the personality scales how far along that lerp a body gets, and the floor
+    // is one of the two endpoints rather than a clamp bolted on afterwards.
+    const kelHi = lerp(2.00, 1.22, g);      // carriage at the back of the swing
+    const kelLo = lerp(1.72, 1.05, g);      // ...and at the front of it
+    const kw = clamp(k.spec.swing / 1.7, 0.4, 1);
+    k.setElbow(1, lerp(kelHi, kelLo, Math.max(0, -sw) * kw));
+    k.setElbow(-1, lerp(kelHi, kelLo, Math.max(0, sw) * kw));
     k.hips.rotation.y = sw * 0.075 * g;
     k.hips.rotation.z = sw * 0.045 * g;
     k.hips.position.y = k.hipY + (Math.abs(sw) - 0.5) * 0.030 * g;
@@ -8234,6 +8317,14 @@ export function createAgents(THREE, scene, world) {
       k.neck.rotation.y = k.spec.side * 0.55;
       k.armL.rotation.x = -0.18; k.armR.rotation.x = -0.16;
       k.hips.rotation.x = 0.04;
+      // ROUND 6 — a child stopped dead in front of something is not standing to
+      // attention. The arms hang, but a small child's hanging arm is bent: the
+      // resting carrying angle at this age is nearer 150 than an adult's 154 and
+      // it closes the moment they start fiddling with something, which is what
+      // this state is. `phase` gives each one its own slow drift so four
+      // planted children are not one pose four times.
+      const idle = 2.34 + Math.sin(k.t * 0.7 + k.spec.phase) * 0.22;
+      k.setElbow(1, idle); k.setElbow(-1, idle - 0.10);
     } else {
       k.neck.rotation.x = -0.06 + g * 0.10;
       k.neck.rotation.y = Math.sin(k.t * 0.8 + k.spec.phase) * 0.34;
@@ -10576,6 +10667,16 @@ export function createAgents(THREE, scene, world) {
     // broken, not that the geometry is.
     faceSelfTest: () => faceSelfTest(THREE, F),
     carrySelfTest: () => carrySelfTest(F),
+    // ROUND 6 (character) — the third one, and it is the CLAUDE.md rule applied
+    // to this round's own change: handRig() composes by hand what three.js
+    // composes to draw the arm, so the two are made to disagree out loud.
+    //   handCheck      is handRig() the hand the renderer draws, at the
+    //                  fingertip AND out along the fingers, over five shoulder
+    //                  poses on three rolled bodies?
+    //   handSelfTest   every input its docstring names, including round 5's own
+    //                  handRigOf through handLock(true).
+    handCheck: (inj) => handCheck(THREE, F, inj),
+    handSelfTest: () => handSelfTest(THREE, F),
     // The elbow, exposed so a probe can measure the distribution across
     // gestures without reaching into figures.js.
     // `lock(true)` pins every joint in the game at ELB0 — the build before this
@@ -10583,6 +10684,12 @@ export function createAgents(THREE, scene, world) {
     // for every number in the round report and it must be left off.
     elbow: { ELB0, ELB_MIN, band: ELB_HANDLING, reach: elbReach,
       lock: elbLock, get locked() { return elbLocked(); } },
+    // ROUND 6 (character) — the same shape of dial for the hand solve.
+    // `lock(true)` restores round 5's handRigOf: the fudge past the fingertip
+    // rides the humerus again, hipY goes back to a constant, and the chest and
+    // the hips leave the answer. It is the control for every hand, prop and
+    // grasp number in this round's report and it must be left off.
+    hand: { lock: handLock, get locked() { return handLocked(); } },
     // How often a grasp actually finds something, and how far away it was. A
     // miss is ordinary — pallet stacks and cart loads are not takeable and the
     // search will not reach THROUGH a fixture — but a hit rate that collapsed

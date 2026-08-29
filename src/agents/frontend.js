@@ -146,6 +146,46 @@ const swing = (u) => ease(u < 0.5 ? u * 2 : (1 - u) * 2);
 // A future round that wants a cashier to hand something to a shopper should be
 // able to move a number from one file to the other and have it mean the same
 // thing.
+//
+// ===========================================================================
+// ROUND 6 (character) — AND THE ELBOW, WHICH IS THE WHOLE POINT OF THESE SEVEN
+// ===========================================================================
+// figures.js grew a real joint in round 5 and agents.js drove it on fourteen
+// shoppers and the cop. It did not reach here or the children, and round 5 said
+// so in its own close-out: "the child rig has the joint and nothing drives it
+// ... same for the front-end staff." So eleven bodies were left rendering at
+// ELB0 — 154.2 degrees, a straight arm — standing next to fifteen whose arms
+// bend. That is worse than before the joint existed, because a difference is
+// what the eye finds and a uniform stiffness is not.
+//
+// THESE SEVEN MATTER MORE THAN THEIR NUMBER SUGGESTS: they are the only people
+// in the game the player ever sees STANDING STILL AND DOING A JOB. Everybody
+// else is walking, and a walking arm can get away with being nearly straight.
+// A cashier's cannot — the reference set is unusually good on exactly this
+// posture, and unanimous:
+//
+//   ppl_00  the standing cashier in blue works with her forearms UP, the near
+//           one folded to somewhere around a right angle over the belt, and the
+//           second cashier at the register has both arms in about the same
+//           place on the keys.
+//   ppl_01  the seated cashier in orange, both forearms up over the counter,
+//           the working arm around 100 degrees and the other closer still.
+//   ppl_06  the child pushing the basket wagon is the counter-example and it is
+//           in here on purpose: HIS arms are nearly straight, because he is
+//           braced against something heavier than he is and his trunk is behind
+//           it. A round that bends every elbow it can find would have got that
+//           one backwards. Straight is right when a body is PUSHING.
+//
+// (Angles read off 2D photographs with foreshortening in them: the BAND is the
+// claim — everybody handling goods sits inside ELB_HANDLING's 60-110 — and no
+// single degree here is defended.)
+//
+// So every pose below authors both elbows, in the same units decoy.js uses:
+// interior angle in radians, smaller is more bent. The numbers are named
+// against agents.js's EL table where one fits, rather than being a third
+// private vocabulary. The numbers are NOT imported: this file's whole
+// construction argument is that it shares no mutable state with agents.js, and
+// a table of constants would be the first thread across. They are quoted.
 
 // SCANNING. The single most important animation in this file, because it is the
 // one the client asked for by name and the only one with a period short enough
@@ -168,10 +208,17 @@ function poseScan(r, p) {
   const lift = swing(clamp((u - 0.10) / 0.80, 0, 1));
   r.armR.rotation.x = -1.28 - lift * 0.34;
   r.armR.rotation.z = lerp(-0.62, 0.52, across);
+  // ROUND 6 — the working elbow, and it is the read. Out at the belt the arm is
+  // most open (100 deg); across the scanner and down into the bag well it folds
+  // to 74, which is where both reference cashiers sit. `lift` closes it a
+  // little further at the top of the arc, because you bring an item IN to pass
+  // it over the window rather than swinging it round on a straight arm.
+  r.setElbow(-1, lerp(1.75, 1.30, across) - lift * 0.10);
   // The left hand hovers at the belt, steadying the next item, and dips as the
   // right one comes back for it.
   r.armL.rotation.x = -1.05 - (1 - across) * 0.30;
   r.armL.rotation.z = 0.30 + (1 - across) * 0.16;
+  r.setElbow(1, lerp(1.44, 1.62, across));
   // Head follows the hand, but lags it — you look at the scanner, not at your
   // own arm — so the neck yaw uses `across` at 0.7 amplitude and a beat late.
   r.neck.rotation.y = lerp(0.34, -0.26, ease(clamp((u - 0.34) / 0.50, 0, 1)));
@@ -193,6 +240,12 @@ function posePay(r, p) {
   r.armR.rotation.z = lerp(-0.62, -0.10, k);
   r.armL.rotation.x = lerp(-1.05, -1.34, k);
   r.armL.rotation.z = lerp(0.30, 0.20, k);
+  // Hands off the belt and onto the keypad: both elbows come in and stay there
+  // for the length of the beat. This is the most closed either arm gets in the
+  // file and it is correct — a hand on a register keyboard is a hand held at
+  // the sternum. EL.read is 1.46 on the adults; the working arm goes past it.
+  r.setElbow(-1, lerp(1.75, 1.34, k));
+  r.setElbow(1, lerp(1.44, 1.40, k));
   // ...and he says something. A slow nod at 0.9 Hz, which at this distance is
   // "talking" and at any distance is not a machine.
   const nod = Math.sin(p * TAU * 2.4) * 0.06 * k;
@@ -222,6 +275,15 @@ function poseUnload(r, p) {
   r.armR.rotation.z = lerp(-0.36, 0.08, out);
   r.armL.rotation.x = lerp(-0.70, -1.10, out * 0.6) - dip * 0.30;
   r.armL.rotation.z = 0.28;
+  // ROUND 6 — AND THIS IS THE ONE THAT STAYS OPEN, which is why the whole file
+  // is not a single constant. Reaching DOWN into a trolley is the one moment at
+  // a checkout where an arm is near full stretch: the dip has him folded at the
+  // waist with the arm extended into the basket (2.28, i.e. 131 deg), and the
+  // elbow only closes as he lifts the item up onto the belt (1.55, 89). It is
+  // the reverse of the cashier's cycle and it is what makes the two bodies in a
+  // lane read as two different jobs rather than as one animation twice.
+  r.setElbow(-1, lerp(2.28, 1.55, out));
+  r.setElbow(1, lerp(2.32, 1.90, out * 0.6));
   r.neck.rotation.x = 0.18 + dip * 0.30 - out * 0.34;
   r.neck.rotation.y = lerp(-0.30, 0.22, out);
   r.chest.rotation.y = lerp(-0.12, 0.10, out);
@@ -237,6 +299,12 @@ function poseWait(r, p) {
   r.armR.rotation.z = lerp(-0.14, 0.06, reach);
   r.armL.rotation.x = -0.80;
   r.armL.rotation.z = 0.20;
+  // Fishing a card out and holding it up: the elbow closes to bring the hand to
+  // the body and then OPENS as the card goes across the counter, which is the
+  // opposite of what an arm-only version of this pose does. The idle arm hangs
+  // at the adults' EL.hang.
+  r.setElbow(-1, lerp(2.30, 1.62, reach));
+  r.setElbow(1, 2.52);
   r.neck.rotation.x = 0.06;
   r.neck.rotation.y = Math.sin(p * TAU * 0.6) * 0.16;
   r.chest.rotation.y = 0;
@@ -252,6 +320,13 @@ function poseBag(r, p) {
   r.armR.rotation.z = lerp(-0.28, 0.30, side);
   r.armL.rotation.x = -1.06 - d * 0.34;
   r.armL.rotation.z = lerp(0.34, -0.10, side);
+  // Both hands working in a bag well below the counter line: forearms down and
+  // in, elbows around 80-90 and closing on the dip, which is the moment the
+  // hands are deepest in the bag. A bagger is the most CLOSED body in the file
+  // and it is the pose the reference shows twice (ppl_00's bagged goods, ppl_01
+  // handing a loaf across).
+  r.setElbow(-1, 1.58 - d * 0.22);
+  r.setElbow(1, 1.50 - d * 0.20);
   r.neck.rotation.x = 0.34 - d * 0.08;
   r.neck.rotation.y = lerp(0.18, -0.20, side);
   r.chest.rotation.y = lerp(0.10, -0.10, side);
@@ -270,6 +345,14 @@ function poseClerk(r, p) {
   r.armR.rotation.z = lerp(-0.16, 0.10, hand);
   r.armL.rotation.x = -1.26 - type * 0.05;
   r.armL.rotation.z = 0.18;
+  // Typing is a folded arm — forearms level with the desk, elbows near a right
+  // angle — and the hand-over EXTENDS one of them across the counter, which is
+  // the only thing at that desk that changes a silhouette. The 6 Hz `type`
+  // wobble goes on the joint as well as the shoulder, at a tenth of the
+  // amplitude: at this distance it is the forearm that is visible and the
+  // upper arm that is not.
+  r.setElbow(-1, lerp(1.46 + type * 0.04, 2.10, hand));
+  r.setElbow(1, 1.42 - type * 0.04);
   r.neck.rotation.x = lerp(0.30, 0.02, hand);
   r.neck.rotation.y = lerp(-0.14, 0.10, hand);
   r.chest.rotation.y = hand * 0.10;
@@ -293,6 +376,16 @@ function poseQueue(r, p) {
   r.armR.rotation.z = -0.16 + r.rest.splayR;
   r.armL.rotation.x = -0.94 - shift * 0.05;
   r.armL.rotation.z = 0.16 + r.rest.splayL;
+  // ROUND 6 — the dullest elbow in the file, and PER BODY. Standing in a queue
+  // is a hanging arm (EL.hang, 150 deg), but seven hanging arms at one number
+  // is the identical clone tell this function's own note describes for the
+  // weight shift — and it is worse on the elbow, because a queue is the one
+  // place several of these bodies are in frame at once. `b.elbRest` is rolled
+  // once, off THIS FILE's private generator, so the variety costs agents.js no
+  // draw. The shift opens and closes them a few degrees out of phase with each
+  // other, which is what a bored body does.
+  r.setElbow(-1, r.feElbRest + shift * 0.10);
+  r.setElbow(1, r.feElbRest - 0.06 - shift * 0.08);
   r.neck.rotation.y = look * 0.40;
   r.neck.rotation.x = 0.06 - Math.max(0, look) * 0.10;
 }
@@ -388,6 +481,16 @@ export function makeFrontEnd(THREE, scene, F, world, opt = {}) {
     // rather than being rolled away, which would move this stream instead.
     person.kid = null;
     const rig = makePerson(THREE, F, person);
+    // ROUND 6 — a resting elbow per body, rolled HERE. `rest` in figures.js
+    // carries this body's hip roll and arm splay and is rolled inside
+    // rollPerson, i.e. on whichever stream rolled the person; adding a field to
+    // it would have taken a draw off agents.js's shared seeded generator for
+    // every shopper in the store, and CLAUDE.md records that a single extra
+    // draw moved a published likelihood ratio from 1.95 to 2.33. So it is one
+    // more number off the private LCG, on the rig, written once.
+    // 2.44-2.62 rad is 140-150 degrees: a hanging arm, with the spread real
+    // people have and this file did not.
+    rig.feElbRest = rng.rr(2.44, 2.62);
     rig.root.position.set(anchor.x, 0, anchor.z);
     const f = anchor.face || [0, 1];
     rig.root.rotation.y = Math.atan2(f[0], f[1]);
