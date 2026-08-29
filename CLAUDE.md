@@ -173,6 +173,25 @@ Keep this list; every entry cost a round or a false report.
   directions at n=2 guilty bodies (`gMean` 1.000 then 0.455; at n=5 it was 0.498
   vs 0.500). Publish a census of who was armed alongside any population claim.
 
+## A check that refuses is not a check that failed
+
+`plantCheck`, `copCheck` and `faceCheck` all read **false at boot**, and they are
+right to. Nothing has walked yet, `attachFeet` runs lazily inside `poseWalk`, and
+a rig that has never moved has no sample. They return prose saying so — *"nothing
+scaled has walked yet... walk the crowd before believing this row"* — rather than
+returning green on an empty set, which is the behaviour the instrument list above
+demands.
+
+The lead misread this **four separate times in one session** — `copCheck` on a
+stationary cop, `kneeOk` before the rig built, `plantCheck` twice — and each time
+briefly believed a working thing was broken. Two rules:
+
+- **Drive the sim before reading any check.** `C.run(10, {keys:['KeyW']})` first,
+  or walk the cop, or run a bench. A boot-time reading means nothing.
+- **Read the `bad` array, never just `ok`.** These checks explain themselves.
+  A false with prose in it is a refusal; a false with a measurement in it is a
+  failure. They are not the same result and they need different responses.
+
 ## Guilt must not be readable, and it keeps becoming readable
 
 The premise is that you cannot tell a thief from a shopper without watching what
