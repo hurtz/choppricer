@@ -109,6 +109,23 @@ export const POSE = {
   vis: 0,
   armR: -0.95, armRz: -0.16,  // the cart-bar pose is the rest state in this store
   armL: -0.95, armLz: 0.16,
+  // ROUND 5 (character) — THE ELBOW, IN RADIANS OF INTERIOR ANGLE. Smaller is
+  // more bent. `null` means "leave it where the animator's own default put it",
+  // which is what every clip that has not been authored for the joint gets, and
+  // is why adding this channel moved nothing until a key mentioned it.
+  //
+  // WHAT THE NUMBERS MEAN, off reference/people rather than off a guess: every
+  // person in that set who is HANDLING GOODS is between 60 and 110 degrees —
+  // both women in ppl_09 hold cartons at sternum height around 70-90, ppl_06
+  // about 95, ppl_00's cashier about 90, ppl_01's man with the bag about 90.
+  // The game shipped ONE value, 2.692 rad (154.2 deg), on every arm always.
+  //   2.69  straight-ish, and it is the bake — a reach at full stretch
+  //   2.36  135, a relaxed arm on a cart bar
+  //   1.92  110, the top of the reference band
+  //   1.57  90,  a carton held at the sternum; a basket at the hip
+  //   1.22  70,  something brought in against the chest
+  //   1.05  60,  the bottom of the reference band; a hand at the collar
+  elbR: null, elbL: null,
   chest: 0.0,                 // pitch ADDED to the rig's own stoop
   neck: 0.0,                  // pitch: + is looking down
   look: 0.0,                  // yaw: the shoulder check
@@ -174,10 +191,17 @@ const kf = (u, o) => ({ u, ...o });
 // He is at the shelf with his chin down (neck +0.20), the head comes up and off
 // (neck -0.12) with a check over the right shoulder at 0.22, and a longer one
 // the other way at 0.50 with the body starting to come round with it.
+// ROUND 5 (character) — AND THE ELBOW IS IN HERE, WHICH IS THE POINT OF HERE.
+// A new pose channel is a new place for guilt to leak, and the guarantee that
+// stops it is that the first half-second of every reaction in this game is ONE
+// set of keyframes. Authoring the joint anywhere else in the eleven clips that
+// share this would have given a startle a different elbow from a shrug on frame
+// one, which is a free probe: keyed the handset, watched 0.85 s of footage,
+// read the answer off the forearm.
 const heard = (dur) => [
-  kf(0.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, neck: 0.20 }),
-  kf(0.22 / dur, { vis: 0, armR: -0.92, armL: -0.93, neck: -0.12, look: 0.60 }),
-  kf(0.50 / dur, { vis: 0, armR: -0.90, armL: -0.91, neck: -0.10, look: -0.66, turn: -0.26 }),
+  kf(0.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, neck: 0.20, elbR: 2.16, elbL: 2.16 }),
+  kf(0.22 / dur, { vis: 0, armR: -0.92, armL: -0.93, neck: -0.12, look: 0.60, elbR: 2.10, elbL: 2.10 }),
+  kf(0.50 / dur, { vis: 0, armR: -0.90, armL: -0.91, neck: -0.10, look: -0.66, turn: -0.26, elbR: 2.06, elbL: 2.06 }),
 ];
 export const GESTURES = [
   // =========================================================================
@@ -192,12 +216,23 @@ export const GESTURES = [
     // the same beats. The brief was explicit that the thief's tell must not get
     // louder to pay for the decoys, so it did not.
     keys: [
-      kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, chest: 0.05, neck: 0.22 }),
-      kf(0.22, { vis: 1, armR: -1.92, armRz: -0.20, look: 0.72, neck: 0.10 }),
-      kf(0.42, { vis: 1, armR: -2.05, armRz: 0.10, look: -0.55 }),
-      kf(0.60, { vis: 1, armR: -1.55, armRz: 0.88, off: [0.0, -0.02, -0.24], look: 0.30 }),
-      kf(0.66, { vis: 0, armR: -1.45, armRz: 0.95, off: [0.0, -0.02, -0.26], look: 0.45 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
+      // ROUND 5 (character) — THE ELBOW, AND `off` PAID FOR IT.
+      // The shape is still round 5's and still deliberately unchanged: item off
+      // the lip, up past the sternum, into the coat, gone, hands back on the
+      // bar. What is new is that the hand actually GETS to the coat. It could
+      // not before — the arm was a rigid stick at 154 degrees, so the hand was
+      // always 640 mm from the shoulder and the concealment was staged by
+      // dragging the PROP 240 mm back toward the body with `off.z` while the
+      // fist stayed out in front of the ribs. That offset was the straight
+      // arm's receipt. With a 64-degree elbow the hand comes in on its own and
+      // the offset shrinks to a token, so the prop ends up where round 5 put it
+      // and the hand ends up where the prop is.
+      kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, chest: 0.05, neck: 0.22, elbR: 2.30 }),
+      kf(0.22, { vis: 1, armR: -1.92, armRz: -0.20, look: 0.72, neck: 0.10, elbR: 1.86 }),
+      kf(0.42, { vis: 1, armR: -2.05, armRz: 0.10, look: -0.55, elbR: 1.54 }),
+      kf(0.60, { vis: 1, armR: -1.55, armRz: 0.88, off: [0.0, -0.02, -0.06], look: 0.30, elbR: 1.12 }),
+      kf(0.66, { vis: 0, armR: -1.45, armRz: 0.95, off: [0.0, -0.02, -0.07], look: 0.45, elbR: 1.06 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, elbR: 2.16 }),
     ],
   },
   {
@@ -205,11 +240,11 @@ export const GESTURES = [
     // Low and quick. Never gets above the sternum, which is why it needs the
     // decoy `restash` to exist — that one is the same move and gives it back.
     keys: [
-      kf(0.00, { vis: 1, armR: -1.45, armRz: -0.26, chest: 0.08, neck: 0.26 }),
-      kf(0.26, { vis: 1, armR: -1.70, armRz: -0.14, look: -0.62 }),
-      kf(0.52, { vis: 1, armR: -0.72, armRz: 0.46, off: [0.0, 0.0, -0.10], look: 0.50, chest: 0.10 }),
-      kf(0.60, { vis: 0, armR: -0.58, armRz: 0.44, off: [0.0, 0.0, -0.12], look: 0.34 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
+      kf(0.00, { vis: 1, armR: -1.45, armRz: -0.26, chest: 0.08, neck: 0.26, elbR: 2.28 }),
+      kf(0.26, { vis: 1, armR: -1.70, armRz: -0.14, look: -0.62, elbR: 1.82 }),
+      kf(0.52, { vis: 1, armR: -0.72, armRz: 0.46, off: [0.0, 0.0, -0.03], look: 0.50, chest: 0.10, elbR: 1.36 }),
+      kf(0.60, { vis: 0, armR: -0.58, armRz: 0.44, off: [0.0, 0.0, -0.04], look: 0.34, elbR: 1.24 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, elbR: 2.16 }),
     ],
   },
   {
@@ -217,12 +252,12 @@ export const GESTURES = [
     // Into a tote at the off hip, both hands, with a long turn away from the
     // aisle first. The slowest steal in the file, and slower than four decoys.
     keys: [
-      kf(0.00, { vis: 1, armR: -1.60, armRz: -0.28, neck: 0.20 }),
-      kf(0.18, { vis: 1, armR: -1.86, armRz: -0.12, turn: -0.35, look: 0.60 }),
-      kf(0.40, { vis: 1, armR: -1.55, armRz: 0.46, armL: -1.30, turn: -0.95 }),
-      kf(0.58, { vis: 1, armR: -1.05, armRz: 0.56, armL: -1.35, turn: -1.05, chest: 0.14 }),
-      kf(0.66, { vis: 0, armR: -0.98, armRz: 0.52, armL: -1.10, turn: -0.95 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, turn: 0.0 }),
+      kf(0.00, { vis: 1, armR: -1.60, armRz: -0.28, neck: 0.20, elbR: 2.32 }),
+      kf(0.18, { vis: 1, armR: -1.86, armRz: -0.12, turn: -0.35, look: 0.60, elbR: 1.98 }),
+      kf(0.40, { vis: 1, armR: -1.55, armRz: 0.46, armL: -1.30, turn: -0.95, elbR: 1.38, elbL: 1.34 }),
+      kf(0.58, { vis: 1, armR: -1.05, armRz: 0.56, armL: -1.35, turn: -1.05, chest: 0.14, elbR: 1.16, elbL: 1.28 }),
+      kf(0.66, { vis: 0, armR: -0.98, armRz: 0.52, armL: -1.10, turn: -0.95, elbR: 1.22, elbL: 1.60 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, turn: 0.0, elbR: 2.16, elbL: 2.16 }),
     ],
   },
 
@@ -235,12 +270,12 @@ export const GESTURES = [
   {
     id: 'putback', tell: 'putback', dur: 1.60, item: BOX, puts: 1,
     keys: [
-      kf(0.00, { vis: 0, armR: -1.45, armRz: 0.92, off: [0.0, 0.0, -0.24], look: 0.55 }),
-      kf(0.16, { vis: 1, armR: -1.62, armRz: 0.10, look: -0.40 }),
-      kf(0.52, { vis: 1, armR: -1.80, armRz: -0.30, neck: 0.08 }),
-      kf(0.80, { vis: 1, armR: -1.70, armRz: -0.40, neck: 0.22, chest: 0.10 }),
-      kf(0.86, { vis: 0, armR: -1.55, armRz: -0.38, neck: 0.20 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16 }),
+      kf(0.00, { vis: 0, armR: -1.45, armRz: 0.92, off: [0.0, 0.0, -0.07], look: 0.55, elbR: 1.08 }),
+      kf(0.16, { vis: 1, armR: -1.62, armRz: 0.10, look: -0.40, elbR: 1.56 }),
+      kf(0.52, { vis: 1, armR: -1.80, armRz: -0.30, neck: 0.08, elbR: 2.36 }),
+      kf(0.80, { vis: 1, armR: -1.70, armRz: -0.40, neck: 0.22, chest: 0.10, elbR: 2.46 }),
+      kf(0.86, { vis: 0, armR: -1.55, armRz: -0.38, neck: 0.20, elbR: 2.22 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, elbR: 2.16 }),
     ],
   },
 
@@ -255,13 +290,13 @@ export const GESTURES = [
     // Against `concealPocket` this is the same five frames in the same order.
     id: 'phone', tell: 'decoy', dur: 2.35, item: FLAT,
     keys: [
-      kf(0.00, { vis: 0, armR: -0.80, armRz: 0.10, look: -0.25 }),
-      kf(0.12, { vis: 1, armR: -0.98, armRz: 0.06 }),
-      kf(0.30, { vis: 1, armR: -1.62, armRz: 0.14, neck: 0.30 }),
-      kf(0.52, { vis: 1, armR: -2.10, armRz: 0.30, neck: 0.16, look: 0.30 }),
-      kf(0.72, { vis: 1, armR: -1.02, armRz: 0.14, look: -0.45 }),
-      kf(0.80, { vis: 0, armR: -0.62, armRz: 0.30, off: [0.0, 0.0, -0.08] }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
+      kf(0.00, { vis: 0, armR: -0.80, armRz: 0.10, look: -0.25, elbR: 2.44 }),
+      kf(0.12, { vis: 1, armR: -0.98, armRz: 0.06, elbR: 2.06 }),
+      kf(0.30, { vis: 1, armR: -1.62, armRz: 0.14, neck: 0.30, elbR: 1.54 }),
+      kf(0.52, { vis: 1, armR: -2.10, armRz: 0.30, neck: 0.16, look: 0.30, elbR: 1.30 }),
+      kf(0.72, { vis: 1, armR: -1.02, armRz: 0.14, look: -0.45, elbR: 1.72 }),
+      kf(0.80, { vis: 0, armR: -0.62, armRz: 0.30, off: [0.0, 0.0, -0.02], elbR: 1.34 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, elbR: 2.16 }),
     ],
   },
   {
@@ -270,13 +305,19 @@ export const GESTURES = [
     // object back inside the bag. This is `concealBag` with a different reason.
     id: 'wallet', tell: 'decoy', dur: 2.70, item: SMALL,
     keys: [
-      kf(0.00, { vis: 0, armR: -1.15, armRz: 0.50, armL: -1.25, turn: -0.55, chest: 0.12 }),
-      kf(0.20, { vis: 0, armR: -1.30, armRz: 0.58, armL: -1.35, turn: -0.85, neck: 0.34 }),
-      kf(0.34, { vis: 1, armR: -1.45, armRz: 0.40, armL: -1.20, turn: -0.80, neck: 0.30 }),
-      kf(0.54, { vis: 1, armR: -1.88, armRz: 0.08, turn: -0.40, neck: 0.18, look: 0.50 }),
-      kf(0.74, { vis: 1, armR: -1.22, armRz: 0.48, armL: -1.28, turn: -0.80, neck: 0.32 }),
-      kf(0.82, { vis: 0, armR: -1.10, armRz: 0.54, armL: -1.20, turn: -0.70 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, turn: 0.0 }),
+      // Digging in a back pocket and going through a wallet with both hands is
+      // the most CLOSED thing an innocent does in this store — a wallet is held
+      // 250 mm off the sternum — and it is also, not coincidentally, the decoy
+      // that sits closest to the conceal on every channel anybody has swept.
+      // Authored to that rather than away from it: the concealment has to look
+      // like this, and the elbow is one more axis on which it does.
+      kf(0.00, { vis: 0, armR: -1.15, armRz: 0.50, armL: -1.25, turn: -0.55, chest: 0.12, elbR: 1.42, elbL: 1.50 }),
+      kf(0.20, { vis: 0, armR: -1.30, armRz: 0.58, armL: -1.35, turn: -0.85, neck: 0.34, elbR: 1.20, elbL: 1.32 }),
+      kf(0.34, { vis: 1, armR: -1.45, armRz: 0.40, armL: -1.20, turn: -0.80, neck: 0.30, elbR: 1.28, elbL: 1.36 }),
+      kf(0.54, { vis: 1, armR: -1.88, armRz: 0.08, turn: -0.40, neck: 0.18, look: 0.50, elbR: 1.94, elbL: 1.90 }),
+      kf(0.74, { vis: 1, armR: -1.22, armRz: 0.48, armL: -1.28, turn: -0.80, neck: 0.32, elbR: 1.24, elbL: 1.30 }),
+      kf(0.82, { vis: 0, armR: -1.10, armRz: 0.54, armL: -1.20, turn: -0.70, elbR: 1.16, elbL: 1.26 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, turn: 0.0, elbR: 2.16, elbL: 2.16 }),
     ],
   },
   {
@@ -287,13 +328,19 @@ export const GESTURES = [
     // only if the camera has an angle on his front.
     id: 'label', tell: 'decoy', dur: 2.45, item: BOX,
     keys: [
-      kf(0.00, { vis: 1, armR: -1.62, armRz: -0.34, neck: 0.24, chest: 0.06 }),
-      kf(0.22, { vis: 1, armR: -1.90, armRz: -0.10, turn: -0.50, look: 0.35 }),
-      kf(0.46, { vis: 1, armR: -1.86, armRz: 0.16, turn: -1.10, neck: 0.30 }),
-      kf(0.68, { vis: 1, armR: -1.88, armRz: 0.20, turn: -0.95, neck: 0.28, look: -0.40 }),
-      kf(0.88, { vis: 1, armR: -1.66, armRz: -0.30, turn: -0.20, neck: 0.20 }),
-      kf(0.94, { vis: 0, armR: -1.55, armRz: -0.36 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, turn: 0.0 }),
+      // A LABEL IS READ AT 70-90 DEGREES. Both women in reference/people ppl_09
+      // are holding cartons at sternum height at about that; this clip held one
+      // at 154 for its whole length, which is a man reading a tin at arm's
+      // length because he has forgotten his glasses. It is the single clearest
+      // place in the file where the reference photographs disagreed with the
+      // game and nothing in the rig could express the difference.
+      kf(0.00, { vis: 1, armR: -1.62, armRz: -0.34, neck: 0.24, chest: 0.06, elbR: 1.66 }),
+      kf(0.22, { vis: 1, armR: -1.90, armRz: -0.10, turn: -0.50, look: 0.35, elbR: 1.44 }),
+      kf(0.46, { vis: 1, armR: -1.86, armRz: 0.16, turn: -1.10, neck: 0.30, elbR: 1.38 }),
+      kf(0.68, { vis: 1, armR: -1.88, armRz: 0.20, turn: -0.95, neck: 0.28, look: -0.40, elbR: 1.36 }),
+      kf(0.88, { vis: 1, armR: -1.66, armRz: -0.30, turn: -0.20, neck: 0.20, elbR: 1.62 }),
+      kf(0.94, { vis: 0, armR: -1.55, armRz: -0.36, elbR: 1.88 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, turn: 0.0, elbR: 2.16 }),
     ],
   },
   {
@@ -305,10 +352,10 @@ export const GESTURES = [
     keys: [
       kf(0.00, { vis: 0, armR: -0.95, armL: -0.95 }),
       // ROUND 4 — 0.55 -> 0.64. See the shoulder-check ledger over `strap`.
-      kf(0.22, { vis: 0, armR: -1.70, armL: -1.70, armRz: 0.34, armLz: -0.34, look: 0.64 }),
-      kf(0.46, { vis: 0, armR: -1.95, armL: -1.95, armRz: 0.10, armLz: -0.10, chest: 0.16 }),
-      kf(0.70, { vis: 0, armR: -1.50, armL: -1.50, armRz: 0.40, armLz: -0.40, look: -0.48 }),
-      kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16 }),
+      kf(0.22, { vis: 0, armR: -1.70, armL: -1.70, armRz: 0.34, armLz: -0.34, look: 0.64, elbR: 1.56, elbL: 1.56 }),
+      kf(0.46, { vis: 0, armR: -1.95, armL: -1.95, armRz: 0.10, armLz: -0.10, chest: 0.16, elbR: 1.18, elbL: 1.18 }),
+      kf(0.70, { vis: 0, armR: -1.50, armL: -1.50, armRz: 0.40, armLz: -0.40, look: -0.48, elbR: 1.30, elbL: 1.30 }),
+      kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16, elbR: 2.16, elbL: 2.16 }),
     ],
   },
   {
@@ -319,12 +366,12 @@ export const GESTURES = [
     // this from a coat pocket, and there is no child either.
     id: 'handoff', tell: 'decoy', dur: 2.20, item: BOX,
     keys: [
-      kf(0.00, { vis: 1, armR: -1.58, armRz: -0.30, neck: 0.22 }),
-      kf(0.24, { vis: 1, armR: -1.86, armRz: -0.10, look: 0.60 }),
-      kf(0.46, { vis: 1, armR: -1.30, armRz: -0.34, neck: 0.40, chest: 0.18 }),
-      kf(0.64, { vis: 1, armR: -0.70, armRz: -0.46, neck: 0.52, chest: 0.26 }),
-      kf(0.72, { vis: 0, armR: -0.58, armRz: -0.48, neck: 0.50, chest: 0.24 }),
-      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, neck: 0.0, chest: 0.0 }),
+      kf(0.00, { vis: 1, armR: -1.58, armRz: -0.30, neck: 0.22, elbR: 2.24 }),
+      kf(0.24, { vis: 1, armR: -1.86, armRz: -0.10, look: 0.60, elbR: 2.02 }),
+      kf(0.46, { vis: 1, armR: -1.30, armRz: -0.34, neck: 0.40, chest: 0.18, elbR: 1.50 }),
+      kf(0.64, { vis: 1, armR: -0.70, armRz: -0.46, neck: 0.52, chest: 0.26, elbR: 1.24 }),
+      kf(0.72, { vis: 0, armR: -0.58, armRz: -0.48, neck: 0.50, chest: 0.24, elbR: 1.32 }),
+      kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, neck: 0.0, chest: 0.0, elbR: 2.16 }),
     ],
   },
   {
@@ -336,14 +383,14 @@ export const GESTURES = [
     // the actual thief two aisles over is spending walking at the door.
     id: 'restash', tell: 'decoy', dur: 2.60, item: SMALL,
     keys: [
-      kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, neck: 0.22 }),
-      kf(0.18, { vis: 1, armR: -1.78, armRz: -0.10, look: -0.55 }),
-      kf(0.34, { vis: 1, armR: -0.74, armRz: 0.48, off: [0.0, 0.0, -0.10], chest: 0.10 }),
-      kf(0.40, { vis: 0, armR: -0.60, armRz: 0.44, off: [0.0, 0.0, -0.12], look: 0.40 }),
-      kf(0.58, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0 }),
-      kf(0.66, { vis: 1, armR: -1.04, armRz: 0.18 }),
-      kf(0.84, { vis: 1, armR: -1.62, armRz: -0.06, neck: 0.18 }),
-      kf(0.92, { vis: 0, armR: -1.30, armRz: -0.34, neck: 0.30 }),   // into the cart
+      kf(0.00, { vis: 1, armR: -1.55, armRz: -0.30, neck: 0.22, elbR: 2.26 }),
+      kf(0.18, { vis: 1, armR: -1.78, armRz: -0.10, look: -0.55, elbR: 1.84 }),
+      kf(0.34, { vis: 1, armR: -0.74, armRz: 0.48, off: [0.0, 0.0, -0.03], chest: 0.10, elbR: 1.34 }),
+      kf(0.40, { vis: 0, armR: -0.60, armRz: 0.44, off: [0.0, 0.0, -0.04], look: 0.40, elbR: 1.22 }),
+      kf(0.58, { vis: 0, armR: -0.95, armRz: -0.16, look: 0.0, elbR: 2.10 }),
+      kf(0.66, { vis: 1, armR: -1.04, armRz: 0.18, elbR: 1.70 }),
+      kf(0.84, { vis: 1, armR: -1.62, armRz: -0.06, neck: 0.18, elbR: 1.50 }),
+      kf(0.92, { vis: 0, armR: -1.30, armRz: -0.34, neck: 0.30, elbR: 1.72 }),   // into the cart
       kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16 }),
     ],
   },
@@ -376,13 +423,37 @@ export const GESTURES = [
     // strap you are pulling onto your own shoulder actually costs, and it is
     // well inside the 77 degrees at which this rig hands the turn to the
     // body. The react clips all sit at 0.66 off heard() and are untouched.
+    // =====================================================================
+    // ROUND 5 — AND THE SAME MEDICINE FOR THE SECOND NEAR-MISS, WHICH IS THE
+    // ONE ROUND 4'S LEDGER DID NOT LOOK AT.
+    // =====================================================================
+    // A critic swept RIGHT-HAND LATERAL EXCURSION ACROSS THE MIDLINE and over
+    // 401 live plays it looked like a perfect classifier: every conceal reached
+    // 0.368 m or more, the best innocent managed 0.285, an 83 mm empty gap,
+    // zero false positives. Forcing all twelve clips on all fifteen bodies
+    // destroyed it — conceal spans 0.340-0.476 and `wallet` reaches 0.390, so
+    // the populations overlap in a 50 mm band. THE LIVE SWEEP WAS MEASURING
+    // WHICH CLIPS HAPPEN TO GET PLAYED, not what the clips do; that is the
+    // fourth instrument on this project to fail by sampling rather than by
+    // arithmetic, and it is why a forced sweep is now the default.
+    //
+    // So it is not a classifier. It was still close enough to fix, and the fix
+    // is round 4's, applied to the other channel: DO NOT QUIET THE STEAL —
+    // round 6's rule, and the reason the conceal keys above are shape-identical
+    // — PUT AN INNOCENT ABOVE ITS MAXIMUM so the innocent range strictly
+    // contains the guilty one and no threshold in either direction separates
+    // them. `strap` is the honest clip to do it with, because pulling a bag
+    // strap up onto your own shoulder IS the biggest cross-body reach a person
+    // makes in a supermarket: the right hand ends up at the LEFT shoulder.
+    // 0.52 -> 1.10 rad of armRz is that gesture done properly rather than
+    // gestured at, and it costs the steal nothing.
     id: 'strap', tell: 'decoy', dur: 1.65, item: SMALL,
     keys: [
-      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95 }),
-      kf(0.26, { vis: 0, armR: -2.25, armRz: 0.52, look: -0.74, chest: 0.10 }),
-      kf(0.50, { vis: 0, armR: -2.40, armRz: 0.20, armL: -1.20, chest: 0.18 }),
-      kf(0.76, { vis: 0, armR: -1.60, armRz: 0.44, look: 0.56 }),
-      kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16 }),
+      kf(0.00, { vis: 0, armR: -0.95, armL: -0.95, elbR: 2.16 }),
+      kf(0.26, { vis: 0, armR: -2.25, armRz: 0.66, look: -0.74, chest: 0.10, elbR: 1.72 }),
+      kf(0.50, { vis: 0, armR: -2.34, armRz: 1.10, armL: -1.20, chest: 0.18, elbR: 1.54, elbL: 1.70 }),
+      kf(0.76, { vis: 0, armR: -1.60, armRz: 0.62, look: 0.56, elbR: 1.66 }),
+      kf(1.00, { vis: 0, armR: -0.95, armL: -0.95, armRz: -0.16, armLz: 0.16, elbR: 2.16, elbL: 2.16 }),
     ],
   },
 
@@ -414,13 +485,14 @@ export const GESTURES = [
       ...heard(2.65),
       kf(0.72 / 2.65, { armR: -0.92, armL: -0.93, neck: -0.40, look: 0.20, turn: -0.12 }),
       kf(0.95 / 2.65, { armR: -0.96, armL: -0.94, neck: -0.50, look: 0.0, chest: -0.06 }),
-      kf(1.18 / 2.65, { armR: -1.30, armRz: 0.60, armL: -0.96, neck: -0.06, look: 0.30, chest: 0.04 }),
-      // ...and from here it is `putback` above, keyframe for keyframe.
-      kf(1.42 / 2.65, { vis: 1, armR: -1.45, armRz: 0.92, off: [0.0, 0.0, -0.24], look: 0.55, neck: 0.10 }),
-      kf(1.68 / 2.65, { vis: 1, armR: -1.62, armRz: 0.10, look: -0.40 }),
-      kf(2.06 / 2.65, { vis: 1, armR: -1.80, armRz: -0.30, neck: 0.08 }),
-      kf(2.30 / 2.65, { vis: 1, armR: -1.70, armRz: -0.40, neck: 0.22, chest: 0.10 }),
-      kf(2.38 / 2.65, { vis: 0, armR: -1.55, armRz: -0.38, neck: 0.20 }),
+      kf(1.18 / 2.65, { armR: -1.30, armRz: 0.60, armL: -0.96, neck: -0.06, look: 0.30, chest: 0.04, elbR: 1.40 }),
+      // ...and from here it is `putback` above, keyframe for keyframe — the
+      // elbow included, which is the whole reason the shared tail exists.
+      kf(1.42 / 2.65, { vis: 1, armR: -1.45, armRz: 0.92, off: [0.0, 0.0, -0.07], look: 0.55, neck: 0.10, elbR: 1.08 }),
+      kf(1.68 / 2.65, { vis: 1, armR: -1.62, armRz: 0.10, look: -0.40, elbR: 1.56 }),
+      kf(2.06 / 2.65, { vis: 1, armR: -1.80, armRz: -0.30, neck: 0.08, elbR: 2.36 }),
+      kf(2.30 / 2.65, { vis: 1, armR: -1.70, armRz: -0.40, neck: 0.22, chest: 0.10, elbR: 2.46 }),
+      kf(2.38 / 2.65, { vis: 0, armR: -1.55, armRz: -0.38, neck: 0.20, elbR: 2.22 }),
       kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
     ],
   },
@@ -635,9 +707,13 @@ export const GESTURES = [
     id: 'whoMeRun', tell: 'startle', dur: 0.98, item: SMALL,
     keys: [
       ...heard(0.98),
-      kf(0.62 / 0.98, { armR: -0.66, armRz: 0.20, armL: -0.64, armLz: -0.20, neck: -0.22, look: 0.30, chest: -0.16 }),
-      kf(0.76 / 0.98, { armR: -0.40, armRz: 0.04, armL: -0.38, armLz: -0.04, neck: 0.02, look: 0.0, chest: 0.10, turn: -0.30 }),
-      kf(1.00, { armR: -0.16, armRz: -0.10, armL: -0.14, armLz: 0.10, neck: -0.04, chest: 0.24, turn: -0.18 }),
+      // Hands off the bar and into a run. A sprinter's elbow closes hard, and
+      // this is the ONE react clip where that is true — so it is authored on
+      // the beats AFTER 0.50 s, never before, which is the whole ambiguity
+      // guarantee. See heard().
+      kf(0.62 / 0.98, { armR: -0.66, armRz: 0.20, armL: -0.64, armLz: -0.20, neck: -0.22, look: 0.30, chest: -0.16, elbR: 1.90, elbL: 1.90 }),
+      kf(0.76 / 0.98, { armR: -0.40, armRz: 0.04, armL: -0.38, armLz: -0.04, neck: 0.02, look: 0.0, chest: 0.10, turn: -0.30, elbR: 1.66, elbL: 1.66 }),
+      kf(1.00, { armR: -0.16, armRz: -0.10, armL: -0.14, armLz: 0.10, neck: -0.04, chest: 0.24, turn: -0.18, elbR: 1.52, elbL: 1.52 }),
     ],
   },
 
@@ -690,13 +766,16 @@ export const GESTURES = [
       ...heard(2.60),
       kf(0.66 / 2.60, { armR: -0.90, armL: -0.92, neck: -0.30, look: 0.34, turn: -0.20, aim: 0.35 }),
       // Hands to the hips as he comes round onto it.
-      kf(0.94 / 2.60, { armR: -0.74, armRz: -0.52, armL: -0.72, armLz: 0.52, neck: -0.24, aim: 0.80 }),
-      kf(1.20 / 2.60, { armR: -0.70, armRz: -0.60, armL: -0.68, armLz: 0.60, neck: -0.10, aim: 1.0, chest: -0.10 }),
+      // HANDS ON HIPS is a 70-degree elbow, and with a straight arm it was two
+      // sticks angled out from the shoulders — a man doing a star jump, not a
+      // man squaring up. This is the pose the client asked for by name.
+      kf(0.94 / 2.60, { armR: -0.74, armRz: -0.52, armL: -0.72, armLz: 0.52, neck: -0.24, aim: 0.80, elbR: 1.50, elbL: 1.50 }),
+      kf(1.20 / 2.60, { armR: -0.70, armRz: -0.60, armL: -0.68, armLz: 0.60, neck: -0.10, aim: 1.0, chest: -0.10, elbR: 1.22, elbL: 1.22 }),
       // ...and the hold. Nothing moves for 0.75 s.
-      kf(1.95 / 2.60, { armR: -0.70, armRz: -0.60, armL: -0.68, armLz: 0.60, neck: -0.10, aim: 1.0, chest: -0.10 }),
-      kf(2.20 / 2.60, { armR: -0.80, armRz: -0.40, armL: -0.78, armLz: 0.40, neck: 0.06, aim: 0.55, chest: -0.02, shake: 0.30 }),
-      kf(2.42 / 2.60, { armR: -0.92, armRz: -0.22, armL: -0.90, armLz: 0.22, neck: 0.22, aim: 0.15, chest: 0.14 }),
-      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+      kf(1.95 / 2.60, { armR: -0.70, armRz: -0.60, armL: -0.68, armLz: 0.60, neck: -0.10, aim: 1.0, chest: -0.10, elbR: 1.22, elbL: 1.22 }),
+      kf(2.20 / 2.60, { armR: -0.80, armRz: -0.40, armL: -0.78, armLz: 0.40, neck: 0.06, aim: 0.55, chest: -0.02, shake: 0.30, elbR: 1.56, elbL: 1.56 }),
+      kf(2.42 / 2.60, { armR: -0.92, armRz: -0.22, armL: -0.90, armLz: 0.22, neck: 0.22, aim: 0.15, chest: 0.14, elbR: 1.90, elbL: 1.90 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0, elbR: 2.16, elbL: 2.16 }),
     ],
   },
   {
@@ -738,13 +817,17 @@ export const GESTURES = [
       kf(0.68 / 2.90, { armR: -0.90, armL: -0.92, neck: -0.34, look: 0.32, turn: -0.16, aim: 0.40 }),
       kf(0.92 / 2.90, { armR: -0.94, armL: -0.94, neck: -0.18, aim: 0.95, chest: -0.10 }),
       // Up it goes, unhurried.
-      kf(1.34 / 2.90, { armR: -1.90, armRz: -0.14, armL: -0.92, neck: -0.16, aim: 1.0, chest: -0.10 }),
-      kf(1.56 / 2.90, { armR: -2.42, armRz: -0.06, armL: -0.90, neck: -0.14, aim: 1.0, chest: -0.12 }),
+      // The arm goes UP and it goes up STRAIGHT — that is what the gesture is,
+      // and it is the one place in this round where 154 degrees was already the
+      // right answer. Authored anyway rather than left to a default, so nobody
+      // later "fixes" it into a bend.
+      kf(1.34 / 2.90, { armR: -1.90, armRz: -0.14, armL: -0.92, neck: -0.16, aim: 1.0, chest: -0.10, elbR: 2.30, elbL: 2.20 }),
+      kf(1.56 / 2.90, { armR: -2.42, armRz: -0.06, armL: -0.90, neck: -0.14, aim: 1.0, chest: -0.12, elbR: 2.62, elbL: 2.20 }),
       // The hold. 0.80 s of nothing at all.
-      kf(2.36 / 2.90, { armR: -2.44, armRz: -0.06, armL: -0.90, neck: -0.14, aim: 1.0, chest: -0.12 }),
-      kf(2.58 / 2.90, { armR: -1.50, armRz: -0.20, armL: -0.92, neck: -0.02, aim: 0.45, chest: -0.04 }),
-      kf(2.74 / 2.90, { armR: -1.02, armRz: -0.18, armL: -0.94, neck: 0.20, aim: 0.10, chest: 0.12 }),
-      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0 }),
+      kf(2.36 / 2.90, { armR: -2.44, armRz: -0.06, armL: -0.90, neck: -0.14, aim: 1.0, chest: -0.12, elbR: 2.62, elbL: 2.20 }),
+      kf(2.58 / 2.90, { armR: -1.50, armRz: -0.20, armL: -0.92, neck: -0.02, aim: 0.45, chest: -0.04, elbR: 2.10, elbL: 2.16 }),
+      kf(2.74 / 2.90, { armR: -1.02, armRz: -0.18, armL: -0.94, neck: 0.20, aim: 0.10, chest: 0.12, elbR: 2.16, elbL: 2.16 }),
+      kf(1.00, { armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, turn: 0.0, elbR: 2.16, elbL: 2.16 }),
     ],
   },
   {
@@ -760,8 +843,8 @@ export const GESTURES = [
       ...heard(3.10),
       kf(0.66 / 3.10, { armR: -0.90, armL: -0.92, neck: -0.32, look: 0.30, turn: -0.18, aim: 0.45 }),
       kf(0.92 / 3.10, { armR: -0.94, armL: -0.94, neck: -0.18, aim: 1.0, chest: -0.10 }),
-      kf(1.30 / 3.10, { armR: -1.86, armRz: -0.12, armL: -1.10, armLz: 0.30, neck: -0.16, aim: 1.0, chest: -0.12 }),
-      kf(1.52 / 3.10, { armR: -2.40, armRz: -0.04, armL: -1.34, armLz: 0.44, neck: -0.14, aim: 1.0, chest: -0.12, mouth: 0.09 }),
+      kf(1.30 / 3.10, { armR: -1.86, armRz: -0.12, armL: -1.10, armLz: 0.30, neck: -0.16, aim: 1.0, chest: -0.12, elbR: 2.28, elbL: 1.80 }),
+      kf(1.52 / 3.10, { armR: -2.40, armRz: -0.04, armL: -1.34, armLz: 0.44, neck: -0.14, aim: 1.0, chest: -0.12, mouth: 0.09, elbR: 2.62, elbL: 1.52 }),
       kf(2.10 / 3.10, { armR: -2.42, armRz: -0.04, armL: -1.52, armLz: 0.58, neck: -0.14, aim: 1.0, chest: -0.14, mouth: 0.11 }),
       kf(2.52 / 3.10, { armR: -2.38, armRz: -0.08, armL: -1.28, armLz: 0.40, neck: -0.12, aim: 1.0, chest: -0.12, mouth: 0.08 }),
       kf(2.78 / 3.10, { armR: -1.44, armRz: -0.20, armL: -1.02, armLz: 0.24, neck: 0.02, aim: 0.40, chest: -0.02 }),
@@ -786,9 +869,13 @@ export const GESTURES = [
       ...heard(3.60),
       kf(0.62 / 3.60, { armR: -0.92, armL: -0.93, neck: -0.34, look: 0.28, aim: 0.50 }),
       kf(0.88 / 3.60, { armR: -1.00, armL: -1.00, neck: -0.16, aim: 1.0, chest: -0.08 }),
-      kf(1.24 / 3.60, { armR: -1.36, armRz: 0.62, armL: -1.32, armLz: -0.58, neck: -0.12, aim: 1.0, chest: 0.02 }),
-      kf(3.30 / 3.60, { armR: -1.38, armRz: 0.62, armL: -1.34, armLz: -0.58, neck: -0.10, aim: 1.0, chest: 0.02 }),
-      kf(1.00, { armR: -1.38, armRz: 0.62, armL: -1.34, armLz: -0.58, neck: -0.10, aim: 1.0, chest: 0.02 }),
+      // YOU CANNOT FOLD A STRAIGHT ARM. This clip is the file's own nomination
+      // for the most legible pose any body in the store makes, and until this
+      // round it was two rigid sticks crossed in front of a chest with the
+      // hands nowhere near the opposite elbows. 53 degrees is folded.
+      kf(1.24 / 3.60, { armR: -1.36, armRz: 0.62, armL: -1.32, armLz: -0.58, neck: -0.12, aim: 1.0, chest: 0.02, elbR: 0.94, elbL: 0.94 }),
+      kf(3.30 / 3.60, { armR: -1.38, armRz: 0.62, armL: -1.34, armLz: -0.58, neck: -0.10, aim: 1.0, chest: 0.02, elbR: 0.92, elbL: 0.92 }),
+      kf(1.00, { armR: -1.38, armRz: 0.62, armL: -1.34, armLz: -0.58, neck: -0.10, aim: 1.0, chest: 0.02, elbR: 0.92, elbL: 0.92 }),
     ],
   },
 ];
@@ -835,16 +922,24 @@ export const GESTURES = [
 // The first 0.80 is ONE array, spliced into both tails the way heard() is
 // spliced into the four PA answers, so the two cannot drift apart.
 const reachHead = [
-  kf(0.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
-  kf(0.14, { vis: 0, armR: -0.86, armRz: -0.22, armL: -0.88, armLz: 0.22, neck: 0.06, look: -0.34 }),
-  kf(0.26, { vis: 0, armR: -1.10, armRz: -0.30, armL: -0.78, armLz: 0.30, neck: 0.20, look: 0.16, chest: 0.05 }),
-  kf(0.36, { vis: 0, armR: -1.62, armRz: -0.34, armL: -0.66, armLz: 0.34, neck: 0.24, look: 0.06, chest: 0.15 }),
-  kf(0.42, { vis: 0, armR: -1.86, armRz: -0.26, armL: -0.60, armLz: 0.36, neck: 0.26, chest: 0.19 }),
+  // ROUND 5 (character) — A REACH THAT BENDS, WHICH IS THE THING THE JOINT WAS
+  // BUILT FOR. The elbow authored here is the BASE; agents.js opens it toward
+  // straight by the same `ext` term it already uses to fade the per-reach shelf
+  // elevation in, so the frames at and around the grasp are at full stretch
+  // whatever this says and the take point is protected by construction. What
+  // this buys is the two ends: an arm that comes up bent, straightens INTO the
+  // shelf, and folds back in over the item. The old rig held 154 degrees
+  // through all three and only the middle one was right.
+  kf(0.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, elbR: 2.16, elbL: 2.16 }),
+  kf(0.14, { vis: 0, armR: -0.86, armRz: -0.22, armL: -0.88, armLz: 0.22, neck: 0.06, look: -0.34, elbR: 2.02, elbL: 2.10 }),
+  kf(0.26, { vis: 0, armR: -1.10, armRz: -0.30, armL: -0.78, armLz: 0.30, neck: 0.20, look: 0.16, chest: 0.05, elbR: 1.96, elbL: 2.22 }),
+  kf(0.36, { vis: 0, armR: -1.62, armRz: -0.34, armL: -0.66, armLz: 0.34, neck: 0.24, look: 0.06, chest: 0.15, elbR: 2.10, elbL: 2.34 }),
+  kf(0.42, { vis: 0, armR: -1.86, armRz: -0.26, armL: -0.60, armLz: 0.36, neck: 0.26, chest: 0.19, elbR: 2.30, elbL: 2.42 }),
   // THE GRASP. `vis` steps — decoy.js's own rule, and it is why the take is a
   // frame and not a fade: a 15 fps camera sees a box that is there and then is
   // not, never a box at 40% opacity.
-  kf(0.46, { vis: 1, armR: -1.88, armRz: -0.24, armL: -0.60, armLz: 0.36, neck: 0.26, chest: 0.19 }),
-  kf(0.50, { vis: 1, armR: -1.86, armRz: -0.22, armL: -0.62, armLz: 0.34, neck: 0.24, chest: 0.18 }),
+  kf(0.46, { vis: 1, armR: -1.88, armRz: -0.24, armL: -0.60, armLz: 0.36, neck: 0.26, chest: 0.19, elbR: 2.34, elbL: 2.42 }),
+  kf(0.50, { vis: 1, armR: -1.86, armRz: -0.22, armL: -0.62, armLz: 0.34, neck: 0.24, chest: 0.18, elbR: 2.28, elbL: 2.38 }),
   // ---- ROUND 2 (character): THE INSPECT IS TWO HANDS AND A BOWED HEAD -----
   // Against the reference photographs the tail was the weakest 0.2 s in the
   // clip: what people actually do with a thing they have just taken off a shelf
@@ -874,9 +969,15 @@ const reachHead = [
   // elevation fades out with it too, because agents.js fades that term by how
   // EXTENDED the arm is — so the box now comes down off the shelf instead of
   // hanging at shelf height while he looks at it.
-  kf(0.62, { vis: 1, armR: -1.44, armRz: 0.06, armL: -1.00, armLz: 0.20, neck: 0.44, chest: 0.13 }),
-  kf(0.72, { vis: 1, armR: -1.24, armRz: 0.12, armL: -1.06, armLz: 0.13, neck: 0.58, chest: 0.16, look: -0.16 }),
-  kf(0.80, { vis: 1, armR: -1.10, armRz: 0.14, armL: -1.04, armLz: 0.10, neck: 0.62, chest: 0.15, look: 0.10 }),
+  // ...and the inspect is where the joint finally lets this be what round 2's
+  // note said it should be. "Bring it IN to the chest, put the second hand on
+  // it, drop the head to read the front of the pack" was authored as far as a
+  // rigid arm could go, which is not far: the hand was still 640 mm off the
+  // shoulder at the closest key. Both elbows now close to about 80 degrees,
+  // which is where reference/people holds a carton, and the two hands meet.
+  kf(0.62, { vis: 1, armR: -1.44, armRz: 0.06, armL: -1.00, armLz: 0.20, neck: 0.44, chest: 0.13, elbR: 1.66, elbL: 1.74 }),
+  kf(0.72, { vis: 1, armR: -1.24, armRz: 0.12, armL: -1.06, armLz: 0.13, neck: 0.58, chest: 0.16, look: -0.16, elbR: 1.40, elbL: 1.48 }),
+  kf(0.80, { vis: 1, armR: -1.10, armRz: 0.14, armL: -1.04, armLz: 0.10, neck: 0.62, chest: 0.15, look: 0.10, elbR: 1.34, elbL: 1.42 }),
 ];
 // IT GOES IN THE CART. Down and across, out of frame at the hip, hands back on
 // the bar. Frame for frame this is `handoff`'s tail, which is the point: an
@@ -889,9 +990,9 @@ export const REACH_KEEP = {
     // ...and from the chest it goes DOWN into the trolley, which is a shorter
     // move than it used to be because the item is already in. Same two frames,
     // same `vis` step, same ending on the bar.
-    kf(0.88, { vis: 1, armR: -1.02, armRz: 0.30, armL: -0.99, armLz: 0.08, neck: 0.50, chest: 0.13 }),
-    kf(0.93, { vis: 0, armR: -0.98, armRz: 0.26, armL: -0.97, armLz: 0.12, neck: 0.36, chest: 0.10 }),
-    kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
+    kf(0.88, { vis: 1, armR: -1.02, armRz: 0.30, armL: -0.99, armLz: 0.08, neck: 0.50, chest: 0.13, elbR: 1.62, elbL: 1.86 }),
+    kf(0.93, { vis: 0, armR: -0.98, armRz: 0.26, armL: -0.97, armLz: 0.12, neck: 0.36, chest: 0.10, elbR: 1.84, elbL: 2.02 }),
+    kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, elbR: 2.16, elbL: 2.16 }),
   ],
 };
 // IT GOES BACK ON THE SHELF. He decided against it. This is the commonest thing
@@ -909,10 +1010,10 @@ export const REACH_PUT = {
     // withdraw brought it. That is what putting something back looks like, and
     // it is why the two tails are legibly different ACTIONS while the first
     // 0.80 of them is one picture.
-    kf(0.86, { vis: 1, armR: -1.66, armRz: -0.14, armL: -0.84, armLz: 0.22, neck: 0.30, chest: 0.16 }),
-    kf(0.92, { vis: 1, armR: -1.84, armRz: -0.30, armL: -0.70, armLz: 0.30, neck: 0.24, chest: 0.18 }),
-    kf(0.95, { vis: 0, armR: -1.72, armRz: -0.34, armL: -0.76, armLz: 0.28, neck: 0.22, chest: 0.14 }),
-    kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
+    kf(0.86, { vis: 1, armR: -1.66, armRz: -0.14, armL: -0.84, armLz: 0.22, neck: 0.30, chest: 0.16, elbR: 1.92, elbL: 2.10 }),
+    kf(0.92, { vis: 1, armR: -1.84, armRz: -0.30, armL: -0.70, armLz: 0.30, neck: 0.24, chest: 0.18, elbR: 2.30, elbL: 2.28 }),
+    kf(0.95, { vis: 0, armR: -1.72, armRz: -0.34, armL: -0.76, armLz: 0.28, neck: 0.22, chest: 0.14, elbR: 2.18, elbL: 2.20 }),
+    kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16, elbR: 2.16, elbL: 2.16 }),
   ],
 };
 // The frame the shelf loses it, in clip-normalised time. agents.js watches
@@ -940,6 +1041,7 @@ export function pickGesture(rng, kind) {
 const lerp = (a, b, t) => a + (b - a) * t;
 const _out = {
   off: [0, 0, 0], vis: 0, armR: 0, armRz: 0, armL: 0, armLz: 0,
+  elbR: null, elbL: null,
   chest: 0, neck: 0, look: 0, turn: 0, shake: 0, aim: 0, mouth: 0,
   item: [1, 1, 1], id: '', tell: '',
 };
@@ -950,6 +1052,18 @@ const _out = {
 // out over 200 ms is a different picture from an item that is there and then is
 // not, and the second one is what a 15 fps stream produces. Everything else is
 // a plain lerp between the bracketing keys.
+// A channel that may be absent. Returns null only when NEITHER end of the
+// segment mentions it; otherwise the mentioned end stands in for the other, so
+// the first authored key steps in and the last one steps out rather than easing
+// from an invented number.
+function mixOpt(k, a, b, e) {
+  const va = a[k] === undefined ? null : a[k];
+  const vb = b[k] === undefined ? null : b[k];
+  if (va == null && vb == null) return null;
+  if (va == null) return vb;
+  if (vb == null) return va;
+  return lerp(va, vb, e);
+}
 export function applyGesture(g, u) {
   const keys = g.keys;
   u = u < 0 ? 0 : u > 1 ? 1 : u;
@@ -969,6 +1083,14 @@ export function applyGesture(g, u) {
   _out.vis = get('vis', a);                 // STEP, not a fade
   _out.armR = mix('armR'); _out.armRz = mix('armRz');
   _out.armL = mix('armL'); _out.armLz = mix('armLz');
+  // ROUND 5 — the elbow interpolates like any other angle, with ONE difference:
+  // `null` is not a number and must not lerp toward one. A clip that authors the
+  // joint on some keys and not others would otherwise ease from "leave it alone"
+  // through an arbitrary midpoint, which is a pop on the frame the first
+  // authored key arrives. An unauthored side of a segment inherits the authored
+  // one, so `elb` behaves like a step at the clip's edges and a ramp inside it.
+  _out.elbR = mixOpt('elbR', a, b, e);
+  _out.elbL = mixOpt('elbL', a, b, e);
   _out.chest = mix('chest'); _out.neck = mix('neck');
   _out.look = mix('look'); _out.turn = mix('turn'); _out.shake = mix('shake');
   _out.aim = mix('aim'); _out.mouth = mix('mouth');

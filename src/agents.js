@@ -1368,6 +1368,8 @@ import { makeFrontEnd } from './agents/frontend.js';
 import {
   mergeParts, buildFigureGeo, rollPerson, makePerson, makeCop, FIG, KID,
   SKIN, HAIR, CLOTH, PANTS, COP_KNEE_Y, faceCheck, carryCheck,
+  faceSelfTest, carrySelfTest, ELB0, ELB_MIN, ELB_HANDLING, elbReach,
+  elbLock, elbLocked,
 } from './agents/figures.js';
 // ROUND 6 — the decoy library. Every reach-with-an-object in the store, guilty
 // and innocent, keyframed in ONE table and sampled by ONE function, so the
@@ -2731,7 +2733,40 @@ const _G = {
   flexR: 0, flexL: 0,
 };
 const ONE3 = [1, 1, 1];
-const _P = { armR: 0, armRz: 0, off: [0, 0, 0], item: ONE3 };
+const _P = { armR: 0, armRz: 0, off: [0, 0, 0], item: ONE3, elbR: null, elbL: null };
+
+// ===========================================================================
+// ROUND 5 (character) — THE ELBOW VOCABULARY.
+// ===========================================================================
+// figures.js grew a joint this round; this is the table of what to do with it,
+// and it is the whole point of having built one. Numbers are the INTERIOR angle
+// in radians — smaller is more bent — and they are read against
+// reference/people rather than invented: everybody in that set who is handling
+// goods sits between 60 and 110 degrees (1.05..1.92 rad). The game shipped
+// 154.241 degrees on every arm in every frame for eleven rounds.
+//
+// WHAT ANY BRANCH THAT DOES NOT MENTION THE ELBOW GETS: ELB0, the bake, which
+// renders byte-for-byte the build before this one. That is deliberate and it is
+// what makes the likelihood ratios in this round's report comparable — nothing
+// moved except where a number below says it did.
+const EL = {
+  straight: ELB0,     // 154 — the bake. A reach at full stretch.
+  hang: 2.62,         // 150 — an arm hanging at the side of a standing body
+  walk: 2.34,         // 134 — a walking arm. Nobody walks with a straight arm.
+  cartOut: 2.58,      // 148 — a trolley shoved out ahead at arm's length
+  cartBar: 2.16,      // 124 — hands on the bar, the commonest pose in the game
+  shelfHand: 2.02,    // 116 — a hand flat on a shelf lip, arm braced
+  reachTop: 2.62,     // 150 — going for a facing: this is where straight is RIGHT
+  pocket: 1.66,       // 95  — hands in pockets
+  carry: 1.60,        // 92  — a basket at the hip. See the round note below.
+  run: 1.52,          // 87  — running. A sprinter's elbow is not open.
+  read: 1.46,         // 84  — a label held up and read (ppl_09: 70-90)
+  phone: 1.38,        // 79  — both hands at the chest
+  cartLean: 1.34,     // 77  — forearms down on the bar, weight through them
+  hipHand: 1.26,      // 72  — a hand resting on the jutting hip
+  bring: 1.12,        // 64  — something brought in against the body
+  fold: 0.92,         // 53  — arms folded. The most closed pose in the game.
+};
 const BODY_R = 0.42;          // agent collision radius
 const CART_R = 0.34;
 // ROUND 10 — A CHILD'S. Deliberately much smaller than BODY_R, and not for
@@ -4351,13 +4386,23 @@ export function createAgents(THREE, scene, world) {
     // Checked by rendering: at the frame the right foot lands, the LEFT arm is
     // the one out in front.
     const asw = Math.cos(u.phase - K.copArmLag);
-    r.armL.rotation.x = -asw * amp * K.copArmSwing;
-    r.armR.rotation.x = asw * amp * K.copArmSwing;
     // THE ELBOWS CLEAR THE BELLY. He is 1.62 girth and the widest thing on him
     // is his stomach, so his arms cannot brush his sides the way a thin man's
     // do — they ride out and swing less, which is the trade in K.copArmSwing.
     const out = K.copArmOut + 0.06 * spd + 0.06 * F;
     r.armL.rotation.z = out; r.armR.rotation.z = -out;
+    // ---- ROUND 5 (character): HIS ELBOWS, AND HE IS THE BODY IT MATTERS ON --
+    // The chase camera sits three metres behind him for the whole floor phase,
+    // so his two bare forearms are the largest moving thing in this game. They
+    // were two rigid tubes at 154 degrees whatever he was doing. A heavy man
+    // walking carries his elbows bent — more so as he gasses, because a blown
+    // man pulls his arms in and pumps them — and it comes off the same `asw`
+    // the swing does, so the joint cannot drift out of phase with the shoulder.
+    const elC = lerp(EL.walk, EL.run, clamp(spd * 0.55 + F * 0.45, 0, 1));
+    r.armL.rotation.x = -asw * amp * K.copArmSwing;
+    r.armR.rotation.x = asw * amp * K.copArmSwing;
+    r.setElbow(1, elC + asw * 0.16);
+    r.setElbow(-1, elC - asw * 0.16);
     // ROUND 7 — THE SHOULDERS ROUND FURTHER AS HE FATIGUES, which was asked for
     // by name. Not a rotation: the shoulder JOINTS travel forward, which is
     // what actually happens to a blown man and what makes him narrower from the
@@ -4461,6 +4506,12 @@ export function createAgents(THREE, scene, world) {
       r.armR.rotation.x = lerp(r.armR.rotation.x, -0.92 - w * 0.10, b);
       r.armL.rotation.z = lerp(r.armL.rotation.z, 0.46, b);
       r.armR.rotation.z = lerp(r.armR.rotation.z, -0.46, b);
+      // HANDS ON KNEES. It is a 90-degree elbow and it always was — the pose is
+      // named for where the HANDS end up, and with a straight arm they ended up
+      // somewhere below his shins. This is the single most-looked-at pose in the
+      // game after the walk.
+      r.setElbow(1, lerp(r.elbowOf(1), 1.48, b));
+      r.setElbow(-1, lerp(r.elbowOf(-1), 1.48, b));
       r.neck.rotation.x = lerp(r.neck.rotation.x, -0.34 + (1 - w) * 0.30, b);
     }
 
@@ -4506,6 +4557,15 @@ export function createAgents(THREE, scene, world) {
       r.armR.rotation.x = lerp(r.armR.rotation.x, -0.44 - w * 0.03, hk);
       r.armL.rotation.z = lerp(r.armL.rotation.z, 0.02, hk);
       r.armR.rotation.z = lerp(r.armR.rotation.z, -0.02, hk);
+      // ROUND 5 — and the note above ("the arm has one pivot and a baked elbow,
+      // so thumbs in the belt is really forearms converging") is out of date in
+      // the good direction: the forearms can now actually come UP to the belt.
+      // 80 degrees is a hand at buckle height on this body, measured by
+      // rendering it. The round-10 note's real finding stands and is the reason
+      // the hands go to the SIDES of the buckle rather than over it — he is
+      // 1.62 girth and anything inboard vanishes into his own gut.
+      r.setElbow(1, lerp(r.elbowOf(1), 1.40, hk));
+      r.setElbow(-1, lerp(r.elbowOf(-1), 1.40, hk));
       // ...and he squares up a little while he is doing it. A man with his
       // thumbs in his belt is not slumped; that is most of the attitude in it.
       r.chest.rotation.x = lerp(r.chest.rotation.x, r.chest.rotation.x - 0.05, hk);
@@ -4877,15 +4937,20 @@ export function createAgents(THREE, scene, world) {
   // has, and the yaw the body is actually DRAWN at — for the same reason
   // decoy.js stopped authoring the prop's position: a hand solved from a
   // constant is 0.5 m from the hand you can see.
+  const _hv = new THREE.Vector3();
   function handWorld(s, out) {
     const r = s.rig;
     const AL = r.armLen + K.grabOut;
-    const az = r.armR.rotation.z, ax = r.armR.rotation.x;
-    const cz = Math.cos(az), sz = Math.sin(az), cx = Math.cos(ax), sx = Math.sin(ax);
-    // rig-local, arm hanging down its own -Y off the shoulder
-    const lx = r.armR.position.x + AL * sz;
-    const ly = r.hipY + r.armR.position.y - AL * cz * cx;
-    const lz = -AL * cz * sx;
+    // ROUND 5 (character) — THE RIG OWNS WHERE THE HAND IS, and this function
+    // and placeProp() are the two callers. They used to derive it inline, twice,
+    // from `armLen` and two shoulder angles — which was right only while the arm
+    // was a rigid stick from shoulder to fingertip, and it has an elbow now.
+    // figures.js's handRig() carries the identical straight-stick arithmetic
+    // plus the joint's displacement, so at elbow ELB0 this is byte-for-byte what
+    // was here before. See CLAUDE.md's one-owner rule, and AGENTS_BRIEF's second
+    // half of it: both callers are asking the same question.
+    r.handRig(-1, AL, _hv);
+    const lx = _hv.x, ly = _hv.y, lz = _hv.z;
     const sc = r.root.scale.x || 1;
     const yaw = s.mesh.rotation.y;
     const cy = Math.cos(yaw), sy = Math.sin(yaw);
@@ -6751,16 +6816,11 @@ export function createAgents(THREE, scene, world) {
     // placed from `p` would sit where the clip WANTED the hand rather than
     // where the hand is. Same class of bug as round 5's floating box, one
     // indirection further down; the rig is the truth, so read the rig.
-    const AL = r.armLen;
-    const shX = r.armR.position.x, shY = r.hipY + r.armR.position.y;
-    const az = r.armR.rotation.z, ax = r.armR.rotation.x;
-    const cz = Math.cos(az), sz = Math.sin(az);
-    const cx = Math.cos(ax), sx = Math.sin(ax);
-    s.held.position.set(
-      shX + AL * sz + p.off[0],
-      shY - AL * cz * cx + p.off[1],
-      -AL * cz * sx + p.off[2],
-    );
+    // ROUND 5 (character) — and through the rig, for the reason above: the arm
+    // has a joint and a prop placed off a straight stick would drift out of the
+    // fist the moment anything bent. Same function the grasp query calls.
+    r.handRig(-1, r.armLen, _hv);
+    s.held.position.set(_hv.x + p.off[0], _hv.y + p.off[1], _hv.z + p.off[2]);
     const sz3 = s.itemSize;
     if (sz3) {
       s.held.scale.set(
@@ -7428,6 +7488,14 @@ export function createAgents(THREE, scene, world) {
       s.mesh.rotation.y = s.visYaw + p.turn;
       r.armR.rotation.x = p.armR; r.armR.rotation.z = p.armRz;
       r.armL.rotation.x = p.armL; r.armL.rotation.z = p.armLz;
+      // ROUND 5 (character) — AND THE ELBOW, BEFORE ANYTHING SOLVES OFF IT.
+      // `placeProp` and `takeAt` both ask the rig where the hand is, and the rig
+      // cannot answer until the joint is set, so this line has to come above
+      // them or a prop is placed at last frame's elbow. A clip that authors no
+      // elbow gets the cart-bar rest, which is what a shopper's arm does when
+      // nothing is asking anything of it.
+      r.setElbow(-1, p.elbR == null ? EL.cartBar : p.elbR);
+      r.setElbow(1, p.elbL == null ? EL.cartBar : p.elbL);
       r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + p.chest, ed(10));
       r.neck.rotation.x = lerp(r.neck.rotation.x, p.neck, ed(9));
       r.neck.rotation.y = lerp(r.neck.rotation.y, p.look, ed(9));
@@ -7580,6 +7648,15 @@ export function createAgents(THREE, scene, world) {
         // (body, reach number) — no draw off rnd(), no knowledge of guilt.
         const ext = clamp((-p.armR - 0.95) / 0.93, 0, 1);
         r.armR.rotation.x = p.armR + s.reachEl * ext;
+        // ROUND 5 — AND THE ARM OPENS AS IT GOES OUT. `ext` already measures how
+        // extended the clip wants this arm to be, so the elbow rides the same
+        // number: bent on the approach and the withdrawal, straight at the
+        // grasp. That is what a reach IS — the old rig held one angle through
+        // all three phases and the middle one was the only one it was right for.
+        // The grasp point is solved from the hand, so this moves the query; the
+        // hit rate and the grasp distance are measured in this round's report
+        // rather than assumed.
+        r.setElbow(-1, lerp(p.elbR == null ? EL.cartBar : p.elbR, EL.reachTop, ext));
         r.chest.rotation.x = lerp(r.chest.rotation.x,
           r.stoop + p.chest + Math.max(0, s.reachEl) * 0.42 * ext, ed(10));
         // ROUND 2 (character) — AND THIS IS WHERE `reachDone` COMES FROM. It
@@ -7654,15 +7731,25 @@ export function createAgents(THREE, scene, world) {
       const bar = hold === 3 ? -1.24 : hold === 4 ? -0.74 : -0.95;
       const spl = hold === 3 ? 0.26 : hold === 4 ? 0.10 : 0.16;
       const freeX = -al * amp * 0.62 * P.swing;
+      // ROUND 5 (character) — AND FIVE ELBOWS TO GO WITH THE FIVE HOLDS, which
+      // is most of what made the old cart pose read as a forklift: two dead
+      // straight arms out in front. A hand on a trolley bar is 120-130 degrees;
+      // leaning on it is nearer 75; only the arm's-length pusher is anywhere
+      // near straight, and that is exactly the hold that is SUPPOSED to look
+      // like a man shoving a cart away from himself.
+      const elBar = hold === 3 ? EL.cartLean : hold === 4 ? EL.cartOut : EL.cartBar;
       if (hold === 1) {
         r.armR.rotation.x = bar - 0.03; r.armR.rotation.z = -spl * 0.65;
         r.armL.rotation.x = freeX;      r.armL.rotation.z = P.splay;
+        r.setElbow(-1, elBar); r.setElbow(1, EL.walk);
       } else if (hold === 2) {
         r.armL.rotation.x = bar - 0.03; r.armL.rotation.z = spl * 0.65;
         r.armR.rotation.x = -freeX;     r.armR.rotation.z = -P.splay;
+        r.setElbow(1, elBar); r.setElbow(-1, EL.walk);
       } else {
         r.armL.rotation.x = bar; r.armR.rotation.x = bar;
         r.armL.rotation.z = spl; r.armR.rotation.z = -spl;
+        r.setElbow(-1, elBar); r.setElbow(1, elBar);
       }
       // Leaning on the bar puts weight through the arms, so the hips go back and
       // the back rounds; pushing it out at arm's length does the opposite. This
@@ -7699,10 +7786,21 @@ export function createAgents(THREE, scene, world) {
       // which is a reflection, and a reflected body is a mannequin.
       r.armL.rotation.z = bolting ? 0.12 : r.rest.splayL;
       r.armR.rotation.z = bolting ? -0.12 : r.rest.splayR;
+      // ROUND 5 — a walking arm is not straight and a running one is nowhere
+      // near it: the elbow closes as the arm comes forward and opens behind,
+      // off the SAME `al` the swing runs on, so it costs no new oscillator and
+      // cannot get out of phase with the shoulder.
+      const elW = bolting ? EL.run : EL.walk;
+      r.setElbow(1, elW - Math.max(0, -al) * (bolting ? 0.30 : 0.22));
+      r.setElbow(-1, elW - Math.max(0, al) * (bolting ? 0.30 : 0.22));
     }
     if (s.angry > 0) {
       const w = Math.sin(s.angry * 22);
       r.armR.rotation.x = -1.9 + w * 0.45; r.armR.rotation.z = -0.55;
+      // A finger jabbed at somebody is a BENT arm that straightens on the jab,
+      // which is the whole shape of the gesture and the old rig could not make
+      // it: it was one rigid stick swinging from the shoulder.
+      r.setElbow(-1, 1.70 + w * 0.55); r.setElbow(1, EL.hang);
       r.armL.rotation.x = -0.4; r.chest.rotation.x = 0.12;
       r.neck.rotation.x = -0.12;
       s.bang.position.y = 2.15 + Math.abs(w) * 0.07;
@@ -7753,6 +7851,7 @@ export function createAgents(THREE, scene, world) {
         const set = Math.sin(s.phase * 0.31 + s.id) * 0.5 + 0.5;
         r.armR.rotation.x = -1.44 - set * 0.05;
         r.armR.rotation.z = -0.40;
+        r.setElbow(-1, EL.shelfHand); r.setElbow(1, EL.hang);
         r.armL.rotation.x = lerp(r.armL.rotation.x, -0.30, ed(5));
         r.armL.rotation.z = lerp(r.armL.rotation.z, 0.30, ed(5));
         r.hips.rotation.z += P.hipSide * 0.055;
@@ -7765,6 +7864,9 @@ export function createAgents(THREE, scene, world) {
         const rd = Math.sin(s.phase * 0.62 + s.id) * 0.09;
         r.armR.rotation.x = -1.52 + rd; r.armR.rotation.z = -0.30;
         r.armL.rotation.x = -1.46 - rd; r.armL.rotation.z = 0.34;
+        // Reading a label off a facing. ppl_09 has two women doing exactly this
+        // and both are at 70-90 degrees; the game had them at 154.
+        r.setElbow(-1, EL.read + rd); r.setElbow(1, EL.read - rd);
         r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + 0.09, ed(6));
         r.neck.rotation.x = lerp(r.neck.rotation.x, 0.34, ed(6));
       } else {
@@ -7779,6 +7881,8 @@ export function createAgents(THREE, scene, world) {
         r.armR.rotation.x = lerp(r.armR.rotation.x, -0.62 + scan * 0.10, ed(5));
         r.armR.rotation.z = lerp(r.armR.rotation.z, -0.24, ed(5));
         r.armL.rotation.x = lerp(r.armL.rotation.x, -0.44, ed(5));
+        r.setElbow(-1, lerp(r.elbowOf(-1), EL.hang - 0.30, ed(5)));
+        r.setElbow(1, lerp(r.elbowOf(1), EL.hang - 0.16, ed(5)));
         r.chest.rotation.x = lerp(r.chest.rotation.x, r.stoop + 0.04, ed(6));
         r.neck.rotation.x = lerp(r.neck.rotation.x, 0.18, ed(6)); // looking at the shelf
         // "Looks along the row." The one thing a body parked at a shelf has
@@ -7924,6 +8028,17 @@ export function createAgents(THREE, scene, world) {
       const lo = -0.30 * w - 0.62 * (1 - w), hi = 0.14 * w + 0.30 * (1 - w);
       aL.x = clamp(aL.x, lo, hi);
       aL.z = clamp(aL.z, r.rest.splayL - 0.10, r.rest.splayL + 0.22);
+      // ---- ROUND 5 (character): AND IT IS HELD AT THE HIP, NOT DRAGGED ------
+      // The load clamp above kept the SHOULDER honest and could do nothing
+      // about the elbow, because there was not one: a basket hung off a dead
+      // straight arm at KNEE height, clipping the thigh, on every body in this
+      // store that ever picked one up. A six-kilo basket is carried with the
+      // elbow at about 90 degrees and the handle level with the hip — that is
+      // what the reference photographs show and it is what the load is FOR.
+      // Weight opens the elbow a little (six kilos pulls the forearm down),
+      // which is the one place in this file where a number is allowed to say
+      // "this is heavy" out loud.
+      r.setElbow(1, EL.carry + 0.22 * w);
     }
   }
 
@@ -8178,6 +8293,12 @@ export function createAgents(THREE, scene, world) {
     let aLx = r.armL.rotation.x, aLz = r.armL.rotation.z;
     let chX = r.chest.rotation.x, chZ = 0, nkX = r.neck.rotation.x, nkY = r.neck.rotation.y;
     let hipZ = 0, hipY = 0;
+    // ROUND 5 (character) — AN ELBOW PER IDLE, and this is where the joint pays
+    // most: seven poses that were seven arrangements of two straight sticks.
+    // Folded arms in particular were geometrically impossible — you cannot fold
+    // a straight arm — and it is the idle the round-9 note calls the biggest
+    // single change in this function at 214x120.
+    let eR = EL.hang, eL = EL.hang;
     if (k === 0) {
       // WEIGHT ON ONE HIP. The one that reads best at monitor scale, because it
       // is the only idle here that makes the body ASYMMETRIC below the waist:
@@ -8185,8 +8306,13 @@ export function createAgents(THREE, scene, world) {
       // being a vertical bar. One hand rests on the jutting hip.
       hipZ = hs * (0.085 + w2 * 0.012); hipY = -0.020;
       chZ = -hs * 0.10;
-      if (hs > 0) { aLx = -0.62; aLz = 0.52; aRx = -0.14 + w * 0.03; aRz = -0.13; }
-      else { aRx = -0.62; aRz = -0.52; aLx = -0.14 + w * 0.03; aLz = 0.13; }
+      if (hs > 0) {
+        aLx = -0.62; aLz = 0.52; aRx = -0.14 + w * 0.03; aRz = -0.13;
+        eL = EL.hipHand; eR = EL.hang;
+      } else {
+        aRx = -0.62; aRz = -0.52; aLx = -0.14 + w * 0.03; aLz = 0.13;
+        eR = EL.hipHand; eL = EL.hang;
+      }
       nkY = s.look + w2 * 0.20;
       chX = r.stoop + 0.01;
     } else if (k === 1) {
@@ -8197,6 +8323,7 @@ export function createAgents(THREE, scene, world) {
       // detail, which is the only kind of thing that survives down there.
       aRx = -1.36 + w * 0.02; aRz = 0.62;
       aLx = -1.32 - w * 0.02; aLz = -0.58;
+      eR = EL.fold + w * 0.02; eL = EL.fold - w * 0.02;
       chX = r.stoop + 0.05; hipZ = hs * 0.035;
       nkY = s.look + w2 * 0.16;
     } else if (k === 2) {
@@ -8208,6 +8335,7 @@ export function createAgents(THREE, scene, world) {
       // man checking a list makes.
       aRx = -1.58 + w * 0.04; aRz = 0.34;
       aLx = -1.52 - w * 0.04; aLz = -0.26;
+      eR = EL.phone + w * 0.03; eL = EL.phone - w * 0.03;
       chX = r.stoop + 0.07; nkX = 0.42; hipZ = hs * 0.030;
     } else if (k === 3) {
       // HANDS IN POCKETS, shoulders up round the ears. Narrow, hunched and
@@ -8215,6 +8343,7 @@ export function createAgents(THREE, scene, world) {
       // list that makes a person look SMALLER.
       aRx = -0.30; aRz = -0.30 - P.splay;
       aLx = -0.28; aLz = 0.30 + P.splay;
+      eR = EL.pocket; eL = EL.pocket;
       chX = r.stoop + 0.06; hipZ = hs * 0.045 * (1 + w2 * 0.3);
       nkX = 0.10; nkY = s.look + w * 0.22;
     } else if (k === 4 && s.hasCart) {
@@ -8225,6 +8354,7 @@ export function createAgents(THREE, scene, world) {
       // cart is a metre of bright chrome and the eye goes to it.
       aRx = -1.30 + w * 0.02; aRz = -0.30;
       aLx = -1.28 - w * 0.02; aLz = 0.28;
+      eR = EL.cartLean; eL = EL.cartLean;
       chX = r.stoop + 0.20; hipY = -0.055; nkX = 0.06;
       nkY = s.look + w2 * 0.26;
     } else if (k === 5) {
@@ -8234,6 +8364,7 @@ export function createAgents(THREE, scene, world) {
       // doing. Braced arm out to the side, weight on the far foot.
       aRx = -1.20 + w * 0.02; aRz = -0.66;
       aLx = -0.24; aLz = 0.16;
+      eR = EL.shelfHand; eL = EL.hang;
       hipZ = -hs * 0.070; hipY = -0.016; chZ = hs * 0.055;
       chX = r.stoop + 0.06; nkY = s.look - 0.34;
     } else {
@@ -8246,6 +8377,7 @@ export function createAgents(THREE, scene, world) {
       chZ = -rock * 0.038;
       aRx = -0.16 + rock * 0.06; aRz = -P.splay;
       aLx = -0.14 - rock * 0.06; aLz = P.splay;
+      eR = EL.hang + rock * 0.10; eL = EL.hang - rock * 0.10;
       chX = r.stoop + 0.02;
       nkY = s.look + rock * 0.24;
     }
@@ -8253,6 +8385,11 @@ export function createAgents(THREE, scene, world) {
     r.armR.rotation.z = mix(r.armR.rotation.z, aRz);
     r.armL.rotation.x = mix(r.armL.rotation.x, aLx);
     r.armL.rotation.z = mix(r.armL.rotation.z, aLz);
+    // Through the SAME `mix` the shoulders use, so the joint blends in and out
+    // of an idle on the identical curve the rest of the pose does. A hard set
+    // here would pop the forearm on the frame the idle takes over.
+    r.setElbow(-1, mix(r.elbowOf(-1), eR));
+    r.setElbow(1, mix(r.elbowOf(1), eL));
     r.chest.rotation.x = mix(r.chest.rotation.x, chX);
     r.leanZ = chZ * m;
     r.neck.rotation.x = mix(r.neck.rotation.x, nkX);
@@ -10291,6 +10428,16 @@ export function createAgents(THREE, scene, world) {
     if (!FC.ok && typeof console !== 'undefined') console.warn('[agents] face', FC);
     const CC = carryCheck(F);
     if (!CC.ok && typeof console !== 'undefined') console.warn('[agents] carry', CC);
+    // ROUND 5 (character) — AND THE CHECKS' OWN FALSIFICATION SUITES, AT THE
+    // SAME VOLUME, because both of the above passed for a whole round while
+    // blind to the exact bug class they were written for. A green check is
+    // worth nothing until something has shown it can go red; these run every
+    // input the two docstrings name and complain if any of them fails to fire.
+    // Cost is measured, not assumed — see the round report.
+    const FS = faceSelfTest(THREE, F);
+    if (!FS.ok && typeof console !== 'undefined') console.warn('[agents] faceSelfTest', FS);
+    const CS = carrySelfTest(F);
+    if (!CS.ok && typeof console !== 'undefined') console.warn('[agents] carrySelfTest', CS);
   }
 
   return {
@@ -10421,8 +10568,21 @@ export function createAgents(THREE, scene, world) {
     //               baked buffers; it is not a re-derivation of the placement.
     //   carryCheck  does the fist the carry override derives from SH_ARM still
     //               land inside the hand shopperHand() bakes?
-    faceCheck: () => faceCheck(THREE, F),
-    carryCheck: () => carryCheck(F),
+    faceCheck: (inj) => faceCheck(THREE, F, inj),
+    carryCheck: (inj) => carryCheck(F, inj),
+    // ROUND 5 (character) — and the two suites that prove they can fail. Each
+    // runs every input its check's own docstring names as a hazard and reports
+    // whether the check went red on it. `ok:false` here means an ASSERTION is
+    // broken, not that the geometry is.
+    faceSelfTest: () => faceSelfTest(THREE, F),
+    carrySelfTest: () => carrySelfTest(F),
+    // The elbow, exposed so a probe can measure the distribution across
+    // gestures without reaching into figures.js.
+    // `lock(true)` pins every joint in the game at ELB0 — the build before this
+    // round, on the same page load, with nothing else changed. It is the control
+    // for every number in the round report and it must be left off.
+    elbow: { ELB0, ELB_MIN, band: ELB_HANDLING, reach: elbReach,
+      lock: elbLock, get locked() { return elbLocked(); } },
     // How often a grasp actually finds something, and how far away it was. A
     // miss is ordinary — pallet stacks and cart loads are not takeable and the
     // search will not reach THROUGH a fixture — but a hit rate that collapsed

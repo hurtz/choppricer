@@ -15,6 +15,21 @@
 // animateCop()/animateChild() all drive it:
 //   { root, hips, chest, torso, belly, neck, head, legL, legR, armL, armR,
 //     shirt, pants, hipY }
+// ROUND 5 (character) adds THE ELBOW to that contract, on all three rigs, and
+// it is three calls and nothing else:
+//   setElbow(side, th)      set the interior elbow angle in radians. `side` is
+//                           +1 for the left arm and -1 for the right, matching
+//                           every other builder in this file. Returns the angle
+//                           actually used, which is the clamped one.
+//   elbowOf(side)           read it back.
+//   handRig(side, AL, out)  where that hand IS, in rig-local metres — the one
+//                           owner, called by agents.js's prop solve AND its
+//                           grasp query. `AL` is the caller's own arm length so
+//                           the straight-stick term is preserved exactly and
+//                           the joint contributes a pure displacement.
+// `armL`/`armR` still name the SHOULDER PIVOT, so every clip, idle and gait
+// channel that writes armR.rotation.x is untouched. See the ROUND 5 block under
+// SH_ARM for what the joint does and why it is built the way it is.
 // ROUND 9 adds three fields to the shopper rig and nothing may write them after
 // construction:
 //   pose   the per-person gait / idle / cart-hold table. See rollPose.
@@ -1131,7 +1146,7 @@ function normOf(E, x, y) {
 // by shopperHead as it bakes; read only by faceCheck.
 const FACE_PROBES = [[], [], []];
 let FACE_REC = null;
-function onFace(E, x, y, hz, proud, tag) {
+function onFace(E, x, y, hz, proud, tag, frx, fry) {
   const z = surfZ(E, x, y); if (z == null) return null;
   const n = normOf(E, x, y);
   const d = proud - hz;
@@ -1146,7 +1161,12 @@ function onFace(E, x, y, hz, proud, tag) {
   // worst direction available, and it is the reason this is stored rather than
   // recomputed at the check.
   const pole = [x + n[0] * proud, y + n[1] * proud, z + n[2] * proud];
-  if (FACE_REC && tag) FACE_REC.push({ tag, E, x, y, proud, pole });
+  // ROUND 5 (character) — AND ITS FOOTPRINT, because the check that reads this
+  // now measures RELIEF as well as burial, and relief is "how far does this
+  // stand off the surface AROUND it" — which needs to know where around it is.
+  // Recorded from the call site, where the radii are already typed, rather than
+  // guessed from a constant.
+  if (FACE_REC && tag) FACE_REC.push({ tag, E, x, y, proud, pole, rx: frx || 0.02, ry: fry || 0.02 });
   return { p: [x + n[0] * d, y + n[1] * d, z + n[2] * d], r: [rx, ry, 0], n, z, proud, pole };
 }
 
@@ -1180,7 +1200,7 @@ function shopperHead(THREE, S, k) {
   // A ball whose front pole stands `proud` off E at (x, y), aimed at the
   // normal. `rz` is its own depth, so the solve knows how far to set it back.
   const onBall = (E, x, y, proud, rx, ry, rz, c, o, tag) => {
-    const m = onFace(E, x, y, rz, proud, tag);
+    const m = onFace(E, x, y, rz, proud, tag, rx, ry);
     P.ball(rx, ry, rz, m.p, c, { seg: 8, rseg: 4, ...(o || {}), r: m.r });
     return m;
   };
@@ -1225,7 +1245,7 @@ function shopperHead(THREE, S, k) {
   }
   // Bridge. Was a box at z 0.078 — 2 mm in, 4.4% visible.
   {
-    const m = onFace(SKULL, 0, h + 0.020, 0.015, 0.003, 'bridge');
+    const m = onFace(SKULL, 0, h + 0.020, 0.015, 0.003, 'bridge', 0.010, 0.015);
     P.box(0.020, 0.030, 0.030, m.p, 0xfafafa, { r: m.r });
   }
   // ---- THE BROW, WHICH IS TWO RIDGES AND NOT A BAR ------------------------
@@ -1335,8 +1355,40 @@ function shopperHair(THREE, S, k) {
     // comes in to 0.140, the pitch to 0.20, and it keeps the 3-degree roll that
     // stops a brim reading as new. Leading edge now at y = h+0.054, which is
     // clear of the brow by 8 mm.
-    cap(0.098, h + 0.030, -0.006);
-    P.half(0.140, 0.013, [0, h + 0.082, 0.026], 0xbdbdbd, { r: [0.20, 0, 0.05], seg: 12 });
+    // ---- ROUND 5: IT WAS STILL A BOWLER, AND THE NEW faceCheck FOUND IT ----
+    // Round 4 got the brim off the eyes and stopped there. What was left is a
+    // 280 mm HALF-DISC — 40% wider than the head it is on, and as deep as it is
+    // wide — pitched 0.20 with 13 mm of thickness hanging off its rim. Two
+    // separate things wrong with that and both are silhouette:
+    //
+    //   IT IS TOO WIDE. A baseball cap's brim is about as wide as the skull and
+    //   no wider (~200 mm on a 200 mm head). At 280 the outline is a disc with
+    //   a person under it, which is a bowler; the round-7 filter says the
+    //   OUTLINE is the whole game at 214 px, so this is the only number that
+    //   really matters.
+    //   IT IS A SEMICIRCLE. A brim is much wider than it is deep — 200 x 78,
+    //   not 280 x 280 — and the shallow forward tongue is what says "cap" from
+    //   any angle at any distance. `half` is a half-cylinder, so an ELLIPTICAL
+    //   half costs nothing: the same primitive with x and z scaled apart, which
+    //   P.half cannot express and P.add can.
+    //
+    // AND THE THIRTEEN MILLIMETRES OF THICKNESS WERE COVERING THE BROW RIDGE.
+    // The rim sat at y = h+0.053 with its underside at h+0.040, and the brow's
+    // own mount pole is at h+0.046 — 6 mm INSIDE the brim. This round's
+    // faceCheck reported it on all three head kinds at 65-66 mm of occlusion
+    // (`head N hair 5: browR`); the round-4 faceCheck read ok:true, because a
+    // brim in front of a feature made its number POSITIVE. That is the whole
+    // argument for rewriting the assertion, found by the assertion, on the
+    // exact defect class round 4 said it was for.
+    // The rim now sits at h+0.059 with its underside at h+0.054, clear of the
+    // brow by 8 mm and of the eye by 30, and the check is green.
+    cap(0.092, h + 0.032, -0.004);
+    // The front panel. A cap crown is not a hair dome: it stands up and forward
+    // over the forehead in a stiff panel, which is the second thing that says
+    // cap rather than beanie, and it is 3 px of extra height at monitor scale.
+    P.ball(0.072, 0.052, 0.052, [0, h + 0.062, 0.040], 0xfafafa, { seg: 8, rseg: 5 });
+    P.add(S.half(14), [0.200, 0.010, 0.156], [0, h + 0.086, 0.030], 0xbdbdbd,
+      { r: [0.30, 0, 0.05] });
   } else if (k === 6) {
     // ROUND 9 — PONYTAIL. Added for one reason and it is a CCTV reason: at
     // 214x120 a head is four pixels of dark on top of a light torso, and every
@@ -1701,6 +1753,247 @@ function armBones(side, shoulderY, tipX, tipY, tipZ, scale, out) {
 // old straight stick put it.
 const SH_ARM = (side) => armBones(side, -0.020, side * 0.008, -0.660, 0.010, 1, SH_ELB_OUT);
 
+// ===========================================================================
+// ROUND 5 (character) — NO ARM IN THIS GAME HAD AN ELBOW.
+// ===========================================================================
+// Round 10 built the bones and then baked the bend. `armStruct` on a shopper, a
+// cop and a child all read {groups: 0}: one rigid pivot, two meshes, no child
+// joint. So SH_ARM's interior elbow angle — 154.241 degrees, i.e. 25.8 of flex
+// — was the angle of EVERY arm in the building, in every frame, forever. Not
+// walking, not reaching a shelf, not carrying a basket, not concealing.
+//
+// The reference photographs are unanimous against it. Everybody handling goods
+// in reference/people is between 60 and 110 degrees: both women in ppl_09 hold
+// cartons at sternum height around 70-90, ppl_06 about 95, ppl_00's cashier
+// about 90, ppl_01's man with the bag about 90. The game had one value.
+//
+// WHICH FREE PARAMETER, AND WHY NOT THE OTHER ONE. There are two ways to hang a
+// joint off this rig and only one of them survives contact with the clips.
+//
+//   (A) HAND ON THE AIM RAY, ELBOW SWINGS OFF IT — two-bone IK to a target that
+//       stays on the shoulder-to-fingertip line and just comes closer. It is
+//       the obvious reading of round 10's bake (the elbow IS the free parameter
+//       there) and it is wrong past about 40 degrees of flex: the elbow has to
+//       go somewhere, and at 90 degrees it is 229 mm off the line. Measured on
+//       a hanging arm that puts the point of the elbow a fifth of a metre
+//       BEHIND the body. Every basket carry in the store would be a chicken
+//       wing.
+//   (B) ELBOW FIXED, FOREARM SWINGS — the shoulder aims the humerus, the elbow
+//       aims the forearm, which is what the joint does. The elbow stays exactly
+//       where round 10's bake put it (so the deltoid, the sleeve hem and the
+//       joint ball never move), and the hand leaves the ray. Chosen.
+//
+// (B) costs one thing and it is the thing the brief said to measure: the hand
+// is no longer at `armLen` down the arm's own -Y, so agents.js's prop solve and
+// its grasp query both move. They are handed the answer instead of deriving it
+// — see `handRig` on the rig — which is CLAUDE.md's rule with the second half
+// AGENTS_BRIEF added: both callers are asking the same question ("where is the
+// right hand, in rig-local metres"), so one owner is legitimate here.
+//
+// THE AXIS IS THE ARM'S OWN PLANE NORMAL, not a canonical X. sh, el and tip are
+// not coplanar with any axis — the elbow is 8 mm inboard and 72 mm behind — so
+// unit(u x v) is 6 degrees off -X on the left arm and 12 on the right. Using -X
+// would swing the forearm out of the plane the bake defines and the arm would
+// twist as it bent. One cross product, computed once per side at module load.
+//
+// THE CHANNEL IS THE INTERIOR ANGLE, IN RADIANS, and it is exact: rotating v
+// about unit(u x v) by phi takes the interior angle to ELB0 - phi, because the
+// axis is by construction perpendicular to both bones. So an author writing
+// `elb: 1.57` gets 90 degrees and a probe measuring the rendered geometry gets
+// 90 degrees, with no calibration in between. ELB0 is the neutral and it is the
+// bake, so a branch that never mentions the elbow renders byte-identically to
+// the build before this one.
+function elbFrom(B, side) {
+  const u = [B.el[0] - B.sh[0], B.el[1] - B.sh[1], B.el[2] - B.sh[2]];
+  const v = [B.tip[0] - B.el[0], B.tip[1] - B.el[1], B.tip[2] - B.el[2]];
+  const n = [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const nl = Math.hypot(n[0], n[1], n[2]) || 1;
+  const A = Math.hypot(u[0], u[1], u[2]), C = Math.hypot(v[0], v[1], v[2]);
+  const D = Math.hypot(B.tip[0] - B.sh[0], B.tip[1] - B.sh[1], B.tip[2] - B.sh[2]);
+  return {
+    side, sh: B.sh, el: B.el, tip: B.tip, A, B: C, D,
+    axis: [n[0] / nl, n[1] / nl, n[2] / nl],
+    theta0: Math.acos(Math.max(-1, Math.min(1, (A * A + C * C - D * D) / (2 * A * C)))),
+  };
+}
+// One table per body class, because the three bakes are three different pairs
+// of bones — the cop's forearm is longer and a child's is 62% of a shopper's —
+// and a shared constant would be the CLAUDE.md duplication bug with extra
+// steps. All three come out at 154.2-154.4 degrees, which is the point: the
+// number was never authored, it fell out of ELB_F and ELB_BACK.
+const COP_ARM = (side) => armBones(side, -0.032, side * 0.010, -0.674, 0.016);
+const KID_ARM = (side) => armBones(side, -0.008, side * 0.005, -0.414, 0.006, 0.62);
+const ELB_SH = [1, -1].map((s) => elbFrom(SH_ARM(s), s));
+const ELB_COP = [1, -1].map((s) => elbFrom(COP_ARM(s), s));
+const ELB_KID = [1, -1].map((s) => elbFrom(KID_ARM(s), s));
+// The neutral. 2.69166 rad = 154.241 degrees, and it is a MEASUREMENT of the
+// round-10 bake rather than a number anybody typed.
+export const ELB0 = ELB_SH[0].theta0;
+// The reference band, so nobody has to look it up again: people handling goods
+// in reference/people sit here, and the game shipped 2.692 for eleven rounds.
+export const ELB_HANDLING = [60 * Math.PI / 180, 110 * Math.PI / 180];
+// A real elbow does not straighten past about 178 and cannot close past about
+// 35 with a forearm in the way. Clamped here rather than at fifteen call sites.
+export const ELB_MIN = 0.62, ELB_MAX = ELB0;
+// ---- THE CONTROL LEVER, AND IT IS A DEBUG HANDLE ---------------------------
+// AGENTS_BRIEF: "ablate on ONE page load ... the strongest evidence came from
+// changing a single dial on a byte-identical scene, never from comparing two
+// builds." The elbow's control is the build without an elbow, so it is a switch
+// rather than a checkout: with this on, every joint in the game is pinned at
+// ELB0 and the rig renders exactly what shipped before this round.
+//
+// It is OFF and it must stay off. It is read once per setElbow call, it is not
+// a TUNING constant, nothing in the game writes it, and any measurement taken
+// with it on says so — see the probe. This is the R5-shadow-block hazard in
+// CLAUDE.md and the mitigation is the same one `agents.override` uses: one
+// obvious global, empty by default, stamped onto anything it touches.
+let ELB_LOCKED = false;
+export function elbLock(on) { ELB_LOCKED = !!on; return ELB_LOCKED; }
+export function elbLocked() { return ELB_LOCKED; }
+export const elbSolve = (side, kind) =>
+  (kind === 'cop' ? ELB_COP : kind === 'kid' ? ELB_KID : ELB_SH)[side > 0 ? 0 : 1];
+// Shoulder-ball-to-fingertip distance at interior angle `th`. This is the whole
+// reason a bent arm is a shorter arm, and agents.js needs it because a grasp
+// that reaches 640 mm with a straight arm reaches 466 at 90 degrees.
+export function elbReach(side, th, kind) {
+  const S = elbSolve(side, kind);
+  return Math.sqrt(S.A * S.A + S.B * S.B - 2 * S.A * S.B * Math.cos(th));
+}
+
+// ---------------------------------------------------------------------------
+// ONE BUILDER FOR EVERY ARM IN THIS GAME. Shopper, cop and child all come
+// through here, so the joint cannot drift between them the way the HUD camera
+// rig drifted from the floor camera.
+//
+//   piv (position, rotation — NO SCALE)
+//     +- Mesh(upper half)  scale (sx, sy, sx)
+//     +- elb (position = scaled elbow, quaternion = flex about the arm's own
+//     |       plane normal)
+//          +- Mesh(fore half)  scale (sx, sy, sx)
+//
+// WHY THE SCALE CAME OFF THE PIVOT. It was (armThick, armLen, armThick) —
+// non-uniform, spanning 0.85..1.17 on this roster — and A ROTATED CHILD OF A
+// NON-UNIFORMLY SCALED PARENT IS SHEARED. makePerson's carry override already
+// carries that warning in prose; this is the same hazard, and the fix is that
+// rotation nodes carry no scale and scale nodes carry no rotation. Composed the
+// other way round the fore half's own scale is applied in the ROTATED frame,
+// which is what an arm actually does: a forearm's length and thickness do not
+// depend on where it is pointing.
+//
+// At flex 0 this renders the previous build byte for byte. `elb.position` is
+// (sx,sy,sx) (*) el and the fore geometry was translated by -el before baking,
+// so the composite is S (*) p — the same vertex, arrived at by two nodes
+// instead of one.
+function makeArm(THREE, layers, x, y, z, sx, sy, solve) {
+  const piv = new THREE.Group();
+  piv.position.set(x, y, z || 0);
+  // ---- THE SHOULDER NODE, AND WHY THERE ARE THREE GROUPS AND NOT TWO -------
+  // A clip authors `armR: -1.92` meaning "hand at the sternum". It has always
+  // meant that, in eleven clips and seven idles, because the arm was a rigid
+  // stick and the shoulder angle WAS the hand's bearing. Bend the elbow with
+  // nothing else changing and that stops being true: the hand swings forward
+  // and up off its own ray, and the first render of this round showed a
+  // concealment with the man's fist against his cheek.
+  //
+  // So the shoulder gives way by exactly as much as the elbow took. The hand's
+  // BEARING from the shoulder is preserved and only its DISTANCE shortens,
+  // which is what "brings something in to the body" means and is what every
+  // existing keyframe, prop offset and reach aim in this game was authored
+  // against. The correction is the closed form of the two-bone triangle:
+  //
+  //     corr = atan2(b sin phi, a + b cos phi)
+  //
+  // and it is applied on its OWN node rather than by adding to piv.rotation.x.
+  // That is not tidiness. Six branches in agents.js LERP toward the arm angle
+  // (`lerp(r.armR.rotation.x, T, ed(5))`), so a correction added to the pivot
+  // would be read back next frame, lerped, and added again — a fixed point at
+  // T + corr/k, which for a 0.08 lerp is six radians. Measured on paper before
+  // it was written, because it is the shape of bug this project keeps finding
+  // after it has shipped. On its own node the correction is idempotent by
+  // construction and the animator cannot see it at all.
+  //
+  // WHERE THE ELBOW ENDS UP: `corr` radians off the shoulder-to-hand line, on
+  // the arm's own back side. On a raised arm that is DOWN — an elbow hanging
+  // under a hand at the sternum, which is every photograph in reference/people
+  // of somebody holding a carton. On a hanging arm it is BACK — an elbow at the
+  // side, behind a hand carried forward at the hip, which is the basket carry.
+  // One rule, correct at both ends, because the two are the same rotation.
+  const shg = new THREE.Group();
+  shg.position.set(solve.sh[0] * sx, solve.sh[1] * sy, solve.sh[2] * sx);
+  piv.add(shg);
+  const elb = new THREE.Group();
+  elb.position.set(solve.el[0] * sx - shg.position.x,
+    solve.el[1] * sy - shg.position.y, solve.el[2] * sx - shg.position.z);
+  shg.add(elb);
+  let hand = null;
+  // Every mesh is offset by -shoulder, so at corr 0 the composite position is
+  // exactly S (*) v — the previous build's bytes, arrived at through two more
+  // nodes.
+  const mx = -shg.position.x, my = -shg.position.y, mz = -shg.position.z;
+  for (const L of layers) {
+    if (L[0]) {
+      const m = new THREE.Mesh(L[0], L[2]);
+      m.scale.set(sx, sy, sx); m.position.set(mx, my, mz); shg.add(m);
+    }
+    if (L[1]) {
+      const m = new THREE.Mesh(L[1], L[2]);
+      m.scale.set(sx, sy, sx); elb.add(m); hand = m;
+    }
+  }
+  // The forearm vector in the SCALED frame. Everything the joint does to the
+  // hand is a rotation of this, and it is the only thing agents.js needs to
+  // know to put a prop in a fist or point a grasp query at a shelf.
+  const w = new THREE.Vector3((solve.tip[0] - solve.el[0]) * sx,
+    (solve.tip[1] - solve.el[1]) * sy, (solve.tip[2] - solve.el[2]) * sx);
+  const ax = new THREE.Vector3(solve.axis[0], solve.axis[1], solve.axis[2]);
+  const tip0 = new THREE.Vector3(solve.tip[0] * sx, solve.tip[1] * sy, solve.tip[2] * sx);
+  const d = new THREE.Vector3(), _t = new THREE.Vector3();
+  const A = solve.A, B = solve.B;
+  const arm = {
+    piv, shg, elb, hand, th: solve.theta0, d, solve, corr: 0,
+    // Set the interior elbow angle, in radians. Returns the angle actually
+    // used, which is the CLAMPED one — an author who writes 0.2 gets ELB_MIN
+    // and gets told so rather than getting a forearm through a bicep.
+    set(th) {
+      const raw = ELB_LOCKED ? solve.theta0 : th;
+      const t = raw < ELB_MIN ? ELB_MIN : raw > ELB_MAX ? ELB_MAX : raw;
+      if (t === arm.th) return t;
+      arm.th = t;
+      const phi = solve.theta0 - t;
+      arm.corr = Math.atan2(B * Math.sin(phi), A + B * Math.cos(phi))
+        - Math.atan2(B * Math.sin(0), A + B);
+      elb.quaternion.setFromAxisAngle(ax, phi);
+      shg.quaternion.setFromAxisAngle(ax, -arm.corr);
+      // Where the fingertip ended up, as a displacement from where the straight
+      // stick put it. One vector, recomputed only when the joint moves.
+      _t.copy(w).applyQuaternion(elb.quaternion).add(elb.position)
+        .applyQuaternion(shg.quaternion).add(shg.position);
+      d.copy(_t).sub(tip0);
+      return t;
+    },
+  };
+  return arm;
+}
+// Where a hand actually is, in RIG-LOCAL metres — the one owner, called by
+// agents.js's prop solve AND its grasp query, which are the same question.
+// `AL` is the caller's own arm length (it carries a deliberate 60 mm fudge past
+// the fingertip, plus K.grabOut on the grasp), so the straight-stick term is
+// preserved EXACTLY and the joint contributes a pure displacement. At flex 0
+// `d` is zero and this is the identical arithmetic agents.js had inline.
+//
+// It ignores `chest` rotation, which the inline version also did. That is a
+// real approximation — a body leaning 0.16 rad moves its hand ~50 mm — and it
+// is left in place deliberately: changing it in the same round as the elbow
+// would put two effects in one measurement.
+function handRigOf(arm, hipY, AL, out) {
+  const piv = arm.piv;
+  out.set(arm.d.x, arm.d.y - AL, arm.d.z).applyQuaternion(piv.quaternion);
+  out.x += piv.position.x;
+  out.y += hipY + piv.position.y;
+  out.z += piv.position.z;
+  return out;
+}
+
 // ROUND 11 — THE ARMS WERE 70% TOO THICK, AND IT WAS COSTING THE WAIST.
 //
 // A 1.65 m person's upper arm is about 100 mm across at the deltoid (arm
@@ -1753,7 +2046,21 @@ const SH_ARM = (side) => armBones(side, -0.020, side * 0.008, -0.660, 0.010, 1, 
 // landmark is a narrow shoulder over a wide seat, and with the widest point of
 // the body at the elbow that landmark was not on the screen at any distance.
 // The best new silhouette of round 11 was invisible for a whole round.
-function shopperSleeve(THREE, S, long, side) {
+// ROUND 5 (character) — EVERY ARM BAKE NOW COMES IN TWO HALVES, and which side
+// of the joint a part is on is stated by the author rather than guessed from a
+// coordinate. `half` is 0 for the humerus (arm-local, unchanged bytes) and 1
+// for the forearm (translated so the elbow is the origin, because it is about
+// to be rotated around it). A half with nothing in it returns null and costs no
+// mesh. THE JOINT BALL STAYS ON THE UPPER HALF: it is centred on the axis, so
+// it fills the corner at every angle, and a ball that rotated with the forearm
+// would open a crescent of daylight at the back of the elbow.
+function halfOut(THREE, P, half, el) {
+  if (!P.L.length) return null;
+  const g = mergeParts(THREE, P.L);
+  if (half) g.translate(-el[0], -el[1], -el[2]);
+  return g;
+}
+function shopperSleeve(THREE, S, long, side, half) {
   const P = partList(THREE, S);
   const B = SH_ARM(side), U = B.upper, F = B.fore;
   // THE DELTOID, and it is a CAP rather than a bulge on a tube: wider than the
@@ -1774,18 +2081,23 @@ function shopperSleeve(THREE, S, long, side) {
   // what an arm hanging in its own trunk's shadow does, and is the same
   // vertex-colour trick the torso rings use for the contact shadow under a
   // belly, at the same price, which is nothing.
-  P.ball(0.076, 0.078, 0.068, [0, -0.010, 0], 0xffffff, { seg: 8, rseg: 6 });
+  if (!half) P.ball(0.076, 0.078, 0.068, [0, -0.010, 0], 0xffffff, { seg: 8, rseg: 6 });
   if (long) {
-    P.taper(0.054, 0.043, U.len * 0.98, U.at(0.51), 0xe8e8e8, { seg: 8, r: U.r });
-    // THE ELBOW ITSELF. A ball at the joint is what makes a bend read as an
-    // elbow rather than as a kink in a pipe — the two tapers meet at an angle
-    // and without something round in the corner you can see the seam from
-    // across the store. It must not be BIGGER than either segment or it is a
-    // knuckle: 0.058 against a 0.062 sleeve is a crease, 0.072 was a knot.
-    P.ball(0.042, 0.044, 0.042, B.el, 0xe2e2e2, { seg: 8, rseg: 5 });
-    P.taper(0.041, 0.030, F.len * 0.62, F.at(0.32), 0xeeeeee, { seg: 8, r: F.r });
-    P.tube(0.031, 0.030, F.at(0.64), 0xd4d4d4, { seg: 8, r: F.r });   // cuff
-  } else {
+    if (!half) {
+      P.taper(0.054, 0.043, U.len * 0.98, U.at(0.51), 0xe8e8e8, { seg: 8, r: U.r });
+      // THE ELBOW ITSELF. A ball at the joint is what makes a bend read as an
+      // elbow rather than as a kink in a pipe — the two tapers meet at an angle
+      // and without something round in the corner you can see the seam from
+      // across the store. It must not be BIGGER than either segment or it is a
+      // knuckle: 0.058 against a 0.062 sleeve is a crease, 0.072 was a knot.
+      // ROUND 5 — and it is now doing that job for real, over a joint that
+      // moves through 94 degrees, instead of over a corner that never opened.
+      P.ball(0.042, 0.044, 0.042, B.el, 0xe2e2e2, { seg: 8, rseg: 5 });
+    } else {
+      P.taper(0.041, 0.030, F.len * 0.62, F.at(0.32), 0xeeeeee, { seg: 8, r: F.r });
+      P.tube(0.031, 0.030, F.at(0.64), 0xd4d4d4, { seg: 8, r: F.r });   // cuff
+    }
+  } else if (!half) {
     // The short sleeve stops at 60% of the upper arm, so its bottom radius is
     // NOT the elbow's — it is the mid-humerus, and 0.049 there is the number
     // the ratio above is actually made of. The rolled hem is 2 mm proud of the
@@ -1793,7 +2105,7 @@ function shopperSleeve(THREE, S, long, side) {
     P.taper(0.054, 0.049, U.len * 0.56, U.at(0.32), 0xe8e8e8, { seg: 8, r: U.r });
     P.tube(0.051, 0.022, U.at(0.62), 0xd6d6d6, { seg: 8, r: U.r });   // rolled hem
   }
-  return mergeParts(THREE, P.L);
+  return halfOut(THREE, P, half, B.el);
 }
 
 // ROUND 10 — AND THE HAND IS NOT A BOX ANY MORE.
@@ -1894,10 +2206,10 @@ function shopperHand(P, F, side, tint, k, uv) {
   return P;
 }
 
-function shopperForearm(THREE, S, long, side) {
+function shopperForearm(THREE, S, long, side, half) {
   const P = partList(THREE, S);
   const B = SH_ARM(side), U = B.upper, F = B.fore;
-  if (!long) {
+  if (!long && !half) {
     // THE BARE ARM STARTS ABOVE THE HEM, NOT AT THE ELBOW, and getting that
     // wrong is what the first render of this showed: the sleeve stopped at 62%
     // of the upper arm and the skin started at the elbow, so a third of every
@@ -1920,12 +2232,14 @@ function shopperForearm(THREE, S, long, side) {
     P.taper(0.0455, 0.0448, U.len * 0.24, U.at(0.640), 0xd9d9d9, { seg: 8, r: U.r });
     P.taper(0.0448, 0.0458, U.len * 0.20, U.at(0.880), 0xe6e6e6, { seg: 8, r: U.r });
     P.ball(0.0458, 0.0436, 0.0472, B.el, 0xdedede, { seg: 8, rseg: 5 });
+  }
+  if (!long && half) {
     P.taper(0.0455, 0.0372, F.len * 0.30, F.at(0.160), 0xf4f4f4, { seg: 8, r: F.r });
     P.taper(0.0368, 0.0296, F.len * 0.25, F.at(0.430), 0xf4f4f4, { seg: 8, r: F.r });
     P.taper(0.0292, 0.0248, F.len * 0.11, F.at(0.605), 0xdcdcdc, { seg: 8, r: F.r });
   }
-  shopperHand(P, F, side, 0xffffff);
-  return mergeParts(THREE, P.L);
+  if (half) shopperHand(P, F, side, 0xffffff);
+  return halfOut(THREE, P, half, B.el);
 }
 
 // ROUND 9 — THE SAME HAND WITH ONE FINGER OUT, AND IT COSTS NO DRAW CALL.
@@ -1947,10 +2261,10 @@ function shopperForearm(THREE, S, long, side) {
 // dome — see the note on `whoMeBird` in decoy.js. This bake is for the two
 // seconds a player spends on the spot monitor at 3x, and for the fact that when
 // he does look, the joke is actually there.
-function shopperBird(THREE, S, long, side) {
+function shopperBird(THREE, S, long, side, half) {
   const P = partList(THREE, S);
   const B = SH_ARM(side), U = B.upper, F = B.fore;
-  if (!long) {
+  if (!long && !half) {
     // Same radii AND THE SAME VALUES as shopperForearm, and they have to BE the
     // same: this bake is swapped onto a live mesh mid-clip and a forearm that
     // changed width on the frame the finger goes up is a pop at any distance.
@@ -1963,10 +2277,13 @@ function shopperBird(THREE, S, long, side) {
     P.taper(0.0455, 0.0448, U.len * 0.24, U.at(0.640), 0xd9d9d9, { seg: 8, r: U.r });
     P.taper(0.0448, 0.0458, U.len * 0.20, U.at(0.880), 0xe6e6e6, { seg: 8, r: U.r });
     P.ball(0.0458, 0.0436, 0.0472, B.el, 0xdedede, { seg: 8, rseg: 5 });
+  }
+  if (!long && half) {
     P.taper(0.0455, 0.0372, F.len * 0.30, F.at(0.160), 0xf4f4f4, { seg: 8, r: F.r });
     P.taper(0.0368, 0.0296, F.len * 0.25, F.at(0.430), 0xf4f4f4, { seg: 8, r: F.r });
     P.taper(0.0292, 0.0248, F.len * 0.11, F.at(0.605), 0xdcdcdc, { seg: 8, r: F.r });
   }
+  if (!half) return halfOut(THREE, P, half, B.el);
   // ROUND 10 — re-baked onto the same bones as the ordinary hand, which is the
   // point of there being bones at all: the swap happens on a live mesh mid-clip
   // and a wrist that jumped 30 mm when the geometry changed would be a pop you
@@ -1983,7 +2300,7 @@ function shopperBird(THREE, S, long, side) {
   P.ball(0.0130, 0.014, 0.0130, F.pt(1.022, 0, 0.004), 0xfbfbfb, { seg: 6, rseg: 4 });
   P.tube(0.0115, 0.036, F.pt(0.796, side * -0.026, 0.010), 0xfafafa,
     { seg: 6, r: [F.r[0] + 0.10, F.r[1], F.r[2] + side * 0.22] });   // thumb, tucked
-  return mergeParts(THREE, P.L);
+  return halfOut(THREE, P, half, B.el);
 }
 
 // ===========================================================================
@@ -2150,16 +2467,19 @@ function kidHair(THREE, S, k) {
 // off the same armBones(), scaled to a 0.41 m reach. A child's arms are the
 // half of the body that is always doing something, so a bend in them is worth
 // more here than on an adult holding a trolley bar.
-function kidArm(THREE, S, side) {
+function kidArm(THREE, S, side, half) {
   const P = partList(THREE, S);
-  const B = armBones(side, -0.008, side * 0.005, -0.414, 0.006, 0.62);
+  const B = KID_ARM(side);
   const U = B.upper, F = B.fore;
-  P.taper(0.038, 0.031, U.len * 0.92, U.at(0.50), 0xffffff, { seg: 7, r: U.r });
-  P.ball(0.032, 0.032, 0.032, B.el, 0xf8f8f8, { seg: 6, rseg: 5 });                    // elbow
-  P.taper(0.031, 0.024, F.len * 0.66, F.at(0.36), 0xffffff, { seg: 7, r: F.r });
-  P.ball(0.024, 0.030, 0.027, F.pt(0.80, 0, 0.004), 0xf4f4f4, { seg: 6, rseg: 5, r: F.r }); // hand
-  P.ball(0.019, 0.021, 0.019, F.pt(0.94, 0, 0.010), 0xf0f0f0, { seg: 6, rseg: 4, r: F.r }); // fingers
-  return mergeParts(THREE, P.L);
+  if (!half) {
+    P.taper(0.038, 0.031, U.len * 0.92, U.at(0.50), 0xffffff, { seg: 7, r: U.r });
+    P.ball(0.032, 0.032, 0.032, B.el, 0xf8f8f8, { seg: 6, rseg: 5 });                  // elbow
+  } else {
+    P.taper(0.031, 0.024, F.len * 0.66, F.at(0.36), 0xffffff, { seg: 7, r: F.r });
+    P.ball(0.024, 0.030, 0.027, F.pt(0.80, 0, 0.004), 0xf4f4f4, { seg: 6, rseg: 5, r: F.r }); // hand
+    P.ball(0.019, 0.021, 0.019, F.pt(0.94, 0, 0.010), 0xf0f0f0, { seg: 6, rseg: 4, r: F.r }); // fingers
+  }
+  return halfOut(THREE, P, half, B.el);
 }
 
 // Leg AND shoe in one mesh: the shoe is a 0.5 vertex colour on the trouser
@@ -2822,9 +3142,12 @@ function copShoe(THREE, S) {
 // CCTV resolution than any amount of detail on the sleeve itself.
 // HIS bones. Same construction as a shopper's, same elbow rule, longer reach
 // and a fingertip at -0.674 — which is where the old straight stick ended, so
-// nothing that assumes an arm length has moved.
-const COP_ARM = (side) => armBones(side, -0.032, side * 0.010, -0.674, 0.016);
+// nothing that assumes an arm length has moved. Declared up with the elbow
+// solve (ROUND 5) so the joint table and the bake read the same one function.
 
+// HIS sleeve is entirely above the joint — it ends at U.at(0.897), 10% of the
+// humerus short of the elbow — so there is no fore half of it at all and the
+// split costs him no mesh on this bake.
 function copSleeve(THREE, S, side) {
   const P = partList(THREE, S);
   const F = { uv: uvOf('shirt') };
@@ -2867,7 +3190,7 @@ function copSleeve(THREE, S, side) {
   return mergeParts(THREE, P.L);
 }
 
-function copForearm(THREE, S, side) {
+function copForearm(THREE, S, side, half) {
   const P = partList(THREE, S);
   const X = { uv: uvOf('flat') };
   const B = COP_ARM(side), U = B.upper, F = B.fore;
@@ -2903,13 +3226,16 @@ function copForearm(THREE, S, side) {
   //     outline pinches.
   // Plus the shadow the sleeve band casts on the arm under it, which is the
   // darkest skin on him and is what makes the sleeve sit ON the arm.
-  P.taper(0.072, 0.079, U.len * 0.13, U.at(0.830), C.skinDk, { seg: 10, r: U.r, ...X });
-  P.taper(0.079, 0.082, U.len * 0.10, U.at(0.925), C.skinDk, { seg: 10, r: U.r, ...X });
-  P.taper(0.082, 0.080, U.len * 0.10, U.at(0.985), C.skinSh, { seg: 10, r: U.r, ...X });
-  // The elbow knob: proud of both segments, and darker on its own because a
-  // point of the arm that sticks out backwards is not the part catching the
-  // ceiling.
-  P.ball(0.081, 0.078, 0.084, B.el, C.skinSh, { seg: 8, rseg: 6, ...X });
+  if (!half) {
+    P.taper(0.072, 0.079, U.len * 0.13, U.at(0.830), C.skinDk, { seg: 10, r: U.r, ...X });
+    P.taper(0.079, 0.082, U.len * 0.10, U.at(0.925), C.skinDk, { seg: 10, r: U.r, ...X });
+    P.taper(0.082, 0.080, U.len * 0.10, U.at(0.985), C.skinSh, { seg: 10, r: U.r, ...X });
+    // The elbow knob: proud of both segments, and darker on its own because a
+    // point of the arm that sticks out backwards is not the part catching the
+    // ceiling.
+    P.ball(0.081, 0.078, 0.084, B.el, C.skinSh, { seg: 8, rseg: 6, ...X });
+    return halfOut(THREE, P, half, B.el);
+  }
   P.taper(0.081, 0.067, F.len * 0.30, F.at(0.16), C.skin, { seg: 10, r: F.r, ...X });
   P.taper(0.066, 0.050, F.len * 0.25, F.at(0.43), C.skin, { seg: 10, r: F.r, ...X });
   P.taper(0.049, 0.040, F.len * 0.11, F.at(0.605), C.skinSh, { seg: 10, r: F.r, ...X });
@@ -2925,7 +3251,7 @@ function copForearm(THREE, S, side) {
     P.tube(0.020, 0.026, F.pt(0.618, 0, 0.032), C.steel,
       { r: [F.r[0] + Math.PI / 2, F.r[1], F.r[2]], seg: 8, ...X });
   }
-  return mergeParts(THREE, P.L);
+  return halfOut(THREE, P, half, B.el);
 }
 
 // ===========================================================================
@@ -2953,17 +3279,27 @@ export function buildFigureGeo(THREE) {
     bag: [0, 1, 2, 3].map((k) => [shopperBag(THREE, S, k, 1), shopperBag(THREE, S, k, -1)]),
     leg: BUILDS.map((b) => [shopperLeg(THREE, S, b, 1), shopperLeg(THREE, S, b, -1)]),
     shoe: [shopperShoe(THREE, S, 0), shopperShoe(THREE, S, 1)],
-    sleeve: [[shopperSleeve(THREE, S, false, 1), shopperSleeve(THREE, S, false, -1)],
-             [shopperSleeve(THREE, S, true, 1), shopperSleeve(THREE, S, true, -1)]],
-    fore: [[shopperForearm(THREE, S, false, 1), shopperForearm(THREE, S, false, -1)],
-           [shopperForearm(THREE, S, true, 1), shopperForearm(THREE, S, true, -1)]],
+    // ROUND 5 — [sleeve][side][half]. `half` 0 is the humerus and stays in the
+    // shoulder pivot; half 1 is the forearm and hangs off the elbow group. A
+    // short sleeve has no fore half and a long-sleeved person's skin bake has
+    // no upper half, so a body carries THREE arm meshes per arm either way,
+    // against two before. That is the price of the joint and it is stated here
+    // rather than discovered from a frame timer: +1 mesh per arm, +2 per body.
+    sleeve: [0, 1].map((long) => [1, -1].map((sd) =>
+      [shopperSleeve(THREE, S, !!long, sd, 0), shopperSleeve(THREE, S, !!long, sd, 1)])),
+    fore: [0, 1].map((long) => [1, -1].map((sd) =>
+      [shopperForearm(THREE, S, !!long, sd, 0), shopperForearm(THREE, S, !!long, sd, 1)])),
     // Both are SHORT-forearm bakes, which looks wrong and is not: the mesh that
     // actually carries a hand in skin is `fore[sleeve][1]` on both sleeve
     // lengths — round 10 collapsed the long-sleeved person's third arm mesh, so
     // there is now exactly one skin hand per arm and one bird bake per sleeve.
     // ROUND 10 — [long, short], both for the RIGHT hand (side -1), because that
     // is the only hand this ever swaps onto. See makePerson.
-    bird: [shopperBird(THREE, S, true, -1), shopperBird(THREE, S, false, -1)],
+    // ROUND 5 — and only the FORE half of it, because the finger is on the
+    // hand: the upper half of a bird arm is byte-identical to the upper half of
+    // an ordinary one, so the swap agents.js does on `handR` still lands on
+    // exactly one geometry and the two bakes it needs are still two.
+    bird: [shopperBird(THREE, S, true, -1, 1), shopperBird(THREE, S, false, -1, 1)],
     // the cop, baked once, one instance
     cop: {
       head: copHead(THREE, S), headKit: copHeadKit(THREE, S),
@@ -2978,14 +3314,14 @@ export function buildFigureGeo(THREE) {
       // position/rotation, never its geometry, so sharing is safe.
       shoe: copShoe(THREE, S),
       sleeve: [copSleeve(THREE, S, 1), copSleeve(THREE, S, -1)],
-      fore: [copForearm(THREE, S, 1), copForearm(THREE, S, -1)],
+      fore: [1, -1].map((sd) => [copForearm(THREE, S, sd, 0), copForearm(THREE, S, sd, 1)]),
       belly: copBelly(THREE, S),
     },
     kid: {
       torso: kidTorso(THREE, S),
       head: kidHead(THREE, S),
       hair: [0, 1, 2, 3].map((k) => kidHair(THREE, S, k)),
-      arm: [kidArm(THREE, S, 1), kidArm(THREE, S, -1)],
+      arm: [1, -1].map((sd) => [kidArm(THREE, S, sd, 0), kidArm(THREE, S, sd, 1)]),
       leg: [kidLeg(THREE, S, 1), kidLeg(THREE, S, -1)],
     },
     BUILDS,
@@ -2994,113 +3330,471 @@ export function buildFigureGeo(THREE) {
 }
 
 // ===========================================================================
-// TWO ASSERTIONS, BOTH OF THE lungCheck() SHAPE: two derivations of one fact,
-// made to say so out loud rather than agreeing by coincidence.
+// TWO ASSERTIONS, BOTH REWRITTEN IN ROUND 5 BECAUSE BOTH WERE BLIND TO THE BUG
+// THEY WERE WRITTEN FOR, AND BOTH NOW CARRY THEIR OWN FALSIFICATION SUITE.
 // ===========================================================================
+// Round 4 shipped these as "two derivations of one fact, made to say so out
+// loud rather than agreeing by coincidence". They were wired, they ran, and a
+// critic proved that neither tested its own proposition:
+//
+//   faceCheck  computed (frontmost_hit_z - feature_pole_z) and failed only when
+//              that went NEGATIVE. Anything IN FRONT of a feature makes it
+//              POSITIVE, so the entire occlusion class — the class the check
+//              exists for — passed. Flattening a hairstyle into a slab 195 mm
+//              over every face: ok, 0 bad. A fringe dropped 20/40/60/80/120 mm
+//              over the eyes: output BYTE-IDENTICAL to baseline. Scaling the
+//              skull in z by 1.15, which is literally the "grow the jaw radius"
+//              input its own text named: zero movement. Two of its three named
+//              falsifiers did not turn it red. (Worse than the critic said: a
+//              BURIED feature also reads positive, because the thing burying it
+//              is nearer the camera — so the round-4 bug that motivated the
+//              check would not have tripped it either.)
+//
+//   carryCheck took the nearest vertex of the forearm bake to the derived fist.
+//              A forearm is a 361 mm tube of vertices around that point, so
+//              sliding the whole bake 150 mm DOWN ITS OWN AXIS moved the answer
+//              12.0 -> 13.6 mm against a 30 mm threshold; it needed about 250
+//              to fire. Changing 0.986 — the first input its docstring names —
+//              could not turn it red.
+//
+// SO THE RULE THIS ROUND ADDS, AND IT IS NOW IN AGENTS_BRIEF: for every input
+// an assertion names as a hazard, SHOW IT FAILING ON THAT INPUT. Both functions
+// below take an optional `inj` describing a perturbation, and both are paired
+// with a selfTest that runs every named input and asserts the check goes red on
+// each one. A green selfTest is the only thing that makes a green check mean
+// anything, and it is cheap enough to run at boot.
 
 // ---------------------------------------------------------------------------
-// faceCheck(THREE, F) — IS THE FACE ON THE OUTSIDE OF THE HEAD?
+// faceCheck(THREE, F, inj) — IS THE FACE ON THE OUTSIDE OF THE HEAD, AND CAN
+// YOU SEE IT?
 // ---------------------------------------------------------------------------
-// The bug this exists for shipped for four rounds behind prose claiming the
-// opposite ("all three have a jaw, a nose, ears, a brow and eyes"), and no
-// numeric check could have found it, because every number in the file was
-// individually reasonable. What finds it is a RAY: fire one down -Z through
-// each feature's own mount point and ask what the frontmost surface is.
+// Two propositions now, because the old one silently tested neither:
 //
-// WHAT INPUT TURNS THIS RED, since AGENTS_BRIEF says to be able to name one:
-// move a mouth back 4 mm; grow the jaw radius; drop a fringe over an eye. The
-// last is not hypothetical — it is how the ballcap brim covered four bodies'
-// faces for eleven rounds, and it is why the hair is in the loop rather than
-// only the head.
+//   OCCLUSION  fire a ray down -Z through the feature's own recorded pole and
+//              require the frontmost surface to BE that pole. Too far forward
+//              means something is in front of it — a fringe, a brim, a jaw that
+//              grew, a skull scaled in z. Too far back means the pole is
+//              hanging in space in front of its own mesh. Both are failures and
+//              the test is TWO-SIDED, which is the entire fix.
+//   RELIEF     ring of rays just outside the feature's own footprint, median
+//              hit taken as "the surface around it". A feature that is flush
+//              with its surroundings is as invisible as one that is buried, and
+//              nothing in the old check could see the difference. Two clauses:
+//              an absolute floor, and a fraction of what onFace() was ASKED to
+//              stand proud — so a mount that grows underneath a feature whose
+//              `proud` never changed still fires.
 //
-// It re-derives against the BAKED buffer. onFace() computed where to put each
-// feature; this asks the merged geometry, which is a different object arrived
-// at by a different route, whether the feature ended up in front.
-export function faceCheck(THREE, F) {
+// The ring uses the MEDIAN rather than the min because neighbours are legally
+// proud: the ring round an eye lands on its own socket and on the brow, and a
+// min would be measuring the brow. It requires half the ring to hit something;
+// a feature with no surface around it at all is its own failure and says so.
+//
+// Both propositions are re-derived against the BAKED buffer. onFace() computed
+// where to put each feature; this asks the merged geometry — a different object
+// arrived at by a different route — what actually got drawn.
+//
+// FALSIFIERS, and every one of them turns this red. See faceSelfTest().
+//   slab    a hairstyle flattened into a solid plate in front of every face
+//   fringe  a 20 mm bar dropped over both eyes (and 40/60/80/120)
+//   skullZ  the skull scaled 1.15 in z under features that did not move
+//   jaw     the jaw grown 6% under the mouth and lips
+//   sink    every feature's proud reduced by 4 mm, i.e. "move a mouth back"
+//   gone    the head collapsed to a point (the wired-at-all control)
+const FACE_OCC_MM = 3.0;      // tolerable slack between a pole and its own tessellated surface
+const FACE_REL_MM = 0.8;      // a feature flatter than this is not on the face
+const FACE_REL_FRAC = 0.40;   // ...and it must keep this much of its authored proud
+export function faceCheck(THREE, F, inj) {
+  const J = inj || {};
   const bad = [], rows = [];
   const rc = new THREE.Raycaster();
   const dir = new THREE.Vector3(0, 0, -1), org = new THREE.Vector3();
-  const mat = new THREE.MeshBasicMaterial({ side: THREE.FrontSide });
-  const meshOf = (g) => { const m = new THREE.Mesh(g, mat); m.updateMatrixWorld(); return m; };
-  for (let k = 0; k < FACE_PROBES.length; k++) {
+  const mat = new THREE.MeshBasicMaterial({ side: THREE.DoubleSide });
+  // DoubleSide, and it matters: a FrontSide raycast through a merged buffer
+  // misses any surface whose winding faces away, and half the reason to fire a
+  // ray at all is to catch geometry that is not where the author thinks.
+  const meshOf = (g, sz) => {
+    const m = new THREE.Mesh(g, mat);
+    if (sz) m.scale.set(sz[0], sz[1], sz[2]);
+    m.updateMatrixWorld();
+    return m;
+  };
+  // ---- the injections, all of them applied to the RAYCAST INPUT ------------
+  // Nothing here mutates a shipped buffer. A slab or a fringe is an extra
+  // target; a grown mount is a scaled clone; a sunk feature is a cloned buffer
+  // with the vertices inside the feature's own footprint pushed back along its
+  // normal. That last one is the only vertex-level edit and it is the only way
+  // to model "somebody moved a feature 4 mm" honestly.
+  const extra = [];
+  if (J.slab != null) {
+    const g = new THREE.BoxGeometry(0.40, 0.40, 0.02);
+    g.translate(0, FIG.headY, J.slab);
+    extra.push(meshOf(g));
+  }
+  if (J.fringe != null) {
+    const g = new THREE.BoxGeometry(0.16, 0.030, 0.010);
+    g.translate(0, FIG.headY + 0.026, 0.104 + J.fringe);
+    extra.push(meshOf(g));
+  }
+  const sunk = (geo, probes, d) => {
+    const g = geo.clone();
+    const p = g.attributes.position;
+    for (const q of probes) {
+      const rr = Math.max(q.rx, q.ry) * 1.05;
+      for (let i = 0; i < p.count; i++) {
+        const dx = p.getX(i) - q.pole[0], dy = p.getY(i) - q.pole[1];
+        if (dx * dx + dy * dy > rr * rr) continue;
+        if (p.getZ(i) < q.pole[2] - 2.2 * q.proud - 0.004) continue;
+        p.setZ(i, p.getZ(i) - d);
+      }
+    }
+    p.needsUpdate = true;
+    return g;
+  };
+  // "grow the jaw radius" — the mount comes forward and the features mounted on
+  // it do NOT follow, which is round 4's bug exactly ("0.078 is not wrong; it is
+  // wrong FOR A JAW OF rz 0.093"). Vertex-level, on the lower half of the head
+  // only, so nothing above the mouth moves.
+  const grown = (geo, k, f) => {
+    const g = geo.clone();
+    const p = g.attributes.position;
+    const cy = FIG.headY - 0.058, cz = 0.008;
+    for (let i = 0; i < p.count; i++) {
+      if (p.getY(i) > cy + 0.030) continue;
+      p.setZ(i, cz + (p.getZ(i) - cz) * f);
+    }
+    p.needsUpdate = true;
+    return g;
+  };
+  // `fast` walks ONE head against ONE hairstyle instead of 3 x 9. It exists for
+  // the self-test, which asks a question about the INSTRUMENT and not about the
+  // roster: 27 identical answers cost 1.9 s at boot and told nobody anything.
+  // The full cross-product is what faceCheck() itself runs, once, next to it.
+  const nH = J.fast ? 1 : FACE_PROBES.length;
+  for (let k = 0; k < nH; k++) {
     const probes = FACE_PROBES[k];
     if (!probes || !probes.length) { bad.push('head ' + k + ' registered no face probes'); continue; }
-    const head = meshOf(F.head[k]);
-    for (let j = 0; j < F.hair.length; j++) {
-      const targets = [head, meshOf(F.hair[j])];
+    let hg = F.head[k];
+    if (J.sink) hg = sunk(hg, probes, J.sink);
+    if (J.jaw) hg = grown(hg, k, J.jaw);
+    const head = meshOf(hg, J.gone ? [1e-3, 1e-3, 1e-3]
+      : J.skullZ ? [1, 1, J.skullZ] : null);
+    const nJ = J.fast ? 1 : F.hair.length;
+    for (let j = 0; j < nJ; j++) {
+      const targets = [head, meshOf(F.hair[j]), ...extra];
       for (const q of probes) {
-        org.set(q.pole[0], q.pole[1], 1.0);
-        rc.set(org, dir);
-        const hit = rc.intersectObjects(targets, false)[0];
-        // Where the FEATURE's own front pole ended up, from the mount solve.
+        const px = q.pole[0], py = q.pole[1];
+        const shoot = (x, y) => {
+          org.set(x, y, 1.0); rc.set(org, dir);
+          const hit = rc.intersectObjects(targets, false)[0];
+          return hit ? hit.point.z : null;
+        };
+        const got = shoot(px, py);
         const want = q.pole[2];
-        const got = hit ? hit.point.z : -1;
-        const mm = +((got - want) * 1000).toFixed(2);
-        if (mm < -0.6) {
-          bad.push('head ' + k + ' hair ' + j + ': ' + q.tag + ' is ' + (-mm).toFixed(1)
-            + ' mm inside whatever is in front of it. A feature is placed by onFace() '
-            + 'and something else — the skull, the jaw, or a fringe — is nearer the '
-            + 'camera at its own mount point.');
+        const occ = got == null ? -999 : +((got - want) * 1000).toFixed(2);
+        // ---- RELIEF: HOW FAR THE DRAWN FEATURE STANDS OFF ITS OWN MOUNT -----
+        // A feature that is flush is as invisible as one that is buried, and
+        // `occ` cannot see the difference: sink every feature 4 mm and its pole
+        // sinks with it, so the frontmost hit is still the feature and occ stays
+        // at zero. This is the clause that catches "move a mouth back 4 mm".
+        //
+        // A NEGATIVE RESULT, KEPT NEXT TO THE CODE IT REPLACED. The first two
+        // versions of this measured the feature against a RING of rays just
+        // outside its own footprint, and both were junk:
+        //   raw z round the ring       every feature read 30-80 mm proud,
+        //                              because a 100 mm skull drops 10 mm
+        //                              across a 45 mm ring. It measured the
+        //                              head's curvature.
+        //   ring height above the mount  cancels the curvature and then reads
+        //                              8-14 mm against authored prouds of
+        //                              1.5-6.0, because the SKULL's own facet
+        //                              sag is up to 7 mm (seg 10 / rseg 6 on a
+        //                              93-104 mm radius) and the feature balls'
+        //                              is 0.3. The sag does not cancel, it is
+        //                              the whole signal, and no quantile of the
+        //                              ring fixes that — swept 0.0/0.1/0.2/0.3
+        //                              and the floor moved 11.4 -> 6.3 mm while
+        //                              the thing being measured is 1.5.
+        // So the ring is gone. The mount surface is ANALYTIC — surfZ(E) — and a
+        // hit measured against it carries no tessellation floor at all. One
+        // raycast per feature instead of seventeen, and it resolves the
+        // millimetre the ring could not.
+        const sZ = surfZ(q.E, px, py);
+        const rel = (got == null || sZ == null) ? -999 : +((got - sZ) * 1000).toFixed(2);
+        const proudMM = q.proud * 1000;
+        const need = Math.max(FACE_REL_MM, proudMM * FACE_REL_FRAC);
+        // A feature may legally be covered by ANOTHER recorded feature standing
+        // prouder in the same footprint — the eye sits 3.5 mm in front of its
+        // own socket on every head in the game, and a check that called that a
+        // bug would be crying wolf 54 times at boot. So the occlusion tolerance
+        // carries the prouder neighbour's own overhang, and nothing else.
+        let tol = FACE_OCC_MM;
+        for (const o of probes) {
+          if (o === q) continue;
+          const dx = o.pole[0] - px, dy = o.pole[1] - py;
+          if (dx * dx + dy * dy > Math.max(o.rx, o.ry) * Math.max(o.rx, o.ry)) continue;
+          const over = (o.proud - q.proud) * 1000;
+          if (over > tol - FACE_OCC_MM) tol = FACE_OCC_MM + over;
         }
-        rows.push({ head: k, hair: j, tag: q.tag, mm });
+        const why = [];
+        if (got == null) why.push('no surface at all in its own column');
+        else if (occ > tol) {
+          why.push('something is ' + occ.toFixed(1) + ' mm IN FRONT of it (tol '
+            + tol.toFixed(1) + ')');
+        } else if (occ < -0.6) {
+          why.push('its pole hangs ' + (-occ).toFixed(1) + ' mm in front of its own mesh');
+        }
+        if (sZ == null) why.push('its pole is not over its own mount surface at all');
+        else if (rel < need) {
+          why.push('it is drawn only ' + rel.toFixed(1) + ' mm proud of its own mount, '
+            + 'against ' + need.toFixed(1) + ' needed (authored proud '
+            + proudMM.toFixed(1) + ' mm)');
+        }
+        if (why.length) {
+          bad.push('head ' + k + ' hair ' + j + ': ' + q.tag + ' — ' + why.join('; '));
+        }
+        rows.push({ head: k, hair: j, tag: q.tag, occ, rel, need: +need.toFixed(2),
+          tol: +tol.toFixed(2), proudMM: +proudMM.toFixed(2) });
       }
     }
   }
-  const worst = rows.reduce((a, r) => (r.mm < a.mm ? r : a), rows[0] || { mm: 0 });
-  return { ok: bad.length === 0, bad, n: rows.length, worstMM: worst.mm, worstAt: worst,
-    // A feature that is exactly flush is as invisible as one that is buried, so
-    // the number to watch is the MINIMUM, not the mean.
-    minProudMM: +Math.min(...rows.map((r) => r.mm)).toFixed(2) };
+  const wOcc = rows.reduce((a, r) => (r.occ > a.occ ? r : a), rows[0] || { occ: 0 });
+  const wRel = rows.reduce((a, r) => (r.rel - r.need < a.rel - a.need ? r : a), rows[0] || { rel: 0, need: 0 });
+  return {
+    ok: bad.length === 0, bad, n: rows.length, rows,
+    // The two numbers to watch, and they point in OPPOSITE directions on
+    // purpose: worstOccMM is how much geometry is in front of the most covered
+    // feature, worstReliefMM is how flat the flattest one is.
+    worstOccMM: +wOcc.occ.toFixed(2), worstOccAt: wOcc,
+    worstReliefMM: +wRel.rel.toFixed(2), worstReliefAt: wRel,
+    inj: inj || null,
+  };
+}
+
+// Every input the docstring above names, run, with the result of running it.
+// `ok` is true when ALL of them turned the check red — a falsifier that does
+// not fire is a bug in the instrument, and it is reported as one.
+export function faceSelfTest(THREE, F) {
+  const cases = [
+    ['baseline (must PASS)', null, false],
+    ['slab: a hairstyle flattened to a plate at z=+0.30', { slab: 0.30 }, true],
+    ['fringe 20 mm over both eyes', { fringe: 0.020 }, true],
+    ['fringe 40 mm', { fringe: 0.040 }, true],
+    ['fringe 60 mm', { fringe: 0.060 }, true],
+    ['fringe 80 mm', { fringe: 0.080 }, true],
+    ['fringe 120 mm', { fringe: 0.120 }, true],
+    ['skull scaled 1.15 in z under fixed features', { skullZ: 1.15 }, true],
+    ['jaw grown 6% under the mouth', { jaw: 1.06 }, true],
+    ['every feature sunk 4 mm ("move a mouth back")', { sink: 0.004 }, true],
+    ['every feature sunk 2 mm', { sink: 0.002 }, true],
+    ['head collapsed to a point', { gone: 1 }, true],
+  ];
+  const rows = [], bad = [];
+  for (const [name, inj, wantRed] of cases) {
+    const r = faceCheck(THREE, F, { ...(inj || {}), fast: true });
+    const red = !r.ok;
+    rows.push({ input: name, red, nBad: r.bad.length,
+      worstOccMM: r.worstOccMM, worstReliefMM: r.worstReliefMM,
+      first: r.bad[0] ? r.bad[0].slice(0, 110) : null });
+    if (red !== wantRed) {
+      bad.push('faceCheck is BLIND to "' + name + '": it stayed '
+        + (red ? 'red' : 'GREEN') + ' when it should have gone '
+        + (wantRed ? 'red' : 'green') + '. An assertion that cannot fail on an '
+        + 'input its own docstring names is decoration — see AGENTS_BRIEF.');
+    }
+  }
+  return { ok: bad.length === 0, bad, rows };
 }
 
 // ---------------------------------------------------------------------------
-// carryCheck(F) — THE ASSERTION ROUND 3 NAMED AND DID NOT WRITE.
+// carryCheck(F, inj) — DOES THE BASKET STILL HANG OFF THE FIST?
 // ---------------------------------------------------------------------------
-// makePerson's `carry` group overrides updateMatrixWorld and re-derives the
-// fist from SH_ARM: `B.fore.at(0.986)`, scaled by the arm pivot's own scale.
-// That is a SECOND copy of where the hand is — the first is the hand that
-// shopperHand() bakes into the forearm buffer — and round 3's own note said so
-// and left it: "if someone moves the hand without moving B.fore.at(0.986) the
-// basket detaches silently." Silently is the word that matters. Nothing on
-// screen would look broken; a basket would simply hang 40 mm off a fist, on two
-// or three bodies, and only while they are carrying.
+// makePerson's `carry` group re-derives the fist from SH_ARM: `B.fore.at(0.986)`
+// taken into elbow-local space and scaled by the arm's own mesh scale. That is
+// a SECOND copy of where the hand is; the first is the hand shopperHand() bakes
+// into the forearm buffer. Round 3's note said so and left it: "if someone
+// moves the hand without moving B.fore.at(0.986) the basket detaches silently."
 //
-// So: take the derived point and ask the BAKED FOREARM whether there is any
-// hand there. Nearest vertex, in the geometry's own frame, over every forearm
-// bake a shopper can be given.
+// THREE RESIDUALS, BECAUSE ONE WAS BLIND ALONG THE ARM. Round 4 measured only
+// the nearest vertex, and a forearm is a tube of vertices around the axis, so
+// the one direction the fist can slide without ever leaving that tube was the
+// one direction the check could not see.
 //
-// WHAT TURNS IT RED: move `fing()`'s t0 values, move SH_ARM's fingertip, change
-// ELB_F, or change 0.986. Any one of those moves one of the two numbers and not
-// the other, which is exactly the failure it is guarding.
-export function carryCheck(F) {
+//   axMM   how far along the forearm axis the derived fist sits BEHIND the
+//          bake's own distal extreme (the fingertip). A hand is about 95 mm
+//          from palm heel to fingertip, so the fist belongs in a band inside
+//          that. This is the residual that catches 0.986, ELB_F, the fingertip
+//          and an axial slide of the whole bake.
+//   latMM  how far the fist sits off the bake's own centreline AT ITS OWN
+//          STATION — the centroid of every vertex in a +/-15 mm slab. This is
+//          the residual that catches a lateral slide, and it is deliberately
+//          separate from axMM so the two cannot mask each other.
+//   nearMM round 4's nearest-vertex distance, kept: it is the scalar the
+//          original note asked for and it is still the honest summary of "the
+//          two derivations have parted company".
+//
+// FALSIFIERS, and every one of them turns this red. See carrySelfTest().
+//   slideAx   the bake slid 150 mm (and 40, and 20) down its own axis
+//   slideLat  the bake slid 35 mm across it
+//   t         0.986 -> 0.900, the first constant the docstring names
+//   elbF      ELB_F 0.45 -> 0.50
+//   tipY      SH_ARM's fingertip -0.660 -> -0.620
+//   fingers   fing()'s three t0 values pushed 25 mm down the arm
+// THE THREE TOLERANCES, WITH THEIR MEASURED BASELINES AND THEIR MARGINS, so
+// nobody has to re-derive whether a green row means anything:
+//   axMM   nominal +4.63 mm, identical on all four rows, tol +/-8. It FIRES AT
+//          8 mm of axial movement in either direction; round 4's needed about
+//          250. The nominal is not zero and is not meant to be: shopperHand's
+//          middle-finger cap ball ends 4.6 mm short of the fingertip SH_ARM
+//          names, so 0.986 lands just past the drawn tip. That 4.6 is a FACT
+//          ABOUT THE BAKE and the assertion is that it does not move.
+//   latMM  nominal 13.94 / 13.81, tol 20 -> fires at about 15 mm of lateral
+//          slide. Not zero for the same kind of reason: the cross-section at
+//          the fingertips is three fingers and a thumb, and its centroid is not
+//          on the middle finger's axis.
+//   nearMM nominal 11.97 / 12.00, tol 30. Round 4's residual, kept.
+// All three are static functions of the bake — they do not drift between runs,
+// they move only when somebody edits one of the constants they are watching,
+// which is the whole point of an assertion.
+const CARRY_AX_NOM = 4.63, CARRY_AX_TOL = 8;  // mm along the forearm axis
+const CARRY_LAT_MM = 20;                      // mm off the hand's own centreline
+const CARRY_NEAR_MM = 30;                     // mm to the nearest vertex — half a fist
+export function carryCheck(F, inj) {
+  const J = inj || {};
   const bad = [], rows = [];
   for (const side of [1, -1]) {
-    const B = SH_ARM(side);
-    const h = B.fore.at(0.986);
+    // The fist, re-derived. ELB_F and the fingertip are injectable because they
+    // are the two numbers that move it without moving the bake.
+    const B = J.elbF != null || J.tipY != null
+      ? armBonesWith(J.elbF, side, -0.020, side * 0.008, J.tipY != null ? J.tipY : -0.660,
+        0.010, 1, SH_ELB_OUT)
+      : SH_ARM(side);
+    const t = J.t != null ? J.t : 0.986;
+    const h = B.fore.at(t);
+    // Elbow-local, which is the frame the fore half is baked in.
+    const hx = h[0] - B.el[0], hy = h[1] - B.el[1], hz = h[2] - B.el[2];
+    const L = B.fore.len;
+    const ux = (B.tip[0] - B.el[0]) / L, uy = (B.tip[1] - B.el[1]) / L, uz = (B.tip[2] - B.el[2]) / L;
+    // ...and one axis across it, for the lateral injection.
+    const ax = B.fore.pt(0, 1, 0);
+    const lx = ax[0] - B.el[0], ly = ax[1] - B.el[1], lz = ax[2] - B.el[2];
     for (let long = 0; long < 2; long++) {
       // makePerson hangs the bag off armL when bag.side > 0 and armR otherwise,
-      // and both of those are `fore[sleeve][side>0?0:1]`.
-      const g = F.fore[long][side > 0 ? 0 : 1];
+      // and both of those are `fore[sleeve][side>0?0:1][1]` — the FORE half,
+      // which is the one carrying the hand on both sleeve lengths.
+      const g = F.fore[long][side > 0 ? 0 : 1][1];
       const pos = g.attributes.position;
-      let best = 1e9, bi = -1;
+      // Injections that move the BAKE rather than the derivation.
+      const sa = J.slideAx || 0, sl = J.slideLat || 0;
+      const dxi = ux * sa + lx * sl, dyi = uy * sa + ly * sl, dzi = uz * sa + lz * sl;
+      let best = 1e9, sTip = -1e9;
+      const acc = { n: 0, x: 0, y: 0, z: 0 };
+      const sFist = hx * ux + hy * uy + hz * uz;
       for (let i = 0; i < pos.count; i++) {
-        const d = Math.hypot(pos.getX(i) - h[0], pos.getY(i) - h[1], pos.getZ(i) - h[2]);
-        if (d < best) { best = d; bi = i; }
+        let vx = pos.getX(i) + dxi, vy = pos.getY(i) + dyi, vz = pos.getZ(i) + dzi;
+        // fing(): the three finger masses live past t=0.80, so pushing only
+        // those down the axis is exactly "somebody edited fing()'s t0".
+        if (J.fingers && (pos.getX(i) * ux + pos.getY(i) * uy + pos.getZ(i) * uz) > L * 0.80) {
+          vx += ux * J.fingers; vy += uy * J.fingers; vz += uz * J.fingers;
+        }
+        const d = Math.hypot(vx - hx, vy - hy, vz - hz);
+        if (d < best) best = d;
+        const s = vx * ux + vy * uy + vz * uz;
+        if (s > sTip) sTip = s;
+        if (Math.abs(s - sFist) < 0.015) { acc.n++; acc.x += vx; acc.y += vy; acc.z += vz; }
       }
-      const mm = +(best * 1000).toFixed(2);
-      rows.push({ side, long, mm, at: [+h[0].toFixed(4), +h[1].toFixed(4), +h[2].toFixed(4)] });
-      // 30 mm is half a fist. Inside that the point is in the hand; outside it,
-      // the two derivations have parted company.
-      if (mm > 30) {
-        bad.push('carry: the fist SH_ARM(' + side + ').fore.at(0.986) derives is ' + mm
-          + ' mm from the nearest vertex of the forearm bake it is supposed to be '
-          + 'inside (sleeve ' + (long ? 'long' : 'short') + '). Either shopperHand moved '
-          + 'or 0.986 did. makePerson\'s carry override will hang the basket in mid air.');
+      const nearMM = +(best * 1000).toFixed(2);
+      const axMM = +((sFist - sTip) * 1000).toFixed(2);
+      let latMM = null;
+      if (acc.n) {
+        const cx = acc.x / acc.n - hx, cy = acc.y / acc.n - hy, cz = acc.z / acc.n - hz;
+        const along = cx * ux + cy * uy + cz * uz;
+        latMM = +(Math.hypot(cx - along * ux, cy - along * uy, cz - along * uz) * 1000).toFixed(2);
       }
+      const why = [];
+      if (Math.abs(axMM - CARRY_AX_NOM) > CARRY_AX_TOL) {
+        why.push('it sits ' + axMM.toFixed(1) + ' mm from the bake\'s own distal extreme ALONG '
+          + 'THE FOREARM AXIS, against a baked ' + CARRY_AX_NOM + ' (tol +/-' + CARRY_AX_TOL
+          + '). This is the direction round 4 could '
+          + 'not see: a forearm is a tube of vertices around this point, so the nearest-vertex '
+          + 'residual barely moves when the two derivations slide past each other');
+      }
+      if (latMM == null) why.push('no hand vertices at its own station at all');
+      else if (latMM > CARRY_LAT_MM) {
+        why.push('it is ' + latMM.toFixed(1) + ' mm off the hand\'s own centreline (tol '
+          + CARRY_LAT_MM + ')');
+      }
+      if (nearMM > CARRY_NEAR_MM) {
+        why.push('its nearest baked vertex is ' + nearMM.toFixed(1) + ' mm away (tol '
+          + CARRY_NEAR_MM + ')');
+      }
+      if (why.length) {
+        bad.push('carry: the fist SH_ARM(' + side + ').fore.at(' + t + ') derives — sleeve '
+          + (long ? 'long' : 'short') + ' — ' + why.join('; ')
+          + '. Either shopperHand moved or 0.986 did, and makePerson\'s carry override '
+          + 'will hang the basket in mid air.');
+      }
+      rows.push({ side, long, axMM, latMM, nearMM,
+        at: [+h[0].toFixed(4), +h[1].toFixed(4), +h[2].toFixed(4)] });
     }
   }
-  return { ok: bad.length === 0, bad, rows,
-    worstMM: rows.reduce((a, r) => Math.max(a, r.mm), 0) };
+  return {
+    ok: bad.length === 0, bad, rows,
+    worstAxMM: rows.reduce((a, r) => (Math.abs(r.axMM - CARRY_AX_NOM)
+      > Math.abs(a - CARRY_AX_NOM) ? r.axMM : a), rows[0].axMM),
+    worstLatMM: rows.reduce((a, r) => Math.max(a, r.latMM == null ? 999 : r.latMM), 0),
+    worstNearMM: rows.reduce((a, r) => Math.max(a, r.nearMM), 0),
+    inj: inj || null,
+  };
+}
+// armBones with ELB_F overridden, for the falsifier that names it. It is a copy
+// of four lines rather than a parameter on armBones, deliberately: ELB_F is a
+// constant everything in this file shares and giving it a live override would
+// be exactly the shadow-block hazard CLAUDE.md keeps a section about. This one
+// is reachable only from carryCheck's own self-test.
+function armBonesWith(elbF, side, shoulderY, tipX, tipY, tipZ, scale, out) {
+  const f = elbF == null ? ELB_F : elbF;
+  const k = scale == null ? 1 : scale;
+  const eo = out == null ? ELB_OUT * k : out;
+  const sh = [0, shoulderY, 0];
+  const tip = [tipX, tipY, tipZ];
+  const el = [tipX * f + side * eo, shoulderY + (tipY - shoulderY) * f, tipZ * f - ELB_BACK * k];
+  return { sh, el, tip, upper: limbSeg(sh, el), fore: limbSeg(el, tip) };
+}
+
+export function carrySelfTest(F) {
+  const cases = [
+    ['baseline (must PASS)', null, false],
+    ['bake slid 150 mm down its own axis', { slideAx: -0.150 }, true],
+    ['bake slid 40 mm down its own axis', { slideAx: -0.040 }, true],
+    ['bake slid 20 mm down its own axis', { slideAx: -0.020 }, true],
+    ['bake slid 35 mm laterally', { slideLat: 0.035 }, true],
+    ['bake slid 20 mm laterally', { slideLat: 0.020 }, true],
+    ['0.986 -> 0.900', { t: 0.900 }, true],
+    ['0.986 -> 0.930', { t: 0.930 }, true],
+    // ...and the floor, published rather than hidden. These three are the
+    // largest perturbations the check does NOT catch, which is the number a
+    // critic actually needs: it is 17 mm axial and 18 mm lateral, against the
+    // 250 mm and 35 mm round 4 shipped.
+    ['0.986 -> 0.970 (BELOW the floor, must pass)', { t: 0.970 }, false],
+    ['bake slid 5 mm down its axis (BELOW the floor, must pass)', { slideAx: -0.005 }, false],
+    ['bake slid 10 mm laterally (BELOW the floor, must pass)', { slideLat: 0.010 }, false],
+    ['ELB_F 0.45 -> 0.50', { elbF: 0.50 }, true],
+    ['SH_ARM fingertip -0.660 -> -0.620', { tipY: -0.620 }, true],
+    ['fing() t0 pushed 25 mm down the arm', { fingers: -0.025 }, true],
+  ];
+  const rows = [], bad = [];
+  for (const [name, inj, wantRed] of cases) {
+    const r = carryCheck(F, inj);
+    const red = !r.ok;
+    rows.push({ input: name, red, nBad: r.bad.length,
+      axMM: r.rows[0].axMM, latMM: r.rows[0].latMM, nearMM: r.rows[0].nearMM });
+    if (red !== wantRed) {
+      bad.push('carryCheck is BLIND to "' + name + '": it stayed '
+        + (red ? 'red' : 'GREEN') + ' when it should have gone '
+        + (wantRed ? 'red' : 'green') + '.');
+    }
+  }
+  return { ok: bad.length === 0, bad, rows };
 }
 
 // ===========================================================================
@@ -3547,8 +4241,14 @@ export function makeChild(THREE, F, o) {
   // between a smudge and a small person standing there.
   const legL = limb(F.kid.leg[0], pants, 0.072, 0);
   const legR = limb(F.kid.leg[1], pants, -0.072, 0);
-  const armL = limb(F.kid.arm[0], skin, 0.105, KID.shoulderY);
-  const armR = limb(F.kid.arm[1], skin, -0.105, KID.shoulderY);
+  // ROUND 5 (character) — and the children get it as well, because a child in
+  // this store holds a parent's hand and hangs off a cart bar, and both of
+  // those are elbows. Their bones are the same construction at 62%.
+  const armLb = makeArm(THREE, [[F.kid.arm[0][0], F.kid.arm[0][1], skin]],
+    0.105, KID.shoulderY, 0, 1, 1, elbSolve(1, 'kid'));
+  const armRb = makeArm(THREE, [[F.kid.arm[1][0], F.kid.arm[1][1], skin]],
+    -0.105, KID.shoulderY, 0, 1, 1, elbSolve(-1, 'kid'));
+  const armL = armLb.piv, armR = armRb.piv;
   hips.add(legL); hips.add(legR); hips.add(armL); hips.add(armR);
 
   g.scale.setScalar(o.height);
@@ -3556,6 +4256,10 @@ export function makeChild(THREE, F, o) {
     root: g, hips, chest, torso, belly: null, neck, head: neck,
     legL, legR, armL, armR, shirt, pants, hipY: KID.hipY, stoop: 0.02,
     cop: false, kid: true, spec: o,
+    armLbone: armLb, armRbone: armRb, elbL: armLb.elb, elbR: armRb.elb,
+    setElbow: (side, th) => (side > 0 ? armLb : armRb).set(th),
+    elbowOf: (side) => (side > 0 ? armLb : armRb).th,
+    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb, KID.hipY, AL, out),
     // Follow state, all of it driven by dt and the constants above. No rng
     // reaches this object after construction, which is what makes a child
     // replayable in a bench trial and unable to walk the seeded stream.
@@ -3691,14 +4395,26 @@ export function makePerson(THREE, F, o) {
   // bare forearm plus the hand. Long-sleeved people go from 3 arm meshes to 2,
   // which is 2 draw calls per person back on every long-sleeved body in the
   // store, and the arm count is now the same for everybody.
-  const armL = limb(F.sleeve[o.sleeve][0], shirt, sw, shoulderY, 0,
-    o.armThick, o.armLen, [F.fore[o.sleeve][0], skin]);
-  const armR = limb(F.sleeve[o.sleeve][1], shirt, -sw, shoulderY, 0,
-    o.armThick, o.armLen, [F.fore[o.sleeve][1], skin]);
+  // ROUND 5 (character) — AND THE ARMS GO THROUGH makeArm, WHICH HAS A JOINT.
+  // `sw` and `shoulderY` are unchanged; what changed is that the pivot no
+  // longer carries the scale (see makeArm) and there is an elbow group under
+  // it. `armL`/`armR` still name the shoulder pivot, so every clip, idle and
+  // gait channel in agents.js that writes armR.rotation.x is untouched.
+  const armLb = makeArm(THREE, [
+    [F.sleeve[o.sleeve][0][0], F.sleeve[o.sleeve][0][1], shirt],
+    [F.fore[o.sleeve][0][0], F.fore[o.sleeve][0][1], skin],
+  ], sw, shoulderY, 0, o.armThick, o.armLen, elbSolve(1));
+  const armRb = makeArm(THREE, [
+    [F.sleeve[o.sleeve][1][0], F.sleeve[o.sleeve][1][1], shirt],
+    [F.fore[o.sleeve][1][0], F.fore[o.sleeve][1][1], skin],
+  ], -sw, shoulderY, 0, o.armThick, o.armLen, elbSolve(-1));
+  const armL = armLb.piv, armR = armRb.piv;
   // ROUND 9 — the mesh whose geometry carries the RIGHT HAND, handed back by
   // name so agents.js can swap in the raised-finger bake without counting
-  // children.
-  const handR = armR.children[armR.children.length - 1];
+  // children. ROUND 5 — makeArm returns it by name, which is what round 9's
+  // note wanted in the first place; `children[length-1]` stopped being the hand
+  // the moment the arm grew a joint.
+  const handR = armRb.hand;
   const handGeo = handR.geometry;                 // what to put back afterwards
   // ROUND 10 — AND ROUND 9'S TWO BAKES WERE THE WRONG TWO. `F.bird` was
   // [side +1, side -1], both short-sleeved, indexed by SLEEVE — so a
@@ -3759,14 +4475,22 @@ export function makePerson(THREE, F, o) {
       // hung here is square. The four lines in the override are the whole
       // feature and they run once per graph traversal on the two or three
       // bodies in the store that are carrying something.
-      const B = SH_ARM(o.bag.side > 0 ? 1 : -1);
-      const armPiv = o.bag.side > 0 ? armL : armR;
-      // The fist, in ARM-LOCAL coordinates, pre-multiplied by the arm pivot's
-      // own scale — which is what the pivot does to a child position before it
-      // rotates it (matrix = T * R * S). t = 0.986 is chest-local y = -0.200 on
-      // an armLen of 1.0, i.e. the exact point round 11's `HAND` named.
-      const h = B.fore.at(0.986);
-      const hand = new THREE.Vector3(h[0] * o.armThick, h[1] * o.armLen, h[2] * o.armThick);
+      const armB = o.bag.side > 0 ? armLb : armRb;
+      const armPiv = armB.piv, elbGrp = armB.elb, shGrp = armB.shg;
+      // The fist, in ELBOW-LOCAL coordinates, pre-multiplied by the arm's own
+      // mesh scale — which is what the fore mesh does to a vertex before the
+      // joint rotates it. t = 0.986 is chest-local y = -0.200 on an armLen of
+      // 1.0 at flex 0, i.e. the exact point round 11's `HAND` named.
+      // ROUND 5 (character) — IT IS ELBOW-LOCAL NOW, AND THAT IS THE FEATURE.
+      // A basket used to hang off a dead-straight arm at knee height, clipping
+      // the thigh, because the fist was derived from a stick. Derived through
+      // the joint it rides the forearm, so `carry` bends with the elbow and a
+      // shopper carries a basket at the hip the way the reference photographs
+      // do. carryCheck() asserts this point is still inside the baked hand.
+      const HB = SH_ARM(o.bag.side > 0 ? 1 : -1);
+      const hb = HB.fore.at(0.986);
+      const hand = new THREE.Vector3((hb[0] - HB.el[0]) * o.armThick,
+        (hb[1] - HB.el[1]) * o.armLen, (hb[2] - HB.el[2]) * o.armThick);
       const carry = new THREE.Group();
       carry.add(bag);
       chest.add(carry);
@@ -3778,7 +4502,9 @@ export function makePerson(THREE, F, o) {
       const PLUMB = 0.10;
       const base = THREE.Object3D.prototype.updateMatrixWorld;
       carry.updateMatrixWorld = function (force) {
-        pv.copy(hand).applyQuaternion(armPiv.quaternion).add(armPiv.position);
+        pv.copy(hand).applyQuaternion(elbGrp.quaternion).add(elbGrp.position)
+          .applyQuaternion(shGrp.quaternion).add(shGrp.position)
+          .applyQuaternion(armPiv.quaternion).add(armPiv.position);
         this.position.copy(pv);
         qv.copy(chest.quaternion).invert();
         this.quaternion.copy(qv).slerp(qId, PLUMB);
@@ -3825,6 +4551,14 @@ export function makePerson(THREE, F, o) {
   return {
     root: g, hips, chest, torso, belly, neck, head, legL, legR, armL, armR,
     shirt, pants, hipY, stoop: o.stoop, cop: false,
+    // ROUND 5 (character) — THE JOINT. Three fields, and they are the whole
+    // contract: set the interior angle, read it back, and ask where the hand
+    // ended up. `elbL`/`elbR` are the groups, for a probe that wants the
+    // quaternion; nothing in agents.js should touch them directly.
+    armLbone: armLb, armRbone: armRb, elbL: armLb.elb, elbR: armRb.elb,
+    setElbow: (side, th) => (side > 0 ? armLb : armRb).set(th),
+    elbowOf: (side) => (side > 0 ? armLb : armRb).th,
+    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb, hipY, AL, out),
     // ROUND 11 — ON THE RIG, because two things in agents.js used to read them
     // off the FIG constants and therefore assumed every body in the store was
     // the same one. `armLen` is the prop solve (a held item is placed from the
@@ -3947,8 +4681,18 @@ export function makeCop(THREE, F) {
   // exact at every phase instead of at one.
   const legL = limb(F.cop.leg[0], F.cop.shoe, uni, COP_STANCE, 0, COP_RAKE_Z);
   const legR = limb(F.cop.leg[1], F.cop.shoe, uni, -COP_STANCE, 0, COP_RAKE_Z);
-  const armL = limb(F.cop.sleeve[0], F.cop.fore[0], uni, 0.206, FIG.shoulderY + 0.012);
-  const armR = limb(F.cop.sleeve[1], F.cop.fore[1], uni, -0.206, FIG.shoulderY + 0.012);
+  // ROUND 5 (character) — HIS ARMS GET THE JOINT TOO, and he is the body it
+  // matters most on: the chase camera sits three metres behind him for the
+  // whole floor phase, so his two forearms are the largest moving thing on
+  // screen in this game. He has no per-body scale, so makeArm's (sx, sy) are
+  // both 1 and the bytes at flex 0 are the previous build's.
+  const armLb = makeArm(THREE, [[F.cop.sleeve[0], null, uni],
+    [F.cop.fore[0][0], F.cop.fore[0][1], uni]],
+  0.206, FIG.shoulderY + 0.012, 0, 1, 1, elbSolve(1, 'cop'));
+  const armRb = makeArm(THREE, [[F.cop.sleeve[1], null, uni],
+    [F.cop.fore[1][0], F.cop.fore[1][1], uni]],
+  -0.206, FIG.shoulderY + 0.012, 0, 1, 1, elbSolve(-1, 'cop'));
+  const armL = armLb.piv, armR = armRb.piv;
   hips.add(legL); hips.add(legR); chest.add(armL); chest.add(armR);
 
   g.scale.setScalar(1.04);
@@ -3968,6 +4712,12 @@ export function makeCop(THREE, F) {
     // Where the arms hang from at rest. animateCop rolls them forward off this
     // as `fatigue` rises, which is the "shoulders round further" note.
     armZ: 0.010,
+    // ROUND 5 (character) — the same three fields a shopper rig carries, so a
+    // function handed "a rig" cannot get a different answer depending on whose.
+    armLbone: armLb, armRbone: armRb, elbL: armLb.elb, elbR: armRb.elb,
+    setElbow: (side, th) => (side > 0 ? armLb : armRb).set(th),
+    elbowOf: (side) => (side > 0 ? armLb : armRb).th,
+    handRig: (side, AL, out) => handRigOf(side > 0 ? armLb : armRb, FIG.hipY, AL, out),
   };
 }
 
