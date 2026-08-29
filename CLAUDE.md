@@ -113,6 +113,14 @@ Keep this list; every entry cost a round or a false report.
   "crowd shown". One explicit render is stable to the call.
 - **Wall-clock frame timers**, repeatedly: a 3x spread on an unchanged build, and
   a ranged arm timing *below* its own no-op baseline.
+- **A check that cannot fail.** `copCheck`'s units row compared `v·(2S/(v/rootS))`
+  against `2S·rootS` — an algebraic tautology. It read 0.000 mm whatever the cop
+  did, and always could have. Before trusting a green check, ask what input would
+  turn it red; if you cannot name one, it is decoration.
+- **A check that silently returned nothing.** `_probe_move_plant.js`'s foot-flat
+  test computed `ank − beta`, never fell under its 0.07 threshold once the knee
+  landed, and returned `null` for both stance rows rather than a number. A `null`
+  read as "no problem found" for a whole round.
 - **The benches do not play like a player.** A permanent, guilty-only freeze —
   body pinned at zero speed, unarrestable, wearing a depth-test-off `!` through
   the shelving — was reachable two times in three by crowding a thief in the last
