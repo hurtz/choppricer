@@ -347,6 +347,20 @@ export const TUNING = {
   // start a `steal` — making any clip inside it guilty-only against a baseline
   // of exactly zero. Same shape as announceAt's annT + 0.7.
   angryFuse: 0.4,
+
+  // --- Round 16: the cop stops being a second implementation ---
+  // animateCop was round 11's two-sine waveform kept alive next to the real
+  // solve, which is why he missed four rounds of fixes. The arithmetic on his
+  // own constants: his foot swept backwards at 0.938v^2 = 5.18 m/s under a body
+  // doing 2.35. There was exactly one speed at which he did not skate — 1.066
+  // m/s — and his walk is 2.35 and his gassed walk 1.46. He was never at it.
+  //
+  // His hip bob came out at 89.9 mm against the crowd's 13-67. He SHOULD bob
+  // more than they do — he is heavy and unfit and that is the character — but
+  // 90 mm is a body in distress rather than a fat man walking. The builder's
+  // sweep: copFlex 0.012 -> 89.7 mm, 0.055 -> 56.1 mm. 0.038 lands near 70,
+  // which reads as weight without reading as a limp.
+  copFlex: 0.038,
 };
 
 // CHANNEL LINEUP — what the channels ARE. Ids, labels, and which aisle each covers.

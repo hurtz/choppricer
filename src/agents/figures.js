@@ -2199,14 +2199,53 @@ function copBeltKit(THREE, S) {
 }
 
 // --- legs -------------------------------------------------------------------
-// Trouser with the outseam stripe, a break over the shoe, and a real oxford on
-// the end of it: sole, heel, welt and a toe cap that takes a highlight. Shoes
-// not made for running.
+// Trouser with the outseam stripe and a break over the shoe. The oxford it
+// breaks over — sole, heel, welt and a toe cap that takes a highlight, shoes
+// not made for running — is copShoe() below, and used to be part of this bake.
+// ---------------------------------------------------------------------------
+// ROUND 1 (cop) — THE SHOE COMES OUT OF THE LEG, AND THAT IS THE WHOLE REASON
+// HE MISSED FOUR ROUNDS OF WALK FIXES.
+//
+// gait.js's attachFeet() finds the shoe inside a leg group BY MEASUREMENT —
+// "the child whose geometry is short and lives at the bottom of the leg" — and
+// then splits the leg at the knee and hinges the two halves. Every shopper has
+// had that since round 12. The cop never could, for one reason: `copLeg` baked
+// the oxford INTO the trouser, so his leg group had exactly one child and
+// attachFeet returned null on the first line. Not a missing feature, a merged
+// mesh. So the oxford is its own bake now, in the SAME leg-local coordinates it
+// was already at, and `makeCop` hangs it off the same pivot: the rest pose is
+// byte-identical and the rig now satisfies the shoe search.
+//
+// COST: one draw call per leg, plus one per leg for the knee's shank, so four.
+// See the ledger over makeCop.
+//
+// The knee ball also MOVED, by 15 mm, and it moved because of gait.js:
+// attachFeet cuts the leg at `ankleY * KNEE_F` and the cut is safe precisely
+// when it passes through the CENTRE of the ball ("a ball split by a plane
+// containing the hinge axis and rotated about that axis is still the same
+// ball"). His shoe's top — the ankle — is at -0.780, so KNEE_F 0.529 puts the
+// cut at -0.4126 and the ball was at -0.428. Moving the ball to meet the cut is
+// 15 mm on a 1.72 m man and it is invisible; leaving it there would have put a
+// 15 mm crease off-centre in the one place on a leg where a crease is a
+// feature. It also puts his knee at the same anatomical fraction as everyone
+// else's, which it was not.
+export const COP_ANKLE_Y = -0.780;                 // shoe bbox top, in leg-local metres
+export const COP_KNEE_Y = COP_ANKLE_Y * 0.529;     // = gait.js's KNEE_F. See the note above.
+// Hip half-separation. UNCHANGED at 0.112, and the reason it is unchanged is
+// worth writing down because "a fat man stands wider" is true and this is not
+// where it goes. His thigh is 0.118 at the top, so the two of them overlap
+// across the midline by 12 mm — round 11's note is that the overlap IS the
+// pelvis this game has, and widening the pivots opens a hole at the crotch that
+// the seat loft does not reach down to cover. A wide stance is hip ABDUCTION,
+// which puts the FEET apart without taking the thighs apart, and it lives in
+// agents.js as K.copSplay where it can be a per-frame quantity.
+const COP_STANCE = 0.112;
+const COP_RAKE_Z = 0.038;                   // see the note over `limb` in makeCop
 function copLeg(THREE, S, side) {
   const P = partList(THREE, S);
   const T = { uv: uvOf('twill') }, X = { uv: uvOf('flat') };
   P.taper(0.118, 0.094, 0.42, [side * 0.006, -0.205, 0], C.trouser, { seg: 10, ...T });
-  P.ball(0.086, 0.062, 0.090, [0, -0.428, 0.008], C.trouser, { seg: 8, rseg: 5, ...T });
+  P.ball(0.086, 0.062, 0.090, [0, COP_KNEE_Y, 0.008], C.trouser, { seg: 8, rseg: 5, ...T });
   P.taper(0.090, 0.076, 0.34, [0, -0.600, 0.004], C.trouser, { seg: 10, ...T });
   P.tube(0.078, 0.052, [0, -0.782, 0.010], C.trouser, { seg: 10, ...T });      // break
   // outseam stripe, on the outside of each leg
@@ -2218,11 +2257,25 @@ function copLeg(THREE, S, side) {
     P.box(0.013, a[0] - b[0] + 0.006, 0.030,
       [side * (a[1] + b[1]) * 0.5, (a[0] + b[0]) * 0.5, 0.004], C.stripe, { ...X });
   }
-  // The oxford, unpolished. The colour is off-black and slightly brown now —
-  // black leather that has not seen a brush in a year goes grey-brown, not
-  // black — and the shine is gone from the atlas cell rather than from here,
-  // so the cap brim (which shares that cell) goes dull with it, which is
-  // correct: they have been neglected by the same man.
+  return mergeParts(THREE, P.L);
+}
+
+// The oxford, unpolished. The colour is off-black and slightly brown now —
+// black leather that has not seen a brush in a year goes grey-brown, not
+// black — and the shine is gone from the atlas cell rather than from here,
+// so the cap brim (which shares that cell) goes dull with it, which is
+// correct: they have been neglected by the same man.
+//
+// EVERY COORDINATE HERE IS THE ONE IT HAD INSIDE copLeg. The mesh moves from
+// being merged into the trouser to being a sibling of it at the same pivot, so
+// nothing about the standing figure changes; what changes is that gait.js can
+// now find it, pitch it and pin its sole. `soleY`/`toeZ`/`heelZ` in attachFeet
+// come straight off this box, so the numbers below ARE the foot rocker:
+// sole at -0.856, toe at +0.126, heel at -0.087 — a 213 mm shoe with the ankle
+// 76 mm up, which is what makes his hip rise at both ends of stance.
+function copShoe(THREE, S) {
+  const P = partList(THREE, S);
+  const X = { uv: uvOf('flat') };
   const y = -0.826;
   P.ball(0.052, 0.036, 0.086, [0, y + 0.010, 0.020], 0x2b2721, { seg: 10, rseg: 6, uv: uvOf('shoe') });
   P.ball(0.046, 0.028, 0.056, [0, y + 0.002, 0.078], 0x362f28, { seg: 10, rseg: 6, uv: uvOf('shoe') });
@@ -2330,6 +2383,12 @@ export function buildFigureGeo(THREE) {
       seat: copSeat(THREE, S),
       belt: copBelt(THREE, S), beltKit: copBeltKit(THREE, S),
       leg: [copLeg(THREE, S, 1), copLeg(THREE, S, -1)],
+      // ONE bake, shared by both feet: the oxford is symmetric about x, so a
+      // second copy would be the same buffer twice. (The trouser is NOT
+      // symmetric — the outseam stripe runs down the outside — which is why
+      // `leg` is still a pair.) gait.js only ever writes a shoe's mesh
+      // position/rotation, never its geometry, so sharing is safe.
+      shoe: copShoe(THREE, S),
       sleeve: [copSleeve(THREE, S, 1), copSleeve(THREE, S, -1)],
       fore: [copForearm(THREE, S, 1), copForearm(THREE, S, -1)],
       belly: copBelly(THREE, S),
@@ -3018,6 +3077,18 @@ export function makePerson(THREE, F, o) {
 //   legs  : 2
 //   arms  : sleeve(2) forearm(2) ... shared material, so 4
 // = 13. Two over the old rig; the two are the belt, and the belt is the joke.
+//
+// ROUND 1 (cop) — 13 -> 17, and the four are named rather than buried:
+//   +2  the shoes, which had to leave the trouser mesh before gait.js's
+//       attachFeet() could find them at all. This is the whole port.
+//   +2  the shanks, from the knee split. attachFeet cuts the trouser in two
+//       and hinges the lower half; the shank borrows the thigh's material and
+//       the split geometry is cached on the source, so it is a draw call and
+//       nothing else — no material, no texture, no new buffer per body.
+// He is ONE body against a store that draws thousands, and the scene renders
+// ten times a frame, so this is 40 draw calls a frame for the only walk cycle
+// the player ever looks at from three metres. Every shopper already pays the
+// same four.
 // ---------------------------------------------------------------------------
 export function makeCop(THREE, F) {
   const g = new THREE.Group();
@@ -3064,14 +3135,28 @@ export function makeCop(THREE, F) {
   head.castShadow = true; neck.add(head);
   neck.add(new THREE.Mesh(F.cop.headKit, kit));
 
-  const limb = (a, b, mb, x, y) => {
-    const piv = new THREE.Group(); piv.position.set(x, y, 0);
+  const limb = (a, b, mb, x, y, z) => {
+    const piv = new THREE.Group(); piv.position.set(x, y, z || 0);
     piv.add(new THREE.Mesh(a, uni));
     if (b) piv.add(new THREE.Mesh(b, mb || uni));
     return piv;
   };
-  const legL = limb(F.cop.leg[0], null, null, 0.112, 0);
-  const legR = limb(F.cop.leg[1], null, null, -0.112, 0);
+  // ---- WEIGHT ON THE HEELS, AS A TRANSLATION AND NOT AS AN ANGLE ----------
+  // animateCop used to open every frame with `legL.rotation.x += 0.046` on both
+  // legs — "both legs raked 2.6 degrees forward of the pelvis, so his feet lead
+  // and the gut is out over them". The read is right and it is the single most
+  // fat-man thing on him, but that channel now belongs to gait.js's solve,
+  // where the leg angle and the ground travel are an EQUALITY (see the header
+  // of gait.js). Adding a constant to one side of an equality is not constant
+  // on the other: -L sin(th + rake) differs from -L sin(th) by L·rake·cos(th),
+  // which swings 2.4 mm across a stance and is skate.
+  //
+  // What "raked forward" physically MEANS is that his feet are in front of his
+  // pelvis, so it is a translation of the hip pivot, and a translation cannot
+  // slip. 0.038 m is L·sin(0.046) — the same displacement the old angle bought,
+  // exact at every phase instead of at one.
+  const legL = limb(F.cop.leg[0], F.cop.shoe, uni, COP_STANCE, 0, COP_RAKE_Z);
+  const legR = limb(F.cop.leg[1], F.cop.shoe, uni, -COP_STANCE, 0, COP_RAKE_Z);
   const armL = limb(F.cop.sleeve[0], F.cop.fore[0], uni, 0.206, FIG.shoulderY + 0.012);
   const armR = limb(F.cop.sleeve[1], F.cop.fore[1], uni, -0.206, FIG.shoulderY + 0.012);
   hips.add(legL); hips.add(legR); chest.add(armL); chest.add(armR);
