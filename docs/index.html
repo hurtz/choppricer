@@ -54498,7 +54498,14 @@ const TUNING = {
   // visibly wrong FOUR separate times. A check on the solve is not a check on
   // the rig. Anything touching these wants shots/_probe_move_plant.js too.
   gaitLift: 0.075, gaitLiftHeavy: 0.62,   // swing clearance, and how a heavy body scales it
-  gaitFlex: 0.055, gaitFlexHeavy: 0.70,   // knee flex through stance
+  // gaitFlex was authored as an ANGLE and encoded as a LENGTH FRACTION — its own
+  // comment said "about 15 degrees" while 0.055 was 38 degrees of knee. Invisible
+  // for as long as the leg telescoped instead of bending. The bob and the
+  // stance-knee angle are the same quantity and pull opposite ways; swept on the
+  // roster, 0.055 gives bob 13/38/67mm at 38deg, 0.012 gives 22/57/91mm at 18deg.
+  // 0.020 is the compromise. The third lever that would let both land is
+  // stride's upper bound in figures.js, which owns the 85mm tail.
+  gaitFlex: 0.020, gaitFlexHeavy: 0.70,   // knee flex through stance
   swayLean: 0.016, swayHeavy: 0.052,      // lateral sway; a heavy walk is not a slow thin one
   listLean: 0.045, listHeavy: 0.105,      // list onto the loaded side
   startRamp: 2.9,  stopRamp: 4.2,         // 0 -> 1.17 m/s in 0.42 s, was 0.12 s
@@ -54533,6 +54540,29 @@ const TUNING = {
   // sim-neutrality was proved rather than asserted. Costs about one theft per
   // four-minute shift.
   reachArm: 1,
+
+  // --- Round 14: speed could carry state, so it carried guilt ---
+  // `drift` (guilty-only, post-conceal) walked at thiefWalk*1.12 where innocents
+  // capped at 1.25. Not a likelihood ratio — a PERFECT classifier: 57.8% of a
+  // thief's pre-bolt life above 1.33 m/s against 0.0% of an innocent's, zero
+  // false positives in 27 minutes.
+  //
+  // Collapsing drift onto leave was tried, measured and REJECTED: it killed the
+  // per-frame classifier and left a rate of 23.6% vs 2.5% (LR 9.6), because BOTH
+  // door states were faster than the ordinary walk while a thief spends 48% of
+  // his pre-bolt life in one and an honest shopper 14%.
+  //
+  // There is now ONE walking speed in the file: a per-person multiplier from
+  // hash2(id), quantised to paceN buckets across paceLo..paceHi, read by every
+  // state that walks. Speed cannot carry state, so it cannot carry guilt.
+  // leakHi — % of guilty body-time above the highest value any innocent reached
+  // — is 0.00% on all ten swept channels.
+  paceLo: 0.90, paceHi: 1.12, paceN: 5,
+
+  // Head yaw was the same bug on the same two lines (drift 0.50 rad @ 0.80 Hz,
+  // leave 0.32 @ 0.55). One per-person band spanning both.
+  exitLookLo: 0.32, exitLookHi: 0.50,
+  exitLookRateLo: 0.55, exitLookRateHi: 0.80,
 };
 
 // CHANNEL LINEUP — what the channels ARE. Ids, labels, and which aisle each covers.
@@ -95227,7 +95257,24 @@ function makePerson(THREE, F, o) {
   // independent 0.93-1.07 on top. Measured on the shipped roster, the arm's
   // lateral edge at mid-humerus stands 20-38 mm proud of the trunk on all six
   // builds, against 10-13 mm before and a real adult's ~42 mm.
-  const hw = b.hw * o.stanceW, sw = b.sw * o.shoulderW * o.girth * o.torsoW;
+  // ROUND 2 (character) — AND THE LEGS HAD THE ARMS' BUG, one paragraph up.
+  // The leg MESH is scaled by `o.girth` (see the two limb() calls below, whose
+  // `sx` is o.girth), so a wide body's thighs get wider — but the hip PIVOTS
+  // were `b.hw * o.stanceW` and knew nothing about girth, so the two thighs
+  // walked into each other. Round 11's own note explains why that is not
+  // cosmetic: the thighs are MEANT to overlap across the midline, because that
+  // overlap is the only pelvis this game has. Scale the separation and the
+  // overlap holds at whatever it was authored to be; leave it and the overlap
+  // grows with girth until the widest builds are one solid block from hip to
+  // knee with the crotch swallowed. Measured on the shipped roster of 14, as
+  // (thigh half-width x girth) - (hip half-separation):
+  //     before   11.3 - 48.6 mm of overlap, and it moved with GIRTH
+  //     after     8.6 - 44.6 mm, and it moves with BUILD alone
+  // The three widest bodies (girth 1.06-1.067) were each carrying 4-6 mm of
+  // overlap they had not been authored. `stanceW` is untouched and still means
+  // what it says — how far apart this person stands — because it multiplies on
+  // top of the corrected quantity rather than instead of it.
+  const hw = b.hw * o.stanceW * o.girth, sw = b.sw * o.shoulderW * o.girth * o.torsoW;
   // ONE FOOT IN FRONT OF THE OTHER, and it is the free leg that goes forward.
   const ff = o.wSide > 0 ? [0, o.footFwd] : [o.footFwd, 0];
   const legL = limb(F.leg[o.build][0], pants, hw, 0, ff[0], o.girth, legS,
@@ -96787,9 +96834,38 @@ const reachHead = [
   // not, never a box at 40% opacity.
   kf(0.46, { vis: 1, armR: -1.88, armRz: -0.24, armL: -0.60, armLz: 0.36, neck: 0.26, chest: 0.19 }),
   kf(0.50, { vis: 1, armR: -1.86, armRz: -0.22, armL: -0.62, armLz: 0.34, neck: 0.24, chest: 0.18 }),
-  kf(0.62, { vis: 1, armR: -1.70, armRz: 0.02, armL: -0.80, armLz: 0.24, neck: 0.30, chest: 0.10 }),
-  kf(0.72, { vis: 1, armR: -1.62, armRz: 0.16, armL: -1.10, armLz: 0.10, neck: 0.44, chest: 0.06, look: -0.20 }),
-  kf(0.80, { vis: 1, armR: -1.58, armRz: 0.20, armL: -1.14, armLz: 0.08, neck: 0.46, chest: 0.05, look: 0.14 }),
+  // ---- ROUND 2 (character): THE INSPECT IS TWO HANDS AND A BOWED HEAD -----
+  // Against the reference photographs the tail was the weakest 0.2 s in the
+  // clip: what people actually do with a thing they have just taken off a shelf
+  // is bring it IN to the chest, put the second hand on it, and drop the head
+  // to read the front of the pack. What this did was hold armR at -1.58 to
+  // -1.70 through the whole inspect — 90 to 97 degrees off the body, i.e. very
+  // nearly full extension — with the off hand 40 degrees away and the head
+  // barely down. A man reading a label at arm's length, one-handed.
+  //
+  // So the withdraw KEEPS GOING: -1.70 -> -1.44 -> -1.24 -> -1.10 brings the
+  // item from the shelf face in to about 0.3 m off the sternum, the left arm
+  // comes to meet it (-1.14 -> -1.04, armLz 0.24 -> 0.10, which closes the gap
+  // between the hands to roughly the width of a cereal box), the neck pitches
+  // to 0.62 and the chest curls over it. `look` still swings, because a person
+  // reading a label still glances along the row.
+  //
+  // NOTHING AT OR BEFORE THE GRASP MOVED. Every key up to u = 0.50 is byte for
+  // byte what it was, so the frame the shelf loses the box, the grab height and
+  // the grab distance — which is what benchTake measures and what LR(grab
+  // height) is computed from — are unchanged by construction. This is also the
+  // SHARED head of both tails, so the keep and the put-back are still one
+  // picture up to 0.80 and the ambiguity argument is untouched.
+  //
+  // The prop follows for free: placeProp() derives the item's position from the
+  // rig's arm angles, so pulling the arm in pulls the box in with it, and the
+  // round-5 floating-box failure cannot recur here. The per-reach shelf
+  // elevation fades out with it too, because agents.js fades that term by how
+  // EXTENDED the arm is — so the box now comes down off the shelf instead of
+  // hanging at shelf height while he looks at it.
+  kf(0.62, { vis: 1, armR: -1.44, armRz: 0.06, armL: -1.00, armLz: 0.20, neck: 0.44, chest: 0.13 }),
+  kf(0.72, { vis: 1, armR: -1.24, armRz: 0.12, armL: -1.06, armLz: 0.13, neck: 0.58, chest: 0.16, look: -0.16 }),
+  kf(0.80, { vis: 1, armR: -1.10, armRz: 0.14, armL: -1.04, armLz: 0.10, neck: 0.62, chest: 0.15, look: 0.10 }),
 ];
 // IT GOES IN THE CART. Down and across, out of frame at the hip, hands back on
 // the bar. Frame for frame this is `handoff`'s tail, which is the point: an
@@ -96799,8 +96875,11 @@ const REACH_KEEP = {
   id: 'reachKeep', tell: 'reach', dur: 3.10, item: [1, 1, 1],
   keys: [
     ...reachHead,
-    kf(0.88, { vis: 1, armR: -1.16, armRz: 0.36, armL: -1.00, neck: 0.42, chest: 0.14 }),
-    kf(0.93, { vis: 0, armR: -1.02, armRz: 0.32, armL: -0.98, neck: 0.34, chest: 0.10 }),
+    // ...and from the chest it goes DOWN into the trolley, which is a shorter
+    // move than it used to be because the item is already in. Same two frames,
+    // same `vis` step, same ending on the bar.
+    kf(0.88, { vis: 1, armR: -1.02, armRz: 0.30, armL: -0.99, armLz: 0.08, neck: 0.50, chest: 0.13 }),
+    kf(0.93, { vis: 0, armR: -0.98, armRz: 0.26, armL: -0.97, armLz: 0.12, neck: 0.36, chest: 0.10 }),
     kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
   ],
 };
@@ -96814,7 +96893,12 @@ const REACH_PUT = {
   id: 'reachPut', tell: 'reach', dur: 3.10, item: [1, 1, 1], puts: 1,
   keys: [
     ...reachHead,
-    kf(0.86, { vis: 1, armR: -1.76, armRz: -0.22, armL: -0.78, armLz: 0.26, neck: 0.28, chest: 0.16 }),
+    // ...and from the chest it goes BACK OUT to the shelf, which is now a real
+    // reach again rather than a twitch — the arm has to travel the distance the
+    // withdraw brought it. That is what putting something back looks like, and
+    // it is why the two tails are legibly different ACTIONS while the first
+    // 0.80 of them is one picture.
+    kf(0.86, { vis: 1, armR: -1.66, armRz: -0.14, armL: -0.84, armLz: 0.22, neck: 0.30, chest: 0.16 }),
     kf(0.92, { vis: 1, armR: -1.84, armRz: -0.30, armL: -0.70, armLz: 0.30, neck: 0.24, chest: 0.18 }),
     kf(0.95, { vis: 0, armR: -1.72, armRz: -0.34, armL: -0.76, armLz: 0.28, neck: 0.22, chest: 0.14 }),
     kf(1.00, { vis: 0, armR: -0.95, armRz: -0.16, armL: -0.95, armLz: 0.16 }),
@@ -97000,7 +97084,110 @@ const swingEase = (w) => {
 // false, agents.js falls back to a shorter step that does not need a knee, and
 // gaitCheck() says so out loud instead of the walk quietly degrading.
 // ---------------------------------------------------------------------------
-function attachFeet(rig) {
+// ---------------------------------------------------------------------------
+// ROUND 2 (character) — AND NOW THERE IS A KNEE, BECAUSE THERE WAS NOT ONE.
+//
+// The header below this one describes the round-12 trade honestly: with no
+// joint available, the swing leg was SHORTENED by scaling the leg mesh, and
+// "at 8-12% for a third of a second that reads as a knee at every distance this
+// game is played at." It does not. A critic measured the shipped rig at 7.7-
+// 15.6% — 69 to 139 mm — of pure telescoping, in every frame, stance and swing.
+// A rigid rod that changes length is a compass gait with a slider in it, and
+// planting the foot of a rigid rod gives you a walking toy.
+//
+// THE PATTERN IS figures.js:armBones, AND IT TRANSFERS EXACTLY. Round 10 solved
+// this for the arm: the shoulder and the hand are GIVEN, the elbow is the free
+// parameter that swings off the line between them, and the bend costs no new
+// joint group because both segments are simply re-aimed at it. The knee is the
+// same problem with the same shape — hip and ankle are given by the solve (the
+// ankle sits at `k * A` along the hip-ankle line, which is exactly where the
+// telescope put it), and the knee is the free parameter off that line.
+//
+// The one thing that does NOT transfer is that an elbow's bend is CONSTANT, so
+// round 10 could bake it into the geometry. A knee's is not: it runs from 0 to
+// 64 degrees twice a second. So the leg has to be two parts that can be re-aimed
+// per frame, and figures.js bakes it as one.
+//
+// SO THE SPLIT IS DONE HERE, ONCE PER SOURCE GEOMETRY, AT ATTACH TIME. The
+// merged leg is cut into a thigh and a shank at the knee, the shank goes into a
+// small group hinged at the cut, and the shoe goes with it. Three properties
+// make this safe rather than clever:
+//
+//   THE CUT IS WHERE THE KNEE BALL ALREADY IS. figures.js bakes a ball at the
+//   knee ("The knee is a real landmark and it was a sphere at a guess"), and the
+//   cut plane passes through its CENTRE. A ball split by a plane containing the
+//   hinge axis and rotated about that axis is still the same ball, so the joint
+//   covers itself at every angle instead of opening a wedge. The residual is
+//   |rz - ry| of that ball — 17 mm, at the one place on a leg where a crease is
+//   what you expect to see.
+//
+//   THE GEOMETRIES ARE SHARED AND ARE NEVER MUTATED. `F.leg[build][side]` is one
+//   BufferGeometry behind every body of that build; translating or splitting it
+//   in place would rebuild the whole crowd's legs from whichever body attached
+//   first. The split is cached on a WeakMap keyed by the SOURCE geometry, so
+//   fourteen bodies pay for it twice (once per build side) and share the result.
+//
+//   IT DEGRADES THE SAME WAY THE SHOE SEARCH DOES. If the cut lands outside the
+//   leg, or either half comes back empty, `knee` is null, footPose falls back to
+//   the round-12 telescope, and the rig reports `kneeOk: false`.
+//
+// COST: one extra mesh per leg, so +2 draw calls per body — the first new draw
+// call this file has added in three rounds, and it is named rather than buried.
+// 28 extra draws for 14 shoppers, against a store that draws thousands. No new
+// material (the shank borrows the thigh's), no new texture, and the split
+// geometries are shared, so no new buffer per body either.
+// ---------------------------------------------------------------------------
+// Knee height as a fraction of hip -> ankle. figures.js puts the knee ball's
+// centre at -0.418 on a leg whose ankle is at -0.790, i.e. 0.529, and an
+// anatomical knee is at 0.50-0.53 of that span measured to the ankle. It is a
+// constant rather than a measurement because a measurement here is fragile: the
+// ball is NOT a local maximum of the leg's radius (the thigh taper ends wider
+// than the ball, t*0.78 against t*0.76), so there is nothing to find.
+const KNEE_F = 0.529;
+// How far either side of the cut is duplicated into both halves, as a fraction
+// of hip -> ankle. 0.075 is 59 mm on a standard leg, which is the knee ball's
+// own y-radius plus a little: enough that each half owns the whole ball.
+const KNEE_BAND = 0.075;
+const _splitCache = new WeakMap();
+
+// THE JOINT BAND IS IN BOTH HALVES, AND THE FIRST RENDER IS WHY. Splitting on
+// the centroid alone gives each half a hard rim, and at 60 degrees of flexion
+// the two rims rotate apart and open a bright wedge across the front of the
+// knee — visible at aisle range, which is the whole distance this game is
+// played at. So every triangle within `band` of the cut goes into BOTH halves.
+// Each side then carries a complete sleeve across the joint; one copy stays
+// with the thigh and one swings with the shank, and their union has no hole at
+// any angle. It costs about 60 triangles a leg and no draw call, and it is the
+// polygon equivalent of what a trouser knee does.
+function splitAtY(THREE, geo, cutY, band) {
+  const src = geo.index ? geo.toNonIndexed() : geo;
+  const pos = src.attributes.position;
+  const up = [], dn = [];
+  for (let t = 0; t < pos.count; t += 3) {
+    const cy = (pos.getY(t) + pos.getY(t + 1) + pos.getY(t + 2)) / 3;
+    if (cy > cutY) { up.push(t); if (cy < cutY + band) dn.push(t); }
+    else { dn.push(t); if (cy > cutY - band) up.push(t); }
+  }
+  const keys = Object.keys(src.attributes);
+  const build = (tris) => {
+    const g = new THREE.BufferGeometry();
+    for (const k of keys) {
+      const a = src.attributes[k], n = a.itemSize;
+      const arr = new a.array.constructor(tris.length * 3 * n);
+      let w = 0;
+      for (let i = 0; i < tris.length; i++) {
+        const base = tris[i] * n;
+        for (let v = 0; v < 3 * n; v++) arr[w++] = a.array[base + v];
+      }
+      g.setAttribute(k, new THREE.BufferAttribute(arr, n, a.normalized));
+    }
+    g.computeBoundingBox(); g.computeBoundingSphere();
+    return g;
+  };
+  return { up: build(up), dn: build(dn), nUp: up.length, nDn: dn.length };
+}
+
+function attachFeet(rig, THREE) {
   const one = (grp) => {
     if (!grp || grp.children.length < 2) return null;
     let leg = null, shoe = null, legSpan = 0, shoeTop = 0;
@@ -97024,17 +97211,97 @@ function attachFeet(rig) {
     }
     if (!shoe) return null;
     const sb = shoe.geometry.boundingBox;
-    return {
+    const f = {
       leg, shoe, ankleY: shoeTop, leg0: leg.scale.y, shoe0: shoe.position.clone(),
       // the sole, and the two corners that touch the ground. footPose needs all
       // three; see the note there about which point a foot actually pivots on.
       soleY: sb.min.y, toeZ: sb.max.z, heelZ: sb.min.z,
+      knee: null, shank: null, a: 0, b: 0, kneeY: 0, alpha: 0, beta: 0,
+      // ---- THE LEG GROUP'S OWN SCALE, AND IT IS NOT COSMETIC ---------------
+      // figures.js scales the leg PIVOT by (girth, legS, girth) — build and
+      // stature — and everything below it lives inside that scale. The sole pin
+      // computes a corner in LEG-LOCAL units and compares it against a floor
+      // height in ROOT metres, so it has been off by exactly this factor since
+      // it was written. That is the "sole below the tiles, -28..+28 mm" row in
+      // round 12's own table and the critic's 49 mm: not a transient, a frame
+      // error, and it scales with how tall the body is. Measured after: the
+      // live median goes from 11 mm under the tiles to 0.9 mm.
+      sy: grp.scale.y || 1, sxz: grp.scale.x || 1,
     };
+    // ---- THE KNEE ---------------------------------------------------------
+    if (!THREE) return f;                       // no constructors: telescope on
+    const legBB = leg.geometry.boundingBox;
+    const kneeY = f.ankleY * KNEE_F;
+    if (!(kneeY < legBB.max.y - 0.02 && kneeY > legBB.min.y + 0.02)) return f;
+    let cut = _splitCache.get(leg.geometry);
+    if (!cut || Math.abs(cut.kneeY - kneeY) > 1e-6) {
+      const sp = splitAtY(THREE, leg.geometry, kneeY, KNEE_BAND * -f.ankleY);
+      if (!sp.nUp || !sp.nDn) return f;
+      // The shank is re-based on the knee so the hinge group can be a plain
+      // rotation about its own origin. `translate` mutates, so it is done on the
+      // SPLIT copy and never on figures.js's shared bake.
+      sp.dn.translate(0, -kneeY, 0);
+      cut = { kneeY, thigh: sp.up, shank: sp.dn };
+      _splitCache.set(leg.geometry, cut);
+    }
+    const knee = new THREE.Group();
+    knee.position.set(0, kneeY, 0);
+    const shank = new THREE.Mesh(cut.shank, leg.material);
+    shank.castShadow = leg.castShadow; shank.receiveShadow = leg.receiveShadow;
+    leg.geometry = cut.thigh;
+    // The hinge hangs off the THIGH MESH, not off the leg group, so
+    // `legL.rotation.x` keeps meaning exactly what it meant — the hip-to-ankle
+    // line — for the solve, the plant instrument and every probe that reads it.
+    // The thigh's own -alpha lives on the mesh underneath it.
+    leg.add(knee);
+    knee.add(shank);
+    // ...and the shoe goes with the shank, because a foot is on the end of a
+    // shank. Its GEOMETRY is untouched (shared, and baked in leg-local metres);
+    // only the mesh's rest position moves, by exactly the hinge offset, so the
+    // existing ankle algebra below carries over with one extra term.
+    grp.remove(shoe); knee.add(shoe);
+    f.knee = knee; f.shank = shank; f.kneeY = kneeY;
+    f.a = -kneeY;                       // hip -> knee
+    f.b = -(f.ankleY - kneeY);          // knee -> ankle
+    f.shoe0 = shoe.position.clone(); f.shoe0.y -= kneeY;
+    return f;
   };
   const L = one(rig.legL), R = one(rig.legR);
   rig.footL = L; rig.footR = R;
   rig.feetOk = !!(L && R);
+  rig.kneeOk = !!(L && L.knee && R && R.knee);
+  // THE SHOE'S OWN BOX, AS FRACTIONS OF THE LEG. solveGait needs the ankle's
+  // height over a flat sole and the two contact reaches to solve the hip height
+  // through the foot rocker, and it works in root metres while these are baked
+  // in figures.js units. The RATIO is scale-free — the leg group's own scale
+  // takes the geometry to root — so a fraction crosses the boundary safely and
+  // a raw millimetre does not. Null when the shoes were not found, and the
+  // solve falls back to the rigid-rod hip height.
+  rig.footGeom = L ? {
+    h0: (L.ankleY - L.soleY) / -L.soleY,
+    toe: L.toeZ / -L.soleY,
+    heel: -L.heelZ / -L.soleY,
+  } : null;
   return rig.feetOk;
+}
+
+// Two-bone IK, and it is four lines because the hard part was choosing what the
+// unknowns are. The hip and the ankle are GIVEN — `d` is the hip-to-ankle
+// distance the solve already asked for, which is where the round-12 telescope
+// put the ankle too — so what is left is the law of cosines on a triangle with
+// two known sides. `alpha` is how far the thigh leaves the hip-ankle line and
+// `beta` is how far the shank comes back to it; `alpha + beta` is the knee's
+// own flexion angle. Both are zero when d = a + b, so a straight leg is the
+// continuous limit of this and not a special case.
+//
+// The sign puts the knee FORWARD (+Z, the body's facing), which is the only
+// direction a knee bends. Writing it the other way gives a flamingo, and that is
+// how the sign was checked.
+function ikKnee(f, d) {
+  const a = f.a, b = f.b;
+  const dd = clamp(d, Math.abs(a - b) + 1e-4, a + b - 1e-5);
+  f.alpha = Math.acos(clamp((a * a + dd * dd - b * b) / (2 * a * dd), -1, 1));
+  f.beta = Math.acos(clamp((b * b + dd * dd - a * a) / (2 * b * dd), -1, 1));
 }
 
 // Ankle pitch + knee substitute, written onto the two meshes attachFeet found.
@@ -97081,6 +97348,55 @@ function attachFeet(rig) {
 // foot wherever the ankle put it.
 function footPose(f, k, ank, th, floorY) {
   if (!f) return;
+  // ---- ROUND 2 (character): THE REAL KNEE --------------------------------
+  // Same contract, same five arguments, same `k`: it is still "how long the
+  // hip-to-ankle line is, as a fraction". What changed is what the leg DOES
+  // about it. The telescope below is kept as the fallback for a rig whose leg
+  // could not be split — see attachFeet — and for gaitCheck's synthetic runs.
+  if (f.knee) {
+    const A = -f.ankleY;
+    ikKnee(f, k * A);
+    const al = f.alpha, be = f.beta;
+    f.leg.scale.y = f.leg0;                 // NEVER scaled again. That was the bug.
+    f.leg.rotation.x = -al;                 // thigh leaves the line, knee forward
+    f.knee.rotation.x = al + be;            // ...and the shank comes back to it
+    // The shank's pitch is what the foot hangs off now, so the ankle angle is
+    // solved against THAT and not against the hip-to-ankle line. This is the
+    // same correction round 12 made when it wrote `ank - th` instead of `ank`:
+    // one more joint upstream, one more term.
+    const sh = th + be;
+    const a = ank - sh;
+    f.shoe.rotation.x = a;
+    const ay = f.ankleY, ca = Math.cos(a), sa = Math.sin(a);
+    const base = f.shoe0.y + ay * (1 - ca);
+    const dz = f.shoe0.z - ay * sa;
+    if (floorY == null) { f.shoe.position.set(f.shoe0.x, base, dz); return; }
+    // The sole pin, through the whole chain and now through the SCALE as well.
+    // Below the leg group the transform is
+    //     M = T_grp . Rx(th) . S(g, ly, g) . Rx(-alpha) . T(0,kneeY,0) . Rx(alpha+beta)
+    // so every child rotation happens INSIDE the non-uniform scale and the scale
+    // is applied once, last, before the hip rotation. Fold it in that order or
+    // the pin is wrong by the body's own stature — which is exactly what it has
+    // been. Closed form, no matrix update: this runs 28 times a frame.
+    const cb = Math.cos(be), sb = Math.sin(be);
+    const cal = Math.cos(al), sal = Math.sin(al);
+    const cth = Math.cos(th), sth = Math.sin(th);
+    const corner = (z) => {
+      const cy = base + f.soleY * ca - z * sa;
+      const cz = dz + f.soleY * sa + z * ca;
+      // up through the hinge into leg-group-local, still unscaled
+      const Y = f.kneeY * cal + (cy * cb - cz * sb);
+      const Z = -f.kneeY * sal + (cy * sb + cz * cb);
+      return f.sy * Y * cth - f.sxz * Z * sth;          // hips-local y, root metres
+    };
+    const lowest = Math.min(corner(f.toeZ), corner(f.heelZ));
+    // ...and a lift of `d` along the knee frame's own Y arrives in hips-local as
+    // d * (sy*cos(beta)*cos(th) - sxz*sin(beta)*sin(th)). Clamped so a deeply
+    // flexed leg cannot divide by nothing.
+    const gain = f.sy * cb * cth - f.sxz * sb * sth;
+    f.shoe.position.set(f.shoe0.x, base + (floorY - lowest) / Math.max(0.3, gain), dz);
+    return;
+  }
   const a = ank - th;
   f.leg.scale.y = f.leg0 * k;
   f.shoe.rotation.x = a;
@@ -97089,23 +97405,26 @@ function footPose(f, k, ank, th, floorY) {
   const base = f.shoe0.y + ay * (k - ca);
   const dz = f.shoe0.z - ay * sa;
   if (floorY == null) { f.shoe.position.set(f.shoe0.x, base, dz); return; }
-  // the two ground corners, through the shoe's rotation and then the leg's
+  // the two ground corners, through the shoe's rotation, the leg group's SCALE
+  // and then its rotation — in that order, because that is the order the matrix
+  // composes them. See the knee branch above for why the scale is not optional.
   const cth = Math.cos(th), sth = Math.sin(th);
   const corner = (z) => {
     const cy = base + f.soleY * ca - z * sa;
     const cz = dz + f.soleY * sa + z * ca;
-    return cy * cth - cz * sth;                       // hips-local y
+    return f.sy * cy * cth - f.sxz * cz * sth;          // hips-local y, root metres
   };
   const lowest = Math.min(corner(f.toeZ), corner(f.heelZ));
-  // A leg-local lift arrives in hips-local multiplied by cos(th), so divide it
-  // back out. Clamped so a leg past 72 degrees cannot divide by nothing.
-  f.shoe.position.set(f.shoe0.x, base + (floorY - lowest) / Math.max(0.3, cth), dz);
+  // A leg-local lift arrives in hips-local multiplied by sy*cos(th), so divide
+  // it back out. Clamped so a leg past 72 degrees cannot divide by nothing.
+  f.shoe.position.set(f.shoe0.x, base + (floorY - lowest) / Math.max(0.3, f.sy * cth), dz);
 }
 function footRest(f) {
   if (!f) return;
   f.leg.scale.y = f.leg0;
   f.shoe.rotation.x = 0;
   f.shoe.position.copy(f.shoe0);
+  if (f.knee) { f.leg.rotation.x = 0; f.knee.rotation.x = 0; f.alpha = f.beta = 0; }
 }
 
 // ---------------------------------------------------------------------------
@@ -97156,6 +97475,49 @@ function solveGait(G, o) {
   const thR = -Math.asin(clamp(fxR / LR, -0.94, 0.94));
   const thL = -Math.asin(clamp(fxL / LL, -0.94, 0.94));
 
+  // ---- ROUND 2 (character): THE SIGNS WERE INVERTED AND THE FOOT ROCKED
+  // ---- BACKWARDS THROUGH EVERY STEP THIS GAME HAS EVER DRAWN --------------
+  // `ank` is the sole's pitch, and it goes onto the shoe as `ank - shank`, so it
+  // composes to the sole's pitch in the parent frame. A positive rotation about
+  // +X sends a point at +z (the toe, because the body faces +z) DOWNWARD:
+  //     y' = y cos p - z sin p
+  // so p > 0 is TOES DOWN. Round 12 authored +0.24 at heel strike and -0.52 at
+  // toe-off with comments reading "heel strike toes-up" and "rolling onto the
+  // toe" — i.e. the intent was right and the sign was the other way round for
+  // both. Measured on the live rig, one full stride, id 1, world millimetres,
+  // heel and toe contact corners:
+  //
+  //     stance begins   heel +21 mm, toe -29 mm   -> THE TOE LANDS FIRST
+  //     stance ends     heel -29 mm, toe +87 mm   -> IT PUSHES OFF THE HEEL
+  //
+  // A person lands on the heel and leaves off the toe. This did the exact
+  // opposite, on every body, in every frame, in every build that has shipped.
+  // It survived because the sole pin re-plants whichever corner is lowest, so
+  // the foot never floated and never sank — it was simply rolling the wrong way,
+  // and that is not something a check on the SOLVE can see. It is also the real
+  // cause of the note in this file's header about the heel going through the
+  // floor at toe-off: the heel was going through the floor because the heel was
+  // the trailing contact, which is not where a push-off happens. After:
+  //
+  //     stance begins   heel 0 mm,  toe +52 mm    -> heel strike
+  //     stance ends     heel +95 mm, toe +2 mm    -> toe-off
+  //
+  // Negated. The comments underneath were already describing the fixed version.
+  const ankleOf = (u, stance) => {
+    if (!o.feet) return 0;
+    if (stance) {
+      const p = u / D;
+      if (p < 0.18) return -0.24 * (1 - p / 0.18);         // heel strike -> flat
+      if (p < 0.62) return 0;                              // foot flat, loaded
+      const q = (p - 0.62) / 0.38;
+      return 0.52 * q * q;                                 // rolling onto the toe
+    }
+    const w = (u - D) / (1 - D);
+    // comes off the toe still pointed, swings through neutral, cocks up to
+    // present the heel for the next strike
+    return 0.52 * Math.pow(1 - Math.min(1, w / 0.30), 2) - 0.24 * Math.pow(w, 2.2);
+  };
+
   // ---- the hip height, i.e. the controlled fall ---------------------------
   // Whichever planted leg is MOST angled is the one holding the hip down. In
   // double support that is the trailing leg, which is why the body is lowest
@@ -97170,11 +97532,45 @@ function solveGait(G, o) {
   // shortened by `flex` on a hump that maxes at mid-stance. The foot does not
   // move: the sole pin puts it back on the tiles, which is what the knee is
   // doing in a real leg too.
+  //
+  // ---- ROUND 2 (character): AND THE FOOT IS PART OF THE LEG ---------------
+  // The paragraph above is right about the mechanism and wrong about the size
+  // of it, and the error only becomes visible once there is a real knee to look
+  // at. "About 15 degrees" of stance knee flexion shortens a two-bone leg by
+  // 1 - cos(7.5 deg) = 0.9%, not by the 5.5% `gaitFlex` is set to; 5.5% is
+  // 38 degrees of knee, two and a half times life, and with the telescope it
+  // was invisible because a rod that gets 5% shorter just gets shorter.
+  //
+  // But dropping `flex` to its anatomical value puts the bob straight back up
+  // to the compass-gait value, because stance knee flexion was never the term
+  // that buys the difference. THE FOOT IS. A leg is hip -> ankle -> a 230 mm
+  // sole, and the sole ROLLS: at heel strike the contact is 83 mm behind the
+  // ankle and at toe-off it is 148 mm in front, so at both ends of stance the
+  // ankle stands HIGHER above the ground than it does with the foot flat. That
+  // raises the hip exactly where the compass gait says it should be lowest,
+  // which is the whole of the classical "determinants of gait" argument and is
+  // why real walking runs 40-50 mm on a leg whose rigid-rod prediction is 90.
+  //
+  // So the hip height is solved off the ANKLE plus the foot, not off the sole:
+  //     hip = (L - h0)(1 - flex) cos(theta)  +  h0 cos(ank) + reach * |sin(ank)|
+  // where h0 is the ankle's height over a flat sole and `reach` is whichever
+  // sole corner is down. It needs no dial, it is exact given the shoe's own box,
+  // and it is what lets gaitFlex be the angle it always claimed to be.
+  // `o.foot` is null for a rig with no shoes found and the expression collapses
+  // to the old one.
   const stR = stR0, stL = stL0;
-  let hFrac = 1;
-  if (stR) hFrac = Math.min(hFrac, Math.cos(thR) * (1 - fR));
-  if (stL) hFrac = Math.min(hFrac, Math.cos(thL) * (1 - fL));
-  G.drop = L * (1 - hFrac);
+  const FT = o.foot;
+  const ankR0 = ankleOf(uR, stR), ankL0 = ankleOf(uL, stL);
+  const hipOf = (th, flex, ank) => {
+    if (!FT) return L * Math.cos(th) * (1 - flex);
+    const h0 = FT.h0 * L;
+    const reach = (ank > 0 ? FT.toe : FT.heel) * L;
+    return (L - h0) * (1 - flex) * Math.cos(th) + h0 * Math.cos(ank) + reach * Math.abs(Math.sin(ank));
+  };
+  let hip = L;
+  if (stR) hip = Math.min(hip, hipOf(thR, fR, ankR0));
+  if (stL) hip = Math.min(hip, hipOf(thL, fL, ankL0));
+  G.drop = L - hip;
   G.thR = thR; G.thL = thL;
   G.stanceR = stR; G.stanceL = stL;
   G.flexR = fR; G.flexL = fL;
@@ -97207,22 +97603,9 @@ function solveGait(G, o) {
   // a neutral-to-slightly-up carriage through the swing so the toe does not
   // catch. Authored against `u` rather than against the leg angle so a shuffle
   // and a stride roll through the same phases.
-  const ankleOf = (u, stance) => {
-    if (!o.feet) return 0;
-    if (stance) {
-      const p = u / D;
-      if (p < 0.18) return 0.24 * (1 - p / 0.18);          // heel strike -> flat
-      if (p < 0.62) return 0;                              // foot flat, loaded
-      const q = (p - 0.62) / 0.38;
-      return -0.52 * q * q;                                // rolling onto the toe
-    }
-    const w = (u - D) / (1 - D);
-    // comes off the toe still pointed, swings through neutral, cocks up to
-    // present the heel for the next strike
-    return -0.52 * Math.pow(1 - Math.min(1, w / 0.30), 2) + 0.24 * Math.pow(w, 2.2);
-  };
-  G.ankR = ankleOf(uR, stR);
-  G.ankL = ankleOf(uL, stL);
+  // ---- the ankle: the block moved above the hip height, which now needs it
+  G.ankR = ankR0;
+  G.ankL = ankL0;
 
   // ---- the pelvis ---------------------------------------------------------
   // LIST: the unloaded hip drops. Signed off which foot is carrying, and it is
@@ -99616,6 +99999,49 @@ const K = {
   get turnRate()      { return t('turnRate', 5.6); },   // rad/s of body yaw
   get turnLead()      { return t('turnLead', 0.62); },  // x the error, onto the neck
   get turnBank()      { return t('turnBank', 0.10); },  // s per rad/s, into the lean
+  // ---- ROUND 2 (character): HOW FAST THIS PERSON WALKS --------------------
+  // ONE walking speed band, multiplying thiefWalk, read by EVERY state that
+  // walks. It replaces three literals that were three different ideas of the
+  // same quantity:
+  //     walk    K.thiefWalk         1.00   everyone
+  //     leave   K.thiefWalk * 1.06  1.06   either population
+  //     drift   K.thiefWalk * 1.12  1.12   GUILTY ONLY, post-conceal
+  // which made `speed > 1.33` a perfect guilt classifier. See the `leave`/
+  // `drift` case for the numbers.
+  //
+  // COLLAPSING drift ONTO leave WOULD NOT HAVE BEEN ENOUGH, and measuring it
+  // is the only reason I know that. With the two door states sharing one
+  // constant the per-frame classifier died — max speeds overlapped, zero
+  // guilty body-time above the innocent ceiling — but the RATE above 1.33 m/s
+  // still read 23.6% guilty against 2.5% innocent, a likelihood ratio of 9.6.
+  // The cause is not the constants any more, it is that both door states are
+  // faster than the ordinary walk while a thief spends 48% of his pre-bolt life
+  // in one of them and an honest shopper 14%. Speed was reporting the STATE,
+  // and the state mix is guilt.
+  //
+  // So there is no purposeful-exit bump left at all. A person walks at his own
+  // pace in the aisles, to the door, and away from a shelf he changed his mind
+  // about, and the ONLY spread in this store's walking speed is which person
+  // it is. That is the strongest available form of the claim: speed cannot
+  // carry state, so it cannot carry guilt. The price is real and is named — a
+  // shopper heading for the exit no longer picks up 6%, which is a true thing
+  // about people that this game cannot afford to model.
+  //
+  // The band's mean is 1.01, so the crowd's mean walk is within 1% of round
+  // 12's and the bench is comparable; its top is the old drift value, so
+  // nothing in the store got faster than it already was. Five buckets over
+  // fourteen bodies means roughly three people share every pace and no pace is
+  // a fingerprint — paceCheck's sibling exitCheck() asserts exactly that.
+  get paceLo()        { return t('paceLo', 0.90); },      // x thiefWalk
+  get paceHi()        { return t('paceHi', 1.12); },
+  get paceN()         { return t('paceN', 5); },          // buckets, so a pace is shared
+  // ...and the head. Same band, same person, same argument: a man on his way
+  // out of a shop looks around, and how much is a trait. 0.32/0.55 was the
+  // innocent's and 0.50/0.80 the thief's.
+  get exitLookLo()    { return t('exitLookLo', 0.32); },  // rad of head yaw
+  get exitLookHi()    { return t('exitLookHi', 0.50); },
+  get exitLookRateLo(){ return t('exitLookRateLo', 0.55); },
+  get exitLookRateHi(){ return t('exitLookRateHi', 0.80); },
   // ---- browsing at the shelf ---------------------------------------------
   // WHERE A SHOPPER STANDS. The old wanderTarget picked aisleX +- 1.15 m at
   // random, which is the aisle CENTRE LINE, and the lead measured the
@@ -100739,8 +101165,15 @@ function createAgents(THREE, scene, world) {
       //   reachT     seconds until the next browse reach. Runs on the RIG's
       //              idle clock, not on this object, for the anti-oracle reason
       //              round 9 wrote down; see the note in animateShopper.
-      //   reachU     0..1 through the reach sequence, or -1 when not reaching.
-      shelfSide: 0, facing: null, reachU: -1, reachTook: false, reachKeep: false,
+      //   `reachU` was declared here as "0..1 through the reach sequence, or -1
+      //   when not reaching", with a comment documenting it as the reach clock,
+      //   and NOTHING EVER WROTE IT. It is deleted rather than wired: the reach
+      //   clip's phase already has exactly one owner — `1 - s.gestT/s.gestD`,
+      //   computed in animateShopper and handed to applyGesture — and adding a
+      //   second copy of it on the shopper is the duplication CLAUDE.md's rule
+      //   is about. A field that is only ever read as -1 is worse than absent,
+      //   because the next reader believes the comment.
+      shelfSide: 0, facing: null, reachTook: false, reachKeep: false,
       grabHand: V(0, 0, 0), itemSize: null, grabT: 0, cartYaw: 0, leanA: 0, reachEl: 0,
       lastAlong: 0, turnErr: 0,
       // Pure counters for benchTake. They are written by takeAt/putBack and
@@ -101916,7 +102349,80 @@ function createAgents(THREE, scene, world) {
   function turnBack(s) {
     s.state = 'walk'; s.timer = rr(2.5, 6.0); s.path = []; s.aim = null; s.aimT = 0;
     s.target = { x: aisleX(ri(0, AISLE_COUNT - 1)) + rr(-1.0, 1.0), z: rr(0.5, HALF_LEN - 2) };
-    s.gestIn = Math.min(s.gestIn, rr(0.4, 2.5));
+    // ROUND 2 (character) — THE "LOOK BUSY" EFFECT IS GONE AND THE DRAW STAYS.
+    //     s.gestIn = Math.min(s.gestIn, rr(0.4, 2.5));   // look busy
+    // Only a body that has concealed something ever turns back, so this pulled
+    // the decoy scheduler from its 9-22 s to under 2.5 s FOR GUILTY BODIES
+    // ONLY — about a fivefold rate, arriving exactly when the player is camping
+    // the door and watching the aisles. "The one fiddling with his phone every
+    // two seconds" is the same class of tell as the drift walk that this round
+    // exists to kill, and it is worse than that one because it is a rate on the
+    // decoy system itself, whose whole claim is that the scheduler has never
+    // seen `s.guilty`. He goes back to the crowd's own schedule; the theatre of
+    // hanging back in the aisles is the stall, not the clip rate.
+    // THE DRAW ITSELF STAYS, AND ITS RESULT IS THROWN AWAY. This file's header
+    // records a single misplaced rnd() moving a published likelihood ratio from
+    // 1.95 to 2.33 in a change that touched no probability anywhere, and
+    // turnBack fires inside the bench. Deleting the line outright measured
+    // 58.5% against 59.5% with the draw kept, at n=200, seed 1234,
+    // difficulty 1 — a full point of chase, bought back for one dead call.
+    // Removing the BEHAVIOUR is the whole point; moving the seeded stream
+    // underneath every number in this file is not, and the two are separable.
+    void rr(0.4, 2.5);
+  }
+  // ---------------------------------------------------------------------
+  // ROUND 2 (character) — HOW THIS PERSON WALKS OUT OF A SHOP.
+  //
+  // ONE derivation, read by BOTH `leave` and `drift`, which is why it is a
+  // function and not two literals. `pace` multiplies thiefWalk; `lookAmp` and
+  // `lookRate` are the head swivel on the way. All three come off `hash2(id)`,
+  // which is a PERSON: it is fixed for the life of a body, it is the same
+  // number whether that body is armed this shift or not, and it costs the
+  // seeded stream nothing (see the header's note on rnd() draws).
+  //
+  // Quantised to `exitPaceN` buckets so a pace is shared by several people
+  // rather than being a fingerprint. With 14 bodies and 5 buckets, roughly
+  // three people walk out at any given pace.
+  // ---------------------------------------------------------------------
+  // ONE scratch object, reused, for the same reason `_G` is: this is called once
+  // per body per frame and 25 bodies at 60 Hz is 1,500 allocations a second for
+  // four numbers. Nothing holds a reference across a frame.
+  const _PC = { u: 0, pace: 1, lookAmp: 0, lookRate: 0 };
+  function paceOf(s) {
+    const n = Math.max(2, Math.round(K.paceN));
+    const u = Math.min(n - 1, Math.floor(hash2(s.id + 4801, 0) * n)) / (n - 1);
+    _PC.u = u;
+    _PC.pace = lerp(K.paceLo, K.paceHi, u);
+    _PC.lookAmp = lerp(K.exitLookLo, K.exitLookHi, u);
+    _PC.lookRate = lerp(K.exitLookRateLo, K.exitLookRateHi, u);
+    return _PC;
+  }
+  // THE ASSERTION, in the shape CLAUDE.md names. `drift` and `leave` now share
+  // one code path, so the failure this guards against is not the two of them
+  // disagreeing — it is somebody widening the band so that the top of it stops
+  // being reachable by an innocent body. That is the property the leak actually
+  // violated, so that is what gets checked: over the live roster, the highest
+  // walk-out pace any body can draw must also be drawn by at least two DIFFERENT
+  // bodies, and the band must be non-degenerate.
+  //
+  // It cannot check guilt (guilt is re-rolled every shift and this runs once),
+  // and it should not try to: the point is that the band has no guilt term in
+  // it at all. Returns { ok, why } like lungCheck/paceCheck and is stamped onto
+  // every bench result.
+  function exitCheck() {
+    const why = [];
+    if (!(K.paceHi > K.paceLo)) why.push('walk pace band is degenerate');
+    const buckets = new Map();
+    for (const s of shoppers) {
+      const w = paceOf(s);
+      buckets.set(w.u, (buckets.get(w.u) || 0) + 1);
+    }
+    if (buckets.size) {
+      const top = Math.max(...buckets.keys());
+      if (top < 0.999) why.push('no body can draw the top of the pace band');
+      if ((buckets.get(top) || 0) < 2) why.push(`only ${buckets.get(top) || 0} body draws the top pace — it is a fingerprint`);
+    }
+    return { ok: why.length === 0, why: why.join('; '), buckets: [...buckets.entries()].sort() };
   }
 
   function updatePost(dt) {
@@ -102495,27 +103001,18 @@ function createAgents(THREE, scene, world) {
   }
 
   function updateShopper(s, dt, api, frozen) {
-    // ---- ROUND 2 (character): THE TROLLEY HAS A SECOND OWNER AND IT IS NOT
-    // ---- IN THIS FILE ------------------------------------------------------
-    // `hasCart` is a property of the PERSON now (figures.js rolls `desc.cart`
-    // once, at construction) and resetShopper() is where it is applied. It is
-    // not the only place it is written: game.js's putBack(), which returns a
-    // resolved body to the floor eighteen seconds later, sets `s.hasCart = true`
-    // and `s.cart.visible = true` unconditionally. Measured on the live page —
-    // seven cartless bodies at boot, ten of them holding a trolley two minutes
-    // in, three of whom had never had one.
-    //
-    // game.js is not this builder's file, so this is the ONE-WAY CLAMP instead:
-    // a body that was not issued a trolley never acquires one, and the
-    // legitimate write in the other direction — the bolt, which lets go of it —
-    // is untouched. It is deliberately not silent about being a repair, because
-    // CLAUDE.md's rule is that one piece of code owns a derivation and everybody
-    // else calls it: the actual fix is one line in game.js putBack(),
-    //     s.hasCart = s.rig.desc.cart !== false; s.cart.visible = s.hasCart;
-    // and this clamp comes out the round that lands.
-    if (s.hasCart && s.rig.desc && s.rig.desc.cart === false) {
-      s.hasCart = false; s.cart.visible = false;
-    }
+    // ---- THE TROLLEY CLAMP IS GONE, BECAUSE THE REAL FIX LANDED ------------
+    // Last round this function opened with a per-frame repair:
+    //     if (s.hasCart && s.rig.desc.cart === false) { s.hasCart = false; ... }
+    // because game.js's putBack() handed a trolley to every body it returned to
+    // the floor, including the seven who were never issued one. That fix has
+    // landed on the owning side — game.js:3253 now reads
+    //     s.hasCart = s.rig?.desc?.cart !== false;
+    // which is the same derivation with one owner — so the clamp comes out, as
+    // its own note said it would. Verified on the live page: 7 cartless bodies
+    // at boot and 7 after 150 s, 0 mismatched against `desc.cart`, with the
+    // clamp removed. `desc.cart` is rolled in figures.js at construction, so it
+    // is a person and not a shift.
     if (s.escaped || s.caught) { animateShopper(s, dt, 0); return; }
     if (frozen) { s.vel.multiplyScalar(Math.exp(-6 * dt)); animateShopper(s, dt, 0); return; }
 
@@ -102825,8 +103322,28 @@ function createAgents(THREE, scene, world) {
       if (s.angry > 0) { s.angry -= dt; if (s.angry <= 0) s.bang.visible = false; }
     }
 
-    let target = K.thiefWalk;
+    // ONE walking speed, and it is a PERSON. Every state below that walks reads
+    // this and nothing else — see K.paceLo. `bolt`, `react` and `shove` set
+    // their own and are exempt on the same grounds as the start ramp: they are
+    // the three states the chase is measured in and a bolt is already a
+    // confession.
+    const PACE = paceOf(s);
+    let target = K.thiefWalk * PACE.pace;
     let dir = null;
+
+    // ROUND 2 (character) — A HEAD DOES NOT STAY COCKED, AND THIS WAS THE SAME
+    // LEAK ONE CHANNEL OVER. `s.look` is AUTHORED every frame by the four states
+    // that use it and was never CLEARED by the three that do not, so it latched:
+    // a body that turned back out of `drift` carried its last swivel — up to
+    // 0.50 rad, 29 degrees — into `walk` and held it there, frozen, for the rest
+    // of its shift. Only a body that has concealed something can make that
+    // transition, so a permanently cocked head was a guilt tell with no decay at
+    // all, and it survived every measurement because `look` was only ever read
+    // one frame at a time. Zeroed on the three states that never write it; the
+    // neck lerps at ed(8) downstream, so it reads as him facing front again
+    // rather than as a snap. `react` and `conceal` are left alone: both write it
+    // themselves, every frame, on purpose.
+    if (s.state === 'walk' || s.state === 'browse' || s.state === 'putback') s.look = 0;
 
     switch (s.state) {
       case 'walk': {
@@ -102881,32 +103398,89 @@ function createAgents(THREE, scene, world) {
         }
         break;
       }
-      // A customer who is done shopping, walking at the same door on the same
-      // field with the same gait. He is not evidence of anything.
-      case 'leave': {
-        dir = navToExit(s, false, dt);
-        target = K.thiefWalk * 1.06;
-        s.look = Math.sin(s.phase * 0.55) * 0.32;
-        if (atExit(s) >= 0) { startShove(s); break; }
-        break;
-      }
+      // =====================================================================
+      // ROUND 2 (character) — ONE WALK TO THE ONE DOOR, AND IT IS THE SAME
+      // WALK. THIS WAS THE WORST BUG IN THE PROJECT AND IT WAS TWO CONSTANTS.
+      // =====================================================================
+      // `leave` and `drift` are the same body doing the same thing — heading
+      // for the only exit on the same field, at the same gait, past the same
+      // people. The only difference that has ever mattered is behavioural: a
+      // drifter turns back rather than walk into a posted uniform, and a
+      // leaver has nothing to turn back from. Everything else about them was
+      // written out twice, and the two copies drifted:
+      //
+      //     leave   K.thiefWalk * 1.06   look sin(phase*0.55) * 0.32
+      //     drift   K.thiefWalk * 1.12   look sin(phase*0.80) * 0.50
+      //
+      // `drift` is the one state that only a body which has already concealed
+      // something can enter. So both of those numbers were GUILT, published on
+      // the two channels a player watches hardest. Measured over 150 s of live
+      // sim at difficulty 1, excluding bolt/react/shove:
+      //
+      //                       max speed   % of body-time > 1.33 m/s
+      //       guilty            1.400 m/s          49.6%
+      //       innocent          1.250 m/s           0.0%
+      //                       max |head yaw|   % above the innocent ceiling
+      //       guilty            0.500 rad          29.7%
+      //       innocent          0.320 rad           0.0%
+      //
+      // Zero false positives across 30 minutes of innocent walking. That is not
+      // a likelihood ratio, it is a perfect classifier, and it fires for half of
+      // the thief's pre-bolt life in runs of up to 13.6 s. Every ambiguity
+      // number in this file is measured against a design whose premise is that
+      // you cannot tell; a player who notices "the fast one is the thief" has
+      // beaten all of it without watching a single gesture.
+      //
+      // THE FILE ALREADY STATED THE RULE THIS BROKE. The guard on `huff`, forty
+      // lines below, reads "a guilty shrugger who bolts later must not be
+      // quietly 18% faster for it." That guard went on the huff and not on the
+      // state only a thief can be in.
+      //
+      // THE FIX IS NOT A NUMBER, IT IS THE DUPLICATION — AND COLLAPSING `drift`
+      // ONTO `leave` WAS MEASURED AND WAS NOT ENOUGH. Shipping that first cut
+      // killed the per-frame classifier outright (max speeds overlapped, 0.0% of
+      // guilty body-time above the innocent ceiling) and left a rate: 23.6% of
+      // guilty body-time over 1.33 m/s against 2.5% of innocent, LR 9.6. The
+      // residue was never the two constants. It was that BOTH door states were
+      // faster than the ordinary walk while a thief spends 48% of his pre-bolt
+      // life in one of them and an honest shopper 14%. Speed was reporting the
+      // STATE, and the state mix is guilt.
+      //
+      // So the door bump is gone entirely. There is now ONE walking speed in
+      // this file, it is a PERSON — see K.paceLo — and every state that walks
+      // reads it, so a body's speed cannot tell you what it is doing, let alone
+      // why. `PACE` is taken once at the top of this function; this branch does
+      // not touch `target` at all, which is the point: there is no door
+      // multiplier left for a tuning pass to get wrong.
+      //
+      // The head is the same argument on the other channel. `lookAmp`/`lookRate`
+      // are also the person's, spanning the union of the two old pairs, and the
+      // three door-adjacent states that never authored `look` now clear it —
+      // see the note above the switch, because a latched head was the same leak
+      // with no decay at all.
+      case 'leave':
       case 'drift': {
         // ROUND 6 — HE DOES NOT WALK INTO A UNIFORM STOOD ON THE ONLY DOOR.
         // He turns back into the shelf runs and waits. See the `walk` branch of
         // the guilty timeline above for the other half, and dumpGoods() for
-        // what happens if you never move.
-        if (heldOff(s) && toExit(s.position.x, s.position.z) < K.deterSight) {
-          s.state = 'walk'; s.timer = rr(2.5, 6.0); s.path = [];
-          // Back INTO the store, not to a random point that might be the aisle
-          // the cop is standing at the end of. He is going somewhere to wait.
-          s.target = { x: aisleX(ri(0, AISLE_COUNT - 1)) + rr(-1.0, 1.0), z: rr(0.5, HALF_LEN - 2) };
+        // what happens if you never move. This is the ONE thing that differs
+        // between the two states, and a body in `leave` has nothing to turn
+        // back from — he is not carrying anything he should not be.
+        if (s.state === 'drift' && heldOff(s)
+            && toExit(s.position.x, s.position.z) < K.deterSight) {
+          // ...and it goes through turnBack(), which is where this decision
+          // already lived. The two were hand-copied and had ALREADY diverged —
+          // the inline one never cleared `aim`/`aimT`, so a thief who turned
+          // back kept staring at whatever the last clip pointed him at. Same
+          // rnd() draws in the same order, so the seeded stream is unmoved.
+          turnBack(s);
           s.stall += dt;
-          s.gestIn = Math.min(s.gestIn, rr(0.4, 2.5));   // look busy
           break;
         }
         dir = navToExit(s, false, dt);
-        target = K.thiefWalk * 1.12;
-        s.look = Math.sin(s.phase * 0.8) * 0.5;
+        // ...and it is the SAME `target` the aisles use, untouched. There is no
+        // door multiplier left to get wrong.
+        s.look = Math.sin(s.phase * PACE.lookRate) * PACE.lookAmp;
         if (atExit(s) >= 0) { startShove(s); break; }
         break;
       }
@@ -103288,7 +103862,10 @@ function createAgents(THREE, scene, world) {
     // of how far a leg goes: half a step over a leg length is the sine of the
     // hip angle, which is the same quantity gait.js solves.
     const amp = clamp(Math.asin(clamp(step * 0.5 / L, 0, 0.94)) * P.amp, 0.02, 0.75);
-    if (!r.feetOk && r.feetOk !== false) attachFeet(r);
+    // THREE goes in because the knee split needs constructors — see attachFeet.
+    // Without it the rig falls back to round 12's telescoping leg rather than
+    // throwing, which is the same degradation path the shoe search already had.
+    if (!r.feetOk && r.feetOk !== false) attachFeet(r, THREE);
     solveGait(_G, {
       phase: s.phase, speed: s.speed, L, step: step * gz,
       duty: dutyOf(s.speed, heavy),
@@ -103303,6 +103880,12 @@ function createAgents(THREE, scene, world) {
       lift: K.gaitLift * (heavy ? K.gaitLiftHeavy : 1) * clamp(P.bounce, 0.65, 1.35) * gz,
       flex: K.gaitFlex * (heavy ? K.gaitFlexHeavy : 1) * gz,
       feet: !!r.feetOk,
+      // ROUND 2 (character) — the shoe's own box, so the solve can put the hip
+      // where the FOOT holds it rather than where a rigid rod would. This is
+      // what took the roster's hip bob from 17-87 mm to a real band; see the
+      // note over hipOf() in gait.js. Measured once at attach, null if the
+      // shoes were not found, and the solve falls back without it.
+      foot: r.footGeom,
     });
     // Straight through, NOT scaled — see `gz` above. A stopped body stands
     // still because its step went to zero, which is the same reason its hip
@@ -105388,6 +105971,10 @@ function createAgents(THREE, scene, world) {
       // inverted or the bot's model has fallen outside it, and every speed
       // number on this object is describing a different game. See paceCheck().
       paceBroken: paceCheck().ok ? null : paceCheck(),
+      // ROUND 2 (character). Non-null means the walk-out band has stopped being
+      // a band anybody can draw from, i.e. the guilt leak this round closed has
+      // been reopened by a tuning edit. Same contract as the two above.
+      exitBroken: exitCheck().ok ? null : exitCheck(),
       catchRate: +(caught.length / n * 100).toFixed(1),
       escaped: esc.length, stalled: stall.length,
       // He ditched it rather than walk into you. See onAbort above and dumpT.
@@ -106313,6 +106900,13 @@ function createAgents(THREE, scene, world) {
     return { cut: row('cut'), chase: row('chase'), camp: row('camp') };
   }
 
+  // Loud at boot, like the lung and the pace. It needs the roster, so it cannot
+  // live in the module-level block those two use.
+  {
+    const E = exitCheck();
+    if (!E.ok && typeof console !== 'undefined') console.warn('[agents] exit band', E);
+  }
+
   return {
     cop, shoppers, powerups, reset,
     update: tick,
@@ -106420,7 +107014,7 @@ function createAgents(THREE, scene, world) {
     // itself instead of being quoted as the shipped build. Leave it empty.
     // crossBands() is how the back-route metric finds the store's corridors
     // from the nav grid instead of assuming where they are.
-    override: OVR, crossBands, lungCheck, paceCheck,
+    override: OVR, crossBands, lungCheck, paceCheck, exitCheck, paceOf,
     // ROUND 12. gaitCheck() is the walk's lungCheck(): it re-derives the planted
     // foot in world coordinates and fails loudly if it slips. stockWired says
     // whether world.takeFacing was actually found at construction, so a report
